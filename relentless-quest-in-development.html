@@ -1477,7 +1477,7 @@ button.squad-tag.squad-tag-active{
     <div style="min-width:0;text-align:center">
       <h1 id="hdr-title">⚔ Relentless Quest ⚔</h1>
       <div class="sub" id="hdr-sub">Relentless Quest — Personal Edition</div>
-      <div id="gold-disp">🪙 <span id="gamt">0</span> gp</div>
+      <div id="gold-disp">🪙 <span id="gamt">0</span> gp <button id="btn-edit-gold" type="button" title="Edit gold (Dev Mode)" style="display:none;background:none;border:1px solid rgba(201,146,42,.45);border-radius:4px;padding:0 5px;cursor:pointer;color:var(--gold-bright);font-size:.9em;line-height:1">✏️</button></div>
     </div>
     <button class="btn bink sm" id="btn-hdr-settings" type="button" title="Settings" aria-label="Settings" style="justify-self:end;min-width:36px;padding-left:8px;padding-right:8px">⚙️</button>
   </div>
@@ -1686,7 +1686,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.410
+      Version 1.411
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Franchise-owned items and assets can now be sold back at half price
@@ -1711,6 +1711,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.
+        <div style="margin-bottom:9px"><strong>Version 1.411</strong> — Dev Mode now includes direct economy controls: item/hire purchases remain free, the header gold readout has a ✏️ editor for setting current gold, and completed quest rewards now show a ✏️ rollback action to reopen completions during testing.</div>
         <div style="margin-bottom:9px"><strong>Version 1.410</strong> — Adopted a single canonical development filename: <code>relentless-quest-in-development.html</code>. Future revisions should update this file in place while Git commits/tags provide version history, preventing drift across numbered HTML copies.</div>
         <div style="margin-bottom:9px"><strong>Version 1.409</strong> — Added an in-app Dev Mode toggle for logged-in accounts so test users can enable/disable developer behavior without URL flags or re-login. Dev Mode now also bypasses gold spending costs for purchases and hires while preserving transaction logs.</div>
         <div style="margin-bottom:9px"><strong>Version 1.408</strong> — Hardened asset persistence after reports of mounts/pets/buildings disappearing. Startup now suppresses auto-push while cloud pull is still in progress (preventing stale local overwrite), and cloud pull now restores a fallback copy of party assets from franchise settings when the party_assets table returns empty.</div>
@@ -6394,11 +6395,14 @@ function renderQuestLog(){
     'border-radius:7px;padding:10px 12px;margin-bottom:14px;max-height:340px;overflow-y:auto">'+
     '<div style="font-family:\'Cinzel\',serif;font-size:.78em;color:var(--gold-dark);margin-bottom:8px;font-weight:700">'+
     '📜 Quest Completion Log</div>'+
-    log.map(function(e){
+    log.map(function(e,li){
+      var rollbackBtn=isDevModeActive()
+        ?'<button class="btn bink sm" data-a="qrollback" data-li="'+li+'" title="Rollback quest completion" style="font-size:.6em;min-height:20px;padding:1px 6px;margin-left:6px">✏️</button>'
+        :'';
       return '<div style="border-bottom:1px dashed var(--parchment-deep);padding:7px 0;margin-bottom:4px">'+
         '<div style="display:flex;justify-content:space-between;align-items:baseline">'+
         '<span style="font-family:\'Cinzel\',serif;font-size:.82em;color:var(--ink)">'+esc(e.questTitle)+'</span>'+
-        '<span style="font-size:.72em;color:var(--gold-dark)">🪙 '+e.reward+' gp</span>'+
+        '<span style="font-size:.72em;color:var(--gold-dark)">🪙 '+e.reward+' gp'+rollbackBtn+'</span>'+
         '</div>'+
         '<div style="font-size:.72em;color:var(--ink-light);margin-top:2px">'+esc(e.completedAt)+' · Franchise: '+e.franchiseCut+' gp</div>'+
         (e.chars&&e.chars.length?'<div style="margin-top:4px">'+e.chars.map(function(cr){
@@ -6408,6 +6412,55 @@ function renderQuestLog(){
         '</div>';
     }).join('')+'</div>';
 }
+
+document.getElementById('quest-log-panel').addEventListener('click',function(e){
+  var b=e.target.closest('[data-a="qrollback"]');
+  if(!b)return;
+  if(!isDevModeActive()){alert('Developer mode only.');return;}
+  var li=parseInt(b.getAttribute('data-li'),10);
+  var log=S.questLog||[];
+  if(isNaN(li)||!log[li])return;
+  var entry=log[li];
+  if(!confirm('Rollback "'+entry.questTitle+'"?\\n\\nThis dev tool re-opens completion state and reverses logged gold allocations when possible.'))return;
+
+  var franchiseCut=Math.max(0,Math.floor(Number(entry.franchiseCut)||0));
+  S.gold=Math.max(0,(Math.floor(Number(S.gold)||0)-franchiseCut));
+
+  (entry.chars||[]).forEach(function(cr){
+    var c=(S.party||[]).filter(function(pc){return pc.name===cr.name;})[0];
+    if(!c)return;
+    var cut=Math.max(0,Math.floor(Number(cr.cut)||0));
+    c.coinPurse=Math.max(0,(Math.floor(Number(c.coinPurse)||0)-cut));
+    if(cr.item){
+      var idx=(c.inv||[]).indexOf(cr.item);
+      if(idx!==-1)c.inv.splice(idx,1);
+      if(c.ownedItems){
+        var oi=c.ownedItems.indexOf(cr.item);
+        if(oi!==-1)c.ownedItems.splice(oi,1);
+      }
+    }
+  });
+
+  var qs=S.questState||{};
+  var set=activeQuestSet();
+  if(set&&qs.done&&Array.isArray(qs.done)){
+    var qObj=(set.quests||[]).filter(function(q){return q.title===entry.questTitle;})[0];
+    if(qObj){
+      qs.done=qs.done.filter(function(idx){return idx!==qObj.idx;});
+      if(!qs.revealed)qs.revealed=[];
+      if(qs.revealed.indexOf(qObj.idx)===-1)qs.revealed.push(qObj.idx);
+    }
+  }
+
+  log.splice(li,1);
+  S.questLog=log;
+  logAdd('🧪 Rolled back completion: '+entry.questTitle,'adv');
+  setGold();
+  save();
+  renderAdv();
+  renderQuestLog();
+  renderParty();
+});
 
 document.getElementById('btn-monthly-theme').addEventListener('click',function(){
   var set=activeQuestSet();
@@ -7384,6 +7437,8 @@ function applyDevModeAccess(){
   setSectionVisibility('btn-nav-log', false);
   setSectionVisibility('settings-changelog-sec', false);
   setSectionVisibility('settings-data-sec', true);
+  var editGoldBtn=document.getElementById('btn-edit-gold');
+  if(editGoldBtn)editGoldBtn.style.display=dev?'inline-flex':'none';
 }
 
 document.getElementById('btn-toggle-devmode').addEventListener('click',function(){
@@ -7409,6 +7464,23 @@ document.getElementById('btn-savebrand').addEventListener('click',function(){
   S.settings.appName=document.getElementById('set-name').value.trim();
   S.settings.subtitle='';
   applySettings();save();alert('Branding saved!');
+});
+
+document.getElementById('btn-edit-gold').addEventListener('click',function(){
+  if(!isDevModeActive()){alert('Developer mode only.');return;}
+  var cur=Math.max(0,Math.floor(Number(S.gold)||0));
+  var raw=prompt('Set current gold value:',String(cur));
+  if(raw===null)return;
+  var next=Math.max(0,Math.floor(Number(raw)));
+  if(!isFinite(next)){alert('Enter a valid number.');return;}
+  S.gold=next;
+  logAdd('🧪 Dev Mode set gold to '+next+' gp.','gold');
+  setGold();
+  save();
+  renderParty();
+  renderTasks();
+  renderArchive();
+  renderAdv();
 });
 document.getElementById('btn-savemorn').addEventListener('click',function(){
   if(!isDevModeActive()){alert('Developer mode only. Add ?dev=1 to the URL.');return;}
