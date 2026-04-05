@@ -1670,6 +1670,8 @@ button.squad-tag.squad-tag-active{
   <div class="set-sec" id="settings-account-sec">
     <div class="set-sec-ttl">Account</div>
     <div class="hint" id="current-user-display" style="margin-bottom:8px">Logged in as: Guest</div>
+    <div class="hint" id="devmode-status" style="margin-bottom:8px;display:none"></div>
+    <button class="btn bpur full" id="btn-toggle-devmode" style="display:none;margin-bottom:6px">🧪 Enable Dev Mode</button>
     <button class="btn bred full" id="btn-logout">Log Out</button>
   </div>
 
@@ -3300,6 +3302,11 @@ function goldAdd(n,reason,type){
   setGold();save();
 }
 function goldSpend(n,reason,type){
+  if(isDevModeActive()){
+    logAdd('🧪 Dev Mode bypassed -'+n+' gp — '+reason,type||'buy');
+    save();
+    return true;
+  }
   if(S.gold<n){alert('Not enough gold!\nNeed: '+n+' gp\nHave: '+S.gold+' gp');return false;}
   S.gold-=n;
   logAdd('-'+n+' gp — '+reason,type||'buy');
@@ -7339,6 +7346,19 @@ function renderSettings(){
   var msCycle=document.getElementById('set-milestone-cycle');
   if(msCycle)msCycle.value=String(cfg.testMilestoneCycle||1);
   updateMilestoneControls();
+  var loggedIn=!!uid();
+  var devToggleBtn=document.getElementById('btn-toggle-devmode');
+  var devStatusEl=document.getElementById('devmode-status');
+  if(devToggleBtn){
+    devToggleBtn.style.display=loggedIn?'':'none';
+    devToggleBtn.textContent=isDevModeActive()?'🧪 Disable Dev Mode':'🧪 Enable Dev Mode';
+  }
+  if(devStatusEl){
+    devStatusEl.style.display=loggedIn?'':'none';
+    devStatusEl.textContent=isDevModeActive()
+      ?'Developer mode is ON for this account (free purchases & dev controls enabled).'
+      :'Developer mode is OFF for this account.';
+  }
   var cue=document.getElementById('current-user-display');
   if(cue)cue.textContent='Logged in as: '+(currentUserEmail()||'Guest')+(isDevModeActive()?' · Dev Mode':'');
   var cd=document.getElementById('changelog-details');
@@ -7363,6 +7383,22 @@ function applyDevModeAccess(){
   setSectionVisibility('settings-changelog-sec', false);
   setSectionVisibility('settings-data-sec', true);
 }
+
+document.getElementById('btn-toggle-devmode').addEventListener('click',function(){
+  if(!uid()){
+    alert('Log in to enable Developer Mode.');
+    return;
+  }
+  if(!S.settings)S.settings={};
+  S.settings.devModeOverride=!S.settings.devModeOverride;
+  logAdd('Developer mode '+(S.settings.devModeOverride?'enabled':'disabled')+' for '+(currentUserEmail()||'this account')+'.','gold');
+  save();
+  applySettings();
+  renderSettings();
+  renderStore();
+  renderTasks();
+  renderArchive();
+});
 
 
 
@@ -7476,7 +7512,9 @@ var SB_HDR={'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'B
   var TEST_MODE=false;
 
 function isDevModeActive(){
-  return !!DEV_MODE_URL && (currentUserEmail()||'').toLowerCase()===DEV_LOGIN_EMAIL.toLowerCase();
+  var urlDev=!!DEV_MODE_URL && (currentUserEmail()||'').toLowerCase()===DEV_LOGIN_EMAIL.toLowerCase();
+  var toggleDev=!!(uid() && S && S.settings && S.settings.devModeOverride);
+  return urlDev || toggleDev;
 }
 
 function uid(){
