@@ -1845,8 +1845,9 @@ button.squad-tag.squad-tag-active{
         <option value="480">8 hours (override)</option>
       </select>
     </div>
-    <div class="hint">Test mode only — changes quest timer for new assignments. Does not affect quests already in progress.</div>
+    <div class="hint">Test mode only — changes quest timer for new assignments. Use the fast-forward button below to instantly complete quests already in progress.</div>
     <button class="btn bg sm full" id="btn-save-testmode" style="margin-top:7px">Save Test Mode</button>
+    <button class="btn bpur sm full" id="btn-ff-quests" style="margin-top:6px">🧪 Fast-Forward In-Progress Quests</button>
     <button class="btn bink sm full" id="btn-jump-cycle2" style="margin-top:6px">🧪 Jump to Quest Cycle 2 (Rising Reputation)</button>
   </div>
   <div class="set-sec">
@@ -3018,6 +3019,9 @@ function serializeAssetType(a){
 }
 function isAnimalAsset(a){var t=assetBaseType(a);return t==='pet'||t==='mount';}
 function isBuildingAsset(a){return ['structure','income','workshop','utility','stronghold','building'].indexOf(assetBaseType(a))!==-1;}
+function hasAnyOwnedBuildingAsset(){
+  return (S.partyAssets||[]).some(function(a){return isBuildingAsset(a);});
+}
 function marketItemByName(name){
   var all=[].concat(GEAR,VEHICLES,BUILDINGS,PETS);
   for(var i=0;i<all.length;i++)if(all[i].name===name)return all[i];
@@ -4413,29 +4417,32 @@ function renderParty(){
 
   // Franchise Storage section
   var storage=S.franchiseStorage||[];
+  var storageUnlocked=hasAnyOwnedBuildingAsset();
   html+='<div class="card" style="margin-top:14px;padding:9px 12px">'+
     '<div style="font-family:\'Cinzel\',serif;font-size:.78em;text-transform:uppercase;letter-spacing:.05em;color:var(--gold-dark);margin-bottom:7px">'+
     '🏚 Franchise Storage'+(storage.length?' ('+storage.length+' item'+(storage.length!==1?'s':'')+')' :'')+
     '</div>'+
-    (storage.length?
-      storage.map(function(item,si){
-        var wt=ITEM_WEIGHT[item];
-        var wtStr=(wt!==undefined&&wt>0)?' <span style="font-size:.75em;color:var(--ink-light)">('+wt+'lb)</span>':'';
-        return '<div class="inv-item" style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:3px">'+
-          '<span style="font-size:.88em">· '+esc(item)+wtStr+'</span>'+
-          '<div style="display:flex;gap:4px">'+
-          '<select class="storage-dest" data-si="'+si+'" style="font-size:.68em;padding:1px 3px;max-width:110px">'+
-          '<option value="">→ To character…</option>'+
-          S.party.map(function(c,ci){
-            var wouldEnc=c.stats&&wouldEncumber(c,item);
-            return '<option value="'+ci+'"'+(wouldEnc?' style="color:var(--crimson)"':'')+'>'+esc(c.name)+(wouldEnc?' ⚠':'')+'</option>';
-          }).join('')+
-          '</select>'+
-          '<button class="btn bg sm" data-a="from-storage" data-si="'+si+'" style="font-size:.6em;padding:1px 5px;min-height:18px">Give</button>'+
-          '<button class="btn bg sm" data-a="sell-storage" data-si="'+si+'" style="font-size:.6em;padding:1px 5px;min-height:18px;white-space:nowrap" title="Sell back for '+franchiseSellPriceByName(item)+' gp">Sell</button>'+
-          '</div></div>';
-      }).join('')
-      :'<div style="font-size:.8em;color:var(--ink-light);font-style:italic">Storage is empty.</div>')+
+    (!storageUnlocked
+      ?'<div style="font-size:.8em;color:var(--ink-light);font-style:italic">Locked: buy at least one building asset to unlock franchise storage.</div>'
+      :(storage.length?
+        storage.map(function(item,si){
+          var wt=ITEM_WEIGHT[item];
+          var wtStr=(wt!==undefined&&wt>0)?' <span style="font-size:.75em;color:var(--ink-light)">('+wt+'lb)</span>':'';
+          return '<div class="inv-item" style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:3px">'+
+            '<span style="font-size:.88em">· '+esc(item)+wtStr+'</span>'+
+            '<div style="display:flex;gap:4px">'+
+            '<select class="storage-dest" data-si="'+si+'" style="font-size:.68em;padding:1px 3px;max-width:110px">'+
+            '<option value="">→ To character…</option>'+
+            S.party.map(function(c,ci){
+              var wouldEnc=c.stats&&wouldEncumber(c,item);
+              return '<option value="'+ci+'"'+(wouldEnc?' style="color:var(--crimson)"':'')+'>'+esc(c.name)+(wouldEnc?' ⚠':'')+'</option>';
+            }).join('')+
+            '</select>'+
+            '<button class="btn bg sm" data-a="from-storage" data-si="'+si+'" style="font-size:.6em;padding:1px 5px;min-height:18px">Give</button>'+
+            '<button class="btn bg sm" data-a="sell-storage" data-si="'+si+'" style="font-size:.6em;padding:1px 5px;min-height:18px;white-space:nowrap" title="Sell back for '+franchiseSellPriceByName(item)+' gp">Sell</button>'+
+            '</div></div>';
+        }).join('')
+        :'<div style="font-size:.8em;color:var(--ink-light);font-style:italic">Storage is empty.</div>'))+
     '</div>';
 
   el.innerHTML=html;
@@ -4453,6 +4460,10 @@ document.getElementById('plist').addEventListener('click',function(e){
     save();renderParty();window.scrollTo({top:0,behavior:'smooth'});
   } else if(a==='to-storage'){
     // Move item from character inventory to franchise storage
+    if(!hasAnyOwnedBuildingAsset()){
+      alert('Franchise Storage is locked. Buy at least one building asset first.');
+      return;
+    }
     var itemName=b.getAttribute('data-item');
     var c2=S.party[ci];
     if(!c2||!itemName)return;
@@ -5135,8 +5146,8 @@ function makeStarterNavigatorCandidate(){
   c.skills=['Survival','Perception','Investigation','Athletics'];
   c.tools=["Navigator's Tools","Healer's Kit"];
   c.weapons=['Longswords','Bows'];
-  c.inv=["Adventurer's Pack","Traveler's Clothes","Compass","Waterskin"];
   c.hireCost=125;
+  c.inv=recruitLoadoutByClassBgAndCost(c.cls,c.bg,c.hireCost).concat(['Compass']);
   c.starterGuide=true;
   c.firstHire=true;
   c.starterGuideLabel='Recommended Starter';
@@ -5150,15 +5161,17 @@ function shouldOfferStarterGuide(){
 function makeCandidate(){
   var cls=rnd(DND.cls);
   var species=rnd(DND.species);
+  var bg=rnd(DND.bg);
+  var hireCost=(20+rndInt(0,80))*5;
   return {
     name:pickName(species),species:species,cls:cls,
-    bg:rnd(DND.bg),rel:rnd(DND.rel),age:rndInt(18,120),
+    bg:bg,rel:rnd(DND.rel),age:rndInt(18,120),
     height:rndInt(4,7)+"'"+rndInt(0,11)+'"',weight:rndInt(90,280)+' lbs',
     lang:pick(DND.lang,rndInt(2,4)),skills:pickClassSkills(cls),
     tools:pick(DND.tools,2),weapons:pick(DND.weapons,rndInt(1,3)),
     stats:rollStats(cls),
-    level:1,inv:["Adventurer's Pack","Traveler's Clothes"],
-    hireCost:(20+rndInt(0,80))*5
+    level:1,inv:recruitLoadoutByClassBgAndCost(cls,bg,hireCost),
+    hireCost:hireCost
   };
 }
 
@@ -5729,6 +5742,37 @@ function classStarterItems(cls){
   };
   return (map[cls]||['Dagger',"Traveler's Clothes","Adventurer's Pack"]).slice();
 }
+function recruitCostTier(hireCost){
+  var gp=Math.max(0,parseInt(hireCost,10)||0);
+  if(gp>=450)return 'elite';
+  if(gp>=250)return 'veteran';
+  return 'starter';
+}
+function recruitLoadoutByClassBgAndCost(cls,bg,hireCost){
+  var inv=classStarterItems(cls);
+  var bgMap={
+    'Outlander':['Rope 50ft','Rations (1 week)'],
+    'Sailor':['Rope 50ft','Waterskin'],
+    'Acolyte':["Healer's Kit",'Holy Symbol'],
+    'Guild Artisan':["Tinker's Tools",'Ledger of Accounts'],
+    'Soldier':['Shield','Rations (1 week)'],
+    'Criminal':["Burglar's Pack",'Dagger'],
+    'Sage':['Spellbook','Ink & Quill'],
+    'Hermit':['Herbalism Kit','Waterskin'],
+    'Noble':["Traveler's Clothes",'Signet Ring'],
+    'Investigator':['Magnifying Glass','Lantern'],
+    'Mercenary Veteran':['Chain Shirt','Shield']
+  };
+  (bgMap[bg]||[]).forEach(function(it){ if(inv.indexOf(it)===-1)inv.push(it); });
+  var tier=recruitCostTier(hireCost);
+  var tierMap={
+    starter:['Torch x10'],
+    veteran:['Potion of Healing'],
+    elite:['Potion of Healing','Potion of Healing','Bag of Holding']
+  };
+  (tierMap[tier]||[]).forEach(function(it){ if(inv.indexOf(it)===-1)inv.push(it); });
+  return inv;
+}
 
 function classWeaponsForMerc(cls){
   var map={
@@ -5888,7 +5932,7 @@ function initMercenaryUI(){
       weapons:classWeaponsForMerc(cls),
       stats:rollStats(cls),
       level:1,
-      inv:classStarterItems(cls),
+      inv:recruitLoadoutByClassBgAndCost(cls,bg,cost),
       hireCost:cost,
       premium:true,
       coinPurse:0
@@ -7517,6 +7561,19 @@ document.getElementById('btn-save-testmode').addEventListener('click',function()
   if(S.settings.testQuestMins===1)S.gold=310;
   save();alert('Test mode saved!');
 });
+document.getElementById('btn-ff-quests').addEventListener('click',function(){
+  if(!isDevModeActive()){alert('Developer mode only. Enable it in Settings.');return;}
+  var qs=S.questState||{};
+  var now=Date.now();
+  var changed=0;
+  (qs.pending||[]).forEach(function(pq){ if((pq.doneAt||0)>now){ pq.doneAt=now; changed++; } });
+  (qs.grindPending||[]).forEach(function(gp){ if((gp.doneAt||0)>now){ gp.doneAt=now; changed++; } });
+  if(!changed){ alert('No in-progress quests to fast-forward.'); return; }
+  logAdd('🧪 Fast-forwarded '+changed+' in-progress quest timer'+(changed===1?'':'s')+' to ready state.','adv');
+  save();
+  renderAdv();
+  alert('✅ Fast-forward complete. '+changed+' quest timer'+(changed===1?' was':'s were')+' set to ready.');
+});
 document.getElementById('btn-jump-cycle2').addEventListener('click',function(){
   if(!isDevModeActive()){alert('Developer mode only. Enable it in Settings.');return;}
   if(!confirm('Jump to Quest Cycle 2 (Rising Reputation)?\n\nCurrent quest progress will be archived and reset.'))return;
@@ -7893,6 +7950,20 @@ function syncStatus(msg,color){
   var el=document.getElementById('sync-status');if(!el)return;
   el.textContent=msg;el.style.color=color||'var(--ink-light)';
 }
+var supabaseOfflineNotified=false;
+function notifySupabaseOffline(context,err){
+  var detail=(err&&err.message)?err.message:'Network unreachable';
+  var msg='⚠ Supabase appears offline ('+context+'). Using local save data only until connection returns.';
+  syncStatus(msg,'var(--crimson)');
+  if(supabaseOfflineNotified)return;
+  supabaseOfflineNotified=true;
+  var loginStatus=document.getElementById('login-status');
+  if(loginStatus){
+    loginStatus.textContent=msg;
+    loginStatus.style.color='var(--crimson)';
+  }
+  alert(msg+'\n\nDetails: '+detail);
+}
 
 /* ── PUSH ── */
 function sbPush(manual){
@@ -8026,6 +8097,7 @@ function sbPush(manual){
     })
     .catch(function(err){
       syncStatus('⚠ Sync error: '+err.message,'var(--crimson)');
+      notifySupabaseOffline('push',err);
       console.error('Supabase push:',err);
       throw err;
     });
@@ -8211,6 +8283,7 @@ function sbPull(manual){
     return true;
   }).catch(function(err){
     syncStatus(manual?'❌ Pull failed: '+err.message:'⚠ Offline — using local data','var(--crimson)');
+    notifySupabaseOffline('pull',err);
     console.error('Supabase pull:',err);
     throw err;
   });
@@ -8479,7 +8552,8 @@ function initSession(pullFromCloud){
       renderLog();
       saveLocalState();
       suppressAutoPush=false;
-    }).catch(function(){
+    }).catch(function(err){
+      notifySupabaseOffline('startup pull',err||new Error('pull failed'));
       suppressAutoPush=false;
     });
   }
@@ -8540,6 +8614,7 @@ function confirmBurner(){
   if(!isFinite(ts)){alert('Choose a valid defer date and time.');return;}
   if(ts<=Date.now()){alert('Choose a time in the future.');return;}
   S.active[P.brn].burnerUntil=ts;
+  if((S.active[P.brn].subtasks||[]).length)S.active[P.brn].collapsed=true;
   logAdd('"'+S.active[P.brn].name+'" deferred until '+new Date(ts).toLocaleString(),'task');
   P.brn=null;
   closeOv('ov-burner');
