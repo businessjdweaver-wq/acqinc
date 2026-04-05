@@ -1684,7 +1684,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.408
+      Version 1.407
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Franchise-owned items and assets can now be sold back at half price
@@ -1709,7 +1709,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.
-        <div style="margin-bottom:9px"><strong>Version 1.408</strong> — Hardened asset persistence after reports of mounts/pets/buildings disappearing. Startup now suppresses auto-push while cloud pull is still in progress (preventing stale local overwrite), and cloud pull now restores a fallback copy of party assets from franchise settings when the party_assets table returns empty.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.407</strong> — Prepared the downloadable build for the new contract-title edit workflow and aligned the Settings version badge so it now reports 1.407. Includes clickable title editing for contract details (title, gp, notes, group, subtasks, burner timing, archive/delete action).</div>
         <div style="margin-bottom:9px"><strong>Version 1.397</strong> — Investigated and fixed the broken Recruitment-shell update. The earlier revision added a close-button listener, but the actual screen markup replacement did not land cleanly, which left the page in an inconsistent state. Reapplied the Recruitment screen as a single shell card on top of the last stable build, with the ✕ close button wired correctly back to Party.</div>
           <div style="margin-bottom:9px"><strong>Version 1.406b</strong> — Contract titles are now clickable to open a full edit modal for active contracts. The modal supports updating title, gp value, notes, group container assignment, subtask list, back-burner status/timing, and immediate archive/delete actions from one place.</div>
           <div style="margin-bottom:9px"><strong>Version 1.395</strong> — Restored the missing Quest page content after a thorough check of recent changes. The root cause was a stray <code>+ autoTag</code> fragment accidentally inserted into multiple unrelated rendering paths during archive auto-label work, which caused runtime failures before the quest interface could fully render. Removed all stray references so the Quest page, Party filters, recruit cards, and quest/grind progress blocks render normally again.</div>
@@ -7779,12 +7779,7 @@ function sbPush(manual){
     return sbInsert('franchise',[{
       user_id:userId,
       gold:S.gold,
-      settings:Object.assign({},S.settings||{},{
-        _franchiseStorage:S.franchiseStorage||[],
-        _questLog:S.questLog||[],
-        _taskGroups:S.taskGroups||[],
-        _partyAssetsBackup:S.partyAssets||[]
-      }),
+      settings:Object.assign({},S.settings||{},{_franchiseStorage:S.franchiseStorage||[],_questLog:S.questLog||[],_taskGroups:S.taskGroups||[]}),
       last_sync:new Date().toISOString()
     }]);
   }));
@@ -7929,19 +7924,16 @@ function sbPull(manual){
     S=createDefaultState();
 
     var hadFranchiseRow=!!(franchise&&franchise[0]);
-    var backupPartyAssets=[];
     if(hadFranchiseRow){
       S.gold=franchise[0].gold||0;
       var rawSettings=franchise[0].settings||{};
       S.franchiseStorage=rawSettings._franchiseStorage||[];
       S.questLog=rawSettings._questLog||[];
       S.taskGroups=rawSettings._taskGroups||[];
-      backupPartyAssets=rawSettings._partyAssetsBackup||[];
       var cleanSettings=Object.assign({},rawSettings);
       delete cleanSettings._franchiseStorage;
       delete cleanSettings._questLog;
       delete cleanSettings._taskGroups;
-      delete cleanSettings._partyAssetsBackup;
       S.settings=normalizeSettings(cleanSettings);
     }
     if(party&&party.length){
@@ -7989,13 +7981,6 @@ function sbPull(manual){
     }
     if(assets&&assets.length){
       S.partyAssets=assets.map(function(a){var pa=parseAssetType(a.type); return {_sbId:a.id,name:a.name,ic:a.ic,type:pa.baseType,meta:pa.meta||{}};}); ensureAssetMetas();
-    } else if(backupPartyAssets&&backupPartyAssets.length){
-      S.partyAssets=backupPartyAssets.map(function(a){
-        var pa=parseAssetType(a.type);
-        return {name:a.name,ic:a.ic,type:pa.baseType||a.type,meta:a.meta||pa.meta||{}};
-      });
-      ensureAssetMetas();
-      logAdd('Recovered assets from franchise settings backup.','buy');
     }
     if(squads&&squads.length){
       S.squads=squads.map(function(sq){
@@ -8089,11 +8074,9 @@ function sbPull(manual){
 
 /* ── Debounced auto-push ── */
 var autoPushTimer=null;
-var suppressAutoPush=false;
 function schedulePush(){
   console.log('[Push] schedulePush called');
   if(!uid())return;
-  if(suppressAutoPush)return;
   if(autoPushTimer)clearTimeout(autoPushTimer);
   autoPushTimer=setTimeout(function(){
     console.log('[Push] timer fired, calling sbPush');
@@ -8308,8 +8291,7 @@ function initSession(pullFromCloud){
   if(!S.settings.hirelRollDate)S.settings.hirelRollDate='';
   if(!S.lastRerollReset)S.lastRerollReset='';
   mergeCustomContent();
-  suppressAutoPush=!!(pullFromCloud&&uid());
-  saveLocalState();
+  save();
   applySettings();
   renderBudgetDisplays();
   checkFavourites();
@@ -8340,13 +8322,8 @@ function initSession(pullFromCloud){
       renderSettings();
       renderAdv();
       renderLog();
-      saveLocalState();
-      suppressAutoPush=false;
-    }).catch(function(){
-      suppressAutoPush=false;
-    });
+    }).catch(function(){});
   }
-  suppressAutoPush=false;
   return Promise.resolve();
 }
 
