@@ -1708,7 +1708,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.424
+      Version 1.425
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Franchise-owned items and assets can now be sold back at half price
@@ -1733,6 +1733,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.425</strong> — Switching cycles from the Quest Map now preserves per-cycle progress instead of resetting. Cycle-completion prerequisites are now managed in Cycle Rules (set-level) rather than quest-level fields, and quest-level cycle prerequisite enforcement has been removed from assignment flow.</div>
         <div style="margin-bottom:9px"><strong>Version 1.424</strong> — Content Editor quest form now includes optional Vehicle Support and Building Support fields, so set-level support requirements like The Rival’s Warehouse needing a Storage Shed are directly visible and editable from the editor.</div>
         <div style="margin-bottom:9px"><strong>Version 1.423</strong> — Fixed a stray Settings markup leak at the bottom of non-Settings screens, kept the top header fixed while scrolling, disabled repeat quest clears, and added cycle prerequisite support for pet counts (for example, any 3 pets).</div>
         <div style="margin-bottom:9px"><strong>Version 1.422</strong> — Expanded Quest Map and cycle-level editor wiring with visibility modes and cycle-level prerequisites.</div>
@@ -3323,7 +3324,6 @@ function questHardGateIssues(q,charIdxs){
   var issues=[];
   if(!q)return issues;
   var picked=(charIdxs||[]).filter(function(ci){return !!S.party[ci];});
-  if(q.cyclePrereq&&!questCyclePrereqMet(q))issues.push('Locked: requires cycle "'+q.cyclePrereq+'" completion.');
   if(q.squadReqMin&&picked.length<q.squadReqMin)issues.push('Requires a minimum squad size of '+q.squadReqMin+'.');
   if(!questTerrainRequirementMet(q,picked)){
     if(q.terrain==='aquatic')issues.push('Aquatic terrain requires Diving Bell or Keelboat support.');
@@ -3364,9 +3364,28 @@ function candidateSquadsForCycleGate(rule){
   }
   return cands;
 }
+function isSetCompleted(setId){
+  var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
+  if(!set)return false;
+  var qs=S.questState||{};
+  var sp=(qs.setProgress&&qs.setProgress[setId])||null;
+  if(sp){
+    var doneByCounts=(set.quests||[]).every(function(q){
+      var c=parseInt((sp.repeatCounts&&sp.repeatCounts[q.idx]),10)||0;
+      if(!c&&(sp.done||[]).indexOf(q.idx)!==-1)c=1;
+      return c>=1;
+    });
+    if(doneByCounts)return true;
+  }
+  var hist=(S.questCycles||[]).filter(function(cy){return cy&&cy.setId===setId;});
+  return hist.some(function(cy){return (cy.completed||[]).length>=(set.quests||[]).length;});
+}
 function cycleGateStatus(set){
   var rule=cycleGateForSet(set)||{};
   var issues=[];
+  if(rule.requiredCycleSetId){
+    if(!isSetCompleted(rule.requiredCycleSetId))issues.push('Requires completion of cycle: '+rule.requiredCycleSetId);
+  }
   if(rule.requiredAsset){
     var has=(S.partyAssets||[]).some(function(a){return a&&a.name===rule.requiredAsset;})||(S.franchiseStorage||[]).indexOf(rule.requiredAsset)!==-1;
     if(!has)issues.push('Requires franchise item: '+rule.requiredAsset);
@@ -3408,14 +3427,9 @@ function activateQuestCycleSet(setId){
   var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
   if(!set)return;
   if(!S.questState)S.questState={};
-  S.questState.cycleId=cycleId();
-  S.questState.setId=set.id;
-  S.questState.revealed=(set.quests||[]).map(function(q){return q.idx;});
-  S.questState.done=[];
-  S.questState.pending=[];
-  S.questState.assigned={};
-  S.questState.grindPending=[];
-  S.questState.repeatCounts={};
+  if(!S.questState.cycleId)S.questState.cycleId=cycleId();
+  saveActiveSetProgress();
+  loadSetProgress(set.id);
   save();
   renderAdv();
 }
@@ -6750,8 +6764,56 @@ function initQuestState(cycleNum){
     pending:[],
     assigned:{},
     grindPending:[],
+    repeatCounts:{},
+    setProgress:{}
+  };
+  S.questState.setProgress[set.id]={
+    revealed:S.questState.revealed.slice(),
+    done:[],
+    assigned:{},
+    pending:[],
+    grindPending:[],
     repeatCounts:{}
   };
+}
+
+function saveActiveSetProgress(){
+  var qs=S.questState;
+  if(!qs||!qs.setId)return;
+  if(!qs.setProgress)qs.setProgress={};
+  qs.setProgress[qs.setId]={
+    revealed:(qs.revealed||[]).slice(),
+    done:(qs.done||[]).slice(),
+    assigned:Object.assign({},qs.assigned||{}),
+    pending:(qs.pending||[]).slice(),
+    grindPending:(qs.grindPending||[]).slice(),
+    repeatCounts:Object.assign({},qs.repeatCounts||{})
+  };
+}
+function loadSetProgress(setId){
+  var qs=S.questState||{};
+  var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
+  if(!set)return;
+  if(!qs.setProgress)qs.setProgress={};
+  var sp=qs.setProgress[setId];
+  if(!sp){
+    sp={
+      revealed:(set.quests||[]).map(function(q){return q.idx;}),
+      done:[],
+      assigned:{},
+      pending:[],
+      grindPending:[],
+      repeatCounts:{}
+    };
+    qs.setProgress[setId]=sp;
+  }
+  qs.setId=setId;
+  qs.revealed=(sp.revealed||[]).slice();
+  qs.done=(sp.done||[]).slice();
+  qs.assigned=Object.assign({},sp.assigned||{});
+  qs.pending=(sp.pending||[]).slice();
+  qs.grindPending=(sp.grindPending||[]).slice();
+  qs.repeatCounts=Object.assign({},sp.repeatCounts||{});
 }
 
 function checkQuestCycleReset(){
@@ -7059,6 +7121,7 @@ function collectQuest(qi,pq,q,set){
   (S.questState.pending||[]).forEach(function(p,pi){if(p.idx===qi)pqIdx=pi;});
   if(pqIdx!==-1)S.questState.pending.splice(pqIdx,1);
   if(q.capstone)awardCapstonReward(set);
+  saveActiveSetProgress();
 }
 
 function autoCollectExpired(){
@@ -7075,7 +7138,7 @@ function autoCollectExpired(){
       collected.push(q.title);
     }
   });
-  if(collected.length){save();setGold();renderAdv();}
+  if(collected.length){saveActiveSetProgress();save();setGold();renderAdv();}
 }
 
 function awardCapstonReward(set){
@@ -7327,9 +7390,7 @@ function renderAdv(){
     }
 
     var readiness=!isDone&&!inProgress?questReadiness(q,qs):'ready';
-    var cycleLocked=!!(q.cyclePrereq&&!questCyclePrereqMet(q));
     var borderCol=isDone?'var(--forest)':inProgress?'var(--gold-dark)':
-      cycleLocked?'var(--crimson)':
       q.capstone?'var(--gold-dark)':
       readiness==='ready'?'var(--forest)':readiness==='stretch'?'var(--gold-dark)':'var(--crimson)';
 
@@ -7353,7 +7414,6 @@ function renderAdv(){
     } else {
       var ri=readiness==='ready'?'🟢 Ready':readiness==='stretch'?'🟡 Stretch':'🔴 Overreach';
       statusHtml='<div style="font-size:.72em;margin-top:4px">'+ri+'</div>';
-      if(cycleLocked)statusHtml+='<div style="font-size:.72em;color:var(--crimson);margin-top:3px">🔒 Requires cycle "'+esc(q.cyclePrereq)+'" completion</div>';
     }
 
     var metaLine=[q.terrain&&q.terrain!=='none'?'Terrain: '+q.terrain:'',q.difficulty&&q.difficulty!=='standard'?'Difficulty: '+q.difficulty:'',q.squadReqMin?('Min squad: '+q.squadReqMin):''].filter(Boolean).join(' · ');
@@ -7369,7 +7429,7 @@ function renderAdv(){
       (metaLine?'<div style="font-size:.7em;color:var(--ink-light);margin-top:3px">'+esc(metaLine)+'</div>':'')+
       statusHtml+
       (names.length&&!inProgress&&!isDone?'<div style="font-size:.72em;color:var(--ink-light);margin-top:3px">Previously: '+names.map(function(n){return esc(n);}).join(', ')+'</div>':'')+
-      (!isDone&&!inProgress&&!cycleLocked?'<button class="btn bg sm" style="margin-top:7px" data-a="qassign" data-qi="'+q.idx+'">⚔ Assign & Begin</button>':'')+
+      (!isDone&&!inProgress?'<button class="btn bg sm" style="margin-top:7px" data-a="qassign" data-qi="'+q.idx+'">⚔ Assign & Begin</button>':'')+
       '</div>';
   });
 
@@ -8024,6 +8084,7 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit){
     S.questState.grindPending.push({id:gObj2.id,title:gObj2.title,chars:chars,reward:reward2,doneAt:Date.now()+questDuration(gObj2)});
     var cn2=chars.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', ')||'unassigned';
     logAdd('Grind: "'+gObj2.title+'" started ('+cn2+') — '+reward2+' gp in '+questDurationLabel(gObj2),'adv');
+    saveActiveSetProgress();
     P4.grind=null;closeOv('ov-quest');save();renderAdv();
     return;
   }
@@ -8046,6 +8107,7 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit){
   qs.pending.push({idx:P4.quest,chars:chars,reward:reward,doneAt:doneAt});
   var cn=chars.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', ')||'unassigned';
   logAdd('Quest started: "'+q.title+'" ('+cn+') — '+reward+' gp in '+questDurationLabel(q),'adv');
+  saveActiveSetProgress();
   P4.quest=null;closeOv('ov-quest');save();renderAdv();
 }
 document.getElementById('ov-q-yes').addEventListener('click',function(){
@@ -10232,6 +10294,11 @@ function edShowCycleForm(){
     '<option value="obscured"'+(vis==='obscured'?' selected':'')+'>Obscured (show prerequisite)</option>'+
     '<option value="hidden"'+(vis==='hidden'?' selected':'')+'>Hidden (only appears when met)</option>'+
     '</select></div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Required Completed Cycle (optional)</label>'+
+    '<select id="ec-cycle-pre" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">'+
+    '<option value=\"\">None</option>'+
+    QUESTSETS.map(function(s){return '<option value=\"'+s.id+'\"'+((gate.requiredCycleSetId||'')===s.id?' selected':'')+'>'+esc(s.name)+'</option>';}).join('')+
+    '</select></div>';
   html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Required Franchise Item</label>'+
     '<input id="ec-asset" type="text" value="'+esc(gate.requiredAsset||'')+'" placeholder="e.g. Diving Bell" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
   html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Required Mount / Vehicle Type</label>'+
@@ -10262,6 +10329,7 @@ function edShowCycleForm(){
     var nextMeta=idx>=0?Object.assign({},setMeta[idx]):{id:set.id,name:set.name,theme:set.theme,dndTier:set.dndTier,capstoneIdx:set.capstoneIdx};
     nextMeta.cycleGate={
       visibility:document.getElementById('ec-vis').value||'fully_visible',
+      requiredCycleSetId:document.getElementById('ec-cycle-pre').value||'',
       requiredAsset:document.getElementById('ec-asset').value.trim(),
       requiredCompanionKind:document.getElementById('ec-comp-kind').value||'specific',
       requiredMountType:document.getElementById('ec-mount-type').value.trim(),
@@ -10332,7 +10400,6 @@ function edShowQuestForm(){
       '<div><strong>Base GP:</strong> '+q.baseGp+'</div>'+
       '<div><strong>Tier:</strong> '+q.tier+'</div>'+
       '<div><strong>Capstone:</strong> '+(q.capstone?'Yes':'No')+'</div>'+
-      (q.cyclePrereq?'<div><strong>Cycle prereq:</strong> '+esc(q.cyclePrereq)+'</div>':'')+
       (q.squadReqMin?'<div><strong>Min squad:</strong> '+q.squadReqMin+'</div>':'')+
       (q.terrain&&q.terrain!=='none'?'<div><strong>Terrain:</strong> '+esc(q.terrain)+'</div>':'')+
       (q.difficulty&&q.difficulty!=='standard'?'<div><strong>Difficulty:</strong> '+esc(q.difficulty)+'</div>':'')+
@@ -10354,8 +10421,6 @@ function edShowQuestForm(){
 
   // Editable form
   var sets=QUESTSETS.map(function(s){return '<option value="'+s.id+'"'+(s.id===setId?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
-  var cyclePrereqOpts=['<option value="">None</option>','<option value="any-previous"'+(q&&q.cyclePrereq==='any-previous'?' selected':'')+'>Any previous cycle completed</option>']
-    .concat(QUESTSETS.map(function(s){return '<option value="'+s.id+'"'+(q&&q.cyclePrereq===s.id?' selected':'')+'>'+esc('Requires '+s.name+' complete')+'</option>';})).join('');
   var types=['combat','social','explore','wonder'].map(function(t){return '<option value="'+t+'"'+(q&&q.type===t?' selected':'')+'>'+t+'</option>';}).join('');
   var tiers=['common','uncommon','rare'].map(function(t){return '<option value="'+t+'"'+(q&&q.tier===t?' selected':'')+'>'+t+'</option>';}).join('');
 
@@ -10383,8 +10448,6 @@ function edShowQuestForm(){
   html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Gold Required (pre)</label>'+
     '<input id="ef-gold" type="number" min="0" value="'+(q?pre.gold:0)+'" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
 
-  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Cycle Prerequisite</label>'+
-    '<select id="ef-cyclepr" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">'+cyclePrereqOpts+'</select></div>';
   html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Min Squad Size</label>'+
     '<input id="ef-squadmin" type="number" min="0" max="6" value="'+(q&&q.squadReqMin?parseInt(q.squadReqMin,10):0)+'" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
   html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Terrain</label>'+
@@ -10490,7 +10553,6 @@ function edShowQuestForm(){
       tier:document.getElementById('ef-tier').value,
       baseGp:parseInt(document.getElementById('ef-gp').value)||40,
       capstone:document.getElementById('ef-capstone').checked,
-      cyclePrereq:document.getElementById('ef-cyclepr').value||'',
       squadReqMin:Math.max(0,parseInt(document.getElementById('ef-squadmin').value,10)||0),
       terrain:document.getElementById('ef-terrain').value||'none',
       difficulty:document.getElementById('ef-difficulty').value||'standard',
