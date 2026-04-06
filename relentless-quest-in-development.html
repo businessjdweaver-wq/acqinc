@@ -1708,7 +1708,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.421
+      Version 1.422
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Franchise-owned items and assets can now be sold back at half price
@@ -1733,6 +1733,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.422</strong> — Expanded Quest Map and cycle-level editor wiring: cycles now appear by availability rules (not strictly month-driven), can be activated directly from the map, and can be configured at set-level with visibility mode (Fully Visible / Obscured / Hidden), mount/vehicle requirements, average squad level requirements, and franchise item requirements.</div>
         <div style="margin-bottom:9px"><strong>Version 1.421</strong> — Added a new Tier 2 quest cycle, “Hasufan in the Eastern Juxians,” featuring mountain travel, tectonic hazards, and runesmith diplomacy. These quests use cycle prerequisites plus squad/terrain/difficulty gates, including a mountain rule that requires one Mule assigned per selected adventurer.</div>
         <div style="margin-bottom:9px"><strong>Version 1.420</strong> — Content Editor quest entries now support cycle prerequisites, squad minimum size, and terrain/difficulty tags with assignment-time gating. Quest assignment also adds a Squad picker that can auto-select roster members from a saved squad.</div>
         <div style="margin-bottom:9px"><strong>Version 1.419</strong> — Adventure screen now includes a new Map button (between Theme and Log) that opens a quest-map modal with tiles for Cycle 1, Cycle 2, Dicentis Temple, and Grind missions. Main quests are now replayable for up to 3 clears each per cycle with full rewards each time, then grey out after the third completion.</div>
@@ -2893,6 +2894,7 @@ var QUESTSETS=[
     name:'The Drowned Temple of Dicentis',
     theme:'A newly discovered underwater temple of Dicentis lies somewhere along the Aqua Vallis Waterway. The franchise must locate it, secure safe access, recover relics, and turn regional attention into lasting influence.',
     dndTier:2,
+    cycleGate:{visibility:'obscured',requiredAsset:'Diving Bell',minAvgSquadLevel:2},
     capstoneIdx:9,
     quests:[
       {idx:0,tier:'uncommon',type:'social',title:'Claims on the Aqua Vallis',
@@ -2950,6 +2952,7 @@ var QUESTSETS=[
     name:'Hasufan in the Eastern Juxians',
     theme:'The franchise pushes into the icy Eastern Juxian mountains to secure terms with Hasufan, a giant runesmith. Tectonic shifts from western Jux make routes unstable and logistics essential.',
     dndTier:2,
+    cycleGate:{visibility:'obscured',requiredMountType:'Mule',requiredMountCount:4,minAvgSquadLevel:2,minSquadSize:4},
     capstoneIdx:7,
     quests:[
       {idx:0,tier:'rare',type:'explore',title:'Find the Fracture Pass',
@@ -3022,7 +3025,7 @@ var ADV={title:'Legacy',enc:[]}; // compat stub
 
 /* ═══════════════════════ STATE ═══════════════════════ */
 
-var DEFAULT_SETTINGS={appName:'Relentless Quest',subtitle:'Relentless Quest',fontSize:18,resetTime:'06:00',questSort:'sequence',welcomeSeen:false,showWelcome:false,taskBudgetRemaining:300,taskBudgetDate:'',testQuestMins:480,accessFontSize:18,accessLineSpacing:'relaxed',highContrast:true};
+var DEFAULT_SETTINGS={appName:'Relentless Quest',subtitle:'Relentless Quest',fontSize:18,resetTime:'06:00',questSort:'sequence',welcomeSeen:false,showWelcome:false,taskBudgetRemaining:300,taskBudgetDate:'',testQuestMins:480,accessFontSize:18,accessLineSpacing:'relaxed',highContrast:true,autoCycleMonthly:false};
 
 function normalizeSettings(raw){
   var cfg=Object.assign({}, DEFAULT_SETTINGS, raw||{});
@@ -3451,6 +3454,97 @@ function questHardGateIssues(q,charIdxs){
     else issues.push('Difficulty gate not met.');
   }
   return issues;
+}
+function cycleGateForSet(set){
+  if(!set)return null;
+  return set.cycleGate||null;
+}
+function averageLevelForIndices(indices){
+  var chars=(indices||[]).map(function(ci){return S.party[ci];}).filter(function(c){return c;});
+  if(!chars.length)return 0;
+  var sum=chars.reduce(function(acc,c){return acc+(Number(c.level)||0);},0);
+  return sum/chars.length;
+}
+function candidateSquadsForCycleGate(rule){
+  var cands=[];
+  (S.squads||[]).forEach(function(sq){
+    var idxs=(sq.memberIdxs||[]).filter(function(ci){return S.party[ci];});
+    if(idxs.length)cands.push({name:sq.name,idxs:idxs});
+  });
+  if(!cands.length){
+    var all=(S.party||[]).map(function(_,ci){return ci;});
+    if(all.length)cands.push({name:'Roster',idxs:all});
+  }
+  if(rule&&rule.minSquadSize){
+    cands=cands.filter(function(c){return c.idxs.length>=rule.minSquadSize;});
+  }
+  return cands;
+}
+function cycleGateStatus(set){
+  var rule=cycleGateForSet(set)||{};
+  var issues=[];
+  if(rule.requiredAsset){
+    var has=(S.partyAssets||[]).some(function(a){return a&&a.name===rule.requiredAsset;})||(S.franchiseStorage||[]).indexOf(rule.requiredAsset)!==-1;
+    if(!has)issues.push('Requires franchise item: '+rule.requiredAsset);
+  }
+  if(rule.requiredMountType&&rule.requiredMountCount){
+    var owned=(S.partyAssets||[]).filter(function(a){return a&&a.name===rule.requiredMountType&&assetBaseType(a)==='mount';}).length;
+    if(owned<rule.requiredMountCount)issues.push('Requires '+rule.requiredMountCount+' '+rule.requiredMountType+(rule.requiredMountCount===1?'':'s')+'.');
+  }
+  if(rule.minAvgSquadLevel||rule.minSquadSize){
+    var okSquad=(candidateSquadsForCycleGate(rule)||[]).some(function(c){
+      var avg=averageLevelForIndices(c.idxs);
+      var sizeOk=!rule.minSquadSize||c.idxs.length>=rule.minSquadSize;
+      var avgOk=!rule.minAvgSquadLevel||avg>=rule.minAvgSquadLevel;
+      return sizeOk&&avgOk;
+    });
+    if(!okSquad){
+      if(rule.minSquadSize&&rule.minAvgSquadLevel)issues.push('Requires a squad of '+rule.minSquadSize+'+ with average level '+rule.minAvgSquadLevel+'+.');
+      else if(rule.minSquadSize)issues.push('Requires squad size '+rule.minSquadSize+'+.');
+      else issues.push('Requires squad average level '+rule.minAvgSquadLevel+'+.');
+    }
+  }
+  return {ok:issues.length===0,issues:issues,visibility:rule.visibility||'fully_visible',rule:rule};
+}
+function cycleGateSummaryText(status){
+  if(!status||!status.issues||!status.issues.length)return 'Available';
+  return status.issues.join(' ');
+}
+function activateQuestCycleSet(setId){
+  var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
+  if(!set)return;
+  if(!S.questState)S.questState={};
+  S.questState.cycleId=cycleId();
+  S.questState.setId=set.id;
+  S.questState.revealed=(set.quests||[]).map(function(q){return q.idx;});
+  S.questState.done=[];
+  S.questState.pending=[];
+  S.questState.assigned={};
+  S.questState.grindPending=[];
+  S.questState.repeatCounts={};
+  save();
+  renderAdv();
+}
+function renderCycleMapCards(){
+  var host=document.getElementById('ov-cycle-map-cards');
+  if(!host)return;
+  var activeSet=activeQuestSet();
+  var cards=[];
+  (QUESTSETS||[]).forEach(function(set){
+    var st=cycleGateStatus(set);
+    var vis=st.visibility||'fully_visible';
+    if(vis==='hidden'&&!st.ok)return;
+    var title=(set.dndTier?('Tier '+set.dndTier+' · '):'')+set.name;
+    var subtitle=st.ok?'Ready to launch from map.':(vis==='obscured'?'Prerequisite: '+cycleGateSummaryText(st):'Locked: '+cycleGateSummaryText(st));
+    cards.push('<div class="enc-card" style="border-color:'+(st.ok?'var(--forest)':'var(--gold-dark)')+'">'+
+      '<div class="etitle">'+esc(title)+'</div>'+
+      '<div class="edesc">'+esc(set.theme||'')+'</div>'+
+      '<div style="font-size:.72em;margin-top:4px;color:'+(st.ok?'var(--forest)':'var(--ink-light)')+'">'+esc(subtitle)+'</div>'+
+      (st.ok?'<button class="btn bg sm" style="margin-top:7px" data-a="cycle-activate" data-setid="'+esc(set.id)+'">'+(activeSet&&activeSet.id===set.id?'✓ Active Cycle':'⚔ Activate Cycle')+'</button>':'')+
+      '</div>');
+  });
+  cards.push('<div class="enc-card"><div class="etitle">⚙ Grind Missions</div><div class="edesc">Repeatable franchise jobs for common rewards and roster training.</div></div>');
+  host.innerHTML=cards.join('');
 }
 function getQuestSortMode(){
   return (S.settings&&S.settings.questSort)||'sequence';
@@ -7228,7 +7322,16 @@ document.getElementById('btn-monthly-theme').addEventListener('click',function()
   alert(msg);
 });
 document.getElementById('btn-cycle-map').addEventListener('click',function(){
+  renderCycleMapCards();
   openOv('ov-cycle-map');
+});
+document.getElementById('ov-cycle-map-cards').addEventListener('click',function(e){
+  var btn=e.target.closest('[data-a="cycle-activate"]');
+  if(!btn)return;
+  var setId=btn.getAttribute('data-setid');
+  if(!setId)return;
+  activateQuestCycleSet(setId);
+  renderCycleMapCards();
 });
 document.getElementById('ov-cycle-map-close').addEventListener('click',function(){
   closeOv('ov-cycle-map');
@@ -7241,7 +7344,7 @@ function renderAdv(){
   var el=document.getElementById('avcontent');
   if(!el)return;
   var qs=S.questState;
-  if(!S.questState||S.questState.cycleId!==cycleId()){checkQuestCycleReset();}
+  if((S.settings&&S.settings.autoCycleMonthly) && (!S.questState||S.questState.cycleId!==cycleId())){checkQuestCycleReset();}
   if(!S.questState){el.innerHTML='<div class="empty">No quest data.</div>';return;}
 
   var set=activeQuestSet();
@@ -10027,6 +10130,7 @@ function mergeCustomContent(){
         existing.theme=meta.theme||existing.theme;
         existing.dndTier=meta.dndTier||existing.dndTier;
         if(meta.capstoneIdx!=null)existing.capstoneIdx=meta.capstoneIdx;
+        if(meta.cycleGate)existing.cycleGate=clone(meta.cycleGate);
         existing._customSet=!!meta._editable;
         existing._visibility=scope;
         existing._ownerUserId=meta._ownerUserId||'';
@@ -10037,6 +10141,7 @@ function mergeCustomContent(){
           theme:meta.theme||'',
           dndTier:meta.dndTier||1,
           capstoneIdx:meta.capstoneIdx!=null?meta.capstoneIdx:0,
+          cycleGate:meta.cycleGate?clone(meta.cycleGate):null,
           _customSet:!!meta._editable,
           _visibility:scope,
           _ownerUserId:meta._ownerUserId||'',
@@ -10141,6 +10246,11 @@ function edRenderList(){
   if(edTab==='quests'){
     QUESTSETS.forEach(function(set){
       html+='<div style="padding:6px 12px 3px;font-family:\'Cinzel\',serif;font-size:.7em;text-transform:uppercase;letter-spacing:.05em;color:var(--gold-dark);border-top:1px solid var(--parchment-deep);margin-top:4px">'+esc(set.name)+'</div>';
+      var isCycleSel=edSelected&&edSelected.type==='cycle'&&edSelected.setId===set.id;
+      html+='<div class="ed-list-item'+(isCycleSel?' ed-list-sel':'')+'" data-ed="cycle" data-setid="'+esc(set.id)+'" style="padding:7px 14px;cursor:pointer;border-left:3px solid '+(isCycleSel?'var(--crimson)':'transparent')+';background:'+(isCycleSel?'rgba(139,26,26,.06)':'rgba(44,26,14,.03)')+';display:flex;align-items:center;gap:8px">'+
+        '<span style="flex:1;font-size:.82em;color:var(--ink-light)">⚙ Cycle Rules</span>'+
+        '<span style="font-size:.62em;color:var(--ink-light);border:1px solid var(--parchment-deep);border-radius:3px;padding:0 3px">set-level</span>'+
+        '</div>';
       set.quests.forEach(function(q){
         var isCustom=!!q._custom;
         var isSel=edSelected&&edSelected.type==='quest'&&edSelected.setId===set.id&&edSelected.idx===q.idx;
@@ -10187,6 +10297,7 @@ function edRenderList(){
     row.addEventListener('click',function(){
       var type=this.getAttribute('data-ed');
       if(type==='quest'){edSelected={type:'quest',setId:this.getAttribute('data-setid'),idx:parseInt(this.getAttribute('data-idx'))};edShowQuestForm();}
+      else if(type==='cycle'){edSelected={type:'cycle',setId:this.getAttribute('data-setid')};edShowCycleForm();}
       else if(type==='grind'){edSelected={type:'grind',id:this.getAttribute('data-gid')};edShowGrindForm();}
       else if(type==='gear'){edSelected={type:'gear',name:this.getAttribute('data-gname')};edShowGearForm();}
       edRenderList();
@@ -10198,6 +10309,75 @@ function edShowPlaceholder(){
   document.getElementById('ed-form-inner').innerHTML=
     '<div style="color:var(--ink-light);font-style:italic;font-size:.95em;margin-top:60px;text-align:center">'+
     'Select an item from the list, or click <strong>+ New</strong> to create one.</div>';
+}
+
+function edShowCycleForm(){
+  var setId=edSelected&&edSelected.setId;
+  var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
+  if(!set){edShowPlaceholder();return;}
+  var gate=set.cycleGate||{};
+  var vis=gate.visibility||'fully_visible';
+  var html='<div style="max-width:760px">';
+  html+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">'+
+    '<h2 style="font-family:\'Cinzel\',serif;color:var(--crimson);font-size:1.1em;margin:0">⚙ Cycle Rules · '+esc(set.name)+'</h2></div>';
+  html+='<div style="font-size:.9em;color:var(--ink-light);margin-bottom:14px">Configure prerequisites at cycle-level (instead of quest-by-quest). These rules power the Quest Map availability state.</div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 20px">';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Visibility Mode</label>'+
+    '<select id="ec-vis" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">'+
+    '<option value="fully_visible"'+(vis==='fully_visible'?' selected':'')+'>Fully Visible</option>'+
+    '<option value="obscured"'+(vis==='obscured'?' selected':'')+'>Obscured (show prerequisite)</option>'+
+    '<option value="hidden"'+(vis==='hidden'?' selected':'')+'>Hidden (only appears when met)</option>'+
+    '</select></div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Required Franchise Item</label>'+
+    '<input id="ec-asset" type="text" value="'+esc(gate.requiredAsset||'')+'" placeholder="e.g. Diving Bell" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Required Mount / Vehicle Type</label>'+
+    '<input id="ec-mount-type" type="text" value="'+esc(gate.requiredMountType||'')+'" placeholder="e.g. Mule" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Required Mount / Vehicle Count</label>'+
+    '<input id="ec-mount-count" type="number" min="0" value="'+(parseInt(gate.requiredMountCount,10)||0)+'" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Minimum Squad Size</label>'+
+    '<input id="ec-squad-size" type="number" min="0" value="'+(parseInt(gate.minSquadSize,10)||0)+'" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Minimum Average Squad Level</label>'+
+    '<input id="ec-avg-level" type="number" min="0" step="0.1" value="'+(gate.minAvgSquadLevel||0)+'" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
+  html+='</div>';
+  html+='<div style="margin-top:16px;display:flex;gap:10px">'+
+    '<button id="ec-save" style="padding:10px 24px;background:var(--forest);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:\'Cinzel\',serif">💾 Save Cycle Rules</button>'+
+    '<button id="ec-clear" style="padding:10px 18px;background:var(--ink-light);color:#fff;border:none;border-radius:5px;cursor:pointer">Reset Rules</button>'+
+    '</div></div>';
+  document.getElementById('ed-form-inner').innerHTML=html;
+
+  document.getElementById('ec-save').addEventListener('click',function(){
+    var setMeta=getCustomQuestSets();
+    var idx=-1;
+    for(var i=0;i<setMeta.length;i++){if(setMeta[i]&&setMeta[i].id===set.id){idx=i;break;}}
+    var nextMeta=idx>=0?Object.assign({},setMeta[idx]):{id:set.id,name:set.name,theme:set.theme,dndTier:set.dndTier,capstoneIdx:set.capstoneIdx};
+    nextMeta.cycleGate={
+      visibility:document.getElementById('ec-vis').value||'fully_visible',
+      requiredAsset:document.getElementById('ec-asset').value.trim(),
+      requiredMountType:document.getElementById('ec-mount-type').value.trim(),
+      requiredMountCount:Math.max(0,parseInt(document.getElementById('ec-mount-count').value,10)||0),
+      minSquadSize:Math.max(0,parseInt(document.getElementById('ec-squad-size').value,10)||0),
+      minAvgSquadLevel:Math.max(0,parseFloat(document.getElementById('ec-avg-level').value)||0)
+    };
+    if(idx>=0)setMeta[idx]=nextMeta; else setMeta.push(nextMeta);
+    saveCustom('_customQuestSets',setMeta);
+    mergeCustomContent();
+    edRenderList();
+  });
+  document.getElementById('ec-clear').addEventListener('click',function(){
+    var setMeta=getCustomQuestSets();
+    var idx=-1;
+    for(var i=0;i<setMeta.length;i++){if(setMeta[i]&&setMeta[i].id===set.id){idx=i;break;}}
+    if(idx>=0){
+      if(confirm('Clear cycle rules for '+set.name+'?')){
+        setMeta[idx].cycleGate={visibility:'fully_visible'};
+        saveCustom('_customQuestSets',setMeta);
+        mergeCustomContent();
+        edShowCycleForm();
+      }
+    }else{
+      alert('No saved custom cycle rules exist for this set yet.');
+    }
+  });
 }
 
 // ── QUEST FORM ──
