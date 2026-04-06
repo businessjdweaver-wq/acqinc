@@ -2100,6 +2100,15 @@ button.squad-tag.squad-tag-active{
     <button class="btn bink" id="ov-dtr-close" style="display:none">Close</button>
   </div>
 </div></div>
+<div class="ov" id="ov-dt-forfeit"><div class="modal" style="max-width:420px">
+  <h3>⚠ Forfeit Downtime Progress?</h3>
+  <p>Assigning this roster to a quest will cancel active downtime immediately. Any uncollected downtime progress/rewards will be forfeited.</p>
+  <div id="ov-dtf-body" style="font-size:.84em;color:var(--ink);margin:8px 0 10px"></div>
+  <div class="mbtns">
+    <button class="btn bink" type="button" id="ov-dtf-no">Back</button>
+    <button class="btn bpur" type="button" id="ov-dtf-yes">Approve & Assign</button>
+  </div>
+</div></div>
 
 <div class="ov" id="ov-grpdefer"><div class="modal">
   <h3>🕐 Defer Group</h3>
@@ -4219,6 +4228,17 @@ function downtimeRemainingLabel(job){
   var rem=(job.endsAt||0)-Date.now();
   if(rem<=0)return 'Ready';
   return fmtCountdown(rem);
+}
+function downtimeElapsedLabel(job){
+  if(!job)return '0m';
+  var start=job.startedAt||Date.now();
+  var elapsed=Math.max(0,Date.now()-start);
+  var h=Math.floor(elapsed/3600000);
+  var m=Math.floor((elapsed%3600000)/60000);
+  var s=Math.floor((elapsed%60000)/1000);
+  if(h>0)return h+'h '+'0'.concat(m).slice(-2)+'m';
+  if(m>0)return m+'m '+'0'.concat(s).slice(-2)+'s';
+  return s+'s';
 }
 function downtimeTrackLabel(type,target){
   if(type==='skill')return 'Skill: '+target;
@@ -6671,7 +6691,7 @@ function fmtCountdown(ms){
 }
 
 /* ── Quest collect + XP ── */
-var P4={quest:null,grind:null};
+var P4={quest:null,grind:null,downtimeForfeit:null};
 
 // Distribute charPool among chars with weighted shares, minimum 1 gp each.
 // Returns {shares:[], unspent, franchiseDebit} where franchiseDebit is extra taken from franchise.
@@ -7595,11 +7615,58 @@ document.getElementById('ov-q-chars').addEventListener('click',function(e){
 });
 document.getElementById('ov-q-no').addEventListener('click',function(){
   P4.grind=null;
+  P4.downtimeForfeit=null;
   questHirePanel={open:false,reqType:null,reqValue:null,candidates:[],rolled:false};
   closeOv('ov-quest');
 });
-document.getElementById('ov-q-yes').addEventListener('click',function(){
+function activeDowntimeJobsForChars(chars){
+  ensureDowntimeState();
+  var now=Date.now();
+  return (chars||[]).map(function(ci){
+    var job=downtimeJobForChar(ci);
+    return job&&((job.endsAt||0)>now)?{ci:ci,job:job}:null;
+  }).filter(Boolean);
+}
+function showDowntimeForfeitModal(jobs){
+  var body=document.getElementById('ov-dtf-body');
+  if(body){
+    body.innerHTML=jobs.map(function(x){
+      var c=S.party[x.ci];
+      var who=c?c.name:('Character #'+x.ci);
+      return '<div style="padding:6px 0;border-bottom:1px dotted rgba(139,96,16,.25)">'+
+        '<strong>'+esc(who)+'</strong> · '+esc(downtimeTrackLabel(x.job.type,x.job.target))+
+        '<div class="hint" style="margin-top:2px">Elapsed: '+esc(downtimeElapsedLabel(x.job))+'</div>'+
+        '</div>';
+    }).join('');
+  }
+  openOv('ov-dt-forfeit');
+}
+function forfeitDowntimeJobs(jobs){
+  if(!jobs||!jobs.length)return;
+  ensureDowntimeState();
+  jobs.forEach(function(x){
+    var ci=x.ci;
+    var job=downtimeJobForChar(ci);
+    if(!job)return;
+    S.downtimeJobs=S.downtimeJobs.filter(function(j){return j!==job;});
+    var c=S.party[ci];
+    if(c){
+      logAdd('🕯 Downtime forfeited: '+c.name+' · '+downtimeTrackLabel(job.type,job.target)+' after '+downtimeElapsedLabel(job),'adv');
+    }
+  });
+}
+function confirmQuestAssignment(forceApproveDowntimeForfeit){
   var chars=getQuestChars();
+  var dtJobs=forceApproveDowntimeForfeit?(P4.downtimeForfeit||activeDowntimeJobsForChars(chars)):activeDowntimeJobsForChars(chars);
+  if(dtJobs.length&&!forceApproveDowntimeForfeit){
+    P4.downtimeForfeit=dtJobs;
+    showDowntimeForfeitModal(dtJobs);
+    return;
+  }
+  if(dtJobs.length&&forceApproveDowntimeForfeit){
+    forfeitDowntimeJobs(dtJobs);
+  }
+  P4.downtimeForfeit=null;
 
   // ── Grind mission confirm ──
   if(P4.grind!==null){
@@ -7633,6 +7700,9 @@ document.getElementById('ov-q-yes').addEventListener('click',function(){
   var cn=chars.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', ')||'unassigned';
   logAdd('Quest started: "'+q.title+'" ('+cn+') — '+reward+' gp in '+questDurationLabel(q),'adv');
   P4.quest=null;closeOv('ov-quest');save();renderAdv();
+}
+document.getElementById('ov-q-yes').addEventListener('click',function(){
+  confirmQuestAssignment(false);
 });
 
 /* ═══════════════════════ STORE ═══════════════════════ */
@@ -9113,6 +9183,23 @@ if(_dtRollClose && !_dtRollClose.dataset.bound){
   _dtRollClose.addEventListener('click',function(e){
     e.preventDefault();e.stopPropagation();
     closeOv('ov-downtime-roll');
+  });
+}
+var _dtfNo=document.getElementById('ov-dtf-no');
+if(_dtfNo && !_dtfNo.dataset.bound){
+  _dtfNo.dataset.bound='1';
+  _dtfNo.addEventListener('click',function(e){
+    e.preventDefault();e.stopPropagation();
+    closeOv('ov-dt-forfeit');
+  });
+}
+var _dtfYes=document.getElementById('ov-dtf-yes');
+if(_dtfYes && !_dtfYes.dataset.bound){
+  _dtfYes.dataset.bound='1';
+  _dtfYes.addEventListener('click',function(e){
+    e.preventDefault();e.stopPropagation();
+    closeOv('ov-dt-forfeit');
+    confirmQuestAssignment(true);
   });
 }
 
