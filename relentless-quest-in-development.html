@@ -1855,6 +1855,7 @@ button.squad-tag.squad-tag-active{
       <button class="ed-tab ed-tab-on" data-et="quests"  style="font-family:\'Cinzel\',serif;font-size:.78em;padding:5px 14px;border:1px solid var(--gold-dark);border-radius:4px;background:rgba(201,146,42,.2);color:var(--gold-bright);cursor:pointer;letter-spacing:.04em">⚔ Quests</button>
       <button class="ed-tab"           data-et="grind"   style="font-family:\'Cinzel\',serif;font-size:.78em;padding:5px 14px;border:1px solid rgba(201,146,42,.3);border-radius:4px;background:none;color:var(--parchment-deep);cursor:pointer;letter-spacing:.04em">⚙ Grind</button>
       <button class="ed-tab"           data-et="gear"    style="font-family:\'Cinzel\',serif;font-size:.78em;padding:5px 14px;border:1px solid rgba(201,146,42,.3);border-radius:4px;background:none;color:var(--parchment-deep);cursor:pointer;letter-spacing:.04em">🎒 Gear</button>
+      <button class="ed-tab"           data-et="assets"  style="font-family:\'Cinzel\',serif;font-size:.78em;padding:5px 14px;border:1px solid rgba(201,146,42,.3);border-radius:4px;background:none;color:var(--parchment-deep);cursor:pointer;letter-spacing:.04em">🏰 Assets</button>
     </div>
     <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end">
       <label for="ed-content-scope" style="font-family:\'Cinzel\',serif;font-size:.68em;color:var(--parchment-deep);text-transform:uppercase;letter-spacing:.05em">Save as</label>
@@ -2585,6 +2586,11 @@ var PETS=[
   {name:'Owlbear Chick',ic:'🦉',desc:'Ferocious companion. Grows to full Owlbear in 1 year.',rar:'rare',price:2000,type:'pet',party:true},
   {name:'Phase Spider (Tamed)',ic:'🕷️',desc:'Can Ethereal Jaunt as bonus action. Unnerving.',rar:'veryrare',price:8000,type:'pet',party:true}
 ];
+
+// Immutable snapshots so mergeCustomContent() can reset to built-in state each call
+var BUILTIN_VEHICLES=JSON.parse(JSON.stringify(VEHICLES));
+var BUILTIN_BUILDINGS=JSON.parse(JSON.stringify(BUILDINGS));
+var BUILTIN_PETS=JSON.parse(JSON.stringify(PETS));
 
 /* ═══════════════════════ QUEST SETS ═══════════════════════ */
 
@@ -10395,21 +10401,27 @@ function wireMacroPanel(){
 
 // Shared content library stored in Supabase content_items
 var CONTENT_LIB={
-  official:{questSets:[],quests:[],grind:[],gear:[]},
-  shared:{questSets:[],quests:[],grind:[],gear:[]},
-  private:{questSets:[],quests:[],grind:[],gear:[]}
+  official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},
+  shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},
+  private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]}
 };
 var CONTENT_TYPE_MAP={
   _customQuestSets:'quest_set',
   _customQuests:'quest',
   _customGrind:'grind',
-  _customGear:'gear'
+  _customGear:'gear',
+  _customVehicles:'vehicle',
+  _customBuildings:'building',
+  _customPets:'pet'
 };
 var CONTENT_LIST_MAP={
   _customQuestSets:'questSets',
   _customQuests:'quests',
   _customGrind:'grind',
-  _customGear:'gear'
+  _customGear:'gear',
+  _customVehicles:'vehicles',
+  _customBuildings:'buildings',
+  _customPets:'pets'
 };
 
 function normalizeContentScope(v){
@@ -10448,6 +10460,9 @@ function getCustomQuestSets(){return contentItemsForScope(currentContentScope(),
 function getCustomQuests(){return contentItemsForScope(currentContentScope(),'_customQuests');}
 function getCustomGrind(){return contentItemsForScope(currentContentScope(),'_customGrind');}
 function getCustomGear(){return contentItemsForScope(currentContentScope(),'_customGear');}
+function getCustomVehicles(){return contentItemsForScope(currentContentScope(),'_customVehicles');}
+function getCustomBuildings(){return contentItemsForScope(currentContentScope(),'_customBuildings');}
+function getCustomPets(){return contentItemsForScope(currentContentScope(),'_customPets');}
 
 function editorScopeNote(){
   var note=document.getElementById('ed-scope-note');
@@ -10489,7 +10504,7 @@ function persistContentScope(scope,key,arr){
       key==='_customQuestSets' ? (item.id||('set-'+idx)) :
       key==='_customQuests' ? ((item.setId||'set')+'::'+(item.id||item.title||idx)) :
       key==='_customGrind' ? (item.id||('grind-'+idx)) :
-      (item.name||('gear-'+idx));
+      (item.name||('item-'+idx));
     return contentRow(type,stableKey,item.title||item.name||stableKey,item,scope,idx);
   });
 
@@ -10549,19 +10564,22 @@ function migrateLegacyContentIntoPrivateScope(){
 
 function loadContentLibrary(manual){
   if(!uid()){
-    CONTENT_LIB={official:{questSets:[],quests:[],grind:[],gear:[]},shared:{questSets:[],quests:[],grind:[],gear:[]},private:{questSets:[],quests:[],grind:[],gear:[]}};
+    CONTENT_LIB={official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]}};
     mergeCustomContent();
     return Promise.resolve(false);
   }
   return sbGet('content_items','select=*').then(function(rows){
-    CONTENT_LIB={official:{questSets:[],quests:[],grind:[],gear:[]},shared:{questSets:[],quests:[],grind:[],gear:[]},private:{questSets:[],quests:[],grind:[],gear:[]}};
+    CONTENT_LIB={official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]}};
     (rows||[]).forEach(function(row){
       var scope=normalizeContentScope(row.visibility);
       var listKey =
         row.content_type==='quest_set' ? 'questSets' :
         row.content_type==='quest' ? 'quests' :
         row.content_type==='grind' ? 'grind' :
-        row.content_type==='gear' ? 'gear' : null;
+        row.content_type==='gear' ? 'gear' :
+        row.content_type==='vehicle' ? 'vehicles' :
+        row.content_type==='building' ? 'buildings' :
+        row.content_type==='pet' ? 'pets' : null;
       if(!listKey)return;
       var item=clone(row.data||{});
       item._dbId=row.id;
@@ -10576,6 +10594,9 @@ function loadContentLibrary(manual){
       CONTENT_LIB[scope].quests.sort(function(a,b){return (a.idx||0)-(b.idx||0);});
       CONTENT_LIB[scope].grind.sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
       CONTENT_LIB[scope].gear.sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
+      (CONTENT_LIB[scope].vehicles||[]).sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
+      (CONTENT_LIB[scope].buildings||[]).sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
+      (CONTENT_LIB[scope].pets||[]).sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
     });
     mergeCustomContent();
     if(manual)syncStatus('☁ Content pulled.','var(--ink-light)');
@@ -10606,9 +10627,9 @@ function saveCustom(key,arr,scope){
 function mergeCustomContent(){
   if(!CONTENT_LIB||!CONTENT_LIB.official){
     CONTENT_LIB={
-      official:{questSets:[],quests:[],grind:[],gear:[]},
-      shared:{questSets:[],quests:[],grind:[],gear:[]},
-      private:{questSets:[],quests:[],grind:[],gear:[]}
+      official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},
+      shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},
+      private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]}
     };
   }
   QUESTSETS=clone(BUILTIN_QUESTSETS);
@@ -10695,6 +10716,39 @@ function mergeCustomContent(){
     if(idx>=0)GEAR[idx]=Object.assign({}, GEAR[idx], payload);
     else GEAR.push(payload);
     if(g.wt!==undefined)ITEM_WEIGHT[g.name]=g.wt;
+  });
+
+  // Merge custom vehicles
+  VEHICLES=clone(BUILTIN_VEHICLES||VEHICLES);
+  var allVehicles=[].concat(CONTENT_LIB.official.vehicles||[],CONTENT_LIB.shared.vehicles||[],CONTENT_LIB.private.vehicles||[]);
+  allVehicles.forEach(function(v){
+    var idx=-1;
+    for(var vi=0;vi<VEHICLES.length;vi++){if(VEHICLES[vi].name===v.name){idx=vi;break;}}
+    var payload=Object.assign({},v,{_custom:!!v._editable,_dbContent:true});
+    if(idx>=0)VEHICLES[idx]=Object.assign({},VEHICLES[idx],payload);
+    else VEHICLES.push(payload);
+  });
+
+  // Merge custom buildings
+  BUILDINGS=clone(BUILTIN_BUILDINGS||BUILDINGS);
+  var allBuildings=[].concat(CONTENT_LIB.official.buildings||[],CONTENT_LIB.shared.buildings||[],CONTENT_LIB.private.buildings||[]);
+  allBuildings.forEach(function(b){
+    var idx=-1;
+    for(var bi=0;bi<BUILDINGS.length;bi++){if(BUILDINGS[bi].name===b.name){idx=bi;break;}}
+    var payload=Object.assign({},b,{_custom:!!b._editable,_dbContent:true});
+    if(idx>=0)BUILDINGS[idx]=Object.assign({},BUILDINGS[idx],payload);
+    else BUILDINGS.push(payload);
+  });
+
+  // Merge custom pets
+  PETS=clone(BUILTIN_PETS||PETS);
+  var allPets=[].concat(CONTENT_LIB.official.pets||[],CONTENT_LIB.shared.pets||[],CONTENT_LIB.private.pets||[]);
+  allPets.forEach(function(p){
+    var idx=-1;
+    for(var pi=0;pi<PETS.length;pi++){if(PETS[pi].name===p.name){idx=pi;break;}}
+    var payload=Object.assign({},p,{_custom:!!p._editable,_dbContent:true});
+    if(idx>=0)PETS[idx]=Object.assign({},PETS[idx],payload);
+    else PETS.push(payload);
   });
 }
 
@@ -10850,7 +10904,7 @@ function importEditorCsv(text){
 }
 
 // ── Editor state ──
-var edTab='quests'; // 'quests' | 'grind' | 'gear'
+var edTab='quests'; // 'quests' | 'grind' | 'gear' | 'assets'
 var edSelected=null; // {type:'custom'|'builtin', id, setId?}
 var edCollapsedCycles={};
 
@@ -10880,7 +10934,7 @@ function edRenderTabs(){
     t.style.color=on?'var(--gold-bright)':'var(--parchment-deep)';
     t.style.borderColor=on?'var(--gold-dark)':'rgba(201,146,42,.3)';
   });
-  var labels={quests:'Quest Sets & Quests',grind:'Grind Missions',gear:'Gear & Magic Items'};
+  var labels={quests:'Quest Sets & Quests',grind:'Grind Missions',gear:'Gear & Magic Items',assets:'Franchise Assets'};
   document.getElementById('ed-list-label').textContent=labels[edTab];
   var dupeBtn=document.getElementById('ed-btn-dupe-cycle');
   if(dupeBtn)dupeBtn.style.display=edTab==='quests'?'block':'none';
@@ -10967,6 +11021,25 @@ function edRenderList(){
           '</div>';
       });
     });
+  } else if(edTab==='assets'){
+    var assetGroups=[
+      {label:'🐴 Vehicles & Mounts',items:VEHICLES,key:'vehicle'},
+      {label:'🏚️ Buildings',items:BUILDINGS,key:'building'},
+      {label:'🐾 Pets',items:PETS,key:'pet'}
+    ];
+    assetGroups.forEach(function(grp){
+      html+='<div style="padding:6px 12px 3px;font-family:\'Cinzel\',serif;font-size:.7em;text-transform:uppercase;letter-spacing:.05em;color:var(--gold-dark);border-top:1px solid var(--parchment-deep);margin-top:4px">'+grp.label+'</div>';
+      grp.items.forEach(function(a){
+        var isCustom=!!a._custom;
+        var isSel=edSelected&&edSelected.type==='asset'&&edSelected.name===a.name&&edSelected.assetKey===grp.key;
+        html+='<div class="ed-list-item'+(isSel?' ed-list-sel':'')+'" data-ed="asset" data-aname="'+esc(a.name)+'" data-akey="'+grp.key+'" style="padding:9px 14px;cursor:pointer;border-left:3px solid '+(isSel?'var(--crimson)':'transparent')+';background:'+(isSel?'rgba(139,26,26,.06)':'none')+';display:flex;align-items:center;gap:8px">'+
+          '<span style="margin-right:2px">'+a.ic+'</span>'+
+          '<span style="flex:1;font-size:.88em;'+(isCustom?'color:var(--crimson)':'')+'">' +esc(a.name)+'</span>'+
+          (isCustom?'<span style="font-size:.62em;color:var(--crimson);border:1px solid var(--crimson);border-radius:3px;padding:0 3px">custom</span>':
+           '<span style="font-size:.62em;color:var(--ink-light);border:1px solid var(--parchment-deep);border-radius:3px;padding:0 3px">built-in</span>')+
+          '</div>';
+      });
+    });
   }
   el.innerHTML=html||'<div style="padding:16px 14px;font-size:.85em;color:var(--ink-light);font-style:italic">Nothing here yet.</div>';
 
@@ -10987,6 +11060,7 @@ function edRenderList(){
       else if(type==='cycle'){edSelected={type:'cycle',setId:this.getAttribute('data-setid')};edShowCycleForm();}
       else if(type==='grind'){edSelected={type:'grind',id:this.getAttribute('data-gid')};edShowGrindForm();}
       else if(type==='gear'){edSelected={type:'gear',name:this.getAttribute('data-gname')};edShowGearForm();}
+      else if(type==='asset'){edSelected={type:'asset',name:this.getAttribute('data-aname'),assetKey:this.getAttribute('data-akey')};edShowAssetForm();}
       edRenderList();
     });
   });
@@ -11546,6 +11620,144 @@ function edShowGearForm(){
   }
 }
 
+// ── ASSET FORM ──
+function edShowAssetForm(){
+  var aname=edSelected.name;
+  var akey=edSelected.assetKey||'vehicle'; // 'vehicle'|'building'|'pet'
+  var srcArr=akey==='vehicle'?VEHICLES:akey==='building'?BUILDINGS:PETS;
+  var customKey=akey==='vehicle'?'_customVehicles':akey==='building'?'_customBuildings':'_customPets';
+  var getterFn=akey==='vehicle'?getCustomVehicles:akey==='building'?getCustomBuildings:getCustomPets;
+  var a=aname?srcArr.filter(function(x){return x.name===aname;})[0]||null:null;
+  var isNew=!a;
+  var isBuiltin=a&&!a._custom;
+
+  // Sub-type options per category
+  var vehicleTypes=['mount','watercraft','land','airship','expedition'];
+  var buildingTypes=['structure','income','workshop','utility','stronghold'];
+  var petTypes=['pet'];
+  var subtypeList=akey==='vehicle'?vehicleTypes:akey==='building'?buildingTypes:petTypes;
+  var currentSubtype=a?a.type:(akey==='vehicle'?'mount':akey==='building'?'structure':'pet');
+
+  var html='<div style="max-width:660px">';
+  html+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">'+
+    '<h2 style="font-family:\'Cinzel\',serif;color:var(--crimson);font-size:1.1em;margin:0">'+(isNew?'New Franchise Asset':'Edit Franchise Asset')+'</h2>'+
+    (isBuiltin?'<span style="font-size:.75em;background:rgba(44,26,14,.08);border:1px solid var(--parchment-deep);border-radius:4px;padding:2px 8px;color:var(--ink-light)">built-in — view only</span>':'')+
+    '</div>';
+
+  if(isBuiltin){
+    html+='<div style="background:rgba(44,26,14,.04);border:1px solid var(--parchment-deep);border-radius:6px;padding:16px 20px">'+
+      '<div style="font-size:1.4em;margin-bottom:6px">'+a.ic+' <strong>'+esc(a.name)+'</strong></div>'+
+      '<div style="color:var(--ink-light);font-style:italic;margin-bottom:10px">'+esc(a.desc)+'</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:.9em">'+
+      '<div><strong>Category:</strong> '+esc(akey)+'</div>'+
+      '<div><strong>Sub-type:</strong> '+esc(a.type||'')+'</div>'+
+      '<div><strong>Price:</strong> '+a.price+' gp</div>'+
+      '</div>'+
+      '</div>'+
+      '<div style="margin-top:16px;padding:12px;background:rgba(201,146,42,.06);border-radius:5px;font-size:.88em;color:var(--ink-light)">Built-in assets cannot be edited. Click <strong>+ New</strong> to add a custom one.</div>';
+    html+='</div>';
+    document.getElementById('ed-form-inner').innerHTML=html;
+    return;
+  }
+
+  // Category selector
+  var catOptions=['vehicle','building','pet'].map(function(c){
+    var labels={vehicle:'🐴 Vehicle / Mount',building:'🏚️ Building',pet:'🐾 Pet'};
+    return '<option value="'+c+'"'+(akey===c?' selected':'')+'>'+labels[c]+'</option>';
+  }).join('');
+
+  var subtypeOptions=subtypeList.map(function(t){
+    return '<option value="'+t+'"'+(currentSubtype===t?' selected':'')+'>'+t+'</option>';
+  }).join('');
+
+  html+='<div style="display:grid;grid-template-columns:80px 1fr;gap:16px 24px;align-items:start">';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Icon</label>'+
+    '<input id="ef-aic" type="text" value="'+(a?a.ic:'🏴')+'" style="width:100%;padding:8px;font-size:1.4em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center;box-sizing:border-box"></div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Name *</label>'+
+    '<input id="ef-aname" type="text" value="'+esc(a?a.name:'')+'" placeholder="Asset name…" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
+  html+='<div style="grid-column:1/-1"><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Description *</label>'+
+    '<textarea id="ef-adesc" rows="2" placeholder="Brief description…" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);resize:vertical;box-sizing:border-box">'+esc(a?a.desc:'')+'</textarea></div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Category</label>'+
+    '<select id="ef-acat" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">'+catOptions+'</select></div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Sub-type</label>'+
+    '<select id="ef-atype" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">'+subtypeOptions+'</select></div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Price (gp)</label>'+
+    '<input id="ef-aprice" type="number" min="0" value="'+(a?a.price:100)+'" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
+  html+='</div>';
+  html+='<p style="font-size:.8em;color:var(--ink-light);margin-top:10px">Changing Category updates the sub-type options. Save after selecting the correct category.</p>';
+  html+='<div style="display:flex;gap:10px;margin-top:20px">'+
+    '<button id="ef-asave" style="padding:10px 28px;background:var(--forest);color:#fff;border:none;border-radius:5px;font-size:.95em;cursor:pointer;font-family:\'Cinzel\',serif;letter-spacing:.04em">💾 Save Asset</button>'+
+    (!isNew?'<button id="ef-adelete" style="padding:10px 20px;background:var(--crimson);color:#fff;border:none;border-radius:5px;font-size:.95em;cursor:pointer">🗑 Delete</button>':'')+
+    '<span style="font-size:.82em;color:var(--ink-light);align-self:center;margin-left:4px">Ctrl+Enter to save</span>'+
+    '</div>';
+  html+='</div>';
+  document.getElementById('ed-form-inner').innerHTML=html;
+
+  // Re-populate sub-type when category changes
+  document.getElementById('ef-acat').addEventListener('change',function(){
+    var cat=this.value;
+    var types=cat==='vehicle'?['mount','watercraft','land','airship','expedition']:
+               cat==='building'?['structure','income','workshop','utility','stronghold']:['pet'];
+    var sel=document.getElementById('ef-atype');
+    sel.innerHTML=types.map(function(t){return '<option value="'+t+'">'+t+'</option>';}).join('');
+  });
+
+  document.getElementById('ed-form-inner').addEventListener('keydown',function(e){
+    if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){document.getElementById('ef-asave')&&document.getElementById('ef-asave').click();}
+  });
+
+  document.getElementById('ef-asave').addEventListener('click',function(){
+    var name=document.getElementById('ef-aname').value.trim();
+    var desc=document.getElementById('ef-adesc').value.trim();
+    if(!name||!desc){alert('Name and description are required.');return;}
+    var cat=document.getElementById('ef-acat').value;
+    var newItem={
+      _custom:true,
+      ic:document.getElementById('ef-aic').value||'🏴',
+      name:name,
+      desc:desc,
+      rar:cat, // matches existing pattern: rar='vehicle'|'building'|'common'
+      type:document.getElementById('ef-atype').value,
+      price:parseInt(document.getElementById('ef-aprice').value)||100,
+      party:true
+    };
+    // Pets get a rarity of 'common' by default (overrideable)
+    if(cat==='pet')newItem.rar='common';
+
+    // Determine which custom key to save to based on selected category
+    var saveKey=cat==='vehicle'?'_customVehicles':cat==='building'?'_customBuildings':'_customPets';
+    var saveGetter=cat==='vehicle'?getCustomVehicles:cat==='building'?getCustomBuildings:getCustomPets;
+
+    // If category changed, remove from old category first
+    if(cat!==akey&&!isNew){
+      var oldArr=getterFn().filter(function(x){return x.name!==aname;});
+      saveCustom(customKey,oldArr);
+    }
+
+    var arr=saveGetter();
+    var oldName=isNew?null:aname;
+    if(!isNew&&cat===akey){arr=arr.map(function(x){return x.name===oldName?newItem:x;});}
+    else{
+      // remove duplicate name if re-saving to same list
+      arr=arr.filter(function(x){return x.name!==name;});
+      arr.push(newItem);
+    }
+    saveCustom(saveKey,arr);
+    mergeCustomContent();
+    edSelected={type:'asset',name:name,assetKey:cat};
+    edRenderList();
+  });
+
+  if(!isNew){
+    document.getElementById('ef-adelete').addEventListener('click',function(){
+      if(!a||!a._custom){alert('Built-in assets cannot be deleted.');return;}
+      if(!confirm('Delete "'+a.name+'"?'))return;
+      saveCustom(customKey,getterFn().filter(function(x){return x.name!==aname;}));
+      mergeCustomContent();edSelected=null;edRenderList();edShowPlaceholder();
+    });
+  }
+}
+
 // ── EDITOR BUTTON WIRING ──
 
 document.getElementById('btn-ed-export-csv').addEventListener('click',function(){
@@ -11724,6 +11936,7 @@ document.getElementById('ed-btn-new').addEventListener('click',function(){
   if(edTab==='quests'){edSelected={type:'quest',setId:QUESTSETS[0].id,idx:null};edShowQuestForm();}
   else if(edTab==='grind'){edSelected={type:'grind',id:null};edShowGrindForm();}
   else if(edTab==='gear'){edSelected={type:'gear',name:null};edShowGearForm();}
+  else if(edTab==='assets'){edSelected={type:'asset',name:null,assetKey:'vehicle'};edShowAssetForm();}
   edRenderList();
 });
 
