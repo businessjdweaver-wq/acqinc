@@ -1733,6 +1733,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.431</strong> — Prevented automatic viewport jumps during asset transfer/update actions, added character-name quick-view links (outside Party/Recruitment) to open a character card modal, and made Stats coverage rows clickable with Party filter behavior.</div>
         <div style="margin-bottom:9px"><strong>Version 1.430</strong> — Added bulk purchasing quantity for acquisitions, expanded assignment targets (building/vehicle/squad) for assets and supply caches, collapsed mount/pet naming controls by default on Party Assets, and updated mountain support gating to count Mules assigned to the selected squad.</div>
         <div style="margin-bottom:9px"><strong>Version 1.429</strong> — Unified prerequisite picker lists with character capability lists (skills, tools, languages, and religions) so Content Editor prerequisites always match what characters can actually have; includes Calligrapher’s Supplies availability for Hasufan prerequisites.</div>
         <div style="margin-bottom:9px"><strong>Version 1.428</strong> — Expanded hireling first-name pool and enforced rerolls to avoid duplicate first names with existing rostered hirelings. Added a Severe roster action on character cards (cost: 25 gp per level, including level 0).</div>
@@ -2171,6 +2172,13 @@ button.squad-tag.squad-tag-active{
   <div id="ov-xp-body" style="font-size:.95em;line-height:1.7;color:var(--ink)"></div>
   <div class="mbtns" style="margin-top:12px">
     <button class="btn bg" id="ov-xp-close">Close</button>
+  </div>
+</div></div>
+<div class="ov" id="ov-charpeek"><div class="modal" style="max-width:430px">
+  <h3>🧾 Character Card</h3>
+  <div id="ov-charpeek-body"></div>
+  <div class="mbtns" style="margin-top:12px">
+    <button class="btn bink" id="ov-charpeek-close">Close</button>
   </div>
 </div></div>
 <div class="ov" id="ov-cycle-map"><div class="modal" style="max-width:420px">
@@ -4863,6 +4871,28 @@ function ptag(label,value,activeFilter){
   var isActive=activeFilter===value;
   return '<button class="pill ptag'+(isActive?' ptag-active':'')+'" data-a="ptag" data-v="'+esc(value)+'">'+label+'</button>';
 }
+function charPeekLink(name){
+  return '<button class="pill" data-a="charpeek" data-name="'+esc(name)+'" style="font-size:.95em;padding:.2em .55em">'+esc(name)+'</button>';
+}
+function openCharacterPeekByName(name){
+  var idx=-1;
+  (S.party||[]).forEach(function(c,ci){if(c&&c.name===name&&idx===-1)idx=ci;});
+  if(idx===-1){alert('Character not found: '+name);return;}
+  var c=S.party[idx];
+  var inv=(c.inv||[]);
+  var body=
+    '<div style="border:1px solid var(--parchment-deep);border-radius:6px;padding:10px;background:rgba(255,255,255,.55)">'+
+      '<div class="cname" style="font-size:1em">'+esc(c.name)+'</div>'+
+      '<div class="cmeta" style="margin-bottom:6px">'+esc(c.species)+' · '+esc(c.cls)+' · Lv '+(c.level||0)+'</div>'+
+      '<div class="pills" style="margin-bottom:6px">'+(c.skills||[]).map(function(s){return ptag('⭐ '+esc(s),s,S.partyTagFilter||null);}).join('')+'</div>'+
+      '<div class="pills" style="margin-bottom:6px">'+(c.tools||[]).map(function(t){return ptag('🔧 '+esc(t),t,S.partyTagFilter||null);}).join('')+'</div>'+
+      '<div class="pills" style="margin-bottom:6px">'+(c.lang||[]).map(function(l){return ptag('🗣 '+esc(l),l,S.partyTagFilter||null);}).join('')+'</div>'+
+      (c.rel?'<div class="pills" style="margin-bottom:6px">'+ptag(relIcon(c.rel)+' '+esc(c.rel),c.rel,S.partyTagFilter||null)+'</div>':'')+
+      '<div style="font-size:.82em;color:var(--ink-light)">Inventory: '+(inv.length?inv.map(esc).join(', '):'—')+'</div>'+
+    '</div>';
+  document.getElementById('ov-charpeek-body').innerHTML=body;
+  openOv('ov-charpeek');
+}
 
 function charCardHtml(c,ci,opts){
   opts=opts||{};
@@ -5346,7 +5376,7 @@ document.getElementById('plist').addEventListener('click',function(e){
     if(!destC.inv)destC.inv=[];
     destC.inv.push(storageItem);
     logAdd(storageItem+' issued from Franchise Storage to '+destC.name,'buy');
-    save();renderParty();window.scrollTo({top:0,behavior:'smooth'});
+    save();renderParty();
   } else if(a==='sell-storage'){
     var dsi=parseInt(b.getAttribute('data-si'));
     var dItem=S.franchiseStorage[dsi];
@@ -5393,7 +5423,7 @@ document.getElementById('plist').addEventListener('click',function(e){
       else if(ov.indexOf('vehicle::')===0){assetSave.meta.ownerType='vehicle';assetSave.meta.ownerRef=ov.slice(9);}
     }
     logAdd('Updated animal assignment: '+assetDisplayName(assetSave),'buy');
-    save();renderParty();window.scrollTo({top:0,behavior:'smooth'});
+    save();renderParty();
   } else if(a==='asset-sell'){
     var ai=parseInt(b.getAttribute('data-ai'));
     var asset=S.partyAssets[ai];
@@ -5511,6 +5541,18 @@ document.getElementById('ov-xp-close').addEventListener('click',function(e){
   e.stopPropagation();
   closeOv('ov-xpbadge');
   window._recentModalClose=Date.now();
+});
+document.getElementById('ov-charpeek-close').addEventListener('click',function(e){
+  e.stopPropagation();
+  closeOv('ov-charpeek');
+  window._recentModalClose=Date.now();
+});
+document.addEventListener('click',function(e){
+  var btn=e.target.closest('[data-a="charpeek"]');
+  if(!btn)return;
+  e.preventDefault();
+  e.stopPropagation();
+  openCharacterPeekByName(btn.getAttribute('data-name')||'');
 });
 document.getElementById('ov-lv-yes').addEventListener('click',function(){
   if(P3.lvl===null)return;
@@ -5665,7 +5707,7 @@ function renderPartyStats(){
       var n=counts[opt]||0;
       return '<div style="margin-bottom:3px">'+
         '<div style="display:flex;justify-content:space-between;align-items:baseline">'+
-        '<span style="font-size:.78em;color:var(--ink)">'+esc(opt)+'</span>'+
+        '<span style="font-size:.78em;color:var(--ink)">'+ptag(esc(opt),opt,S.partyTagFilter||null)+'</span>'+
         '</div>'+
         coverageBar(n,max)+
         '</div>';
@@ -5699,6 +5741,13 @@ function renderPartyStats(){
     section('Classes','⚔',DND.cls,clsCounts)+
     '</div>';
 }
+document.getElementById('party-stats-panel').addEventListener('click',function(e){
+  var b=e.target.closest('[data-a="ptag"]');
+  if(!b)return;
+  S.partyTagFilter=b.getAttribute('data-v')||null;
+  save();
+  renderParty();
+});
 
 /* ── Test Milestones ── */
 
@@ -6495,7 +6544,7 @@ function renderQuestAssignmentRow(opts){
   return '<div data-adv-ci="'+ci+'" style="border-bottom:1px dotted rgba(139,96,16,.12)">'+
     '<label style="'+(isBusy?'opacity:.45;cursor:not-allowed;':'')+'display:flex;align-items:center;gap:10px;padding:10px 4px;min-height:44px;cursor:'+(isBusy?'not-allowed':'pointer')+'">'+
     '<input type="checkbox" class="qcb" value="'+ci+'"'+chk+(isBusy?' disabled':'')+'>'+
-    '<span style="flex:1"><span style="font-size:1em;display:block">'+esc(c.name)+hl+cl+contribHtml+'</span>'+
+    '<span style="flex:1"><span style="font-size:1em;display:block">'+charPeekLink(c.name)+hl+cl+contribHtml+'</span>'+
     '<span style="font-size:.85em;color:var(--ink-light)">'+esc(c.cls)+', Lv '+c.level+
     (isBusy?' · ⚔ on quest':'')+
     '</span></span>'+
@@ -8492,7 +8541,7 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
       S.partyAssets.push({name:item.name,ic:item.ic,type:item.type,meta:meta});
     }
     logAdd('Purchased: '+item.name+' ×'+qty+' ('+total+' gp)','buy');
-    P5.item=null;P5.assetMode=false;P5.customItem=null;closeOv('ov-buyitem');save();renderParty();renderStore();window.scrollTo({top:0,behavior:'smooth'});
+    P5.item=null;P5.assetMode=false;P5.customItem=null;closeOv('ov-buyitem');save();renderParty();renderStore();
     return;
   }
   var ci=parseInt(ownerVal,10);
@@ -8503,7 +8552,7 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
     if(!S.franchiseStorage)S.franchiseStorage=[];
     for(var si=0;si<qty;si++)S.franchiseStorage.push(item.name);
     logAdd(item.name+' ×'+qty+' → Franchise Storage (weight)','buy');
-    P5.item=null;P5.assetMode=false;P5.customItem=null;closeOv('ov-buyitem');save();renderParty();renderStore();window.scrollTo({top:0,behavior:'smooth'});
+    P5.item=null;P5.assetMode=false;P5.customItem=null;closeOv('ov-buyitem');save();renderParty();renderStore();
     return;
   }
   if(ownerVal==='storage'){
@@ -8525,7 +8574,7 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
     for(var ii=0;ii<qty;ii++)S.party[ci].inv.push(item.name);
     logAdd(item.name+' ×'+qty+' → '+S.party[ci].name,'buy');
   }
-  P5.item=null;P5.assetMode=false;P5.customItem=null;closeOv('ov-buyitem');save();renderParty();renderStore();window.scrollTo({top:0,behavior:'smooth'});
+  P5.item=null;P5.assetMode=false;P5.customItem=null;closeOv('ov-buyitem');save();renderParty();renderStore();
 });
 
 /* ═══════════════════════ SETTINGS ═══════════════════════ */
