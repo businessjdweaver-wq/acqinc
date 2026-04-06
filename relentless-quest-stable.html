@@ -8448,6 +8448,7 @@ function sbPush(manual){
         _questLog:S.questLog||[],
         _taskGroups:S.taskGroups||[],
         _partyAssetsBackup:S.partyAssets||[],
+        _archivedBackup:S.archived||[],
         _downtimeJobs:S.downtimeJobs||[]
       }),
       last_sync:new Date().toISOString()
@@ -8576,6 +8577,9 @@ function sbPull(manual){
   }
   if(manual)syncStatus('Pulling from Supabase…','var(--gold-dark)');
   var userId=uid();
+  var localArchivedBackup=((S&&S.archived)||[]).map(function(t){
+    return Object.assign({},t,{subtasks:(t.subtasks||[]).slice()});
+  });
   return Promise.all([
     sbGet('franchise','user_id=eq.'+encodeURIComponent(userId)+'&limit=1'),
     sbGet('party','user_id=eq.'+encodeURIComponent(userId)+'&order=sort_order.asc'),
@@ -8596,6 +8600,7 @@ function sbPull(manual){
 
     var hadFranchiseRow=!!(franchise&&franchise[0]);
     var backupPartyAssets=[];
+    var backupArchived=[];
     if(hadFranchiseRow){
       S.gold=franchise[0].gold||0;
       var rawSettings=franchise[0].settings||{};
@@ -8603,12 +8608,14 @@ function sbPull(manual){
       S.questLog=rawSettings._questLog||[];
       S.taskGroups=rawSettings._taskGroups||[];
       backupPartyAssets=rawSettings._partyAssetsBackup||[];
+      backupArchived=rawSettings._archivedBackup||[];
       S.downtimeJobs=rawSettings._downtimeJobs||[];
       var cleanSettings=Object.assign({},rawSettings);
       delete cleanSettings._franchiseStorage;
       delete cleanSettings._questLog;
       delete cleanSettings._taskGroups;
       delete cleanSettings._partyAssetsBackup;
+      delete cleanSettings._archivedBackup;
       delete cleanSettings._downtimeJobs;
       S.settings=normalizeSettings(cleanSettings);
     }
@@ -8654,6 +8661,18 @@ function sbPull(manual){
         return {_sbId:t.id,name:t.name,gp:t.gp,freq:t.freq,cat:t.cat,
           fav:t.fav,subtasks:t.subtasks||[],archGroup:t.arch_group};
       });
+    } else if(backupArchived&&backupArchived.length){
+      S.archived=backupArchived.map(function(t){
+        return {name:t.name,gp:t.gp,freq:t.freq||'custom',cat:t.cat||null,
+          fav:!!t.fav,subtasks:t.subtasks||[],archGroup:t.archGroup||t.freq||'custom'};
+      });
+      logAdd('Recovered archived tasks from franchise settings backup.','task');
+    } else if(localArchivedBackup&&localArchivedBackup.length){
+      S.archived=localArchivedBackup.map(function(t){
+        return {name:t.name,gp:t.gp,freq:t.freq||'custom',cat:t.cat||null,
+          fav:!!t.fav,subtasks:t.subtasks||[],archGroup:t.archGroup||t.freq||'custom'};
+      });
+      logAdd('Recovered archived tasks from local backup after empty cloud pull.','task');
     }
     if(assets&&assets.length){
       S.partyAssets=assets.map(function(a){var pa=parseAssetType(a.type); return {_sbId:a.id,name:a.name,ic:a.ic,type:pa.baseType,meta:pa.meta||{}};}); ensureAssetMetas();
