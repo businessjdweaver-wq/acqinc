@@ -1733,6 +1733,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.428</strong> — Expanded hireling first-name pool and enforced rerolls to avoid duplicate first names with existing rostered hirelings. Added a Severe roster action on character cards (cost: 25 gp per level, including level 0).</div>
         <div style="margin-bottom:9px"><strong>Version 1.427</strong> — Quest prerequisites now align with Content Editor fields by adding editable Prereq Items, and martial/simple weapon category prerequisites continue to match qualifying inventory weapons.</div>
         <div style="margin-bottom:9px"><strong>Version 1.426</strong> — Updated item prerequisite matching to use D&D 2014 weapon groups: Simple Weapons and Martial Weapons now correctly match qualifying weapons in inventory (for example, Longsword satisfies Martial Weapons requirements).</div>
         <div style="margin-bottom:9px"><strong>Version 1.425</strong> — Switching cycles from the Quest Map now preserves per-cycle progress instead of resetting. Cycle-completion prerequisites are now managed in Cycle Rules (set-level) rather than quest-level fields, and quest-level cycle prerequisite enforcement has been removed from assignment flow.</div>
@@ -2306,6 +2307,67 @@ var SPECIES_NAMES={
 
 /* Track used first names globally to prevent repeats */
 var usedFirstNames={};
+
+var HIRELING_FIRST_NAMES=(function(){
+  var base=(DND&&DND.fn?DND.fn.slice():[]);
+  var target=Math.max(1,base.length*2); // expand hireling first-name pool by 100%
+  var seen={},pool=[];
+  function pushName(n){
+    var name=String(n||'').trim();
+    if(!name||seen[name])return;
+    seen[name]=true;
+    pool.push(name);
+  }
+  base.forEach(pushName);
+  Object.keys(SPECIES_NAMES||{}).forEach(function(k){
+    ((SPECIES_NAMES[k]&&SPECIES_NAMES[k].fn)||[]).forEach(pushName);
+  });
+  if(pool.length<target){
+    var extras=['Ari','Bex','Cai','Dax','Eir','Fia','Galen','Hale','Ira','Jace','Korin','Lyra','Mira','Nero','Orin','Peregrin','Quin','Rhea','Sorin','Tamsin','Ulric','Vera','Wyn','Xander','Ysolt','Zorin'];
+    var i=0;
+    while(pool.length<target){
+      pushName(extras[i%extras.length]+'-'+Math.floor(i/extras.length+1));
+      i++;
+    }
+  }
+  return pool;
+})();
+
+function blockedHirelingFirstNames(){
+  var blocked={};
+  (S.party||[]).forEach(function(c){
+    if(c&&c.hireling&&c.name){
+      var first=String(c.name).trim().split(/\s+/)[0];
+      if(first)blocked[first.toLowerCase()]=true;
+    }
+  });
+  (hirelCandidates||[]).forEach(function(c){
+    if(c&&c.name){
+      var first=String(c.name).trim().split(/\s+/)[0];
+      if(first)blocked[first.toLowerCase()]=true;
+    }
+  });
+  return blocked;
+}
+
+function rollUniqueHirelingFirstName(species){
+  var blocked=blockedHirelingFirstNames();
+  var pool=HIRELING_FIRST_NAMES.slice();
+  var sp=(SPECIES_NAMES&&SPECIES_NAMES[species]&&SPECIES_NAMES[species].fn)||[];
+  if(sp.length){
+    // Keep species flavor while still drawing from expanded pool.
+    pool=sp.concat(pool.filter(function(n){return sp.indexOf(n)===-1;}));
+  }
+  for(var i=0;i<pool.length*2;i++){
+    var candidate=pool[Math.floor(Math.random()*pool.length)];
+    if(!candidate)continue;
+    if(!blocked[String(candidate).toLowerCase()])return candidate;
+  }
+  // Guaranteed unique fallback if all names are blocked.
+  var suffix=1,baseName='Hireling';
+  while(blocked[(baseName+suffix).toLowerCase()])suffix++;
+  return baseName+suffix;
+}
 
 function pickName(species){
   var useSpecies=(S.settings&&S.settings.speciesNames)&&SPECIES_NAMES[species];
@@ -4902,6 +4964,7 @@ function charCardHtml(c,ci,opts){
     '<div style="display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin-top:8px">'+
     '<button class="btn bink sm" data-a="'+(dtReady?'dt-collect':'dt-start')+'" data-ci="'+ci+'" style="white-space:nowrap;padding:2px 6px;min-height:22px;font-size:.72em"'+((isQuesting||dtBusy)?' disabled':'')+'>'+(dtReady?'Resolve Downtime':'🕯 Downtime')+'</button>'+
     '<button class="btn bink sm" data-a="lv" data-ci="'+ci+'" style="white-space:nowrap;padding:2px 6px;min-height:22px;font-size:.72em">Level Up</button>'+
+    '<button class="btn sm" data-a="sever" data-ci="'+ci+'" style="white-space:nowrap;padding:2px 6px;min-height:22px;font-size:.72em;background:rgba(139,26,26,.1);border:1px solid var(--crimson);color:var(--crimson)">Severe</button>'+
     '</div>'+
     '</div>';
 }
@@ -5151,6 +5214,34 @@ document.getElementById('plist').addEventListener('click',function(e){
   if(a==='assets-col'){
     S.assetsCollapsed=!S.assetsCollapsed;
     save();renderParty();window.scrollTo({top:0,behavior:'smooth'});
+  } else if(a==='sever'){
+    var cSev=S.party[ci];
+    if(!cSev)return;
+    if(cSev.name==='The Founder'){alert('The Founder cannot be severed.');return;}
+    var nowSev=Date.now(),isQuestingSev=false;
+    (S.questState&&S.questState.pending||[]).forEach(function(pq){
+      if(pq.doneAt>nowSev&&(pq.chars||[]).indexOf(ci)!==-1)isQuestingSev=true;
+    });
+    (S.questState&&S.questState.grindPending||[]).forEach(function(gp){
+      if(gp.doneAt>nowSev&&(gp.chars||[]).indexOf(ci)!==-1)isQuestingSev=true;
+    });
+    if(isQuestingSev){alert(cSev.name+' is currently on assignment and cannot be severed.');return;}
+    ensureDowntimeState();
+    var hasDowntime=(S.downtimeJobs||[]).some(function(job){return job&&job.ci===ci;});
+    if(hasDowntime){alert(cSev.name+' is currently in downtime and cannot be severed.');return;}
+    var sevCost=(Math.max(0,parseInt(cSev.level,10)||0)+1)*25;
+    if(!confirm('Severe '+cSev.name+' from the roster for '+sevCost+' gp?'))return;
+    if(!goldSpend(sevCost,'Severed '+cSev.name,'hire'))return;
+    if(S.squads&&S.squads.length){
+      S.squads.forEach(function(sq){
+        sq.memberIdxs=(sq.memberIdxs||[]).filter(function(idx){return idx!==ci;}).map(function(idx){return idx>ci?idx-1:idx;});
+      });
+    }
+    S.party.splice(ci,1);
+    logAdd('✂ Severed '+cSev.name+' from roster ('+sevCost+' gp).','hire');
+    save();
+    renderParty();
+    return;
   } else if(a==='dt-start'){
     startDowntimeForChar(ci);
     return;
@@ -6100,7 +6191,7 @@ function makeTargetedHireling(reqType,reqValue){
   // Generate a hireling guaranteed to cover reqType/reqValue
   var species=rnd(DND.species);
   var h={
-    name:pickName(species).split(' ')[0],
+    name:rollUniqueHirelingFirstName(species),
     species:species,cls:'Hireling',bg:rnd(DND.bg),rel:'',
     age:rndInt(18,60),
     height:rndInt(4,6)+"'"+rndInt(0,11)+'"',
@@ -6120,7 +6211,7 @@ function makeTargetedHireling(reqType,reqValue){
 function makeHireling(){
   var species=rnd(DND.species);
   return {
-    name:pickName(species).split(' ')[0], // hirelings have no surname
+    name:rollUniqueHirelingFirstName(species), // hirelings have no surname
     species:species,cls:'Hireling',bg:rnd(DND.bg),rel:'',
     age:rndInt(18,60),
     height:rndInt(4,6)+"'"+rndInt(0,11)+'"',
