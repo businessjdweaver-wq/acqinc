@@ -10495,10 +10495,23 @@ function contentRow(type, key, title, data, scope, order){
   };
 }
 function persistContentScope(scope,key,arr){
-  if(!uid())return Promise.resolve(false);
   scope=normalizeContentScope(scope);
   var type=CONTENT_TYPE_MAP[key];
   var listKey=CONTENT_LIST_MAP[key];
+
+  // Always update CONTENT_LIB immediately (works for guest and logged-in)
+  contentBucket(scope)[listKey]=clone(arr||[]);
+  mergeCustomContent();
+  saveLocalState();
+  var fl=document.getElementById('ed-save-flash');
+  if(fl){fl.style.opacity='1';setTimeout(function(){fl.style.opacity='0';},1200);}
+
+  // Guest: no Supabase account, stop here
+  if(!uid()){
+    syncStatus('\u{1F4BE} Saved locally (guest mode).','var(--gold-dark)');
+    return Promise.resolve(false);
+  }
+
   var rows=(arr||[]).map(function(item,idx){
     var stableKey=
       key==='_customQuestSets' ? (item.id||('set-'+idx)) :
@@ -10516,12 +10529,7 @@ function persistContentScope(scope,key,arr){
     if(!rows.length)return true;
     return sbInsert('content_items',rows);
   }).then(function(){
-    contentBucket(scope)[listKey]=clone(arr||[]);
-    mergeCustomContent();
-    saveLocalState();
-    var fl=document.getElementById('ed-save-flash');
-    if(fl){fl.style.opacity='1';setTimeout(function(){fl.style.opacity='0';},1200);}
-    syncStatus('☁ Content saved ('+scope+').','var(--gold-dark)');
+    syncStatus('\u2601\uFE0F Content saved ('+scope+').','var(--gold-dark)');
     return true;
   });
 }
@@ -10927,6 +10935,36 @@ function closeEditor(){
   renderAdv();
 }
 
+
+// Returns an HTML snippet for the per-form scope selector + save status
+function edScopeRow(formSaveId){
+  var cur=currentContentScope();
+  var isAdmin=isAppAdmin();
+  return '<div style="display:flex;align-items:center;gap:10px;margin-top:20px;padding:10px 14px;'+
+    'background:rgba(201,146,42,.07);border:1px solid rgba(201,146,42,.25);border-radius:6px;flex-wrap:wrap">'+
+    '<label style="font-family:\'Cinzel\',serif;font-size:.7em;color:var(--gold-dark);text-transform:uppercase;'+
+    'letter-spacing:.05em;white-space:nowrap">Save as</label>'+
+    '<select id="ef-scope-sel" style="padding:5px 8px;font-size:.88em;border:1px solid rgba(201,146,42,.4);'+
+    'border-radius:4px;background:var(--parchment);color:var(--ink)">'+
+    '<option value="private"'+(cur==='private'?' selected':'')+'>🔒 Private (this account only)</option>'+
+    '<option value="shared"'+(cur==='shared'?' selected':'')+'>👥 Shared (all signed-in players)</option>'+
+    (isAdmin?'<option value="official"'+(cur==='official'?' selected':'')+'>⭐ Official (everyone)</option>':'')+
+    '</select>'+
+    '<button id="'+formSaveId+'" style="padding:8px 22px;background:var(--forest);color:#fff;border:none;'+
+    'border-radius:5px;font-size:.9em;cursor:pointer;font-family:\'Cinzel\',serif;letter-spacing:.04em">'+
+    '💾 Save</button>'+
+    '<span id="ef-scope-flash" style="font-size:.82em;color:var(--forest);font-weight:700;opacity:0;transition:opacity .4s">✓ Saved</span>'+
+    '</div>';
+}
+function edScopeFlash(){
+  var el=document.getElementById('ef-scope-flash');
+  if(el){el.style.opacity='1';setTimeout(function(){el.style.opacity='0';},1400);}
+}
+function edFormScope(){
+  var sel=document.getElementById('ef-scope-sel');
+  return sel?normalizeContentScope(sel.value):currentContentScope();
+}
+
 function edRenderTabs(){
   document.querySelectorAll('.ed-tab').forEach(function(t){
     var on=t.getAttribute('data-et')===edTab;
@@ -11319,9 +11357,10 @@ function edShowQuestForm(){
   html+='<div style="margin-top:16px"><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Capstone Quest?</label>'+
     '<label style="display:flex;align-items:center;gap:8px;font-size:.95em;cursor:pointer"><input type="checkbox" id="ef-capstone"'+(q&&q.capstone?' checked':'')+' style="width:1.3em;height:1.3em"> This is the cycle\'s capstone (final) quest</label></div>';
 
-  html+='<div style="display:flex;gap:10px;margin-top:24px">'+
-    '<button id="ef-save" style="padding:10px 28px;background:var(--forest);color:#fff;border:none;border-radius:5px;font-size:.95em;cursor:pointer;font-family:\'Cinzel\',serif;letter-spacing:.04em">💾 Save Quest</button>'+
+  html+=edScopeRow('ef-save');
+  html+='<div style="display:flex;gap:10px;margin-top:10px">'+
     (!isNew?'<button id="ef-delete" style="padding:10px 20px;background:var(--crimson);color:#fff;border:none;border-radius:5px;font-size:.95em;cursor:pointer">🗑 Delete</button>':'')+
+    '<span style="font-size:.82em;color:var(--ink-light);align-self:center">Ctrl+Enter to save</span>'+
     '</div>';
 
   html+='</div>';
@@ -11346,7 +11385,7 @@ function edShowQuestForm(){
     var breqName=document.getElementById('ef-breq-name').value.trim();
     var vreq=vreqName?{name:vreqName,ic:(document.getElementById('ef-vreq-ic').value||'🐴').trim(),desc:(document.getElementById('ef-vreq-desc').value||'Optional reward bonus support.').trim()}:null;
     var breq=breqName?{name:breqName,ic:(document.getElementById('ef-breq-ic').value||'🏚️').trim(),desc:(document.getElementById('ef-breq-desc').value||'Optional reward bonus support.').trim()}:null;
-    var targetScope=(isBuiltin&&isAppAdmin())?'official':null;
+    var targetScope=(isBuiltin&&isAppAdmin())?'official':edFormScope();
     var selectedSetId=document.getElementById('ef-setid').value;
     var nextIdx=(function(){
       if(q&&q.idx!=null)return q.idx;
@@ -11356,7 +11395,7 @@ function edShowQuestForm(){
           if(item&&item.idx!=null&&item.idx>maxIdx)maxIdx=item.idx;
         });
       });
-      contentItemsForScope(targetScope||currentContentScope(),'_customQuests').filter(function(item){return item.setId===selectedSetId;}).forEach(function(item){
+      contentItemsForScope(targetScope,'_customQuests').filter(function(item){return item.setId===selectedSetId;}).forEach(function(item){
         if(item&&item.idx!=null&&item.idx>maxIdx)maxIdx=item.idx;
       });
       return maxIdx+1;
@@ -11378,7 +11417,7 @@ function edShowQuestForm(){
       reward:title,
       pre:{skills:selSkills,tools:selTools,lang:selLang,rel:selRel,items:selItems,gold:parseInt(document.getElementById('ef-gold').value)||0}
     };
-    var arr=contentItemsForScope(targetScope||currentContentScope(),'_customQuests');
+    var arr=contentItemsForScope(targetScope,'_customQuests');
     if(!isNew){
       // Update existing by matching setId + idx (stable), fallback to title match.
       var oldQ=edQuestObj();
@@ -11395,6 +11434,7 @@ function edShowQuestForm(){
     }
     saveCustom('_customQuests',arr,targetScope).then(function(){
       mergeCustomContent();
+      edScopeFlash();
       edSelected={type:'quest',setId:newQ.setId,idx:newQ.idx};
       edRenderList();
       edShowQuestForm();
@@ -11477,8 +11517,8 @@ function edShowGrindForm(){
     '<select id="ef-glang" multiple size="6" style="width:100%;padding:4px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">'+
     ALL_LANG.map(function(l){return '<option value="'+l+'"'+(pre.lang.indexOf(l)!==-1?' selected':'')+'>'+l+'</option>';}).join('')+'</select></div>';
   html+='</div>';
-  html+='<div style="display:flex;gap:10px;margin-top:24px">'+
-    '<button id="ef-gsave" style="padding:10px 28px;background:var(--forest);color:#fff;border:none;border-radius:5px;font-size:.95em;cursor:pointer;font-family:\'Cinzel\',serif;letter-spacing:.04em">💾 Save Mission</button>'+
+  html+=edScopeRow('ef-gsave');
+  html+='<div style="display:flex;gap:10px;margin-top:10px">'+
     (!isNew?'<button id="ef-gdelete" style="padding:10px 20px;background:var(--crimson);color:#fff;border:none;border-radius:5px;font-size:.95em;cursor:pointer">🗑 Delete</button>':'')+
     '<span style="font-size:.82em;color:var(--ink-light);align-self:center;margin-left:4px">Ctrl+Enter to save</span>'+
     '</div>';
@@ -11497,19 +11537,18 @@ function edShowGrindForm(){
     var selSkills=Array.from(document.getElementById('ef-gskills').selectedOptions).map(function(o){return o.value;});
     var selTools=Array.from(document.getElementById('ef-gtools').selectedOptions).map(function(o){return o.value;});
     var selLang=Array.from(document.getElementById('ef-glang').selectedOptions).map(function(o){return o.value;});
-    var targetScope=(isBuiltin&&isAppAdmin())?'official':null;
+    var targetScope=(isBuiltin&&isAppAdmin())?'official':edFormScope();
     var newId=g?g.id:('gc_'+Date.now());
     var newG={_custom:true,id:newId,title:title,desc:desc,
       type:document.getElementById('ef-gtype').value,
       baseGp:parseInt(document.getElementById('ef-ggp').value)||30,
       pre:{skills:selSkills,tools:selTools,lang:selLang,rel:'',items:[],gold:0}};
-    var arr=contentItemsForScope(targetScope||currentContentScope(),'_customGrind');
+    var arr=contentItemsForScope(targetScope,'_customGrind');
     if(!isNew){arr=arr.map(function(x){return x.id===gid?newG:x;});}
     else{arr.push(newG);}
-    saveCustom('_customGrind',arr,targetScope);
-    mergeCustomContent();
-    edSelected={type:'grind',id:newId};
-    edRenderList();
+    var gResult=saveCustom('_customGrind',arr,targetScope);
+    var afterGrind=function(){mergeCustomContent();edScopeFlash();edSelected={type:'grind',id:newId};edRenderList();};
+    if(gResult&&typeof gResult.then==='function'){gResult.then(afterGrind);}else{afterGrind();}
   });
 
   if(!isNew){
@@ -11572,8 +11611,8 @@ function edShowGearForm(){
     '<input id="ef-iwt" type="number" min="0" step="0.5" value="'+(g?g.wt:1)+'" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
   html+='</div>';
   html+='<div style="margin-top:16px"><label style="display:flex;align-items:center;gap:8px;font-size:.95em;cursor:pointer"><input type="checkbox" id="ef-ibag"'+(g&&g.bagOfHolding?' checked':'')+' style="width:1.3em;height:1.3em"> Bag of Holding (items inside are weightless)</label></div>';
-  html+='<div style="display:flex;gap:10px;margin-top:24px">'+
-    '<button id="ef-isave" style="padding:10px 28px;background:var(--forest);color:#fff;border:none;border-radius:5px;font-size:.95em;cursor:pointer;font-family:\'Cinzel\',serif;letter-spacing:.04em">💾 Save Item</button>'+
+  html+=edScopeRow('ef-isave');
+  html+='<div style="display:flex;gap:10px;margin-top:10px">'+
     (!isNew?'<button id="ef-idelete" style="padding:10px 20px;background:var(--crimson);color:#fff;border:none;border-radius:5px;font-size:.95em;cursor:pointer">🗑 Delete</button>':'')+
     '<span style="font-size:.82em;color:var(--ink-light);align-self:center;margin-left:4px">Ctrl+Enter to save</span>'+
     '</div>';
@@ -11599,15 +11638,13 @@ function edShowGearForm(){
       bagOfHolding:document.getElementById('ef-ibag').checked||undefined
     };
     if(!newItem.bagOfHolding)delete newItem.bagOfHolding;
-    var targetScope=(isBuiltin&&isAppAdmin())?'official':null;
-    var arr=contentItemsForScope(targetScope||currentContentScope(),'_customGear');
+    var targetScope=(isBuiltin&&isAppAdmin())?'official':edFormScope();
+    var arr=contentItemsForScope(targetScope,'_customGear');
     if(!isNew){arr=arr.map(function(x){return x.name===gname?newItem:x;});}
     else{arr.push(newItem);}
-    saveCustom('_customGear',arr,targetScope);
-    mergeCustomContent();
-    ITEM_WEIGHT[name]=wt;
-    edSelected={type:'gear',name:name};
-    edRenderList();
+    var iResult=saveCustom('_customGear',arr,targetScope);
+    var afterGear=function(){mergeCustomContent();ITEM_WEIGHT[name]=wt;edScopeFlash();edSelected={type:'gear',name:name};edRenderList();};
+    if(iResult&&typeof iResult.then==='function'){iResult.then(afterGear);}else{afterGear();}
   });
 
   if(!isNew){
@@ -11685,8 +11722,8 @@ function edShowAssetForm(){
     '<input id="ef-aprice" type="number" min="0" value="'+(a?a.price:100)+'" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
   html+='</div>';
   html+='<p style="font-size:.8em;color:var(--ink-light);margin-top:10px">Changing Category updates the sub-type options. Save after selecting the correct category.</p>';
-  html+='<div style="display:flex;gap:10px;margin-top:20px">'+
-    '<button id="ef-asave" style="padding:10px 28px;background:var(--forest);color:#fff;border:none;border-radius:5px;font-size:.95em;cursor:pointer;font-family:\'Cinzel\',serif;letter-spacing:.04em">💾 Save Asset</button>'+
+  html+=edScopeRow('ef-asave');
+  html+='<div style="display:flex;gap:10px;margin-top:10px">'+
     (!isNew?'<button id="ef-adelete" style="padding:10px 20px;background:var(--crimson);color:#fff;border:none;border-radius:5px;font-size:.95em;cursor:pointer">🗑 Delete</button>':'')+
     '<span style="font-size:.82em;color:var(--ink-light);align-self:center;margin-left:4px">Ctrl+Enter to save</span>'+
     '</div>';
@@ -11727,27 +11764,28 @@ function edShowAssetForm(){
     // Determine which custom key to save to based on selected category
     var saveKey=cat==='vehicle'?'_customVehicles':cat==='building'?'_customBuildings':'_customPets';
     var saveGetter=cat==='vehicle'?getCustomVehicles:cat==='building'?getCustomBuildings:getCustomPets;
+    var asScope=edFormScope();
 
     // If category changed, remove from old category first
     if(cat!==akey&&!isNew){
       var oldArr=getterFn().filter(function(x){return x.name!==aname;});
-      saveCustom(customKey,oldArr);
+      saveCustom(customKey,oldArr,asScope);
     }
 
     var arr=saveGetter();
     var oldName=isNew?null:aname;
     if(!isNew&&cat===akey){arr=arr.map(function(x){return x.name===oldName?newItem:x;});}
     else{
-      // remove duplicate name if re-saving to same list
       arr=arr.filter(function(x){return x.name!==name;});
       arr.push(newItem);
     }
     var afterSave=function(){
       mergeCustomContent();
+      edScopeFlash();
       edSelected={type:'asset',name:name,assetKey:cat};
       edRenderList();
     };
-    var result=saveCustom(saveKey,arr);
+    var result=saveCustom(saveKey,arr,asScope);
     if(result&&typeof result.then==='function'){result.then(afterSave);}else{afterSave();}
   });
 
