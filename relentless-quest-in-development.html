@@ -1708,7 +1708,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.434
+      Version 1.435
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Franchise-owned items and assets can now be sold back at half price
@@ -1733,6 +1733,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.435</strong> — Added collapse/expand controls for quest cycles in the Content Editor list; surfaced orphaned custom quests (missing set links) so they can be found again; renamed “Severe” action label to “Sever”; and ensured sell menu values never drop below 1 gp for expanded inventory items.</div>
         <div style="margin-bottom:9px"><strong>Version 1.434</strong> — Fixed hireling graduation so Level 1 graduates count as full adventurers for quest prerequisites; improved Content Editor save reliability/visibility; added capstone artifact assignment controls on Assets; refreshed exotic language pool to remove overlaps with now-standard language options.</div>
         <div style="margin-bottom:9px"><strong>Version 1.433</strong> — Reworked Content Editor CSV import/export to handle quest rows only (header = quest properties), while Cycle Rules and Gear remain managed in their existing in-app editor forms.</div>
         <div style="margin-bottom:9px"><strong>Version 1.432</strong> — Added CSV import/export workflow for Content Editor data so quest cycles and gear groups can be edited in Google Sheets-style tab rows, including cycle-rules rows, buffer rows, and quest-row bulk import.</div>
@@ -3288,7 +3289,8 @@ function franchiseSellPriceByName(name){
       return Math.max(1,Math.floor((weaponCandidate.price||0)/2));
     }
   }
-  return 0;
+  // Fallback so expanded/legacy inventory items always show a sell value.
+  return 1;
 }
 function assetDisplayName(a){var m=assetMeta(a);return m.customName?m.customName+' ('+a.name+')':a.name;}
 function assetOwnerLabel(a){
@@ -5040,7 +5042,7 @@ function charCardHtml(c,ci,opts){
     '<div style="display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin-top:8px">'+
     '<button class="btn bink sm" data-a="'+(dtReady?'dt-collect':'dt-start')+'" data-ci="'+ci+'" style="white-space:nowrap;padding:2px 6px;min-height:22px;font-size:.72em"'+((isQuesting||dtBusy)?' disabled':'')+'>'+(dtReady?'Resolve Downtime':'🕯 Downtime')+'</button>'+
     '<button class="btn bink sm" data-a="lv" data-ci="'+ci+'" style="white-space:nowrap;padding:2px 6px;min-height:22px;font-size:.72em">Level Up</button>'+
-    '<button class="btn sm" data-a="sever" data-ci="'+ci+'" style="white-space:nowrap;padding:2px 6px;min-height:22px;font-size:.72em;background:rgba(139,26,26,.1);border:1px solid var(--crimson);color:var(--crimson)">Severe</button>'+
+    '<button class="btn sm" data-a="sever" data-ci="'+ci+'" style="white-space:nowrap;padding:2px 6px;min-height:22px;font-size:.72em;background:rgba(139,26,26,.1);border:1px solid var(--crimson);color:var(--crimson)">Sever</button>'+
     '</div>'+
     '</div>';
 }
@@ -5321,7 +5323,7 @@ document.getElementById('plist').addEventListener('click',function(e){
     var hasDowntime=(S.downtimeJobs||[]).some(function(job){return job&&job.ci===ci;});
     if(hasDowntime){alert(cSev.name+' is currently in downtime and cannot be severed.');return;}
     var sevCost=(Math.max(0,parseInt(cSev.level,10)||0)+1)*25;
-    if(!confirm('Severe '+cSev.name+' from the roster for '+sevCost+' gp?'))return;
+    if(!confirm('Sever '+cSev.name+' from the roster for '+sevCost+' gp?'))return;
     if(!goldSpend(sevCost,'Severed '+cSev.name,'hire'))return;
     if(S.squads&&S.squads.length){
       S.squads.forEach(function(sq){
@@ -10639,6 +10641,7 @@ function importEditorCsv(text){
 // ── Editor state ──
 var edTab='quests'; // 'quests' | 'grind' | 'gear'
 var edSelected=null; // {type:'custom'|'builtin', id, setId?}
+var edCollapsedCycles={};
 
 function openEditor(){
   if(!isDevModeActive()){alert('Developer mode only. Enable it in Settings.');return;}
@@ -10677,13 +10680,24 @@ function edRenderList(){
   var el=document.getElementById('ed-list');
   var html='';
   if(edTab==='quests'){
+    var knownSetIds={};
+    QUESTSETS.forEach(function(s){knownSetIds[s.id]=true;});
+    var orphanBuckets={};
+    contentItemsForScope(currentContentScope(),'_customQuests').forEach(function(item){
+      if(!item||!item.setId||knownSetIds[item.setId])return;
+      if(!orphanBuckets[item.setId])orphanBuckets[item.setId]=[];
+      orphanBuckets[item.setId].push(item);
+    });
     QUESTSETS.forEach(function(set){
       html+='<div style="padding:6px 12px 3px;font-family:\'Cinzel\',serif;font-size:.7em;text-transform:uppercase;letter-spacing:.05em;color:var(--gold-dark);border-top:1px solid var(--parchment-deep);margin-top:4px">'+esc(set.name)+'</div>';
       var isCycleSel=edSelected&&edSelected.type==='cycle'&&edSelected.setId===set.id;
+      var collapsed=!!edCollapsedCycles[set.id];
       html+='<div class="ed-list-item'+(isCycleSel?' ed-list-sel':'')+'" data-ed="cycle" data-setid="'+esc(set.id)+'" style="padding:7px 14px;cursor:pointer;border-left:3px solid '+(isCycleSel?'var(--crimson)':'transparent')+';background:'+(isCycleSel?'rgba(139,26,26,.06)':'rgba(44,26,14,.03)')+';display:flex;align-items:center;gap:8px">'+
+        '<button data-ed-togglecycle="'+esc(set.id)+'" title="'+(collapsed?'Expand cycle':'Collapse cycle')+'" style="border:1px solid var(--parchment-deep);background:rgba(255,255,255,.25);border-radius:3px;padding:0 5px;font-size:.7em;cursor:pointer;color:var(--ink-light)">'+(collapsed?'▸':'▾')+'</button>'+
         '<span style="flex:1;font-size:.82em;color:var(--ink-light)">⚙ Cycle Rules</span>'+
         '<span style="font-size:.62em;color:var(--ink-light);border:1px solid var(--parchment-deep);border-radius:3px;padding:0 3px">set-level</span>'+
         '</div>';
+      if(collapsed)return;
       set.quests.forEach(function(q){
         var isCustom=!!q._custom;
         var isSel=edSelected&&edSelected.type==='quest'&&edSelected.setId===set.id&&edSelected.idx===q.idx;
@@ -10691,6 +10705,26 @@ function edRenderList(){
           '<span style="flex:1;font-size:.88em;'+(isCustom?'color:var(--crimson)':'')+'">'+esc(q.title)+'</span>'+
           (isCustom?'<span style="font-size:.62em;color:var(--crimson);border:1px solid var(--crimson);border-radius:3px;padding:0 3px">custom</span>':
            '<span style="font-size:.62em;color:var(--ink-light);border:1px solid var(--parchment-deep);border-radius:3px;padding:0 3px">built-in</span>')+
+          '</div>';
+      });
+    });
+    Object.keys(orphanBuckets).sort().forEach(function(setId){
+      var rows=orphanBuckets[setId]||[];
+      rows.sort(function(a,b){return (a.idx||0)-(b.idx||0);});
+      html+='<div style="padding:6px 12px 3px;font-family:\'Cinzel\',serif;font-size:.7em;text-transform:uppercase;letter-spacing:.05em;color:var(--purple);border-top:1px solid var(--parchment-deep);margin-top:4px">Orphaned Cycle: '+esc(setId)+'</div>';
+      var isCycleSel=edSelected&&edSelected.type==='cycle'&&edSelected.setId===setId;
+      var collapsed=!!edCollapsedCycles[setId];
+      html+='<div class="ed-list-item'+(isCycleSel?' ed-list-sel':'')+'" data-ed="cycle" data-setid="'+esc(setId)+'" style="padding:7px 14px;cursor:pointer;border-left:3px solid '+(isCycleSel?'var(--crimson)':'transparent')+';background:'+(isCycleSel?'rgba(139,26,26,.06)':'rgba(78,55,117,.07)')+';display:flex;align-items:center;gap:8px">'+
+        '<button data-ed-togglecycle="'+esc(setId)+'" title="'+(collapsed?'Expand cycle':'Collapse cycle')+'" style="border:1px solid var(--parchment-deep);background:rgba(255,255,255,.25);border-radius:3px;padding:0 5px;font-size:.7em;cursor:pointer;color:var(--ink-light)">'+(collapsed?'▸':'▾')+'</button>'+
+        '<span style="flex:1;font-size:.82em;color:var(--ink-light)">⚙ Cycle Rules (set missing from quest sets)</span>'+
+        '<span style="font-size:.62em;color:var(--purple);border:1px solid var(--purple);border-radius:3px;padding:0 3px">orphaned</span>'+
+        '</div>';
+      if(collapsed)return;
+      rows.forEach(function(q){
+        var isSel=edSelected&&edSelected.type==='quest'&&edSelected.setId===setId&&edSelected.idx===q.idx;
+        html+='<div class="ed-list-item'+(isSel?' ed-list-sel':'')+'" data-ed="quest" data-setid="'+esc(setId)+'" data-idx="'+q.idx+'" style="padding:9px 14px;cursor:pointer;border-left:3px solid '+(isSel?'var(--crimson)':'transparent')+';background:'+(isSel?'rgba(139,26,26,.06)':'none')+';display:flex;align-items:center;gap:8px">'+
+          '<span style="flex:1;font-size:.88em;color:var(--crimson)">'+esc(q.title||('Quest #'+q.idx))+'</span>'+
+          '<span style="font-size:.62em;color:var(--purple);border:1px solid var(--purple);border-radius:3px;padding:0 3px">orphaned</span>'+
           '</div>';
       });
     });
@@ -10726,6 +10760,15 @@ function edRenderList(){
   el.innerHTML=html||'<div style="padding:16px 14px;font-size:.85em;color:var(--ink-light);font-style:italic">Nothing here yet.</div>';
 
   // Click handlers
+  el.querySelectorAll('[data-ed-togglecycle]').forEach(function(btn){
+    btn.addEventListener('click',function(ev){
+      ev.preventDefault();
+      ev.stopPropagation();
+      var sid=this.getAttribute('data-ed-togglecycle');
+      edCollapsedCycles[sid]=!edCollapsedCycles[sid];
+      edRenderList();
+    });
+  });
   el.querySelectorAll('[data-ed]').forEach(function(row){
     row.addEventListener('click',function(){
       var type=this.getAttribute('data-ed');
