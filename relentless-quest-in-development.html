@@ -1733,6 +1733,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.430</strong> — Added bulk purchasing quantity for acquisitions, expanded assignment targets (building/vehicle/squad) for assets and supply caches, collapsed mount/pet naming controls by default on Party Assets, and updated mountain support gating to count Mules assigned to the selected squad.</div>
         <div style="margin-bottom:9px"><strong>Version 1.429</strong> — Unified prerequisite picker lists with character capability lists (skills, tools, languages, and religions) so Content Editor prerequisites always match what characters can actually have; includes Calligrapher’s Supplies availability for Hasufan prerequisites.</div>
         <div style="margin-bottom:9px"><strong>Version 1.428</strong> — Expanded hireling first-name pool and enforced rerolls to avoid duplicate first names with existing rostered hirelings. Added a Severe roster action on character cards (cost: 25 gp per level, including level 0).</div>
         <div style="margin-bottom:9px"><strong>Version 1.427</strong> — Quest prerequisites now align with Content Editor fields by adding editable Prereq Items, and martial/simple weapon category prerequisites continue to match qualifying inventory weapons.</div>
@@ -2149,6 +2150,10 @@ button.squad-tag.squad-tag-active{
   <div id="ov-bi-charrow">
     <label class="lbl" id="ov-bi-ownerlbl">Assign to Adventurer</label>
     <select id="ov-bi-sel"></select>
+  </div>
+  <div id="ov-bi-qtyrow" style="margin-top:8px">
+    <label class="lbl" id="ov-bi-qtylbl">Quantity</label>
+    <input type="number" id="ov-bi-qty" min="1" step="1" value="1">
   </div>
   <div id="ov-bi-namerow" style="display:none;margin-top:8px">
     <label class="lbl" id="ov-bi-namelbl">Animal Name</label>
@@ -3279,16 +3284,25 @@ function assetOwnerLabel(a){
     var b=(S.partyAssets||[]).filter(function(x){return isBuildingAsset(x)&&assetMeta(x).uid===m.ownerRef;})[0];
     return 'Housed at '+(b?assetDisplayName(b):'owned building');
   }
+  if(m.ownerType==='squad'&&m.ownerRef)return 'Assigned to squad '+m.ownerRef;
+  if(m.ownerType==='vehicle'&&m.ownerRef){
+    var v=(S.partyAssets||[]).filter(function(x){return assetMeta(x).uid===m.ownerRef;})[0];
+    return 'Assigned to vehicle '+(v?assetDisplayName(v):'owned vehicle');
+  }
   return 'Unassigned';
 }
 function assetOwnerValue(a){
   var m=assetMeta(a);
   if(m.ownerType==='char'&&m.ownerRef)return 'char::'+m.ownerRef;
   if(m.ownerType==='building'&&m.ownerRef)return 'building::'+m.ownerRef;
+  if(m.ownerType==='squad'&&m.ownerRef)return 'squad::'+m.ownerRef;
+  if(m.ownerType==='vehicle'&&m.ownerRef)return 'vehicle::'+m.ownerRef;
   return '';
 }
-function assetOwnerOptionsHtml(selected){
+function assetOwnerOptionsHtml(selected,opts){
+  opts=opts||{};
   var html='<option value="">— Unassigned —</option>';
+  if(opts.includeStorage)html+='<option value="storage"'+(selected==='storage'?' selected':'')+'>📦 Franchise Storage</option>';
   html+=(S.party||[]).map(function(c){
     var v='char::'+c.name;
     return '<option value="'+esc(v)+'"'+(selected===v?' selected':'')+'>👤 '+esc(c.name)+'</option>';
@@ -3297,6 +3311,19 @@ function assetOwnerOptionsHtml(selected){
     var uid=assetMeta(a).uid;
     var v='building::'+uid;
     return '<option value="'+esc(v)+'"'+(selected===v?' selected':'')+'>🏠 '+esc(assetDisplayName(a))+'</option>';
+  }).join('');
+  html+=(S.partyAssets||[]).filter(function(a){
+    if(!a)return false;
+    if(isBuildingAsset(a)||isAnimalAsset(a))return false;
+    return true;
+  }).map(function(a){
+    var uid=assetMeta(a).uid;
+    var v='vehicle::'+uid;
+    return '<option value="'+esc(v)+'"'+(selected===v?' selected':'')+'>🚚 '+esc(assetDisplayName(a))+'</option>';
+  }).join('');
+  html+=(S.squads||[]).map(function(sq){
+    var v='squad::'+sq.name;
+    return '<option value="'+esc(v)+'"'+(selected===v?' selected':'')+'>⚔ '+esc(sq.name)+'</option>';
   }).join('');
   return html;
 }
@@ -3318,6 +3345,16 @@ function countAssignedMountByNameForChars(mountName,charIdxs){
     if(!a||a.name!==mountName||assetBaseType(a)!=='mount')return;
     var m=assetMeta(a);
     if(m.ownerType==='char'&&names.indexOf(m.ownerRef)!==-1)count++;
+  });
+  return count;
+}
+function countAssignedMountByNameForSquad(mountName,squadName){
+  if(!squadName)return 0;
+  var count=0;
+  (S.partyAssets||[]).forEach(function(a){
+    if(!a||a.name!==mountName||assetBaseType(a)!=='mount')return;
+    var m=assetMeta(a);
+    if(m.ownerType==='squad'&&m.ownerRef===squadName)count++;
   });
   return count;
 }
@@ -3415,7 +3452,7 @@ function questCyclePrereqMet(q){
   }
   return !!seen[req];
 }
-function questTerrainRequirementMet(q,charIdxs){
+function questTerrainRequirementMet(q,charIdxs,squadName){
   if(!q||!q.terrain||q.terrain==='none')return true;
   var chars=(charIdxs||[]).map(function(ci){return S.party[ci];}).filter(Boolean);
   var names=[];chars.forEach(function(c){(c.inv||[]).forEach(function(it){names.push(it);});});
@@ -3430,6 +3467,8 @@ function questTerrainRequirementMet(q,charIdxs){
   if(q.terrain==='mountain'){
     var selected=(charIdxs||[]).filter(function(ci){return !!S.party[ci];});
     if(!selected.length)return false;
+    var squadCount=countAssignedMountByNameForSquad('Mule',squadName||'');
+    if(squadCount>0)return squadCount>=selected.length;
     return countAssignedMountByNameForChars('Mule',selected)>=selected.length;
   }
   return true;
@@ -3444,15 +3483,15 @@ function questDifficultyRequirementMet(q,charIdxs){
   if(q.difficulty==='deadly')return full.length>=3&&avg>=2;
   return true;
 }
-function questHardGateIssues(q,charIdxs){
+function questHardGateIssues(q,charIdxs,squadName){
   var issues=[];
   if(!q)return issues;
   var picked=(charIdxs||[]).filter(function(ci){return !!S.party[ci];});
   if(q.squadReqMin&&picked.length<q.squadReqMin)issues.push('Requires a minimum squad size of '+q.squadReqMin+'.');
-  if(!questTerrainRequirementMet(q,picked)){
+  if(!questTerrainRequirementMet(q,picked,squadName)){
     if(q.terrain==='aquatic')issues.push('Aquatic terrain requires Diving Bell or Keelboat support.');
     else if(q.terrain==='underground')issues.push('Underground terrain needs expedition support (Hooded Lantern or Pole).');
-    else if(q.terrain==='mountain')issues.push('Mountain terrain requires one Mule assigned per selected character.');
+    else if(q.terrain==='mountain')issues.push('Mountain terrain requires enough Mules assigned to the selected squad (or selected members) to match squad size.');
     else issues.push('Missing required terrain support.');
   }
   if(!questDifficultyRequirementMet(q,picked)){
@@ -5075,6 +5114,7 @@ function renderParty(){
   // Assets — collapsible with gold total
   ensureAssetMetas();
   var assets=S.partyAssets||[];
+  if(S.assetsAnimalEditorCollapsed===undefined)S.assetsAnimalEditorCollapsed=true;
   if(!S.assetsCollapsed)S.assetsCollapsed=false;
   var assetsCollapsed=S.assetsCollapsed;
 
@@ -5113,6 +5153,7 @@ function renderParty(){
       // Party assets rows
       (assets.length?
         '<div style="font-size:.72em;color:var(--ink-light);text-transform:uppercase;font-family:\'Cinzel\',serif;letter-spacing:.04em;margin:8px 0 4px">Purchased Assets</div>'+
+        '<div style="display:flex;justify-content:flex-end;margin:0 0 6px"><button class="btn bink sm" data-a="toggle-animal-editor" style="font-size:.62em;padding:1px 6px;min-height:18px">'+(S.assetsAnimalEditorCollapsed?'Expand mount/pet assignment':'Collapse mount/pet assignment')+'</button></div>'+
         assets.map(function(a,ai){
           assetMeta(a);
           var match=allPurchasables.filter(function(x){return x.name===a.name;});
@@ -5123,11 +5164,13 @@ function renderParty(){
               '<div style="flex:1">'+
                 '<div><strong>'+esc(a.ic)+' '+esc(assetDisplayName(a))+'</strong></div>'+
                 '<div style="font-size:.74em;color:var(--ink-light);margin:2px 0 5px">'+esc(a.name)+' · '+esc(assetOwnerLabel(a))+'</div>'+
-                '<div style="display:flex;gap:4px;flex-wrap:wrap">'+
-                  '<input type="text" class="asset-name" data-ai="'+ai+'" value="'+esc(assetMeta(a).customName||'')+'" placeholder="Animal name" style="max-width:140px">'+
-                  '<select class="asset-owner" data-ai="'+ai+'" style="max-width:170px">'+assetOwnerOptionsHtml(assetOwnerValue(a))+'</select>'+
-                  '<button class="btn bg sm" data-a="asset-save" data-ai="'+ai+'" style="font-size:.6em;min-height:22px;padding:1px 6px">Save</button>'+
-                '</div>'+
+                (S.assetsAnimalEditorCollapsed
+                  ?'<div style="font-size:.72em;color:var(--ink-light)">Mount/pet naming and assignment controls are collapsed.</div>'
+                  :'<div style="display:flex;gap:4px;flex-wrap:wrap">'+
+                    '<input type="text" class="asset-name" data-ai="'+ai+'" value="'+esc(assetMeta(a).customName||'')+'" placeholder="Animal name" style="max-width:140px">'+
+                    '<select class="asset-owner" data-ai="'+ai+'" style="max-width:170px">'+assetOwnerOptionsHtml(assetOwnerValue(a))+'</select>'+
+                    '<button class="btn bg sm" data-a="asset-save" data-ai="'+ai+'" style="font-size:.6em;min-height:22px;padding:1px 6px">Save</button>'+
+                  '</div>')+
               '</div>'+
               '<span style="display:flex;align-items:center;gap:8px">'+
                 '<span style="font-family:\'Cinzel\',serif;font-size:.78em;color:var(--gold-dark)">'+(val?val.toLocaleString()+' gp':'–')+'</span>'+
@@ -5215,6 +5258,10 @@ document.getElementById('plist').addEventListener('click',function(e){
   if(a==='assets-col'){
     S.assetsCollapsed=!S.assetsCollapsed;
     save();renderParty();window.scrollTo({top:0,behavior:'smooth'});
+  } else if(a==='toggle-animal-editor'){
+    S.assetsAnimalEditorCollapsed=!S.assetsAnimalEditorCollapsed;
+    save();renderParty();
+    return;
   } else if(a==='sever'){
     var cSev=S.party[ci];
     if(!cSev)return;
@@ -5342,6 +5389,8 @@ document.getElementById('plist').addEventListener('click',function(e){
       assetSave.meta.ownerType='';assetSave.meta.ownerRef='';
       if(ov.indexOf('char::')===0){assetSave.meta.ownerType='char';assetSave.meta.ownerRef=ov.slice(6);}
       else if(ov.indexOf('building::')===0){assetSave.meta.ownerType='building';assetSave.meta.ownerRef=ov.slice(10);}
+      else if(ov.indexOf('squad::')===0){assetSave.meta.ownerType='squad';assetSave.meta.ownerRef=ov.slice(7);}
+      else if(ov.indexOf('vehicle::')===0){assetSave.meta.ownerType='vehicle';assetSave.meta.ownerRef=ov.slice(9);}
     }
     logAdd('Updated animal assignment: '+assetDisplayName(assetSave),'buy');
     save();renderParty();window.scrollTo({top:0,behavior:'smooth'});
@@ -7100,7 +7149,9 @@ function questPrereqHtml(q,charIdxs){
   var minLv=questRequiredLevel(q);
   if(minLv>0){var met=topLv>=minLv;rows+='<div class="prerow"><span class="'+(met?'pmet':'punmet')+'">'+(met?'✓':'✗')+'</span> Level '+minLv+'+ (highest: '+topLv+')</div>';}
   if(q.terrain&&q.terrain!=='none'){
-    var tMet=questTerrainRequirementMet(q,charIdxs);
+    var squadSelEl=document.getElementById('ov-q-squad');
+    var squadName=squadSelEl?squadSelEl.value:'';
+    var tMet=questTerrainRequirementMet(q,charIdxs,squadName);
     var tTxt=q.terrain==='mountain'?'Terrain: mountain (1 assigned Mule per selected member)':('Terrain: '+q.terrain);
     rows+='<div class="prerow"><span class="'+(tMet?'pmet':'punmet')+'">'+(tMet?'✓':'✗')+'</span> '+esc(tTxt)+'</div>';
   }
@@ -7118,7 +7169,7 @@ function questReadiness(q,qs){
   var available=S.party.map(function(c,ci){return ci;}).filter(function(ci){
     var c=S.party[ci];return c&&!c.hireling;
   });
-  if(questHardGateIssues(q,available).length)return 'overreach';
+  if(questHardGateIssues(q,available,'').length)return 'overreach';
   var missing=questPrereqCheck(q,available);
   if(missing.length===0)return 'ready';
   if(missing.length<=2)return 'stretch';
@@ -8106,7 +8157,7 @@ function updateQuestModal(){
   document.getElementById('ov-q-reward').textContent=questCalcReward(q,chars);
   var missing=questPrereqCheck(q,chars);
   var roster=regularQuestRosterStatus(chars);
-  var hardIssues=questHardGateIssues(q,chars);
+  var hardIssues=questHardGateIssues(q,chars,document.getElementById('ov-q-squad').value||'');
   var unmet=document.getElementById('ov-q-unmet');
   var issues=[];
   if(!roster.ok&&roster.msg)issues.push(roster.msg);
@@ -8248,7 +8299,7 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit){
   var pr=q.pre;
   var reward=questCalcReward(q,chars);
   var rosterMain=regularQuestRosterStatus(chars);
-  var hardIssuesMain=questHardGateIssues(q,chars);
+  var hardIssuesMain=questHardGateIssues(q,chars,document.getElementById('ov-q-squad').value||'');
   if(!rosterMain.ok){alert('⚠ '+rosterMain.msg);return;}
   if(hardIssuesMain.length){alert('⚠ '+hardIssuesMain.join('\n'));return;}
   if(pr.gold&&pr.gold>0){if(!goldSpend(pr.gold,'Gold invest: "'+q.title+'"','adv'))return;}
@@ -8373,41 +8424,37 @@ document.getElementById('slist').addEventListener('click',function(e){
   }
   P5.item=i;
   P5.assetMode=false;
+  document.getElementById('ov-bi-qty').value='1';
   if(item.party){
-    if(isAnimalAsset(item)){
-      P5.assetMode=true;
-      ensureAssetMetas();
-      document.getElementById('ov-bi-ownerlbl').textContent='Assign to Character or Building';
-      document.getElementById('ov-bi-sel').innerHTML=assetOwnerOptionsHtml('');
-      document.getElementById('ov-bi-charrow').style.display='block';
-      document.getElementById('ov-bi-namerow').style.display='block';
-      document.getElementById('ov-bi-namelbl').textContent=(item.type==='mount'?'Mount Name':'Animal Name');
-      document.getElementById('ov-bi-petname').value='';
-      document.getElementById('ov-bi-weaponrow').style.display='none';
-      document.getElementById('ov-bi-partynote').style.display='block';
-      document.getElementById('ov-bi-partynote').textContent='Choose a name now or leave it blank to keep the base '+(item.type==='mount'?'mount':'animal')+' name.';
-      document.getElementById('ov-bi-msg').textContent=item.name+' — 🪙 '+item.price+' gp';
-      openOv('ov-buyitem');
-      return;
-    }
-    if(!goldSpend(item.price,'Purchased: '+item.name,'buy'))return;
-    if(!S.partyAssets)S.partyAssets=[];
-    S.partyAssets.push({name:item.name,ic:item.ic,type:item.type,meta:{uid:newAssetUid()}});
-    logAdd('Purchased: '+item.name+' ('+item.price+' gp)','buy');
-    save();renderParty();renderStore();window.scrollTo({top:0,behavior:'smooth'});
+    P5.assetMode=true;
+    ensureAssetMetas();
+    document.getElementById('ov-bi-ownerlbl').textContent=isAnimalAsset(item)?'Assign to Character, Building, Vehicle, or Squad':'Assign to Building, Vehicle, or Squad (optional)';
+    document.getElementById('ov-bi-sel').innerHTML=assetOwnerOptionsHtml('');
+    document.getElementById('ov-bi-charrow').style.display='block';
+    document.getElementById('ov-bi-namerow').style.display=isAnimalAsset(item)?'block':'none';
+    document.getElementById('ov-bi-namelbl').textContent=(item.type==='mount'?'Mount Name':'Animal Name');
+    document.getElementById('ov-bi-petname').value='';
+    document.getElementById('ov-bi-weaponrow').style.display='none';
+    document.getElementById('ov-bi-partynote').style.display='block';
+    document.getElementById('ov-bi-partynote').textContent=isAnimalAsset(item)
+      ?'Choose a name now or leave it blank to keep the base '+(item.type==='mount'?'mount':'animal')+' name.'
+      :'Optional: assign these assets to a building, vehicle, or squad.';
+    document.getElementById('ov-bi-msg').textContent=item.name+' — 🪙 '+item.price+' gp each';
+    openOv('ov-buyitem');
     return;
   }
   if(S.party.length){
-    document.getElementById('ov-bi-ownerlbl').textContent='Assign to Adventurer';
-    document.getElementById('ov-bi-sel').innerHTML=S.party.map(function(c,ci){
+    document.getElementById('ov-bi-ownerlbl').textContent='Deliver to Adventurer, Storage, Building, Vehicle, or Squad';
+    var charOptions=S.party.map(function(c,ci){
       var enc=wouldEncumber(c,item.name);
       var encNote=enc?' ⚠ would encumber':'';
       return '<option value="'+ci+'"'+(enc?' style="color:var(--crimson)"':'')+'>'+esc(c.name)+' ('+esc(c.cls)+')'+encNote+'</option>';
     }).join('');
+    document.getElementById('ov-bi-sel').innerHTML=charOptions+assetOwnerOptionsHtml('',{includeStorage:true});
   }
   document.getElementById('ov-bi-namerow').style.display='none';
   document.getElementById('ov-bi-partynote').style.display='none';
-  document.getElementById('ov-bi-msg').textContent=item.name+' — 🪙 '+item.price+' gp'+(item.wt?' · '+item.wt+' lb':'');
+  document.getElementById('ov-bi-msg').textContent=item.name+' — 🪙 '+item.price+' gp each'+(item.wt?' · '+item.wt+' lb':'');
   openOv('ov-buyitem');
 });
 
@@ -8421,35 +8468,63 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
   else return;
   var item=(P5.item==='__plusweapon__'&&P5.customItem)?P5.customItem:items[P5.item];
   if(!item)return;
-  if(P5.assetMode&&isAnimalAsset(item)){
-    var ownerVal=document.getElementById('ov-bi-sel').value||'';
+  var qty=Math.max(1,parseInt(document.getElementById('ov-bi-qty').value,10)||1);
+  var ownerVal=document.getElementById('ov-bi-sel').value||'';
+  if(!P5.assetMode){
+    var isStructuredOwner=ownerVal==='storage'||ownerVal.indexOf('building::')===0||ownerVal.indexOf('vehicle::')===0||ownerVal.indexOf('squad::')===0;
+    var ciCheck=parseInt(ownerVal,10);
+    if(!isStructuredOwner && (!S.party[ciCheck]||isNaN(ciCheck))){
+      alert('Choose a destination first.');
+      return;
+    }
+  }
+  var total=item.price*qty;
+  if(!goldSpend(total,'Purchased: '+item.name+' ×'+qty,'buy'))return;
+  if(P5.assetMode){
     var petName=(document.getElementById('ov-bi-petname').value||'').trim();
-    if(!goldSpend(item.price,'Purchased: '+item.name,'buy'))return;
     if(!S.partyAssets)S.partyAssets=[];
-    var meta={uid:newAssetUid(),customName:petName,ownerType:'',ownerRef:''};
-    if(ownerVal.indexOf('char::')===0){meta.ownerType='char';meta.ownerRef=ownerVal.slice(6);}
-    else if(ownerVal.indexOf('building::')===0){meta.ownerType='building';meta.ownerRef=ownerVal.slice(10);}
-    S.partyAssets.push({name:item.name,ic:item.ic,type:item.type,meta:meta});
-    logAdd('Purchased: '+(petName?petName+' ('+item.name+')':item.name)+' ('+item.price+' gp)','buy');
+    for(var aq=0;aq<qty;aq++){
+      var meta={uid:newAssetUid(),customName:(aq===0?petName:''),ownerType:'',ownerRef:''};
+      if(ownerVal.indexOf('char::')===0){meta.ownerType='char';meta.ownerRef=ownerVal.slice(6);}
+      else if(ownerVal.indexOf('building::')===0){meta.ownerType='building';meta.ownerRef=ownerVal.slice(10);}
+      else if(ownerVal.indexOf('squad::')===0){meta.ownerType='squad';meta.ownerRef=ownerVal.slice(7);}
+      else if(ownerVal.indexOf('vehicle::')===0){meta.ownerType='vehicle';meta.ownerRef=ownerVal.slice(9);}
+      S.partyAssets.push({name:item.name,ic:item.ic,type:item.type,meta:meta});
+    }
+    logAdd('Purchased: '+item.name+' ×'+qty+' ('+total+' gp)','buy');
     P5.item=null;P5.assetMode=false;P5.customItem=null;closeOv('ov-buyitem');save();renderParty();renderStore();window.scrollTo({top:0,behavior:'smooth'});
     return;
   }
-  var ci=parseInt(document.getElementById('ov-bi-sel').value);
+  var ci=parseInt(ownerVal,10);
   var c=S.party[ci];
   // Check encumbrance for gear items assigned to a character
   if(c&&item.wt&&wouldEncumber(c,item.name)){
     if(!confirm('⚠ '+c.name+' would become encumbered carrying this item ('+item.wt+' lb).\n\nSend to Franchise Storage instead?'))return;
-    if(!goldSpend(item.price,'Purchased: '+item.name+' → Franchise Storage','buy'))return;
     if(!S.franchiseStorage)S.franchiseStorage=[];
-    S.franchiseStorage.push(item.name);
-    logAdd(item.name+' → Franchise Storage (weight)','buy');
+    for(var si=0;si<qty;si++)S.franchiseStorage.push(item.name);
+    logAdd(item.name+' ×'+qty+' → Franchise Storage (weight)','buy');
     P5.item=null;P5.assetMode=false;P5.customItem=null;closeOv('ov-buyitem');save();renderParty();renderStore();window.scrollTo({top:0,behavior:'smooth'});
     return;
   }
-  if(!goldSpend(item.price,'Purchased: '+item.name,'buy'))return;
-  if(!S.party[ci].inv)S.party[ci].inv=[];
-  S.party[ci].inv.push(item.name);
-  logAdd(item.name+' → '+S.party[ci].name,'buy');
+  if(ownerVal==='storage'){
+    if(!S.franchiseStorage)S.franchiseStorage=[];
+    for(var ss=0;ss<qty;ss++)S.franchiseStorage.push(item.name);
+    logAdd(item.name+' ×'+qty+' → Franchise Storage','buy');
+  }else if(ownerVal.indexOf('building::')===0||ownerVal.indexOf('vehicle::')===0||ownerVal.indexOf('squad::')===0){
+    if(!S.partyAssets)S.partyAssets=[];
+    for(var sqi=0;sqi<qty;sqi++){
+      var smeta={uid:newAssetUid(),ownerType:'',ownerRef:''};
+      if(ownerVal.indexOf('building::')===0){smeta.ownerType='building';smeta.ownerRef=ownerVal.slice(10);}
+      else if(ownerVal.indexOf('vehicle::')===0){smeta.ownerType='vehicle';smeta.ownerRef=ownerVal.slice(9);}
+      else {smeta.ownerType='squad';smeta.ownerRef=ownerVal.slice(7);}
+      S.partyAssets.push({name:item.name,ic:item.ic||'📦',type:'supply',meta:smeta});
+    }
+    logAdd(item.name+' ×'+qty+' assigned as supply','buy');
+  }else{
+    if(!S.party[ci].inv)S.party[ci].inv=[];
+    for(var ii=0;ii<qty;ii++)S.party[ci].inv.push(item.name);
+    logAdd(item.name+' ×'+qty+' → '+S.party[ci].name,'buy');
+  }
   P5.item=null;P5.assetMode=false;P5.customItem=null;closeOv('ov-buyitem');save();renderParty();renderStore();window.scrollTo({top:0,behavior:'smooth'});
 });
 
