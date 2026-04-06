@@ -1708,7 +1708,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.435
+      Version 1.436
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Franchise-owned items and assets can now be sold back at half price
@@ -1733,6 +1733,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.436</strong> — Rolled back quest-assignment-level squad enforcement and moved squad requirement to Quest Map cycle activation: activating a cycle now requires picking an available squad (one squad can only be assigned to one cycle at a time), and if no squads are available the flow prompts squad creation with non-busy members preselected.</div>
         <div style="margin-bottom:9px"><strong>Version 1.435</strong> — Added collapse/expand controls for quest cycles in the Content Editor list; surfaced orphaned custom quests (missing set links) so they can be found again; renamed “Severe” action label to “Sever”; and ensured sell menu values never drop below 1 gp for expanded inventory items.</div>
         <div style="margin-bottom:9px"><strong>Version 1.434</strong> — Fixed hireling graduation so Level 1 graduates count as full adventurers for quest prerequisites; improved Content Editor save reliability/visibility; added capstone artifact assignment controls on Assets; refreshed exotic language pool to remove overlaps with now-standard language options.</div>
         <div style="margin-bottom:9px"><strong>Version 1.433</strong> — Reworked Content Editor CSV import/export to handle quest rows only (header = quest properties), while Cycle Rules and Gear remain managed in their existing in-app editor forms.</div>
@@ -2116,7 +2117,7 @@ button.squad-tag.squad-tag-active{
     <div class="frow" id="ov-q-squadrow" style="margin:0 0 8px">
       <label class="lbl" for="ov-q-squad">Squad</label>
       <select id="ov-q-squad">
-        <option value="">— Manual selection —</option>
+        <option value="">— Select squad —</option>
       </select>
     </div>
     <div id="ov-q-best" class="best-fit" style="display:none;margin-bottom:8px"></div>
@@ -2130,6 +2131,15 @@ button.squad-tag.squad-tag-active{
   <div class="mbtns">
     <button class="btn bink" id="ov-q-no">Cancel</button>
     <button class="btn bgn" id="ov-q-yes">⚔ Begin Quest</button>
+  </div>
+</div></div>
+
+<div class="ov" id="ov-q-nosquad" style="z-index:560"><div class="modal">
+  <h3>⚔ No Available Squad</h3>
+  <p id="ov-q-nosquad-msg">All squads are currently assigned. Create a new squad from available adventurers to continue.</p>
+  <div class="mbtns">
+    <button class="btn bink" id="ov-q-nosquad-no">Cancel</button>
+    <button class="btn bgn" id="ov-q-nosquad-yes">Create Squad</button>
   </div>
 </div></div>
 
@@ -2200,6 +2210,20 @@ button.squad-tag.squad-tag-active{
   </div>
   <div class="mbtns" style="margin-top:10px">
     <button class="btn bink" id="ov-cycle-map-close">Close</button>
+  </div>
+</div></div>
+<div class="ov" id="ov-cycle-squad"><div class="modal" style="max-width:420px">
+  <h3>⚔ Assign Squad to Cycle</h3>
+  <p id="ov-cycle-squad-msg" class="hint" style="margin-bottom:8px">Choose a squad to activate this cycle.</p>
+  <div class="frow" style="margin-bottom:8px">
+    <label class="lbl" for="ov-cycle-squad-select">Squad</label>
+    <select id="ov-cycle-squad-select">
+      <option value="">— Select squad —</option>
+    </select>
+  </div>
+  <div class="mbtns">
+    <button class="btn bink" id="ov-cycle-squad-no">Cancel</button>
+    <button class="btn bgn" id="ov-cycle-squad-yes">Activate Cycle</button>
   </div>
 </div></div>
 
@@ -3102,6 +3126,7 @@ function createDefaultState(){
     pendingQuests:[],
     downtimeJobs:[], // [{ci,type,target,startedAt,endsAt,durationMins}]
     questState:null,   // {cycleId, setId, cycleNum, revealed:[], done:[], pending:[], assigned:{}, grindPending:[]}
+    questCycleSquads:{}, // {setId:squadName}
     questCycles:[],    // [{cycleId, setId, completed:[], rewards:[]}]
     questLog:[],       // [{cycleId, questTitle, type, reward, franchiseCut, chars:[{name,cut,item}], completedAt}]
     settings:normalizeSettings(),
@@ -3612,6 +3637,53 @@ function activateQuestCycleSet(setId){
   save();
   renderAdv();
 }
+function cycleSquadMap(){
+  if(!S.questCycleSquads||typeof S.questCycleSquads!=='object')S.questCycleSquads={};
+  return S.questCycleSquads;
+}
+function assignedSquadForSet(setId){
+  return (cycleSquadMap()[setId]||'').trim();
+}
+function activeCycleSquadName(){
+  var qs=S.questState||{};
+  if(!qs.setId)return '';
+  return assignedSquadForSet(qs.setId);
+}
+function squadsAssignedToOtherCycles(setId){
+  var used={};
+  var map=cycleSquadMap();
+  Object.keys(map).forEach(function(k){
+    if(k===setId)return;
+    var nm=(map[k]||'').trim();
+    if(nm)used[nm]=true;
+  });
+  return used;
+}
+function availableSquadsForCycleActivation(setId){
+  var used=squadsAssignedToOtherCycles(setId);
+  return (S.squads||[]).filter(function(sq){return sq&&sq.name&&!used[sq.name];});
+}
+function openCycleSquadPicker(setId){
+  P4.cycleSetId=setId;
+  var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
+  var msg=document.getElementById('ov-cycle-squad-msg');
+  if(msg)msg.textContent='Choose a squad to activate '+(set?('"'+set.name+'"'):'this cycle')+'.';
+  var sel=document.getElementById('ov-cycle-squad-select');
+  var av=availableSquadsForCycleActivation(setId);
+  if(!av.length){
+    openNoSquadModal('cycle');
+    return;
+  }
+  var cur=assignedSquadForSet(setId);
+  var opts=['<option value="">— Select squad —</option>'];
+  av.forEach(function(sq){
+    opts.push('<option value="'+esc(sq.name)+'">'+esc('⚔ '+sq.name+' ('+((sq.memberIdxs||[]).length||0)+')')+'</option>');
+  });
+  sel.innerHTML=opts.join('');
+  if(cur&&av.some(function(sq){return sq.name===cur;}))sel.value=cur;
+  else sel.value='';
+  openOv('ov-cycle-squad');
+}
 function renderCycleMapCards(){
   var host=document.getElementById('ov-cycle-map-cards');
   if(!host)return;
@@ -3622,11 +3694,13 @@ function renderCycleMapCards(){
     var vis=st.visibility||'fully_visible';
     if(vis==='hidden'&&!st.ok)return;
     var title=(set.dndTier?('Tier '+set.dndTier+' · '):'')+set.name;
+    var squadName=assignedSquadForSet(set.id);
     var subtitle=st.ok?'Ready to launch from map.':(vis==='obscured'?'Prerequisite: '+cycleGateSummaryText(st):'Locked: '+cycleGateSummaryText(st));
     cards.push('<div class="enc-card" style="border-color:'+(st.ok?'var(--forest)':'var(--gold-dark)')+'">'+
       '<div class="etitle">'+esc(title)+'</div>'+
       '<div class="edesc">'+esc(set.theme||'')+'</div>'+
       '<div style="font-size:.72em;margin-top:4px;color:'+(st.ok?'var(--forest)':'var(--ink-light)')+'">'+esc(subtitle)+'</div>'+
+      (squadName?'<div style="font-size:.72em;color:var(--ink-light);margin-top:3px">Assigned squad: '+esc(squadName)+'</div>':'')+
       (st.ok?'<button class="btn bg sm" style="margin-top:7px" data-a="cycle-activate" data-setid="'+esc(set.id)+'">'+(activeSet&&activeSet.id===set.id?'✓ Active Cycle':'⚔ Activate Cycle')+'</button>':'')+
       '</div>');
   });
@@ -5669,12 +5743,19 @@ document.getElementById('ov-sq-del').addEventListener('click',function(){
 document.getElementById('ov-sq-yes').addEventListener('click',function(){
   var n=document.getElementById('ov-sq-name').value.trim();
   if(!n)return;
+  if((S.squads||[]).some(function(s,si){return s&&s.name===n&&si!==P3.sq;})){
+    alert('A squad with that name already exists. Choose a unique squad name.');
+    return;
+  }
   var ms=[];
   document.querySelectorAll('.sqcb:checked').forEach(function(cb){ms.push(parseInt(cb.value));});
   if(!S.squads)S.squads=[];
   if(P3.sq===null){S.squads.push({id:Date.now(),name:n,memberIdxs:ms});logAdd('Squad: "'+n+'"','hire');}
   else{S.squads[P3.sq].name=n;S.squads[P3.sq].memberIdxs=ms;}
   P3.sq=null;closeOv('ov-squad');save();renderParty();
+  if((document.getElementById('ov-q-nosquad').getAttribute('data-ctx')||'')==='cycle'&&P4.cycleSetId){
+    openCycleSquadPicker(P4.cycleSetId);
+  }
 });
 
 /* ── Party Stats Panel ── */
@@ -7313,7 +7394,7 @@ function fmtCountdown(ms){
 }
 
 /* ── Quest collect + XP ── */
-var P4={quest:null,grind:null,downtimeForfeit:null};
+var P4={quest:null,grind:null,downtimeForfeit:null,cycleSetId:null};
 
 // Distribute charPool among chars with weighted shares, minimum 1 gp each.
 // Returns {shares:[], unspent, franchiseDebit} where franchiseDebit is extra taken from franchise.
@@ -7580,11 +7661,26 @@ document.getElementById('ov-cycle-map-cards').addEventListener('click',function(
   if(!btn)return;
   var setId=btn.getAttribute('data-setid');
   if(!setId)return;
-  activateQuestCycleSet(setId);
-  renderCycleMapCards();
+  openCycleSquadPicker(setId);
 });
 document.getElementById('ov-cycle-map-close').addEventListener('click',function(){
   closeOv('ov-cycle-map');
+});
+document.getElementById('ov-cycle-squad-no').addEventListener('click',function(){
+  P4.cycleSetId=null;
+  closeOv('ov-cycle-squad');
+});
+document.getElementById('ov-cycle-squad-yes').addEventListener('click',function(){
+  var setId=P4.cycleSetId;
+  if(!setId)return;
+  var sel=(document.getElementById('ov-cycle-squad-select').value||'').trim();
+  if(!sel){alert('Select a squad to activate this cycle.');return;}
+  cycleSquadMap()[setId]=sel;
+  activateQuestCycleSet(setId);
+  closeOv('ov-cycle-squad');
+  P4.cycleSetId=null;
+  save();
+  renderCycleMapCards();
 });
 
 /* ═══════════════════════ RENDER ADV ═══════════════════════ */
@@ -7922,7 +8018,10 @@ document.getElementById('avcontent').addEventListener('click',function(e){
     document.getElementById('ov-q-title').textContent=gObj.title;
     document.getElementById('ov-q-desc').textContent=gObj.desc;
     populateQuestSquadPicker();
-    document.getElementById('ov-q-squad').value='';
+    var cycleSq1=activeCycleSquadName();
+    document.getElementById('ov-q-squad').value=cycleSq1;
+    document.getElementById('ov-q-squad').disabled=!!cycleSq1;
+    applyQuestSquadSelection(cycleSq1);
     document.getElementById('ov-q-dur-label').textContent=questDurationLabel(gObj);
     var qg2=document.getElementById('ov-q-gold');if(qg2)qg2.textContent=S.gold.toLocaleString();
     var pr=gObj.pre;
@@ -7985,7 +8084,10 @@ document.getElementById('avcontent').addEventListener('click',function(e){
   document.getElementById('ov-q-title').textContent=q2.title;
   document.getElementById('ov-q-desc').textContent=q2.desc;
   populateQuestSquadPicker();
-  document.getElementById('ov-q-squad').value='';
+  var cycleSq2=activeCycleSquadName();
+  document.getElementById('ov-q-squad').value=cycleSq2;
+  document.getElementById('ov-q-squad').disabled=!!cycleSq2;
+  applyQuestSquadSelection(cycleSq2);
   document.getElementById('ov-q-dur-label').textContent=questDurationLabel(q2);
   var qg=document.getElementById('ov-q-gold');if(qg)qg.textContent=S.gold.toLocaleString();
 
@@ -8067,21 +8169,62 @@ function applyQuestSquadSelection(squadName){
     }
   }
   document.querySelectorAll('#ov-q-chars .qcb').forEach(function(cb){
-    if(cb.disabled)return;
-    cb.checked=!!map[parseInt(cb.value,10)];
+    var ci=parseInt(cb.value,10);
+    if(squadName){
+      cb.checked=!!map[ci];
+      cb.disabled=true;
+    }else{
+      cb.disabled=false;
+    }
   });
   updateQuestModal();
+}
+function activeAssignedSquadNames(){
+  var used={};
+  var now=Date.now();
+  ((S.questState&&S.questState.pending)||[]).forEach(function(pq){
+    if((pq.doneAt||0)>now && pq.squadName)used[pq.squadName]=true;
+  });
+  ((S.questState&&S.questState.grindPending)||[]).forEach(function(gp){
+    if((gp.doneAt||0)>now && gp.squadName)used[gp.squadName]=true;
+  });
+  return used;
+}
+function availableSquadsForQuestAssignment(){
+  return (S.squads||[]).filter(function(sq){return sq&&sq.name;});
+}
+function openNoSquadModal(ctx){
+  var msg=document.getElementById('ov-q-nosquad-msg');
+  if(msg){
+    if(ctx==='cycle')msg.textContent='No squads are currently available for cycle activation. Create a new squad using adventurers who are not already on a quest.';
+    else msg.textContent='No squads are currently available for quest assignment. Create a new squad using adventurers who are not already on a quest.';
+  }
+  document.getElementById('ov-q-nosquad').setAttribute('data-ctx',ctx||'quest');
+  openOv('ov-q-nosquad');
+}
+function availableQuestSquadMemberCandidates(){
+  var busy={};
+  var now=Date.now();
+  ((S.questState&&S.questState.pending)||[]).forEach(function(pq){
+    if((pq.doneAt||0)>now)(pq.chars||[]).forEach(function(ci){busy[ci]=true;});
+  });
+  ((S.questState&&S.questState.grindPending)||[]).forEach(function(gp){
+    if((gp.doneAt||0)>now)(gp.chars||[]).forEach(function(ci){busy[ci]=true;});
+  });
+  return (S.party||[]).map(function(c,ci){return ci;}).filter(function(ci){return !busy[ci];});
 }
 function populateQuestSquadPicker(){
   var sel=document.getElementById('ov-q-squad');
   if(!sel)return;
   var cur=sel.value||'';
-  var opts=['<option value="">— Manual selection —</option>'];
-  (S.squads||[]).forEach(function(sq){
+  var opts=['<option value="">— Select squad —</option>'];
+  var av=availableSquadsForQuestAssignment();
+  av.forEach(function(sq){
     opts.push('<option value="'+esc(sq.name)+'">'+esc('⚔ '+sq.name+' ('+((sq.memberIdxs||[]).length||0)+')')+'</option>');
   });
   sel.innerHTML=opts.join('');
-  if(cur&&(S.squads||[]).some(function(sq){return sq.name===cur;}))sel.value=cur;
+  if(cur&&av.some(function(sq){return sq.name===cur;}))sel.value=cur;
+  if(!av.length)openNoSquadModal('quest');
 }
 
 
@@ -8222,6 +8365,7 @@ function renderQuestAssignmentList(extraChecked){
 
 function updateQuestModal(){
   var chars=getQuestChars();
+  var beginBtn=document.getElementById('ov-q-yes');
   var detailEl=document.getElementById('ov-q-detailtext');
   if(detailEl)detailEl.innerHTML='⏳ Locked for <span id="ov-q-dur-label">'+questDurationLabel(P4.grind!==null ? (GRIND.filter(function(g){return g.id===P4.grind;})[0]||'') : (P4.quest!==null ? (activeQuestSet().quests[P4.quest]||'') : ''))+'</span> · 90% franchise, 10% split by level &amp; expertise';
   if(P4.grind!==null){
@@ -8238,6 +8382,7 @@ function updateQuestModal(){
     if(missing3.length)issues3.push('Missing: '+missing3.join('; ')+'. Reward reduced.');
     if(issues3.length){unmet3.style.display='block';unmet3.textContent='⚠ '+issues3.join(' ');}
     else unmet3.style.display='none';
+    if(beginBtn)beginBtn.disabled=issues3.length>0;
     return;
   }
   if(P4.quest===null)return;
@@ -8251,9 +8396,10 @@ function updateQuestModal(){
   var issues=[];
   if(!roster.ok&&roster.msg)issues.push(roster.msg);
   if(hardIssues.length)issues=issues.concat(hardIssues);
-  if(missing.length)issues.push('Missing: '+missing.join('; ')+'. Can still complete — bonus reduced.');
+  if(missing.length)issues.push('Missing: '+missing.join('; ')+'.');
   if(issues.length){unmet.style.display='block';unmet.textContent='⚠ '+issues.join(' ');}
   else unmet.style.display='none';
+  if(beginBtn)beginBtn.disabled=issues.length>0;
 }
 
 document.getElementById('ov-q-chars').addEventListener('change',updateQuestModal);
@@ -8317,6 +8463,24 @@ document.getElementById('ov-q-no').addEventListener('click',function(){
   questHirePanel={open:false,reqType:null,reqValue:null,candidates:[],rolled:false};
   closeOv('ov-quest');
 });
+document.getElementById('ov-q-nosquad-no').addEventListener('click',function(){
+  closeOv('ov-q-nosquad');
+});
+document.getElementById('ov-q-nosquad-yes').addEventListener('click',function(){
+  var ctx=document.getElementById('ov-q-nosquad').getAttribute('data-ctx')||'quest';
+  closeOv('ov-q-nosquad');
+  var freeMembers=availableQuestSquadMemberCandidates();
+  P3.sq=null;
+  document.getElementById('ov-sq-title').textContent='⚔ New Squad';
+  document.getElementById('ov-sq-name').value='Quest Team '+((S.squads||[]).length+1);
+  document.getElementById('ov-sq-del').style.display='none';
+  document.getElementById('ov-sq-members').innerHTML=S.party.map(function(c,ci2){
+    var chk=freeMembers.indexOf(ci2)!==-1?'checked':'';
+    var busyTag=freeMembers.indexOf(ci2)===-1?' <span style="font-size:.78em;color:var(--crimson)">⚔ busy</span>':'';
+    return '<label><input type="checkbox" class="sqcb" value="'+ci2+'" '+chk+'> '+esc(c.name)+' ('+esc(c.cls)+')'+busyTag+'</label>';
+  }).join('');
+  openOv('ov-squad');
+});
 function activeDowntimeJobsForChars(chars){
   ensureDowntimeState();
   var now=Date.now();
@@ -8354,7 +8518,27 @@ function forfeitDowntimeJobs(jobs){
   });
 }
 function confirmQuestAssignment(forceApproveDowntimeForfeit){
-  var chars=getQuestChars();
+  var squadName=activeCycleSquadName();
+  var squadObj=(S.squads||[]).filter(function(s){return s.name===squadName;})[0];
+  if(!squadObj||!(squadObj.memberIdxs||[]).length){
+    alert('Active cycle squad is missing or empty. Activate the cycle from Quest Map and choose a squad first.');
+    openCycleSquadPicker((S.questState&&S.questState.setId)||'');
+    return;
+  }
+  var chars=(squadObj.memberIdxs||[]).slice();
+  var busyNow={};
+  var nowBusy=Date.now();
+  ((S.questState&&S.questState.pending)||[]).forEach(function(pq){
+    if((pq.doneAt||0)>nowBusy)(pq.chars||[]).forEach(function(ci){busyNow[ci]=true;});
+  });
+  ((S.questState&&S.questState.grindPending)||[]).forEach(function(gp){
+    if((gp.doneAt||0)>nowBusy)(gp.chars||[]).forEach(function(ci){busyNow[ci]=true;});
+  });
+  var busyMembers=chars.filter(function(ci){return busyNow[ci];});
+  if(busyMembers.length){
+    alert('Some members of '+squadName+' are already on active assignments. Wait for completion or edit the cycle squad.');
+    return;
+  }
   var dtJobs=forceApproveDowntimeForfeit?(P4.downtimeForfeit||activeDowntimeJobsForChars(chars)):activeDowntimeJobsForChars(chars);
   if(dtJobs.length&&!forceApproveDowntimeForfeit){
     P4.downtimeForfeit=dtJobs;
@@ -8374,7 +8558,7 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit){
     if(!roster2.ok){alert('⚠ '+roster2.msg);return;}
     var reward2=grindCalcReward(gObj2);
     if(!S.questState.grindPending)S.questState.grindPending=[];
-    S.questState.grindPending.push({id:gObj2.id,title:gObj2.title,chars:chars,reward:reward2,doneAt:Date.now()+questDuration(gObj2)});
+    S.questState.grindPending.push({id:gObj2.id,title:gObj2.title,chars:chars,squadName:squadName,reward:reward2,doneAt:Date.now()+questDuration(gObj2)});
     var cn2=chars.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', ')||'unassigned';
     logAdd('Grind: "'+gObj2.title+'" started ('+cn2+') — '+reward2+' gp in '+questDurationLabel(gObj2),'adv');
     saveActiveSetProgress();
@@ -8388,16 +8572,18 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit){
   var pr=q.pre;
   var reward=questCalcReward(q,chars);
   var rosterMain=regularQuestRosterStatus(chars);
-  var hardIssuesMain=questHardGateIssues(q,chars,document.getElementById('ov-q-squad').value||'');
+  var hardIssuesMain=questHardGateIssues(q,chars,squadName);
+  var missingMain=questPrereqCheck(q,chars);
   if(!rosterMain.ok){alert('⚠ '+rosterMain.msg);return;}
   if(hardIssuesMain.length){alert('⚠ '+hardIssuesMain.join('\n'));return;}
+  if(missingMain.length){alert('⚠ Missing prerequisites:\n'+missingMain.join('\n'));return;}
   if(pr.gold&&pr.gold>0){if(!goldSpend(pr.gold,'Gold invest: "'+q.title+'"','adv'))return;}
   var qs=S.questState;
   if(!qs.assigned)qs.assigned={};
   qs.assigned[P4.quest]=chars;
   if(!qs.pending)qs.pending=[];
   var doneAt=Date.now()+questDuration(q);
-  qs.pending.push({idx:P4.quest,chars:chars,reward:reward,doneAt:doneAt});
+  qs.pending.push({idx:P4.quest,chars:chars,squadName:squadName,reward:reward,doneAt:doneAt});
   var cn=chars.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', ')||'unassigned';
   logAdd('Quest started: "'+q.title+'" ('+cn+') — '+reward+' gp in '+questDurationLabel(q),'adv');
   saveActiveSetProgress();
@@ -9185,7 +9371,8 @@ function sbPush(manual){
         _taskGroups:S.taskGroups||[],
         _partyAssetsBackup:S.partyAssets||[],
         _archivedBackup:S.archived||[],
-        _downtimeJobs:S.downtimeJobs||[]
+        _downtimeJobs:S.downtimeJobs||[],
+        _questStateBackup:S.questState||null
       }),
       last_sync:new Date().toISOString()
     }]);
@@ -9338,6 +9525,7 @@ function sbPull(manual){
     var hadFranchiseRow=!!(franchise&&franchise[0]);
     var backupPartyAssets=[];
     var backupArchived=[];
+    var backupQuestState=null;
     if(hadFranchiseRow){
       S.gold=franchise[0].gold||0;
       var rawSettings=franchise[0].settings||{};
@@ -9347,6 +9535,7 @@ function sbPull(manual){
       backupPartyAssets=rawSettings._partyAssetsBackup||[];
       backupArchived=rawSettings._archivedBackup||[];
       S.downtimeJobs=rawSettings._downtimeJobs||[];
+      backupQuestState=rawSettings._questStateBackup||null;
       var cleanSettings=Object.assign({},rawSettings);
       delete cleanSettings._franchiseStorage;
       delete cleanSettings._questLog;
@@ -9354,6 +9543,7 @@ function sbPull(manual){
       delete cleanSettings._partyAssetsBackup;
       delete cleanSettings._archivedBackup;
       delete cleanSettings._downtimeJobs;
+      delete cleanSettings._questStateBackup;
       S.settings=normalizeSettings(cleanSettings);
     }
     if(party&&party.length){
@@ -9453,7 +9643,7 @@ function sbPull(manual){
         done:qc.done||[],
         pending:(qc.pending||[]).map(function(pq){
           return {idx:parseInt(pq.idx),chars:(pq.chars||[]).map(function(c){return parseInt(c);}),
-            reward:parseInt(pq.reward)||0,doneAt:parseInt(pq.doneAt)||0};
+            squadName:pq.squadName||'',reward:parseInt(pq.reward)||0,doneAt:parseInt(pq.doneAt)||0};
         }),
         assigned:(function(){
           var out={};
@@ -9465,13 +9655,34 @@ function sbPull(manual){
         }()),
         grindPending:(asgn._grindPending||[]).map(function(gp){
           var r=parseInt(gp.reward);
-          return {id:gp.id,title:gp.title,chars:(gp.chars||[]).map(function(c){return parseInt(c);}),reward:isNaN(r)||r<=0?20:r,doneAt:parseInt(gp.doneAt)||0};
+          return {id:gp.id,title:gp.title,squadName:gp.squadName||'',chars:(gp.chars||[]).map(function(c){return parseInt(c);}),reward:isNaN(r)||r<=0?20:r,doneAt:parseInt(gp.doneAt)||0};
         }),
         repeatCounts:asgn._repeatCounts||{},
         popupShown:true,
         partyLvAtStart:qc.party_lv_at_start||0
       };
       console.log('[QuestPull] restored pending:',JSON.stringify(S.questState.pending));
+    } else if(backupQuestState){
+      S.questState=Object.assign({},S.questState||{},{
+        cycleId:backupQuestState.cycleId||cycleId(),
+        setId:backupQuestState.setId||((S.questState&&S.questState.setId)||'root-and-branch'),
+        cycleNum:backupQuestState.cycleNum||0,
+        revealed:backupQuestState.revealed||[],
+        done:backupQuestState.done||[],
+        pending:(backupQuestState.pending||[]).map(function(pq){
+          return {idx:parseInt(pq.idx),chars:(pq.chars||[]).map(function(c){return parseInt(c);}),
+            squadName:pq.squadName||'',reward:parseInt(pq.reward)||0,doneAt:parseInt(pq.doneAt)||0};
+        }),
+        assigned:backupQuestState.assigned||{},
+        grindPending:(backupQuestState.grindPending||[]).map(function(gp){
+          var r=parseInt(gp.reward);
+          return {id:gp.id,title:gp.title,squadName:gp.squadName||'',chars:(gp.chars||[]).map(function(c){return parseInt(c);}),reward:isNaN(r)||r<=0?20:r,doneAt:parseInt(gp.doneAt)||0};
+        }),
+        repeatCounts:backupQuestState.repeatCounts||{},
+        popupShown:true,
+        partyLvAtStart:backupQuestState.partyLvAtStart||0
+      });
+      logAdd('Recovered quest assignment progress from franchise settings backup.','adv');
     }
     if(log&&log.length){
       S.log=log.map(function(e){return {_sbId:e.id,msg:e.msg,type:e.type,date:e.entry_date,time:e.entry_time};});
