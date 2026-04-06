@@ -1872,6 +1872,16 @@ button.squad-tag.squad-tag-active{
     <button class="btn bpur sm full" id="btn-ff-quests" style="margin-top:6px">🧪 Fast-Forward In-Progress Quests</button>
     <button class="btn bink sm full" id="btn-jump-cycle2" style="margin-top:6px">🧪 Jump to Quest Cycle 2 (Rising Reputation)</button>
   </div>
+  <div class="set-sec" id="dev-d20-sec">
+    <div class="set-sec-ttl">🎲 Dev Rolling Table</div>
+    <div class="hint" style="margin-bottom:6px">Two-second icosahedron roll simulation with high-speed entry, edge bounces, and settling before result.</div>
+    <svg id="dev-d20-svg" viewBox="0 0 360 220" style="width:100%;height:170px;display:block;margin:0 auto 4px">
+      <rect x="2" y="2" width="356" height="216" rx="12" fill="#161616" stroke="rgba(201,146,42,.45)" stroke-width="2"></rect>
+      <g data-d20-layer></g>
+    </svg>
+    <div class="hint" id="dev-d20-out" style="margin-bottom:6px">Press Roll 1d20.</div>
+    <button class="btn bpur sm full" id="btn-roll-d20">Roll 1d20</button>
+  </div>
   <div class="set-sec">
     <div class="set-sec-ttl">🎲 Recruitment Names</div>
     <div class="set-row" style="align-items:flex-start">
@@ -2096,7 +2106,10 @@ button.squad-tag.squad-tag-active{
 </div></div>
 <div class="ov" id="ov-downtime-roll"><div class="modal" style="max-width:360px;text-align:center">
   <h3>🎲 Downtime Roll</h3>
-  <div id="ov-dtr-die" style="font-family:'Cinzel',serif;font-size:1.6em;color:var(--gold-dark);margin:8px 0">🎲</div>
+  <svg id="ov-dtr-svg" viewBox="0 0 360 220" style="width:100%;height:170px;display:block;margin:6px auto 2px">
+    <rect x="2" y="2" width="356" height="216" rx="12" fill="#161616" stroke="rgba(201,146,42,.45)" stroke-width="2"></rect>
+    <g data-d20-layer></g>
+  </svg>
   <div id="ov-dtr-body" class="hint" style="font-size:.9em;margin-top:2px">Rolling...</div>
   <div class="mbtns" style="justify-content:center">
     <button class="btn bink" id="ov-dtr-close" style="display:none">Close</button>
@@ -4284,33 +4297,107 @@ function startDowntimeWatcher(){
     if(processCompletedDowntimeJobs())return;
   },1000);
 }
+function d20WireframeData(){
+  if(window.__d20WF)return window.__d20WF;
+  var phi=(1+Math.sqrt(5))/2;
+  var raw=[
+    [-1, phi,0],[1, phi,0],[-1,-phi,0],[1,-phi,0],
+    [0,-1, phi],[0,1, phi],[0,-1,-phi],[0,1,-phi],
+    [ phi,0,-1],[ phi,0,1],[-phi,0,-1],[-phi,0,1]
+  ];
+  var verts=raw.map(function(v){
+    var m=Math.sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2])||1;
+    return [v[0]/m,v[1]/m,v[2]/m];
+  });
+  var pairs=[];
+  for(var i=0;i<verts.length;i++)for(var j=i+1;j<verts.length;j++){
+    var dx=verts[i][0]-verts[j][0],dy=verts[i][1]-verts[j][1],dz=verts[i][2]-verts[j][2];
+    pairs.push({i:i,j:j,d:Math.sqrt(dx*dx+dy*dy+dz*dz)});
+  }
+  pairs.sort(function(a,b){return a.d-b.d;});
+  var edgeLen=pairs[0].d;
+  var eps=0.001;
+  var edges=pairs.filter(function(p){return Math.abs(p.d-edgeLen)<eps;}).map(function(p){return [p.i,p.j];});
+  window.__d20WF={verts:verts,edges:edges};
+  return window.__d20WF;
+}
+function runD20Animation(svgEl,durationMs,onDone){
+  if(!svgEl){if(onDone)onDone(1+rndInt(0,19));return;}
+  durationMs=Math.max(500,parseInt(durationMs,10)||2000);
+  var layer=svgEl.querySelector('[data-d20-layer]');
+  if(!layer){if(onDone)onDone(1+rndInt(0,19));return;}
+  var d20=d20WireframeData(),verts=d20.verts,edges=d20.edges;
+  var W=360,H=220,floorY=198,radius=34,perspective=240,scale=24;
+  var st={x:50,y:40,vx:13.5,vy:8.4,bounce:0.72,drag:0.992,floorFriction:0.965,
+    ax:0.045,ay:0.08,az:0.03,spinDrag:0.987,rx:0.2,ry:-0.4,rz:0.1};
+  var start=performance.now();
+  function rot(v,rx,ry,rz){
+    var x=v[0],y=v[1],z=v[2],c=Math.cos(rx),s=Math.sin(rx),y1=y*c-z*s,z1=y*s+z*c;
+    c=Math.cos(ry);s=Math.sin(ry);var x2=x*c+z1*s,z2=-x*s+z1*c;
+    c=Math.cos(rz);s=Math.sin(rz);var x3=x2*c-y1*s,y3=x2*s+y1*c;
+    return [x3,y3,z2];
+  }
+  function draw(){
+    var transformed=verts.map(function(v){return rot(v,st.rx,st.ry,st.rz);});
+    var pts=transformed.map(function(v){
+      var p=perspective/(perspective-v[2]*scale);
+      return [v[0]*scale*p+st.x,v[1]*scale*p+st.y,v[2]];
+    });
+    var edgeDraw=edges.map(function(e){
+      return {a:e[0],b:e[1],zAvg:(pts[e[0]][2]+pts[e[1]][2])/2};
+    }).sort(function(a,b){return a.zAvg-b.zAvg;});
+    var html='<circle cx="'+st.x.toFixed(2)+'" cy="'+st.y.toFixed(2)+'" r="8" fill="rgba(255,209,102,0.18)"></circle>';
+    edgeDraw.forEach(function(e){
+      var A=pts[e.a],B=pts[e.b];
+      var alpha=0.25+Math.max(0,Math.min(1,(e.zAvg+1.2)/2.4))*0.75;
+      var w=1+alpha*1.2;
+      html+='<line x1="'+A[0].toFixed(2)+'" y1="'+A[1].toFixed(2)+'" x2="'+B[0].toFixed(2)+'" y2="'+B[1].toFixed(2)+'" stroke="#ffd166" stroke-width="'+w.toFixed(2)+'" opacity="'+alpha.toFixed(3)+'"></line>';
+    });
+    layer.innerHTML=html;
+  }
+  function frame(ts){
+    var elapsed=ts-start;
+    var remaining=Math.max(0,durationMs-elapsed);
+    st.x+=st.vx;st.y+=st.vy;
+    st.rx+=st.ax;st.ry+=st.ay;st.rz+=st.az;
+    st.vx*=st.drag;st.vy*=st.drag;st.ax*=st.spinDrag;st.ay*=st.spinDrag;st.az*=st.spinDrag;
+    if(st.x<radius){st.x=radius;st.vx=Math.abs(st.vx)*st.bounce;st.ay*=0.95;}
+    if(st.x>W-radius){st.x=W-radius;st.vx=-Math.abs(st.vx)*st.bounce;st.ay*=0.95;}
+    if(st.y<radius){st.y=radius;st.vy=Math.abs(st.vy)*st.bounce;st.ax*=0.95;}
+    if(st.y>floorY-radius){st.y=floorY-radius;st.vy=-Math.abs(st.vy)*st.bounce;st.vx*=st.floorFriction;}
+    if(remaining<650){
+      st.vx*=0.90;st.vy*=0.90;st.ax*=0.92;st.ay*=0.92;st.az*=0.92;
+      st.vx+=(180-st.x)*0.0022;st.vy+=(102-st.y)*0.0022;
+    }
+    draw();
+    if(elapsed>=durationMs){
+      var roll=1+rndInt(0,19);
+      if(onDone)onDone(roll);
+      return;
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
 function showDowntimeRollModal(payload){
-  var dieEl=document.getElementById('ov-dtr-die');
+  var svgEl=document.getElementById('ov-dtr-svg');
   var bodyEl=document.getElementById('ov-dtr-body');
   var closeBtn=document.getElementById('ov-dtr-close');
-  if(!dieEl||!bodyEl||!closeBtn){
+  if(!svgEl||!bodyEl||!closeBtn){
     alert(payload.summary);
     return;
   }
   closeBtn.style.display='none';
-  dieEl.textContent='🎲';
   bodyEl.textContent='Rolling...';
   openOv('ov-downtime-roll');
-  var ticks=0;
-  var timer=setInterval(function(){
-    ticks++;
-    dieEl.textContent='d20: '+(1+rndInt(0,19));
-    if(ticks>=10){
-      clearInterval(timer);
-      dieEl.textContent='d20: '+payload.roll;
-      bodyEl.innerHTML=
-        '<div><strong>'+esc(payload.track)+'</strong></div>'+
-        '<div style="margin-top:4px">Modifier: '+(payload.mod>=0?'+':'-')+Math.abs(payload.mod)+'</div>'+
-        '<div>Total: <strong>'+payload.total+'</strong> · Progress: <strong>+'+payload.gain+'</strong></div>'+
-        '<div style="margin-top:6px">'+esc(payload.summary)+'</div>';
-      closeBtn.style.display='';
-    }
-  },120);
+  runD20Animation(svgEl,2000,function(){
+    bodyEl.innerHTML=
+      '<div><strong>'+esc(payload.track)+'</strong></div>'+
+      '<div style="margin-top:4px">Roll: <strong>'+payload.roll+'</strong> · Modifier: '+(payload.mod>=0?'+':'-')+Math.abs(payload.mod)+'</div>'+
+      '<div>Total: <strong>'+payload.total+'</strong> · Progress: <strong>+'+payload.gain+'</strong></div>'+
+      '<div style="margin-top:6px">'+esc(payload.summary)+'</div>';
+    closeBtn.style.display='';
+  });
 }
 function runDowntimeCompletion(job){
   if(!job)return;
@@ -7958,6 +8045,7 @@ function applyDevModeAccess(){
     target.style.display=dev?'':'none';
   }
   setSectionVisibility('btn-save-testmode', true);
+  setSectionVisibility('dev-d20-sec', true);
   setSectionVisibility('btn-open-editor', true);
   setSectionVisibility('btn-apply-milestone', true);
   setSectionVisibility('btn-savemorn', true);
@@ -8026,6 +8114,15 @@ document.getElementById('btn-save-testmode').addEventListener('click',function()
   S.settings.testQuestMins=sel?parseInt(sel.value)||0:0;
   if(S.settings.testQuestMins===1)S.gold=310;
   save();alert('Test mode saved!');
+});
+document.getElementById('btn-roll-d20').addEventListener('click',function(){
+  if(!isDevModeActive()){alert('Developer mode only. Enable it in Settings.');return;}
+  var out=document.getElementById('dev-d20-out');
+  var svg=document.getElementById('dev-d20-svg');
+  if(out)out.textContent='Rolling…';
+  runD20Animation(svg,2000,function(roll){
+    if(out)out.textContent='Result: '+roll;
+  });
 });
 document.getElementById('btn-ff-quests').addEventListener('click',function(){
   if(!isDevModeActive()){alert('Developer mode only. Enable it in Settings.');return;}
