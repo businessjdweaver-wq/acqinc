@@ -10766,7 +10766,7 @@ function mergeCustomContent(){
   allVehicles.forEach(function(v){
     var idx=-1;
     for(var vi=0;vi<VEHICLES.length;vi++){if(VEHICLES[vi].name===v.name){idx=vi;break;}}
-    var payload=Object.assign({},v,{_custom:!!v._editable,_dbContent:true});
+    var payload=Object.assign({},v,{_custom:!!(v._editable||v._custom),_dbContent:true});
     if(v._deleted){if(idx>=0)VEHICLES.splice(idx,1);}
     else if(idx>=0)VEHICLES[idx]=Object.assign({},VEHICLES[idx],payload);
     else VEHICLES.push(payload);
@@ -10780,7 +10780,7 @@ function mergeCustomContent(){
   allBuildings.forEach(function(b){
     var idx=-1;
     for(var bi=0;bi<BUILDINGS.length;bi++){if(BUILDINGS[bi].name===b.name){idx=bi;break;}}
-    var payload=Object.assign({},b,{_custom:!!b._editable,_dbContent:true});
+    var payload=Object.assign({},b,{_custom:!!(b._editable||b._custom),_dbContent:true});
     if(b._deleted){if(idx>=0)BUILDINGS.splice(idx,1);}
     else if(idx>=0)BUILDINGS[idx]=Object.assign({},BUILDINGS[idx],payload);
     else BUILDINGS.push(payload);
@@ -10794,7 +10794,7 @@ function mergeCustomContent(){
   allPets.forEach(function(p){
     var idx=-1;
     for(var pi=0;pi<PETS.length;pi++){if(PETS[pi].name===p.name){idx=pi;break;}}
-    var payload=Object.assign({},p,{_custom:!!p._editable,_dbContent:true});
+    var payload=Object.assign({},p,{_custom:!!(p._editable||p._custom),_dbContent:true});
     if(p._deleted){if(idx>=0)PETS.splice(idx,1);}
     else if(idx>=0)PETS[idx]=Object.assign({},PETS[idx],payload);
     else PETS.push(payload);
@@ -11849,48 +11849,49 @@ function edShowAssetForm(){
 
     // Determine which custom key to save to based on selected category
     var saveKey=cat==='vehicle'?'_customVehicles':cat==='building'?'_customBuildings':'_customPets';
-    var saveGetter=cat==='vehicle'?getCustomVehicles:cat==='building'?getCustomBuildings:getCustomPets;
     var asScope=edFormScope();
 
-    // If category changed, remove from old category first
+    // If category changed, remove from old list first
     if(cat!==akey&&!isNew){
-      var oldArr=getterFn().filter(function(x){return x.name!==aname;});
+      var oldArr=contentItemsForScope(asScope,customKey).filter(function(x){return x.name!==aname;});
       saveCustom(customKey,oldArr,asScope);
     }
 
-    var arr=saveGetter();
-    var oldName=isNew?null:aname;
-    if(!isNew&&cat===akey){arr=arr.map(function(x){return x.name===oldName?newItem:x;});}
-    else{
+    // Build updated array for the destination category
+    var arr=contentItemsForScope(asScope,saveKey);
+    if(!isNew&&cat===akey){
+      var replaced=false;
+      arr=arr.map(function(x){if(x.name===aname){replaced=true;return newItem;}return x;});
+      if(!replaced)arr.push(newItem);
+    } else {
       arr=arr.filter(function(x){return x.name!==name;});
       arr.push(newItem);
     }
-    var afterSave=function(){
+    saveCustom(saveKey,arr,asScope).then(function(){
       mergeCustomContent();
       edScopeFlash();
       edSelected={type:'asset',name:name,assetKey:cat};
       edRenderList();
-    };
-    var result=saveCustom(saveKey,arr,asScope);
-    if(result&&typeof result.then==='function'){result.then(afterSave);}else{afterSave();}
+    }).catch(function(err){
+      alert('Asset save failed: '+(err&&err.message?err.message:String(err)));
+    });
   });
 
   if(!isNew){
     document.getElementById('ef-adelete').addEventListener('click',function(){
       var typed=prompt('Type DELETE to confirm removing "'+a.name+'" '+(isBuiltin?'(built-in, will be overridden)':'')+'.');
       if(typed!=='DELETE'){alert('Cancelled — you must type DELETE exactly.');return;}
+      var delScope=edFormScope();
+      var afterDel=function(){mergeCustomContent();edSelected=null;edRenderList();edShowPlaceholder();};
       if(isBuiltin){
-        // For built-ins, save a tombstone that overrides the built-in entry
+        // Save a tombstone so mergeCustomContent removes the built-in
         var tombstone=Object.assign({},a,{_custom:true,_deleted:true});
-        var arr2=getterFn().filter(function(x){return x.name!==aname;});
+        var arr2=contentItemsForScope(delScope,customKey).filter(function(x){return x.name!==aname;});
         arr2.push(tombstone);
-        var delResult=saveCustom(customKey,arr2,edFormScope());
-        var afterDel=function(){mergeCustomContent();edSelected=null;edRenderList();edShowPlaceholder();};
-        if(delResult&&typeof delResult.then==='function'){delResult.then(afterDel);}else{afterDel();}
+        saveCustom(customKey,arr2,delScope).then(afterDel).catch(afterDel);
       } else {
-        var delResult=saveCustom(customKey,getterFn().filter(function(x){return x.name!==aname;}),edFormScope());
-        var afterDel=function(){mergeCustomContent();edSelected=null;edRenderList();edShowPlaceholder();};
-        if(delResult&&typeof delResult.then==='function'){delResult.then(afterDel);}else{afterDel();}
+        var arr2=contentItemsForScope(delScope,customKey).filter(function(x){return x.name!==aname;});
+        saveCustom(customKey,arr2,delScope).then(afterDel).catch(afterDel);
       }
     });
   }
