@@ -2039,6 +2039,40 @@ button.squad-tag.squad-tag-active{
   </div>
 </div></div>
 
+<div class="ov" id="ov-downtime"><div class="modal">
+  <h3>🕯 Downtime Assignment</h3>
+  <p>Choose a downtime activity for "<span id="ov-dt-name"></span>" and set when it should complete.</p>
+  <div class="frow">
+    <label class="lbl" for="ov-dt-activity">Activity</label>
+    <select id="ov-dt-activity"></select>
+  </div>
+  <div class="frow">
+    <label class="lbl" for="ov-dt-target">Focus</label>
+    <select id="ov-dt-target"></select>
+  </div>
+  <div class="frow">
+    <label class="lbl">Quick Duration</label>
+    <div id="ov-dt-pills" style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn bink sm" type="button" data-dt-min="60">1h</button>
+      <button class="btn bink sm" type="button" data-dt-min="240">4h</button>
+      <button class="btn bink sm" type="button" data-dt-min="480">8h</button>
+      <button class="btn bink sm" type="button" data-dt-min="720">12h</button>
+      <button class="btn bink sm" type="button" data-dt-min="1440">24h</button>
+    </div>
+  </div>
+  <div class="frow">
+    <label class="lbl" for="ov-dt-dt">End Date / Time</label>
+    <div style="flex:1">
+      <input type="datetime-local" id="ov-dt-dt" step="60" style="width:100%">
+      <div class="hint">At completion, a visible dice roll determines progress gained.</div>
+    </div>
+  </div>
+  <div class="mbtns">
+    <button class="btn bink" type="button" id="ov-dt-no">Cancel</button>
+    <button class="btn bpur" type="button" id="ov-dt-yes">🕯 Start Downtime</button>
+  </div>
+</div></div>
+
 <div class="ov" id="ov-grpdefer"><div class="modal">
   <h3>🕐 Defer Group</h3>
   <p>Defer all tasks in "<span id="ov-gd-name"></span>" until a set time.</p>
@@ -4127,6 +4161,7 @@ var DOWNTIME_OPTIONS=[
   {id:'contacts',label:'Network for Contacts',durations:[60,240,480]},
   {id:'intel',label:'Research Rumors',durations:[60,240,480]}
 ];
+var DOWNTIME_PENDING={ci:null,type:'skill',target:'',endsAt:0};
 function ensureDowntimeState(){
   if(!S.downtimeJobs)S.downtimeJobs=[];
   if(!S.settings)S.settings={};
@@ -4224,35 +4259,72 @@ function startDowntimeForChar(ci){
   if(!c)return;
   if(questBusyForChar(ci)){alert(c.name+' is currently on a quest.');return;}
   if(downtimeJobForChar(ci)){alert(c.name+' already has active downtime.');return;}
-  var choices=DOWNTIME_OPTIONS.map(function(o,idx){return (idx+1)+') '+o.label;}).join('\\n');
-  var pickRaw=prompt('Choose downtime activity for '+c.name+':\\n\\n'+choices+'\\n\\nEnter number:','1');
-  if(pickRaw===null)return;
-  var oi=Math.max(1,Math.min(DOWNTIME_OPTIONS.length,parseInt(pickRaw,10)||1))-1;
-  var opt=DOWNTIME_OPTIONS[oi];
-  var target='core';
-  if(opt.id==='skill'){
-    var skillPool=(DND.skills||[]).filter(function(s){return (c.skills||[]).indexOf(s)===-1;});
-    if(!skillPool.length){alert(c.name+' already knows all available skills.');return;}
-    var list=skillPool.slice(0,12).map(function(s,idx){return (idx+1)+') '+s;}).join('\\n');
-    var sr=prompt('Select skill to study:\\n\\n'+list+'\\n\\nEnter number:','1');
-    if(sr===null)return;
-    target=skillPool[Math.max(1,Math.min(skillPool.length,parseInt(sr,10)||1))-1];
-  }else if(opt.id==='language'){
-    var langPool=(DND.lang||[]).filter(function(l){return (c.lang||[]).indexOf(l)===-1;});
-    if(!langPool.length){alert(c.name+' already knows all available languages.');return;}
-    var ll=langPool.slice(0,12).map(function(l,idx){return (idx+1)+') '+l;}).join('\\n');
-    var lr=prompt('Select language to study:\\n\\n'+ll+'\\n\\nEnter number:','1');
-    if(lr===null)return;
-    target=langPool[Math.max(1,Math.min(langPool.length,parseInt(lr,10)||1))-1];
+  DOWNTIME_PENDING={ci:ci,type:'skill',target:'',endsAt:Date.now()+240*60000};
+  renderDowntimeModal();
+  openOv('ov-downtime');
+}
+function getDowntimeTargetOptions(c,type){
+  if(type==='skill')return (DND.skills||[]).filter(function(s){return (c.skills||[]).indexOf(s)===-1;});
+  if(type==='language')return (DND.lang||[]).filter(function(l){return (c.lang||[]).indexOf(l)===-1;});
+  if(type==='contacts')return ['Franchise Circle'];
+  if(type==='intel')return ['Local Rumors'];
+  return [];
+}
+function renderDowntimeModal(){
+  var ci=DOWNTIME_PENDING.ci;
+  var c=S.party[ci];
+  if(!c)return;
+  var nameEl=document.getElementById('ov-dt-name');
+  if(nameEl)nameEl.textContent=c.name;
+  var actSel=document.getElementById('ov-dt-activity');
+  if(actSel){
+    actSel.innerHTML=DOWNTIME_OPTIONS.map(function(o){
+      return '<option value="'+o.id+'"'+(o.id===DOWNTIME_PENDING.type?' selected':'')+'>'+o.label+'</option>';
+    }).join('');
   }
-  var durChoices=(opt.durations||[60,240,480]).map(function(d,idx){return (idx+1)+') '+questDurationLabel({durationOverrideMins:d});}).join('\\n');
-  var dr=prompt('Choose downtime duration:\\n\\n'+durChoices+'\\n\\nEnter number:','2');
-  if(dr===null)return;
-  var dIdx=Math.max(1,Math.min((opt.durations||[]).length,parseInt(dr,10)||2))-1;
-  var mins=(opt.durations||[])[dIdx]||240;
+  var targetSel=document.getElementById('ov-dt-target');
+  var targetOpts=getDowntimeTargetOptions(c,DOWNTIME_PENDING.type);
+  if(targetSel){
+    if(!targetOpts.length){
+      targetSel.innerHTML='<option value="">No available targets</option>';
+      targetSel.disabled=true;
+      DOWNTIME_PENDING.target='';
+    }else{
+      targetSel.disabled=false;
+      if(targetOpts.indexOf(DOWNTIME_PENDING.target)===-1)DOWNTIME_PENDING.target=targetOpts[0];
+      targetSel.innerHTML=targetOpts.map(function(t){
+        return '<option value="'+esc(t)+'"'+(t===DOWNTIME_PENDING.target?' selected':'')+'>'+esc(t)+'</option>';
+      }).join('');
+    }
+  }
+  var dtInp=document.getElementById('ov-dt-dt');
+  if(dtInp)dtInp.value=datetimeLocalValue(DOWNTIME_PENDING.endsAt||Date.now()+240*60000);
+  document.querySelectorAll('#ov-dt-pills button[data-dt-min]').forEach(function(btn){
+    var mins=parseInt(btn.getAttribute('data-dt-min'),10)||0;
+    var diff=Math.round(((DOWNTIME_PENDING.endsAt||0)-Date.now())/60000);
+    btn.classList.toggle('active',Math.abs(diff-mins)<=1);
+  });
+}
+function downtimePillPick(mins){
+  DOWNTIME_PENDING.endsAt=Date.now()+((parseInt(mins,10)||240)*60000);
+  renderDowntimeModal();
+}
+function confirmDowntimeModal(){
+  var ci=DOWNTIME_PENDING.ci;
+  var c=S.party[ci];
+  if(!c){closeOv('ov-downtime');return;}
+  var actSel=document.getElementById('ov-dt-activity');
+  var targetSel=document.getElementById('ov-dt-target');
+  var dtInp=document.getElementById('ov-dt-dt');
+  var type=(actSel&&actSel.value)||DOWNTIME_PENDING.type||'skill';
+  var target=(targetSel&&targetSel.value)||'core';
+  var ts=parseDateTimeLocal(dtInp?dtInp.value:'');
+  if(!isFinite(ts)||ts<=Date.now()){alert('Choose a future downtime end time.');return;}
+  var mins=Math.max(1,Math.round((ts-Date.now())/60000));
   ensureDowntimeState();
-  S.downtimeJobs.push({ci:ci,type:opt.id,target:target,startedAt:Date.now(),endsAt:Date.now()+mins*60000,durationMins:mins});
-  logAdd('🕯 Downtime started: '+c.name+' · '+downtimeTrackLabel(opt.id,target)+' · '+questDurationLabel({durationOverrideMins:mins}),'adv');
+  S.downtimeJobs.push({ci:ci,type:type,target:target,startedAt:Date.now(),endsAt:ts,durationMins:mins});
+  logAdd('🕯 Downtime started: '+c.name+' · '+downtimeTrackLabel(type,target)+' · '+questDurationLabel({durationOverrideMins:mins}),'adv');
+  closeOv('ov-downtime');
   save();
   renderParty();
 }
@@ -8862,6 +8934,47 @@ var _burnerYes=document.getElementById('ov-brn-yes');
 if(_burnerYes && !_burnerYes.dataset.bound){
   _burnerYes.dataset.bound='1';
   _burnerYes.addEventListener('click',function(e){ e.preventDefault(); e.stopPropagation(); confirmBurner(); });
+}
+var _dtPills=document.getElementById('ov-dt-pills');
+if(_dtPills && !_dtPills.dataset.bound){
+  _dtPills.dataset.bound='1';
+  _dtPills.addEventListener('click',function(e){
+    var btn=e.target.closest('[data-dt-min]');
+    if(!btn)return;
+    e.preventDefault();e.stopPropagation();
+    downtimePillPick(btn.getAttribute('data-dt-min'));
+  });
+}
+var _dtAct=document.getElementById('ov-dt-activity');
+if(_dtAct && !_dtAct.dataset.bound){
+  _dtAct.dataset.bound='1';
+  _dtAct.addEventListener('change',function(){
+    DOWNTIME_PENDING.type=this.value||'skill';
+    DOWNTIME_PENDING.target='';
+    renderDowntimeModal();
+  });
+}
+var _dtTarget=document.getElementById('ov-dt-target');
+if(_dtTarget && !_dtTarget.dataset.bound){
+  _dtTarget.dataset.bound='1';
+  _dtTarget.addEventListener('change',function(){DOWNTIME_PENDING.target=this.value||'';});
+}
+var _dtNo=document.getElementById('ov-dt-no');
+if(_dtNo && !_dtNo.dataset.bound){
+  _dtNo.dataset.bound='1';
+  _dtNo.addEventListener('click',function(e){
+    e.preventDefault();e.stopPropagation();
+    DOWNTIME_PENDING={ci:null,type:'skill',target:'',endsAt:0};
+    closeOv('ov-downtime');
+  });
+}
+var _dtYes=document.getElementById('ov-dt-yes');
+if(_dtYes && !_dtYes.dataset.bound){
+  _dtYes.dataset.bound='1';
+  _dtYes.addEventListener('click',function(e){
+    e.preventDefault();e.stopPropagation();
+    confirmDowntimeModal();
+  });
 }
 
 async function bootApp(){
