@@ -1733,6 +1733,8 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.427</strong> — Quest prerequisites now align with Content Editor fields by adding editable Prereq Items, and martial/simple weapon category prerequisites continue to match qualifying inventory weapons.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.426</strong> — Updated item prerequisite matching to use D&D 2014 weapon groups: Simple Weapons and Martial Weapons now correctly match qualifying weapons in inventory (for example, Longsword satisfies Martial Weapons requirements).</div>
         <div style="margin-bottom:9px"><strong>Version 1.425</strong> — Switching cycles from the Quest Map now preserves per-cycle progress instead of resetting. Cycle-completion prerequisites are now managed in Cycle Rules (set-level) rather than quest-level fields, and quest-level cycle prerequisite enforcement has been removed from assignment flow.</div>
         <div style="margin-bottom:9px"><strong>Version 1.424</strong> — Content Editor quest form now includes optional Vehicle Support and Building Support fields, so set-level support requirements like The Rival’s Warehouse needing a Storage Shed are directly visible and editable from the editor.</div>
         <div style="margin-bottom:9px"><strong>Version 1.423</strong> — Fixed a stray Settings markup leak at the bottom of non-Settings screens, kept the top header fixed while scrolling, disabled repeat quest clears, and added cycle prerequisite support for pet counts (for example, any 3 pets).</div>
@@ -3115,6 +3117,65 @@ function itemTypeBaseName(name){
 function weaponTypeBaseName(name){
   return itemTypeBaseName(name);
 }
+
+var PHB_WEAPON_GROUPS_2014={
+  simple:[
+    'Club','Dagger','Greatclub','Handaxe','Javelin','Light Hammer','Mace','Quarterstaff','Sickle','Spear',
+    'Light Crossbow','Dart','Shortbow','Sling','Shortbow & Quiver'
+  ],
+  martial:[
+    'Battleaxe','Flail','Glaive','Greataxe','Greatsword','Halberd','Lance','Longsword','Maul','Morningstar',
+    'Pike','Rapier','Scimitar','Shortsword','Trident','War Pick','Warhammer','Whip',
+    'Blowgun','Hand Crossbow','Heavy Crossbow','Longbow'
+  ]
+};
+
+function canonicalItemName(name){
+  var s=itemTypeBaseName(name).toLowerCase();
+  s=s.replace(/[’']/g,'');
+  s=s.replace(/\s*&\s*/g,' and ');
+  s=s.replace(/\bweapons\b/g,'weapon');
+  s=s.replace(/\blongswords\b/g,'longsword');
+  s=s.replace(/\bshortswords\b/g,'shortsword');
+  s=s.replace(/\bdaggers\b/g,'dagger');
+  s=s.replace(/\brapiers\b/g,'rapier');
+  s=s.replace(/\bquarterstaffs\b/g,'quarterstaff');
+  s=s.replace(/\bbows\b/g,'bow');
+  s=s.replace(/\s+/g,' ').trim();
+  return s;
+}
+
+function weaponGroupFromItemName(name){
+  var canonical=canonicalItemName(name);
+  if(!canonical)return '';
+  if(canonical==='simple weapon'||canonical==='martial weapon')return canonical;
+  if(canonical==='bow')return 'martial weapon';
+
+  var simpleSet={},martialSet={};
+  PHB_WEAPON_GROUPS_2014.simple.forEach(function(it){simpleSet[canonicalItemName(it)]=true;});
+  PHB_WEAPON_GROUPS_2014.martial.forEach(function(it){martialSet[canonicalItemName(it)]=true;});
+
+  if(simpleSet[canonical])return 'simple weapon';
+  if(martialSet[canonical])return 'martial weapon';
+  return '';
+}
+
+function inventoryHasPrereqItem(invNames,requiredName){
+  var req=canonicalItemName(requiredName);
+  if(!req)return true;
+  var reqGroup=(req==='simple weapon'||req==='martial weapon')?req:'';
+  for(var i=0;i<(invNames||[]).length;i++){
+    var invName=invNames[i];
+    var invCanonical=canonicalItemName(invName);
+    if(!invCanonical)continue;
+    if(invCanonical===req)return true;
+    if(reqGroup){
+      var invGroup=weaponGroupFromItemName(invName);
+      if(invGroup===reqGroup)return true;
+    }
+  }
+  return false;
+}
 function storeIsPlusWeapon(item){
   if(!item||!item.name)return false;
   return /^\+1\s+/i.test(item.name||'') && !/^\+1\s+armor/i.test(item.name||'');
@@ -3270,7 +3331,7 @@ function availableCoverageForQuestLike(q){
   (pr.tools||[]).forEach(function(t){total++;if(to.indexOf(t)!==-1)met++;});
   (pr.lang||[]).forEach(function(l){total++;if(la.indexOf(l)!==-1)met++;});
   if(pr.rel){total++;if(re.indexOf(pr.rel)!==-1)met++;}
-  (pr.items||[]).forEach(function(x){total++;if(inv.indexOf(x)!==-1)met++;});
+  (pr.items||[]).forEach(function(x){total++;if(inventoryHasPrereqItem(inv,x))met++;});
   return {met:met,total:total,pct:total?met/total:1};
 }
 function questCyclePrereqMet(q){
@@ -6272,7 +6333,7 @@ function buildQuestContributionHtml(c,pr,isBusy){
   (pr.tools||[]).forEach(function(t){if((c.tools||[]).indexOf(t)!==-1)contrib.push('🔧 '+t);});
   (pr.lang||[]).forEach(function(l){if((c.lang||[]).indexOf(l)!==-1)contrib.push('🗣 '+l);});
   if(pr.rel&&c.rel===pr.rel)contrib.push('✝ '+pr.rel);
-  (pr.items||[]).forEach(function(it){if((c.inv||[]).indexOf(it)!==-1)contrib.push('🎒 '+it);});
+  (pr.items||[]).forEach(function(it){if(inventoryHasPrereqItem(c.inv||[],it))contrib.push('🎒 '+it);});
   return contrib.length?'<span style="font-size:.78em;color:var(--gold-dark);margin-left:6px">'+esc(contrib.join(' · '))+'</span>':'';
 }
 function buildQuestLevelActionHtml(c,ci,questLike,isGrind,isBusy){
@@ -6874,7 +6935,7 @@ function questPrereqCheck(q,charIdxs){
   (pr.tools||[]).forEach(function(t){if(to.indexOf(t)===-1)missing.push('Tool: '+t);});
   (pr.lang||[]).forEach(function(l){if(la.indexOf(l)===-1)missing.push('Language: '+l);});
   if(pr.rel&&re.indexOf(pr.rel)===-1)missing.push('Faith: '+pr.rel);
-  (pr.items||[]).forEach(function(x){if(inv.indexOf(x)===-1)missing.push('Item: '+x);});
+  (pr.items||[]).forEach(function(x){if(!inventoryHasPrereqItem(inv,x))missing.push('Item: '+x);});
   if(pr.gold&&S.gold<pr.gold)missing.push('Gold: '+pr.gold+' gp');
   var topLevel=0;
   (charIdxs||[]).forEach(function(ci){
@@ -6936,7 +6997,7 @@ function questPrereqHtml(q,charIdxs){
   (pr.tools||[]).forEach(function(t){var met=to.indexOf(t)!==-1;rows+='<div class="prerow"><span class="'+(met?'pmet':'punmet')+'">'+(met?'✓':'✗')+'</span> Tool: '+esc(t)+(!met?hireBtn('tool',t):'')+'</div>';});
   (pr.lang||[]).forEach(function(l){var met=la.indexOf(l)!==-1;rows+='<div class="prerow"><span class="'+(met?'pmet':'punmet')+'">'+(met?'✓':'✗')+'</span> Language: '+esc(l)+(!met?hireBtn('lang',l):'')+'</div>';});
   if(pr.rel){var met=re.indexOf(pr.rel)!==-1;rows+='<div class="prerow"><span class="'+(met?'pmet':'punmet')+'">'+(met?'✓':'✗')+'</span> Faith: '+esc(pr.rel)+(!met?hireBtn('rel',pr.rel):'')+'</div>';}
-  (pr.items||[]).forEach(function(x){var met=inv.indexOf(x)!==-1;rows+='<div class="prerow"><span class="'+(met?'pmet':'punmet')+'">'+(met?'✓':'✗')+'</span> Item: '+esc(x)+'</div>';});
+  (pr.items||[]).forEach(function(x){var met=inventoryHasPrereqItem(inv,x);rows+='<div class="prerow"><span class="'+(met?'pmet':'punmet')+'">'+(met?'✓':'✗')+'</span> Item: '+esc(x)+'</div>';});
   if(pr.gold){var met=S.gold>=pr.gold;rows+='<div class="prerow"><span class="'+(met?'pmet':'punmet')+'">'+(met?'✓':'✗')+'</span> Gold: '+pr.gold+' gp</div>';}
   var topLv=0;(charIdxs||[]).forEach(function(ci){
     var c=S.party[ci];
@@ -7710,7 +7771,7 @@ document.getElementById('avcontent').addEventListener('click',function(e){
     (pr.tools||[]).forEach(function(x){if((c.tools||[]).indexOf(x)!==-1)s++;});
     (pr.lang||[]).forEach(function(x){if((c.lang||[]).indexOf(x)!==-1)s++;});
     if(pr.rel&&c.rel===pr.rel)s+=2;
-    (pr.items||[]).forEach(function(x){if((c.inv||[]).indexOf(x)!==-1)s++;});
+    (pr.items||[]).forEach(function(x){if(inventoryHasPrereqItem(c.inv||[],x))s++;});
     return s;
   }
 
@@ -7891,7 +7952,7 @@ function renderQuestAssignmentList(extraChecked){
     (pr.tools||[]).forEach(function(x){if((c.tools||[]).indexOf(x)!==-1)s++;});
     (pr.lang||[]).forEach(function(x){if((c.lang||[]).indexOf(x)!==-1)s++;});
     if(pr.rel&&c.rel===pr.rel)s+=2;
-    (pr.items||[]).forEach(function(x){if((c.inv||[]).indexOf(x)!==-1)s++;});
+    (pr.items||[]).forEach(function(x){if(inventoryHasPrereqItem(c.inv||[],x))s++;});
     return s;
   }
 
@@ -10382,6 +10443,22 @@ function edShowQuestForm(){
   var canEditBuiltin=isBuiltin&&isAppAdmin();
   var setId=edSelected.setId;
   var pre=q?q.pre:{skills:[],tools:[],lang:[],rel:'',items:[],gold:0};
+  var prereqItemOptions=(function(){
+    var seen={},opts=[];
+    function pushOpt(name){
+      var n=String(name||'').trim();
+      if(!n||seen[n])return;
+      seen[n]=true;
+      opts.push(n);
+    }
+    ['Simple Weapons','Martial Weapons'].forEach(pushOpt);
+    (GEAR||[]).forEach(function(it){pushOpt(it&&it.name);});
+    (VEHICLES||[]).forEach(function(it){pushOpt(it&&it.name);});
+    (BUILDINGS||[]).forEach(function(it){pushOpt(it&&it.name);});
+    (PETS||[]).forEach(function(it){pushOpt(it&&it.name);});
+    (pre.items||[]).forEach(pushOpt);
+    return opts.sort(function(a,b){return a.localeCompare(b);});
+  })();
 
   var html='<div style="max-width:780px">';
   html+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">'+
@@ -10409,6 +10486,7 @@ function edShowQuestForm(){
       (pre.skills.length?'<div style="margin-top:8px;font-size:.9em"><strong>Skills:</strong> '+pre.skills.join(', ')+'</div>':'')+
       (pre.tools.length?'<div style="font-size:.9em"><strong>Tools:</strong> '+pre.tools.join(', ')+'</div>':'')+
       (pre.lang.length?'<div style="font-size:.9em"><strong>Languages:</strong> '+pre.lang.join(', ')+'</div>':'')+
+      (pre.items&&pre.items.length?'<div style="font-size:.9em"><strong>Items:</strong> '+pre.items.join(', ')+'</div>':'')+
       (pre.gold?'<div style="font-size:.9em"><strong>Gold required:</strong> '+pre.gold+' gp</div>':'')+
       '</div>'+
       '<div style="margin-top:16px;padding:12px;background:rgba(201,146,42,.06);border-radius:5px;font-size:.88em;color:var(--ink-light)">'+
@@ -10478,7 +10556,7 @@ function edShowQuestForm(){
   html+='</div>';// end grid
 
   // Prereq multi-selects
-  html+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px 24px;margin-top:16px">';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px 24px;margin-top:16px">';
 
   html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Prereq Skills <span style="color:var(--ink-light)">(Ctrl+click)</span></label>'+
     '<select id="ef-skills" multiple size="6" style="width:100%;padding:4px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">'+
@@ -10491,6 +10569,10 @@ function edShowQuestForm(){
   html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Prereq Languages</label>'+
     '<select id="ef-lang" multiple size="6" style="width:100%;padding:4px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">'+
     ALL_LANG.map(function(l){return '<option value="'+l+'"'+(pre.lang.indexOf(l)!==-1?' selected':'')+'>'+l+'</option>';}).join('')+'</select></div>';
+
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Prereq Items</label>'+
+    '<select id="ef-items" multiple size="8" style="width:100%;padding:4px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">'+
+    prereqItemOptions.map(function(it){return '<option value="'+esc(it)+'"'+((pre.items||[]).indexOf(it)!==-1?' selected':'')+'>'+esc(it)+'</option>';}).join('')+'</select></div>';
 
   html+='</div>';
 
@@ -10524,6 +10606,7 @@ function edShowQuestForm(){
     var selSkills=Array.from(document.getElementById('ef-skills').selectedOptions).map(function(o){return o.value;});
     var selTools=Array.from(document.getElementById('ef-tools').selectedOptions).map(function(o){return o.value;});
     var selLang=Array.from(document.getElementById('ef-lang').selectedOptions).map(function(o){return o.value;});
+    var selItems=Array.from(document.getElementById('ef-items').selectedOptions).map(function(o){return o.value;});
     var selRel=document.getElementById('ef-rel').value||'';
     var vreqName=document.getElementById('ef-vreq-name').value.trim();
     var breqName=document.getElementById('ef-breq-name').value.trim();
@@ -10559,7 +10642,7 @@ function edShowQuestForm(){
       vehicleReq:vreq||undefined,
       buildingReq:breq||undefined,
       reward:title,
-      pre:{skills:selSkills,tools:selTools,lang:selLang,rel:selRel,items:[],gold:parseInt(document.getElementById('ef-gold').value)||0}
+      pre:{skills:selSkills,tools:selTools,lang:selLang,rel:selRel,items:selItems,gold:parseInt(document.getElementById('ef-gold').value)||0}
     };
     var arr=contentItemsForScope(targetScope||currentContentScope(),'_customQuests');
     if(!isNew){
