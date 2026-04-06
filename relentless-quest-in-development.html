@@ -1708,7 +1708,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.433
+      Version 1.434
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Franchise-owned items and assets can now be sold back at half price
@@ -1733,6 +1733,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.434</strong> — Fixed hireling graduation so Level 1 graduates count as full adventurers for quest prerequisites; improved Content Editor save reliability/visibility; added capstone artifact assignment controls on Assets; refreshed exotic language pool to remove overlaps with now-standard language options.</div>
         <div style="margin-bottom:9px"><strong>Version 1.433</strong> — Reworked Content Editor CSV import/export to handle quest rows only (header = quest properties), while Cycle Rules and Gear remain managed in their existing in-app editor forms.</div>
         <div style="margin-bottom:9px"><strong>Version 1.432</strong> — Added CSV import/export workflow for Content Editor data so quest cycles and gear groups can be edited in Google Sheets-style tab rows, including cycle-rules rows, buffer rows, and quest-row bulk import.</div>
         <div style="margin-bottom:9px"><strong>Version 1.431</strong> — Prevented automatic viewport jumps during asset transfer/update actions, added character-name quick-view links (outside Party/Recruitment) to open a character card modal, and made Stats coverage rows clickable with Party filter behavior.</div>
@@ -1861,7 +1862,7 @@ button.squad-tag.squad-tag-active{
         <option value="official">Official</option>
       </select>
       <span id="ed-scope-note" style="font-size:.72em;color:var(--parchment-deep);font-style:italic"></span>
-      <span id="ed-save-flash" style="font-size:.8em;color:var(--forest);opacity:0;transition:opacity .4s">✓ Saved</span>
+      <span id="ed-save-flash" style="font-size:.82em;color:var(--gold-bright);text-shadow:0 0 8px rgba(201,146,42,.45);font-weight:700;opacity:0;transition:opacity .4s">✓ Saved</span>
       <button id="btn-ed-export-csv" style="background:none;border:1px solid rgba(201,146,42,.4);color:var(--parchment-deep);border-radius:4px;padding:5px 10px;cursor:pointer;font-size:.8em">📤 Export Quest CSV</button>
       <button id="btn-ed-import-csv" style="background:none;border:1px solid rgba(201,146,42,.4);color:var(--parchment-deep);border-radius:4px;padding:5px 10px;cursor:pointer;font-size:.8em">📥 Import Quest CSV</button>
       <button id="btn-close-editor" style="background:none;border:1px solid rgba(201,146,42,.4);color:var(--parchment-deep);border-radius:4px;padding:5px 12px;cursor:pointer;font-size:.85em">✕ Close</button>
@@ -2693,7 +2694,7 @@ var CAPSTONE_REWARDS={
 };
 
 // Exotic traits for NPC contacts
-var EXOTIC_LANG=['Thieves\' Cant','Giant','Goblin','Terran','Aquan','Ignan','Auran','Druidic'];
+var EXOTIC_LANG=['Terran','Aquan','Ignan','Auran','Druidic','Slaad','Modron','Yikaria'];
 var EXOTIC_REL=['The Traveler','The Keeper of the Eternal Flame','The Scaled God','The Dreaming Dark'];
 var EXOTIC_TOOLS=['Poisoner\'s Kit','Forgery Kit','Glassblower\'s Tools','Jeweler\'s Tools','Cobbler\'s Tools'];
 var CONTACT_BG=[
@@ -5213,10 +5214,17 @@ function renderParty(){
               '</span></div>';
           }
           var housed=(S.partyAssets||[]).filter(function(x){return isAnimalAsset(x)&&assetMeta(x).ownerType==='building'&&assetMeta(x).ownerRef===assetMeta(a).uid;});
+          var canAssignReward=(assetBaseType(a)==='artifact');
           return '<div class="inv-item" style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'+
             '<div style="flex:1">'+
               '<div>'+esc(a.ic)+' '+esc(assetDisplayName(a))+'</div>'+
               (housed.length?'<div style="font-size:.74em;color:var(--ink-light);margin-top:2px">Residents: '+housed.map(function(x){return esc((x.ic||'🐾')+' '+assetDisplayName(x));}).join(', ')+'</div>':'')+
+              (canAssignReward?'<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px">'+
+                '<select class="asset-char" data-ai="'+ai+'" style="max-width:170px"><option value="">Assign to character…</option>'+
+                S.party.map(function(c,ci){return '<option value="'+ci+'">'+esc(c.name)+'</option>';}).join('')+
+                '</select>'+
+                '<button class="btn bg sm" data-a="asset-give" data-ai="'+ai+'" style="font-size:.6em;min-height:22px;padding:1px 6px">Give</button>'+
+                '</div><div style="font-size:.68em;color:var(--ink-light);margin-top:2px">Capstone reward items can be assigned directly from Assets.</div>':'')+
             '</div>'+
             '<span style="display:flex;align-items:center;gap:8px">'+
             '<span style="font-family:\'Cinzel\',serif;font-size:.78em;color:var(--gold-dark)">'+(val?val.toLocaleString()+' gp':'–')+'</span>'+
@@ -5429,6 +5437,30 @@ document.getElementById('plist').addEventListener('click',function(e){
     }
     logAdd('Updated animal assignment: '+assetDisplayName(assetSave),'buy');
     save();renderParty();
+  } else if(a==='asset-give'){
+    var gai=parseInt(b.getAttribute('data-ai'));
+    var assetGive=S.partyAssets[gai];
+    if(!assetGive)return;
+    if(assetBaseType(assetGive)!=='artifact'){
+      alert('Only capstone reward artifacts can be assigned from this control.');
+      return;
+    }
+    var prow=b.closest('.inv-item');
+    var pickSel=prow?prow.querySelector('.asset-char'):null;
+    if(!pickSel||pickSel.value===''){
+      alert('Select a character to receive this reward item.');
+      return;
+    }
+    var giveCi=parseInt(pickSel.value,10);
+    var giveChar=S.party[giveCi];
+    if(!giveChar)return;
+    if(!giveChar.inv)giveChar.inv=[];
+    giveChar.inv.push(assetGive.name);
+    if(!giveChar.ownedItems)giveChar.ownedItems=[];
+    if(giveChar.ownedItems.indexOf(assetGive.name)===-1)giveChar.ownedItems.push(assetGive.name);
+    S.partyAssets.splice(gai,1);
+    logAdd('Assigned capstone reward '+assetGive.name+' to '+giveChar.name,'adv');
+    save();renderParty();
   } else if(a==='asset-sell'){
     var ai=parseInt(b.getAttribute('data-ai'));
     var asset=S.partyAssets[ai];
@@ -5570,6 +5602,7 @@ document.getElementById('ov-lv-yes').addEventListener('click',function(){
     var ln=rnd(DND.ln);
     c.name=c.name+' '+ln;
     c.formerHireling=true;
+    c.hireling=false;
     var existSk=c.skills||[],existTl=c.tools||[],existLa=c.lang||[];
     // Grant class-appropriate skills for the new level 1 adventurer
     var fullSkills=pickClassSkills(c.cls||'Fighter');
@@ -11019,22 +11052,27 @@ function edShowQuestForm(){
     };
     var arr=contentItemsForScope(targetScope||currentContentScope(),'_customQuests');
     if(!isNew){
-      // Update existing by matching title+setId of old selection
+      // Update existing by matching setId + idx (stable), fallback to title match.
       var oldQ=edQuestObj();
       var replaced=false;
       arr=arr.map(function(item){
-        if(item.setId===edSelected.setId&&item.title===(oldQ?oldQ.title:'')&&!replaced){replaced=true;return newQ;}
+        var sameIdx=(item.setId===edSelected.setId && item.idx===newQ.idx);
+        var fallbackTitle=(item.setId===edSelected.setId && item.title===(oldQ?oldQ.title:''));
+        if((sameIdx||fallbackTitle)&&!replaced){replaced=true;return newQ;}
         return item;
       });
       if(!replaced)arr.push(newQ);
     } else {
       arr.push(newQ);
     }
-    saveCustom('_customQuests',arr,targetScope);
-    mergeCustomContent();
-    edSelected={type:'quest',setId:newQ.setId,idx:null};
-    edRenderList();
-    edShowPlaceholder();
+    saveCustom('_customQuests',arr,targetScope).then(function(){
+      mergeCustomContent();
+      edSelected={type:'quest',setId:newQ.setId,idx:newQ.idx};
+      edRenderList();
+      edShowQuestForm();
+    }).catch(function(err){
+      alert('Quest save failed: '+(err&&err.message?err.message:err));
+    });
   });
 
   if(!isNew){
@@ -11042,12 +11080,15 @@ function edShowQuestForm(){
       var oldQ=edQuestObj();
       if(!oldQ||!oldQ._custom){alert('Built-in quests cannot be deleted.');return;}
       if(!confirm('Delete "'+oldQ.title+'"?'))return;
-      var arr=getCustomQuests().filter(function(item){return !(item.setId===edSelected.setId&&item.title===oldQ.title);});
-      saveCustom('_customQuests',arr);
-      mergeCustomContent();
-      edSelected=null;
-      edRenderList();
-      edShowPlaceholder();
+      var arr=getCustomQuests().filter(function(item){return !(item.setId===edSelected.setId&&item.idx===oldQ.idx);});
+      saveCustom('_customQuests',arr).then(function(){
+        mergeCustomContent();
+        edSelected=null;
+        edRenderList();
+        edShowPlaceholder();
+      }).catch(function(err){
+        alert('Quest delete failed: '+(err&&err.message?err.message:err));
+      });
     });
   }
 }
