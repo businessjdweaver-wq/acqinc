@@ -7692,10 +7692,17 @@ document.getElementById('ov-cycle-squad-yes').addEventListener('click',function(
 /* ═══════════════════════ RENDER ADV ═══════════════════════ */
 var advCountdownTimer=null;
 
+var advQuestCollapsed=true; // start collapsed on launch
+var advQuestLastSetId=null; // track active set to reset collapse on cycle change
+
 function renderAdv(){
   var el=document.getElementById('avcontent');
   if(!el)return;
   var qs=S.questState;
+  // Auto-collapse when quest cycle changes
+  var _curSetId=qs&&qs.setId;
+  if(_curSetId&&_curSetId!==advQuestLastSetId){advQuestCollapsed=true;advQuestLastSetId=_curSetId;}
+
   if((S.settings&&S.settings.autoCycleMonthly) && (!S.questState||S.questState.cycleId!==cycleId())){checkQuestCycleReset();}
   if(!S.questState){el.innerHTML='<div class="empty">No quest data.</div>';return;}
 
@@ -7759,6 +7766,15 @@ function renderAdv(){
     questRows.sort(function(a,b){return a.q.idx-b.q.idx;});
   }
 
+  // Collapsible quests section
+  html+='<div id="adv-quest-toggle" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:7px 10px;margin-bottom:4px;'+
+    'background:rgba(44,26,14,.06);border:1px solid var(--parchment-deep);border-radius:6px;user-select:none">'+
+    '<span style="font-size:.82em;font-family:\'Cinzel\',serif;color:var(--gold-dark);flex:1">'+
+    (advQuestCollapsed?'▸':'▾')+' Quests ('+doneCount+' / '+totalQ+' done)</span>'+
+    '<span style="font-size:.72em;color:var(--ink-light)">'+(advQuestCollapsed?'tap to expand':'tap to collapse')+'</span>'+
+    '</div>';
+
+  if(!advQuestCollapsed){
   questRows.forEach(function(row){
     var q=row.q;
     var completeCount=repeatCountFor(q.idx);
@@ -7827,6 +7843,7 @@ function renderAdv(){
       (!isDone&&!inProgress?'<button class="btn bg sm" style="margin-top:7px" data-a="qassign" data-qi="'+q.idx+'">⚔ Assign & Begin</button>':'')+
       '</div>';
   });
+  } // end !advQuestCollapsed
 
   // Grind missions — shown when all main quests completed
   if(doneCount>=totalQ){
@@ -7938,6 +7955,13 @@ document.getElementById('avcontent').addEventListener('change',function(e){
 document.getElementById('avcontent').addEventListener('click',function(e){
   var qs=S.questState;
   var set=activeQuestSet();
+
+  // Quest list collapse toggle
+  if(e.target.closest('#adv-quest-toggle')){
+    advQuestCollapsed=!advQuestCollapsed;
+    renderAdv();
+    return;
+  }
 
   var bc=e.target.closest('[data-a="qcollect"]');
   if(bc){
@@ -10641,8 +10665,16 @@ function mergeCustomContent(){
     };
   }
   QUESTSETS=clone(BUILTIN_QUESTSETS);
+  // Filter tombstoned built-in cycles
+  var _ct=JSON.parse(localStorage.getItem('rq_cycle_tombstones')||'[]');
+  if(_ct.length)QUESTSETS=QUESTSETS.filter(function(s){return _ct.indexOf(s.id)===-1;});
   GRIND=clone(BUILTIN_GRIND);
   GEAR=clone(BUILTIN_GEAR);
+  // Filter tombstoned built-ins
+  var _gt=JSON.parse(localStorage.getItem('rq_grind_tombstones')||'[]');
+  if(_gt.length)GRIND=GRIND.filter(function(g){return _gt.indexOf(g.id)===-1;});
+  var _grt=JSON.parse(localStorage.getItem('rq_gear_tombstones')||'[]');
+  if(_grt.length)GEAR=GEAR.filter(function(g){return _grt.indexOf(g.name)===-1;});
 
   ['official','shared','private'].forEach(function(scope){
     (CONTENT_LIB[scope].questSets||[]).forEach(function(meta){
@@ -10729,33 +10761,42 @@ function mergeCustomContent(){
   // Merge custom vehicles
   VEHICLES=clone(BUILTIN_VEHICLES||VEHICLES);
   var allVehicles=[].concat(CONTENT_LIB.official.vehicles||[],CONTENT_LIB.shared.vehicles||[],CONTENT_LIB.private.vehicles||[]);
+  allVehicles=allVehicles.filter(function(v){return !v._deleted;});
+  VEHICLES=VEHICLES.filter(function(v){return !allVehicles.some(function(x){return x.name===v.name&&x._deleted;});});
   allVehicles.forEach(function(v){
     var idx=-1;
     for(var vi=0;vi<VEHICLES.length;vi++){if(VEHICLES[vi].name===v.name){idx=vi;break;}}
     var payload=Object.assign({},v,{_custom:!!v._editable,_dbContent:true});
-    if(idx>=0)VEHICLES[idx]=Object.assign({},VEHICLES[idx],payload);
+    if(v._deleted){if(idx>=0)VEHICLES.splice(idx,1);}
+    else if(idx>=0)VEHICLES[idx]=Object.assign({},VEHICLES[idx],payload);
     else VEHICLES.push(payload);
   });
 
   // Merge custom buildings
   BUILDINGS=clone(BUILTIN_BUILDINGS||BUILDINGS);
   var allBuildings=[].concat(CONTENT_LIB.official.buildings||[],CONTENT_LIB.shared.buildings||[],CONTENT_LIB.private.buildings||[]);
+  allBuildings=allBuildings.filter(function(b){return !b._deleted;});
+  BUILDINGS=BUILDINGS.filter(function(b){return !allBuildings.some(function(x){return x.name===b.name&&x._deleted;});});
   allBuildings.forEach(function(b){
     var idx=-1;
     for(var bi=0;bi<BUILDINGS.length;bi++){if(BUILDINGS[bi].name===b.name){idx=bi;break;}}
     var payload=Object.assign({},b,{_custom:!!b._editable,_dbContent:true});
-    if(idx>=0)BUILDINGS[idx]=Object.assign({},BUILDINGS[idx],payload);
+    if(b._deleted){if(idx>=0)BUILDINGS.splice(idx,1);}
+    else if(idx>=0)BUILDINGS[idx]=Object.assign({},BUILDINGS[idx],payload);
     else BUILDINGS.push(payload);
   });
 
   // Merge custom pets
   PETS=clone(BUILTIN_PETS||PETS);
   var allPets=[].concat(CONTENT_LIB.official.pets||[],CONTENT_LIB.shared.pets||[],CONTENT_LIB.private.pets||[]);
+  allPets=allPets.filter(function(p){return !p._deleted;});
+  PETS=PETS.filter(function(p){return !allPets.some(function(x){return x.name===p.name&&x._deleted;});});
   allPets.forEach(function(p){
     var idx=-1;
     for(var pi=0;pi<PETS.length;pi++){if(PETS[pi].name===p.name){idx=pi;break;}}
     var payload=Object.assign({},p,{_custom:!!p._editable,_dbContent:true});
-    if(idx>=0)PETS[idx]=Object.assign({},PETS[idx],payload);
+    if(p._deleted){if(idx>=0)PETS.splice(idx,1);}
+    else if(idx>=0)PETS[idx]=Object.assign({},PETS[idx],payload);
     else PETS.push(payload);
   });
 }
@@ -10924,6 +10965,9 @@ function openEditor(){
   edSelected=null;
   edMacroManageOpen=false;
   edLastFocused=null;
+  // Auto-collapse all cycles on open
+  edCollapsedCycles={};
+  QUESTSETS.forEach(function(s){edCollapsedCycles[s.id]=true;});
   edRenderTabs();
   edRenderList();
   edShowPlaceholder();
@@ -11001,13 +11045,17 @@ function edRenderList(){
         '<span style="font-size:.62em;color:var(--ink-light);border:1px solid var(--parchment-deep);border-radius:3px;padding:0 3px">set-level</span>'+
         '</div>';
       if(collapsed)return;
-      set.quests.forEach(function(q){
+      set.quests.forEach(function(q,qi){
         var isCustom=!!q._custom;
         var isSel=edSelected&&edSelected.type==='quest'&&edSelected.setId===set.id&&edSelected.idx===q.idx;
-        html+='<div class="ed-list-item'+(isSel?' ed-list-sel':'')+'" data-ed="quest" data-setid="'+esc(set.id)+'" data-idx="'+q.idx+'" style="padding:9px 14px;cursor:pointer;border-left:3px solid '+(isSel?'var(--crimson)':'transparent')+';background:'+(isSel?'rgba(139,26,26,.06)':'none')+';display:flex;align-items:center;gap:8px">'+
+        var isFirst=qi===0;
+        var isLast=qi===set.quests.length-1;
+        html+='<div class="ed-list-item'+(isSel?' ed-list-sel':'')+'" data-ed="quest" data-setid="'+esc(set.id)+'" data-idx="'+q.idx+'" style="padding:5px 8px 5px 14px;cursor:pointer;border-left:3px solid '+(isSel?'var(--crimson)':'transparent')+';background:'+(isSel?'rgba(139,26,26,.06)':'none')+';display:flex;align-items:center;gap:6px">'+
           '<span style="flex:1;font-size:.88em;'+(isCustom?'color:var(--crimson)':'')+'">'+esc(q.title)+'</span>'+
           (isCustom?'<span style="font-size:.62em;color:var(--crimson);border:1px solid var(--crimson);border-radius:3px;padding:0 3px">custom</span>':
            '<span style="font-size:.62em;color:var(--ink-light);border:1px solid var(--parchment-deep);border-radius:3px;padding:0 3px">built-in</span>')+
+          '<button data-ed-movequest="up" data-setid="'+esc(set.id)+'" data-idx="'+q.idx+'" title="Move up" style="border:1px solid var(--parchment-deep);background:rgba(255,255,255,.25);border-radius:3px;padding:0 4px;font-size:.7em;cursor:pointer;color:var(--ink-light);opacity:'+(isFirst?'0.2':'1')+';pointer-events:'+(isFirst?'none':'auto')+'">▲</button>'+
+          '<button data-ed-movequest="down" data-setid="'+esc(set.id)+'" data-idx="'+q.idx+'" title="Move down" style="border:1px solid var(--parchment-deep);background:rgba(255,255,255,.25);border-radius:3px;padding:0 4px;font-size:.7em;cursor:pointer;color:var(--ink-light);opacity:'+(isLast?'0.2':'1')+';pointer-events:'+(isLast?'none':'auto')+'">▼</button>'+
           '</div>';
       });
     });
@@ -11091,6 +11139,66 @@ function edRenderList(){
       edRenderList();
     });
   });
+
+  // Quest reorder ▲▼ buttons
+  el.querySelectorAll('[data-ed-movequest]').forEach(function(btn){
+    btn.addEventListener('click',function(ev){
+      ev.preventDefault();
+      ev.stopPropagation();
+      var dir=this.getAttribute('data-ed-movequest');
+      var sid=this.getAttribute('data-setid');
+      var idx=parseInt(this.getAttribute('data-idx'),10);
+      var set=QUESTSETS.filter(function(s){return s.id===sid;})[0];
+      if(!set)return;
+      var qs=set.quests.slice().sort(function(a,b){return (a.idx||0)-(b.idx||0);});
+      var pos=qs.findIndex(function(q){return q.idx===idx;});
+      var swapPos=dir==='up'?pos-1:pos+1;
+      if(swapPos<0||swapPos>=qs.length)return;
+      // Swap idx values
+      var tmpIdx=qs[pos].idx;
+      qs[pos].idx=qs[swapPos].idx;
+      qs[swapPos].idx=tmpIdx;
+      // Persist: update custom quests for this set with new idx values
+      var scope=currentContentScope();
+      var allCustom=contentItemsForScope(scope,'_customQuests');
+      // Build updated list: for each quest in the set, upsert a custom record with the new idx
+      qs.forEach(function(q){
+        var found=false;
+        allCustom=allCustom.map(function(item){
+          if(item.setId===sid&&item.idx===q.idx){found=true;return Object.assign({},item,{idx:q.idx});}
+          // Also catch items that still have the old idx (the ones we just swapped)
+          return item;
+        });
+        // Create a custom override to lock in the reordered idx
+        var existing=allCustom.filter(function(item){return item.setId===sid&&item.idx===q.idx;})[0];
+        if(!existing){
+          // Clone built-in quest with new idx as a custom override
+          var builtinQ=set.quests.filter(function(bq){return bq.idx===q.idx;})[0];
+          if(builtinQ){
+            var override=Object.assign({},builtinQ,{_custom:true,setId:sid,idx:q.idx});
+            allCustom.push(override);
+          }
+        }
+      });
+      // The two quests that swapped need their idx updated in allCustom
+      var idxA=qs[pos].idx, idxB=qs[swapPos].idx;
+      // Actually the simplest approach: just track which setId+old_idx pairs need updating
+      // Re-derive: find both quests by title (since we swapped idx already in qs)
+      // Better: save entire set's quests as custom overrides with new indices
+      var setCustom=allCustom.filter(function(item){return item.setId===sid;});
+      var otherCustom=allCustom.filter(function(item){return item.setId!==sid;});
+      // Ensure every quest in this set has a custom record with its current idx
+      var newSetCustom=qs.map(function(q){
+        var existing=setCustom.filter(function(item){return item.title===q.title;})[0];
+        if(existing)return Object.assign({},existing,{idx:q.idx});
+        return Object.assign({},q,{_custom:true,setId:sid});
+      });
+      var finalCustom=otherCustom.concat(newSetCustom);
+      var result=saveCustom('_customQuests',finalCustom,scope);
+      var afterMove=function(){mergeCustomContent();edRenderList();};
+      if(result&&typeof result.then==='function'){result.then(afterMove);}else{afterMove();}
+    });
+  });
   el.querySelectorAll('[data-ed]').forEach(function(row){
     row.addEventListener('click',function(){
       var type=this.getAttribute('data-ed');
@@ -11149,9 +11257,12 @@ function edShowCycleForm(){
   html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Minimum Average Squad Level</label>'+
     '<input id="ec-avg-level" type="number" min="0" step="0.1" value="'+(gate.minAvgSquadLevel||0)+'" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
   html+='</div>';
-  html+='<div style="margin-top:16px;display:flex;gap:10px">'+
+  html+='<div style="padding:8px 12px;background:rgba(139,26,26,.06);border:1px solid rgba(139,26,26,.25);border-radius:5px;font-size:.82em;color:var(--ink-light);margin-top:14px">'+
+    '⚠️ Deleting a cycle removes it and all its quests from the editor. Type <strong>DELETE</strong> to confirm.</div>';
+  html+='<div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">'+
     '<button id="ec-save" style="padding:10px 24px;background:var(--forest);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:\'Cinzel\',serif">💾 Save Cycle Rules</button>'+
     '<button id="ec-clear" style="padding:10px 18px;background:var(--ink-light);color:#fff;border:none;border-radius:5px;cursor:pointer">Reset Rules</button>'+
+    '<button id="ec-delete" style="padding:10px 18px;background:var(--crimson);color:#fff;border:none;border-radius:5px;cursor:pointer;margin-left:auto">🗑 Delete Cycle</button>'+
     '</div></div>';
   document.getElementById('ed-form-inner').innerHTML=html;
 
@@ -11189,6 +11300,22 @@ function edShowCycleForm(){
     }else{
       alert('No saved custom cycle rules exist for this set yet.');
     }
+  });
+  document.getElementById('ec-delete').addEventListener('click',function(){
+    var conf=prompt('Type DELETE to confirm removing the entire cycle "'+set.name+'" and all its custom quests.');
+    if((conf||'').trim()!=='DELETE')return;
+    // Remove cycle from custom quest sets
+    var setMeta=getCustomQuestSets().filter(function(s){return s.id!==set.id;});
+    // Remove all custom quests for this cycle
+    var questMeta=contentItemsForScope(currentContentScope(),'_customQuests').filter(function(q){return q.setId!==set.id;});
+    // Also tombstone it so builtin cycles can be hidden
+    var cycleTombstones=JSON.parse(localStorage.getItem('rq_cycle_tombstones')||'[]');
+    if(cycleTombstones.indexOf(set.id)===-1)cycleTombstones.push(set.id);
+    localStorage.setItem('rq_cycle_tombstones',JSON.stringify(cycleTombstones));
+    saveCustom('_customQuestSets',setMeta);
+    saveCustom('_customQuests',questMeta);
+    mergeCustomContent();
+    edSelected=null;edRenderList();edShowPlaceholder();
   });
 }
 
@@ -11236,38 +11363,8 @@ function edShowQuestForm(){
   html+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">'+
     '<h2 style="font-family:\'Cinzel\',serif;color:var(--crimson);font-size:1.1em;margin:0">'+
     (isNew?'New Quest':'Edit Quest')+'</h2>'+
-    (isBuiltin?'<span style="font-size:.75em;background:rgba(44,26,14,.08);border:1px solid var(--parchment-deep);border-radius:4px;padding:2px 8px;color:var(--ink-light)">'+(canEditBuiltin?'built-in — editable as official':'built-in — view only')+'</span>':'')+
+    (isBuiltin?'<span style="font-size:.75em;background:rgba(201,146,42,.12);border:1px solid var(--gold-dark);border-radius:4px;padding:2px 8px;color:var(--gold-dark)">built-in — editable</span>':'')+'
     '</div>';
-
-  if(isBuiltin&&!canEditBuiltin){
-    // Read-only view for built-in quests
-    html+='<div style="background:rgba(44,26,14,.04);border:1px solid var(--parchment-deep);border-radius:6px;padding:16px 20px">'+
-      '<div style="font-size:1.05em;font-weight:700;margin-bottom:6px">'+esc(q.title)+'</div>'+
-      '<div style="color:var(--ink-light);font-style:italic;margin-bottom:10px">'+esc(q.desc)+'</div>'+
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.9em">'+
-      '<div><strong>Type:</strong> '+q.type+'</div>'+
-      '<div><strong>Base GP:</strong> '+q.baseGp+'</div>'+
-      '<div><strong>Tier:</strong> '+q.tier+'</div>'+
-      '<div><strong>Capstone:</strong> '+(q.capstone?'Yes':'No')+'</div>'+
-      (q.squadReqMin?'<div><strong>Min squad:</strong> '+q.squadReqMin+'</div>':'')+
-      (q.terrain&&q.terrain!=='none'?'<div><strong>Terrain:</strong> '+esc(q.terrain)+'</div>':'')+
-      (q.difficulty&&q.difficulty!=='standard'?'<div><strong>Difficulty:</strong> '+esc(q.difficulty)+'</div>':'')+
-      (q.vehicleReq?'<div><strong>Vehicle support:</strong> '+esc((q.vehicleReq.ic||'🚚')+' '+q.vehicleReq.name)+'</div>':'')+
-      (q.buildingReq?'<div><strong>Building support:</strong> '+esc((q.buildingReq.ic||'🏠')+' '+q.buildingReq.name)+'</div>':'')+
-      '</div>'+
-      (pre.skills.length?'<div style="margin-top:8px;font-size:.9em"><strong>Skills:</strong> '+pre.skills.join(', ')+'</div>':'')+
-      (pre.tools.length?'<div style="font-size:.9em"><strong>Tools:</strong> '+pre.tools.join(', ')+'</div>':'')+
-      (pre.lang.length?'<div style="font-size:.9em"><strong>Languages:</strong> '+pre.lang.join(', ')+'</div>':'')+
-      (pre.items&&pre.items.length?'<div style="font-size:.9em"><strong>Items:</strong> '+pre.items.join(', ')+'</div>':'')+
-      (pre.gold?'<div style="font-size:.9em"><strong>Gold required:</strong> '+pre.gold+' gp</div>':'')+
-      '</div>'+
-      '<div style="margin-top:16px;padding:12px;background:rgba(201,146,42,.06);border-radius:5px;font-size:.88em;color:var(--ink-light)">'+
-      'Built-in quests cannot be edited. To create a variant, click <strong>+ New</strong> and choose the same quest set.'+
-      '</div>';
-    html+='</div>';
-    document.getElementById('ed-form-inner').innerHTML=html;
-    return;
-  }
 
   // Editable form
   var sets=QUESTSETS.map(function(s){return '<option value="'+s.id+'"'+(s.id===setId?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
@@ -11446,17 +11543,27 @@ function edShowQuestForm(){
   if(!isNew){
     document.getElementById('ef-delete').addEventListener('click',function(){
       var oldQ=edQuestObj();
-      if(!oldQ||!oldQ._custom){alert('Built-in quests cannot be deleted.');return;}
-      if(!confirm('Delete "'+oldQ.title+'"?'))return;
-      var arr=getCustomQuests().filter(function(item){return !(item.setId===edSelected.setId&&item.idx===oldQ.idx);});
-      saveCustom('_customQuests',arr).then(function(){
-        mergeCustomContent();
-        edSelected=null;
-        edRenderList();
-        edShowPlaceholder();
-      }).catch(function(err){
-        alert('Quest delete failed: '+(err&&err.message?err.message:err));
-      });
+      if(!oldQ)return;
+      var isQBuiltin=!oldQ._custom;
+      var typed=prompt('Type DELETE to confirm removing "'+oldQ.title+'"'+(isQBuiltin?' (built-in — will be overridden with a deletion marker)':'')+'.
+
+This cannot be undone.');
+      if(typed!=='DELETE'){alert('Cancelled — you must type DELETE exactly.');return;}
+      var scope=edFormScope();
+      if(isQBuiltin){
+        // Save tombstone for built-in quest
+        var tombstoneQ=Object.assign({},oldQ,{_custom:true,_deleted:true,setId:edSelected.setId,idx:oldQ.idx});
+        var arr=getCustomQuests().filter(function(item){return !(item.setId===edSelected.setId&&item.idx===oldQ.idx);});
+        arr.push(tombstoneQ);
+        saveCustom('_customQuests',arr,scope).then(function(){
+          mergeCustomContent();edSelected=null;edRenderList();edShowPlaceholder();
+        }).catch(function(err){alert('Quest delete failed: '+(err&&err.message?err.message:err));});
+      } else {
+        var arr=getCustomQuests().filter(function(item){return !(item.setId===edSelected.setId&&item.idx===oldQ.idx);});
+        saveCustom('_customQuests',arr,scope).then(function(){
+          mergeCustomContent();edSelected=null;edRenderList();edShowPlaceholder();
+        }).catch(function(err){alert('Quest delete failed: '+(err&&err.message?err.message:err));});
+      }
     });
   }
 }
@@ -11474,24 +11581,12 @@ function edShowGrindForm(){
   var html='<div style="max-width:700px">';
   html+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">'+
     '<h2 style="font-family:\'Cinzel\',serif;color:var(--crimson);font-size:1.1em;margin:0">'+(isNew?'New Grind Mission':'Edit Grind Mission')+'</h2>'+
-    (isBuiltin?'<span style="font-size:.75em;background:rgba(44,26,14,.08);border:1px solid var(--parchment-deep);border-radius:4px;padding:2px 8px;color:var(--ink-light)">'+(canEditBuiltin?'built-in — editable as official':'built-in — view only')+'</span>':'')+
+    (isBuiltin?'<span style="font-size:.75em;background:rgba(201,146,42,.12);border:1px solid var(--gold-dark);border-radius:4px;padding:2px 8px;color:var(--gold-dark)">built-in — editable</span>':'')+
     '</div>';
 
-  if(isBuiltin&&!canEditBuiltin){
-    html+='<div style="background:rgba(44,26,14,.04);border:1px solid var(--parchment-deep);border-radius:6px;padding:16px 20px">'+
-      '<div style="font-size:1.05em;font-weight:700;margin-bottom:6px">'+esc(g.title)+'</div>'+
-      '<div style="color:var(--ink-light);font-style:italic;margin-bottom:10px">'+esc(g.desc)+'</div>'+
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.9em">'+
-      '<div><strong>Type:</strong> '+g.type+'</div>'+
-      '<div><strong>Base GP:</strong> '+g.baseGp+'</div>'+
-      '</div>'+
-      (pre.skills.length?'<div style="margin-top:8px;font-size:.9em"><strong>Skills:</strong> '+pre.skills.join(', ')+'</div>':'')+
-      (pre.tools.length?'<div style="font-size:.9em"><strong>Tools:</strong> '+pre.tools.join(', ')+'</div>':'')+
-      '</div>'+
-      '<div style="margin-top:16px;padding:12px;background:rgba(201,146,42,.06);border-radius:5px;font-size:.88em;color:var(--ink-light)">Built-in missions cannot be edited. Click <strong>+ New</strong> to create a custom one.</div>';
-    html+='</div>';
-    document.getElementById('ed-form-inner').innerHTML=html;
-    return;
+  if(isBuiltin){
+    html+='<div style="padding:8px 12px;background:rgba(201,146,42,.08);border:1px solid rgba(201,146,42,.3);border-radius:5px;font-size:.82em;color:var(--ink-light);margin-bottom:14px">'+
+      '⚠️ This is a built-in mission. Edits override it globally. Type <strong>DELETE</strong> to confirm deletion.</div>';
   }
 
   var types=['combat','social','explore','wonder'].map(function(t){return '<option value="'+t+'"'+(g&&g.type===t?' selected':'')+'>'+t+'</option>';}).join('');
@@ -11553,10 +11648,23 @@ function edShowGrindForm(){
 
   if(!isNew){
     document.getElementById('ef-gdelete').addEventListener('click',function(){
-      if(!g||!g._custom){alert('Built-in missions cannot be deleted.');return;}
-      if(!confirm('Delete "'+g.title+'"?'))return;
-      saveCustom('_customGrind',getCustomGrind().filter(function(x){return x.id!==gid;}));
-      mergeCustomContent();edSelected=null;edRenderList();edShowPlaceholder();
+      var conf=prompt('Type DELETE to confirm removing "'+g.title+'"');
+      if((conf||'').trim()!=='DELETE')return;
+      var delArr=isBuiltin
+        ? GRIND.filter(function(x){return x.id!==gid&&x.title!==g.title;})
+        : getCustomGrind().filter(function(x){return x.id!==gid;});
+      var delKey=isBuiltin?'_customGrind':undefined;
+      if(isBuiltin){
+        // Store a tombstone so mergeCustomContent skips it
+        var tombstones=JSON.parse(localStorage.getItem('rq_grind_tombstones')||'[]');
+        if(tombstones.indexOf(g.id)===-1)tombstones.push(g.id);
+        localStorage.setItem('rq_grind_tombstones',JSON.stringify(tombstones));
+        mergeCustomContent();
+      } else {
+        saveCustom('_customGrind',getCustomGrind().filter(function(x){return x.id!==gid;}));
+        mergeCustomContent();
+      }
+      edSelected=null;edRenderList();edShowPlaceholder();
     });
   }
 }
@@ -11571,24 +11679,12 @@ function edShowGearForm(){
   var html='<div style="max-width:640px">';
   html+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">'+
     '<h2 style="font-family:\'Cinzel\',serif;color:var(--crimson);font-size:1.1em;margin:0">'+(isNew?'New Gear Item':'Edit Gear Item')+'</h2>'+
-    (isBuiltin?'<span style="font-size:.75em;background:rgba(44,26,14,.08);border:1px solid var(--parchment-deep);border-radius:4px;padding:2px 8px;color:var(--ink-light)">'+(canEditBuiltin?'built-in — editable as official':'built-in — view only')+'</span>':'')+
+    (isBuiltin?'<span style="font-size:.75em;background:rgba(201,146,42,.12);border:1px solid var(--gold-dark);border-radius:4px;padding:2px 8px;color:var(--gold-dark)">built-in — editable</span>':'')+
     '</div>';
 
-  if(isBuiltin&&!canEditBuiltin){
-    html+='<div style="background:rgba(44,26,14,.04);border:1px solid var(--parchment-deep);border-radius:6px;padding:16px 20px">'+
-      '<div style="font-size:1.4em;margin-bottom:6px">'+g.ic+' <strong>'+esc(g.name)+'</strong></div>'+
-      '<div style="color:var(--ink-light);font-style:italic;margin-bottom:10px">'+esc(g.desc)+'</div>'+
-      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:.9em">'+
-      '<div><strong>Rarity:</strong> '+g.rar+'</div>'+
-      '<div><strong>Price:</strong> '+g.price+' gp</div>'+
-      '<div><strong>Type:</strong> '+g.type+'</div>'+
-      '<div><strong>Weight:</strong> '+(g.wt||0)+' lb</div>'+
-      '</div>'+
-      '</div>'+
-      '<div style="margin-top:16px;padding:12px;background:rgba(201,146,42,.06);border-radius:5px;font-size:.88em;color:var(--ink-light)">Built-in items cannot be edited. Click <strong>+ New</strong> to add a custom item.</div>';
-    html+='</div>';
-    document.getElementById('ed-form-inner').innerHTML=html;
-    return;
+  if(isBuiltin){
+    html+='<div style="padding:8px 12px;background:rgba(201,146,42,.08);border:1px solid rgba(201,146,42,.3);border-radius:5px;font-size:.82em;color:var(--ink-light);margin-bottom:14px">'+
+      '⚠️ This is a built-in item. Edits override it globally. Type <strong>DELETE</strong> to confirm deletion.</div>';
   }
 
   var rarOptions=['common','uncommon','rare','veryrare'].map(function(r){return '<option value="'+r+'"'+(g&&g.rar===r?' selected':'')+'>'+r+'</option>';}).join('');
@@ -11649,10 +11745,18 @@ function edShowGearForm(){
 
   if(!isNew){
     document.getElementById('ef-idelete').addEventListener('click',function(){
-      if(!g||!g._custom){alert('Built-in items cannot be deleted.');return;}
-      if(!confirm('Delete "'+g.name+'"?'))return;
-      saveCustom('_customGear',getCustomGear().filter(function(x){return x.name!==gname;}));
-      mergeCustomContent();edSelected=null;edRenderList();edShowPlaceholder();
+      var conf=prompt('Type DELETE to confirm removing "'+g.name+'"');
+      if((conf||'').trim()!=='DELETE')return;
+      if(isBuiltin){
+        var tombstones=JSON.parse(localStorage.getItem('rq_gear_tombstones')||'[]');
+        if(tombstones.indexOf(g.name)===-1)tombstones.push(g.name);
+        localStorage.setItem('rq_gear_tombstones',JSON.stringify(tombstones));
+        mergeCustomContent();
+      } else {
+        saveCustom('_customGear',getCustomGear().filter(function(x){return x.name!==gname;}));
+        mergeCustomContent();
+      }
+      edSelected=null;edRenderList();edShowPlaceholder();
     });
   }
 }
@@ -11678,24 +11782,8 @@ function edShowAssetForm(){
   var html='<div style="max-width:660px">';
   html+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">'+
     '<h2 style="font-family:\'Cinzel\',serif;color:var(--crimson);font-size:1.1em;margin:0">'+(isNew?'New Franchise Asset':'Edit Franchise Asset')+'</h2>'+
-    (isBuiltin?'<span style="font-size:.75em;background:rgba(44,26,14,.08);border:1px solid var(--parchment-deep);border-radius:4px;padding:2px 8px;color:var(--ink-light)">built-in — view only</span>':'')+
+    (isBuiltin?'<span style="font-size:.75em;background:rgba(201,146,42,.12);border:1px solid var(--gold-dark);border-radius:4px;padding:2px 8px;color:var(--gold-dark)">built-in — editable</span>':'')+
     '</div>';
-
-  if(isBuiltin){
-    html+='<div style="background:rgba(44,26,14,.04);border:1px solid var(--parchment-deep);border-radius:6px;padding:16px 20px">'+
-      '<div style="font-size:1.4em;margin-bottom:6px">'+a.ic+' <strong>'+esc(a.name)+'</strong></div>'+
-      '<div style="color:var(--ink-light);font-style:italic;margin-bottom:10px">'+esc(a.desc)+'</div>'+
-      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:.9em">'+
-      '<div><strong>Category:</strong> '+esc(akey)+'</div>'+
-      '<div><strong>Sub-type:</strong> '+esc(a.type||'')+'</div>'+
-      '<div><strong>Price:</strong> '+a.price+' gp</div>'+
-      '</div>'+
-      '</div>'+
-      '<div style="margin-top:16px;padding:12px;background:rgba(201,146,42,.06);border-radius:5px;font-size:.88em;color:var(--ink-light)">Built-in assets cannot be edited. Click <strong>+ New</strong> to add a custom one.</div>';
-    html+='</div>';
-    document.getElementById('ed-form-inner').innerHTML=html;
-    return;
-  }
 
   // Category selector
   var catOptions=['vehicle','building','pet'].map(function(c){
@@ -11791,11 +11879,23 @@ function edShowAssetForm(){
 
   if(!isNew){
     document.getElementById('ef-adelete').addEventListener('click',function(){
-      if(!a||!a._custom){alert('Built-in assets cannot be deleted.');return;}
-      if(!confirm('Delete "'+a.name+'"?'))return;
-      var delResult=saveCustom(customKey,getterFn().filter(function(x){return x.name!==aname;}));
-      var afterDel=function(){mergeCustomContent();edSelected=null;edRenderList();edShowPlaceholder();};
-      if(delResult&&typeof delResult.then==='function'){delResult.then(afterDel);}else{afterDel();}
+      var typed=prompt('Type DELETE to confirm removing "'+a.name+'" '+(isBuiltin?'(built-in — this will override it with a deletion marker)':'')+'.
+
+This cannot be undone.');
+      if(typed!=='DELETE'){alert('Cancelled — you must type DELETE exactly.');return;}
+      if(isBuiltin){
+        // For built-ins, save a tombstone that overrides the built-in entry
+        var tombstone=Object.assign({},a,{_custom:true,_deleted:true});
+        var arr2=getterFn().filter(function(x){return x.name!==aname;});
+        arr2.push(tombstone);
+        var delResult=saveCustom(customKey,arr2,edFormScope());
+        var afterDel=function(){mergeCustomContent();edSelected=null;edRenderList();edShowPlaceholder();};
+        if(delResult&&typeof delResult.then==='function'){delResult.then(afterDel);}else{afterDel();}
+      } else {
+        var delResult=saveCustom(customKey,getterFn().filter(function(x){return x.name!==aname;}),edFormScope());
+        var afterDel=function(){mergeCustomContent();edSelected=null;edRenderList();edShowPlaceholder();};
+        if(delResult&&typeof delResult.then==='function'){delResult.then(afterDel);}else{afterDel();}
+      }
     });
   }
 }
