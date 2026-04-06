@@ -2961,6 +2961,7 @@ function createDefaultState(){
     doneEnc:[],
     encAssigned:{},
     pendingQuests:[],
+    downtimeJobs:[], // [{ci,type,target,startedAt,endsAt,durationMins}]
     questState:null,   // {cycleId, setId, cycleNum, revealed:[], done:[], pending:[], assigned:{}, grindPending:[]}
     questCycles:[],    // [{cycleId, setId, completed:[], rewards:[]}]
     questLog:[],       // [{cycleId, questTitle, type, reward, franchiseCut, chars:[{name,cut,item}], completedAt}]
@@ -4120,6 +4121,141 @@ document.getElementById('ov-am-yes').addEventListener('click',function(){
 /* ═══════════════════════ PARTY ═══════════════════════ */
 
 var P3={lvl:null,sq:null};
+var DOWNTIME_OPTIONS=[
+  {id:'skill',label:'Study a Skill',durations:[60,240,480]},
+  {id:'language',label:'Learn a Language',durations:[60,240,480]},
+  {id:'contacts',label:'Network for Contacts',durations:[60,240,480]},
+  {id:'intel',label:'Research Rumors',durations:[60,240,480]}
+];
+function ensureDowntimeState(){
+  if(!S.downtimeJobs)S.downtimeJobs=[];
+  if(!S.settings)S.settings={};
+  if(!S.settings.intelFragments)S.settings.intelFragments=0;
+}
+function downtimeJobForChar(ci){
+  ensureDowntimeState();
+  for(var i=0;i<S.downtimeJobs.length;i++)if(S.downtimeJobs[i].ci===ci)return S.downtimeJobs[i];
+  return null;
+}
+function questBusyForChar(ci){
+  var now=Date.now();
+  var busy=false;
+  (S.questState&&S.questState.pending||[]).forEach(function(pq){
+    if(!busy && pq.doneAt>now && (pq.chars||[]).indexOf(ci)!==-1)busy=true;
+  });
+  (S.questState&&S.questState.grindPending||[]).forEach(function(gp){
+    if(!busy && gp.doneAt>now && (gp.chars||[]).indexOf(ci)!==-1)busy=true;
+  });
+  return busy;
+}
+function downtimeRemainingLabel(job){
+  if(!job)return '';
+  var rem=(job.endsAt||0)-Date.now();
+  if(rem<=0)return 'Ready';
+  return fmtCountdown(rem);
+}
+function downtimeTrackLabel(type,target){
+  if(type==='skill')return 'Skill: '+target;
+  if(type==='language')return 'Language: '+target;
+  if(type==='contacts')return 'Contacts';
+  if(type==='intel')return 'Rumors';
+  return target||type;
+}
+function runDowntimeCompletion(job){
+  if(!job)return;
+  var c=S.party[job.ci];
+  if(!c)return;
+  if(!c.dtProgress)c.dtProgress={};
+  var roll=1+rndInt(0,19);
+  var mod=0;
+  if(job.type==='skill'||job.type==='intel'){
+    var iMod=Math.floor((((c.stats&&c.stats.int)||10)-10)/2);
+    var wMod=Math.floor((((c.stats&&c.stats.wis)||10)-10)/2);
+    mod=Math.max(iMod,wMod);
+  }else if(job.type==='language'){
+    mod=Math.floor((((c.stats&&c.stats.int)||10)-10)/2);
+  }else if(job.type==='contacts'){
+    mod=Math.floor((((c.stats&&c.stats.cha)||10)-10)/2);
+  }
+  var total=roll+mod;
+  var gain=total>=16?3:total>=11?2:total>=6?1:0;
+  var key=job.type+':'+(job.target||'core');
+  if(c.dtProgress[key]==null)c.dtProgress[key]=0;
+  c.dtProgress[key]+=gain;
+  var threshold=(job.type==='contacts'?6:(job.type==='intel'?5:8));
+  var unlocked=false;
+  var unlockMsg='';
+  if(c.dtProgress[key]>=threshold){
+    c.dtProgress[key]-=threshold;
+    unlocked=true;
+    if(job.type==='skill'&&(c.skills||[]).indexOf(job.target)===-1){
+      c.skills.push(job.target);
+      unlockMsg='✅ '+c.name+' learned skill: '+job.target+'.';
+    }else if(job.type==='language'&&(c.lang||[]).indexOf(job.target)===-1){
+      c.lang.push(job.target);
+      unlockMsg='✅ '+c.name+' learned language: '+job.target+'.';
+    }else if(job.type==='contacts'){
+      c.contact=true;
+      if((c.skills||[]).indexOf('Persuasion')===-1)c.skills.push('Persuasion');
+      unlockMsg='✅ '+c.name+' expanded franchise contacts.';
+    }else if(job.type==='intel'){
+      S.settings.intelFragments=(S.settings.intelFragments||0)+1;
+      unlockMsg='✅ Intel fragment discovered ('+S.settings.intelFragments+'/3).';
+      if(S.settings.intelFragments>=3){
+        S.settings.intelFragments=0;
+        logAdd('🗺 Downtime research uncovered a lead to a new questline.','adv');
+        unlockMsg+=' New quest lead added to the ledger.';
+      }
+    }else{
+      unlockMsg='✅ Downtime milestone reached.';
+    }
+  }
+  logAdd('🕯 Downtime complete: '+c.name+' · '+downtimeTrackLabel(job.type,job.target)+
+    ' · d20 '+roll+(mod>=0?' + ':' - ')+Math.abs(mod)+' = '+total+' · +'+gain+' progress','adv');
+  alert('Downtime result for '+c.name+'\\n\\n'+
+    downtimeTrackLabel(job.type,job.target)+'\\n'+
+    'Roll: d20('+roll+') '+(mod>=0?'+':'-')+' '+Math.abs(mod)+' = '+total+'\\n'+
+    'Progress gained: +'+gain+'\\n'+
+    'Track: '+(c.dtProgress[key]||0)+' / '+threshold+
+    (unlocked?'\\n\\n'+unlockMsg:''));
+}
+function startDowntimeForChar(ci){
+  var c=S.party[ci];
+  if(!c)return;
+  if(questBusyForChar(ci)){alert(c.name+' is currently on a quest.');return;}
+  if(downtimeJobForChar(ci)){alert(c.name+' already has active downtime.');return;}
+  var choices=DOWNTIME_OPTIONS.map(function(o,idx){return (idx+1)+') '+o.label;}).join('\\n');
+  var pickRaw=prompt('Choose downtime activity for '+c.name+':\\n\\n'+choices+'\\n\\nEnter number:','1');
+  if(pickRaw===null)return;
+  var oi=Math.max(1,Math.min(DOWNTIME_OPTIONS.length,parseInt(pickRaw,10)||1))-1;
+  var opt=DOWNTIME_OPTIONS[oi];
+  var target='core';
+  if(opt.id==='skill'){
+    var skillPool=(DND.skills||[]).filter(function(s){return (c.skills||[]).indexOf(s)===-1;});
+    if(!skillPool.length){alert(c.name+' already knows all available skills.');return;}
+    var list=skillPool.slice(0,12).map(function(s,idx){return (idx+1)+') '+s;}).join('\\n');
+    var sr=prompt('Select skill to study:\\n\\n'+list+'\\n\\nEnter number:','1');
+    if(sr===null)return;
+    target=skillPool[Math.max(1,Math.min(skillPool.length,parseInt(sr,10)||1))-1];
+  }else if(opt.id==='language'){
+    var langPool=(DND.lang||[]).filter(function(l){return (c.lang||[]).indexOf(l)===-1;});
+    if(!langPool.length){alert(c.name+' already knows all available languages.');return;}
+    var ll=langPool.slice(0,12).map(function(l,idx){return (idx+1)+') '+l;}).join('\\n');
+    var lr=prompt('Select language to study:\\n\\n'+ll+'\\n\\nEnter number:','1');
+    if(lr===null)return;
+    target=langPool[Math.max(1,Math.min(langPool.length,parseInt(lr,10)||1))-1];
+  }
+  var durChoices=(opt.durations||[60,240,480]).map(function(d,idx){return (idx+1)+') '+questDurationLabel({durationOverrideMins:d});}).join('\\n');
+  var dr=prompt('Choose downtime duration:\\n\\n'+durChoices+'\\n\\nEnter number:','2');
+  if(dr===null)return;
+  var dIdx=Math.max(1,Math.min((opt.durations||[]).length,parseInt(dr,10)||2))-1;
+  var mins=(opt.durations||[])[dIdx]||240;
+  ensureDowntimeState();
+  S.downtimeJobs.push({ci:ci,type:opt.id,target:target,startedAt:Date.now(),endsAt:Date.now()+mins*60000,durationMins:mins});
+  logAdd('🕯 Downtime started: '+c.name+' · '+downtimeTrackLabel(opt.id,target)+' · '+questDurationLabel({durationOverrideMins:mins}),'adv');
+  save();
+  renderParty();
+}
 
 function ptag(label,value,activeFilter){
   var isActive=activeFilter===value;
@@ -4166,6 +4302,12 @@ function charCardHtml(c,ci,opts){
     filteredInv ? '<div style="margin-top:4px">'+filteredInv+'</div>' : ''
   ].join('');
 
+  var dtJob=downtimeJobForChar(ci);
+  var dtReady=!!(dtJob && (dtJob.endsAt||0)<=Date.now());
+  var dtBusy=!!(dtJob && !dtReady);
+  var dtHtml=dtJob
+    ?('<div style="font-size:.72em;color:var(--gold-dark);margin:4px 0 6px">🕯 Downtime · '+esc(downtimeTrackLabel(dtJob.type,dtJob.target))+' · '+(dtReady?'Ready to resolve':esc(downtimeRemainingLabel(dtJob)))+'</div>')
+    :'';
   return '<div class="char-card'+(isQuesting?' char-card-questing':'')+'" data-party-ci="'+ci+'">'+
     '<div><div class="cname">'+esc(c.name)+
     (isQuesting?ptag('<span style="font-size:.6em;color:var(--gold-dark);font-family:\'Cinzel\',serif;background:rgba(201,146,42,.15);border:1px solid var(--gold-dark);border-radius:8px;padding:1px 6px;white-space:nowrap;display:inline-block;">⚔ Questing</span>','Questing',af):'')+
@@ -4253,7 +4395,9 @@ function charCardHtml(c,ci,opts){
       }).join(''):'<div style="font-size:.8em;color:var(--ink-light);font-style:italic">Empty.</div>'))
     )+
     '</div>'+
-    '<div style="display:flex;justify-content:flex-end;margin-top:8px">'+
+    dtHtml+
+    '<div style="display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin-top:8px">'+
+    '<button class="btn bink sm" data-a="'+(dtReady?'dt-collect':'dt-start')+'" data-ci="'+ci+'" style="white-space:nowrap;padding:2px 6px;min-height:22px;font-size:.72em"'+((isQuesting||dtBusy)?' disabled':'')+'>'+(dtReady?'Resolve Downtime':'🕯 Downtime')+'</button>'+
     '<button class="btn bink sm" data-a="lv" data-ci="'+ci+'" style="white-space:nowrap;padding:2px 6px;min-height:22px;font-size:.72em">Level Up</button>'+
     '</div>'+
     '</div>';
@@ -4482,6 +4626,21 @@ document.getElementById('plist').addEventListener('click',function(e){
   if(a==='assets-col'){
     S.assetsCollapsed=!S.assetsCollapsed;
     save();renderParty();window.scrollTo({top:0,behavior:'smooth'});
+  } else if(a==='dt-start'){
+    startDowntimeForChar(ci);
+    return;
+  } else if(a==='dt-collect'){
+    ensureDowntimeState();
+    var jobIdx=-1;
+    S.downtimeJobs.forEach(function(j,ji){if(j.ci===ci)jobIdx=ji;});
+    if(jobIdx===-1){alert('No downtime job found.');return;}
+    var job=S.downtimeJobs[jobIdx];
+    if((job.endsAt||0)>Date.now()){alert('Downtime is still in progress. '+downtimeRemainingLabel(job));return;}
+    S.downtimeJobs.splice(jobIdx,1);
+    runDowntimeCompletion(job);
+    save();
+    renderParty();
+    return;
   } else if(a==='to-storage'){
     // Move item from character inventory to franchise storage
     if(!hasAnyOwnedBuildingAsset()){
@@ -8023,7 +8182,8 @@ function sbPush(manual){
         _franchiseStorage:S.franchiseStorage||[],
         _questLog:S.questLog||[],
         _taskGroups:S.taskGroups||[],
-        _partyAssetsBackup:S.partyAssets||[]
+        _partyAssetsBackup:S.partyAssets||[],
+        _downtimeJobs:S.downtimeJobs||[]
       }),
       last_sync:new Date().toISOString()
     }]);
@@ -8178,11 +8338,13 @@ function sbPull(manual){
       S.questLog=rawSettings._questLog||[];
       S.taskGroups=rawSettings._taskGroups||[];
       backupPartyAssets=rawSettings._partyAssetsBackup||[];
+      S.downtimeJobs=rawSettings._downtimeJobs||[];
       var cleanSettings=Object.assign({},rawSettings);
       delete cleanSettings._franchiseStorage;
       delete cleanSettings._questLog;
       delete cleanSettings._taskGroups;
       delete cleanSettings._partyAssetsBackup;
+      delete cleanSettings._downtimeJobs;
       S.settings=normalizeSettings(cleanSettings);
     }
     if(party&&party.length){
@@ -8535,6 +8697,7 @@ function initSession(pullFromCloud){
   if(!S.encAssigned)S.encAssigned={};
   if(!S.doneEnc)S.doneEnc=[];
   if(!S.pendingQuests)S.pendingQuests=[];
+  if(!S.downtimeJobs)S.downtimeJobs=[];
   if(!S.questCycles)S.questCycles=[];
   if(!S.questLog)S.questLog=[];
   S.party.forEach(function(c){if(!c.stats)c.stats=rollStats(c.cls||'Fighter');});
