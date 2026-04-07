@@ -1794,10 +1794,10 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.456
+      Version 1.457
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
-      Fixed duplicate capstone rewards on page load: localPending restore now filters already-collected quests; awardCapstonReward guarded against double-fire.
+      Description card: skills/tools removed (shown in slots); two-column layout when >3 prereqs; unmet items show a shop button that opens the buy modal and refreshes the quest screen on purchase.
     </div>
   </div>
   <div class="set-sec" id="settings-branding-sec">
@@ -1819,6 +1819,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.457</strong> &mdash; Description card prereq list: (1) skill, tool, language, and faith rows removed &mdash; these are already represented by the peg-slot holes below; (2) the "covered"/"have it" status notes removed for a cleaner look, only vehicle/building bonus notes (+reward) are kept; (3) when more than 3 prereq rows remain, the list switches to a two-column CSS grid layout; (4) unmet item prerequisites show a small shop button (🛒) &mdash; tapping it opens the buy modal for that item directly from the quest screen, and after purchase the quest modal automatically re-opens with the description card updated to show the item as satisfied.</div>
         <div style="margin-bottom:9px"><strong>Version 1.456</strong> &mdash; Fixed duplicate capstone rewards on page reload. Root cause: autoCollectExpired() fires twice on startup &mdash; once from local data, then again after sbPull returns. The first pass collected the capstone and removed it from pending. But the sbPull restore logic then put localPending back (because the pulled state had fewer entries), re-adding the collected quest. The second autoCollectExpired fired awardCapstonReward again. Two fixes: (1) the localPending restore now filters out any quest indices already in qs.done so already-collected quests are never re-added to pending; (2) collectQuest now checks qs.done before calling awardCapstonReward as a secondary guard.</div>
         <div style="margin-bottom:9px"><strong>Version 1.455</strong> &mdash; Custom content now visible in store for all users. Root cause: loadContentLibrary() is asynchronous but renderStore() was not called after it completed, so custom gear and pets from Supabase only appeared after a manual navigation. Fixed by calling renderStore() and renderAdv() at the end of loadContentLibrary() success path. Also cleared the gear stock date cache (S.stockDate) when content loads, so custom gear items can appear in that day's stock immediately rather than waiting until the next day's reroll.</div>
         <div style="margin-bottom:9px"><strong>Version 1.455</strong> &mdash; Content editor scope fix: the editor was defaulting to Private scope, so all saved gear/pets/vehicles/buildings/quests were only visible to the saving account. The Supabase RLS SELECT policy was correct (allows shared+official with status=published) but nothing was being saved as shared. Fixed: editor now defaults to Shared when opened (Official for admins). Non-admin users can no longer accidentally select Official (downgraded to Shared instead of Private). To fix existing rows in Supabase, run: UPDATE content_items SET visibility = 'shared' WHERE visibility = 'private' AND status = 'published' AND content_type IN ('gear','pet','vehicle','building'); Add quest_set and quest to the IN list if those should also be shared.</div>
@@ -8795,6 +8796,42 @@ SQUAD COMMENTED OUT */
 // Hire button delegation on prereq panel
 // qhp-open delegation on modal body — catches clicks from card stack info rows AND prereqs panel
 document.getElementById('ov-quest').addEventListener('click',function(e){
+  // Store-link button: open buy modal for a specific item
+  var storeBtn=e.target.closest('.qcs-store-link');
+  if(storeBtn){
+    var itemName=storeBtn.getAttribute('data-item');
+    // Find the item across GEAR, VEHICLES, PETS
+    var allShop=[].concat(GEAR||[],VEHICLES||[],PETS||[]);
+    var shopItem=allShop.filter(function(it){return it&&it.name===itemName;})[0];
+    if(!shopItem){
+      // Try fuzzy — item might be a weapon group like 'Martial Weapons'
+      shopItem=allShop.filter(function(it){
+        return it&&inventoryHasPrereqItem([it.name],itemName);
+      })[0];
+    }
+    if(!shopItem){alert('"'+itemName+'" is not currently available in the store.');return;}
+    // Set up the buy modal exactly as the store does
+    P5.item=null;P5.assetMode=false;
+    window._questModalOpenAfterBuy=true; // flag to re-open quest modal after purchase
+    var storeItems=[].concat(GEAR||[]);
+    var storeIdx=storeItems.indexOf(shopItem);
+    if(storeIdx===-1){storeItems.push(shopItem);storeIdx=storeItems.length-1;}
+    P5.item=storeIdx;
+    document.getElementById('ov-bi-qty').value='1';
+    document.getElementById('ov-bi-ownerlbl').textContent='Deliver to Adventurer, Storage, Building, Vehicle, or Squad';
+    var charOptions=S.party.map(function(c,ci){
+      return '<option value="'+ci+'">'+esc(c.name)+' ('+esc(c.cls)+')</option>';
+    }).join('');
+    document.getElementById('ov-bi-sel').innerHTML=charOptions+assetOwnerOptionsHtml('',{includeStorage:true});
+    document.getElementById('ov-bi-namerow').style.display='none';
+    document.getElementById('ov-bi-partynote').style.display='none';
+    document.getElementById('ov-bi-msg').textContent=shopItem.name+' — \uD83E\uDE99 '+shopItem.price+' gp'+(shopItem.wt?' \u00b7 '+shopItem.wt+' lb':'');
+    // Store a temp ref so ov-bi-yes can find the item
+    P5.customItem=shopItem;
+    P5.item='__questitem__';
+    openOv('ov-buyitem');
+    return;
+  }
   var btn=e.target.closest('.qhp-open');
   if(!btn)return;
   var rtype=btn.getAttribute('data-rtype');
@@ -9144,7 +9181,7 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
   else if(storeTab==='buildings')items=BUILDINGS;
   else if(storeTab==='pets')items=PETS;
   else return;
-  var item=(P5.item==='__plusweapon__'&&P5.customItem)?P5.customItem:items[P5.item];
+  var item=(P5.item==='__plusweapon__'||P5.item==='__questitem__')&&P5.customItem?P5.customItem:items[P5.item];
   if(!item)return;
   var qty=Math.max(1,parseInt(document.getElementById('ov-bi-qty').value,10)||1);
   var ownerVal=document.getElementById('ov-bi-sel').value||'';
@@ -9203,7 +9240,17 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
     for(var ii=0;ii<qty;ii++)S.party[ci].inv.push(item.name);
     logAdd(item.name+' ×'+qty+' → '+S.party[ci].name,'buy');
   }
-  P5.item=null;P5.assetMode=false;P5.customItem=null;closeOv('ov-buyitem');save();renderParty();renderStore();
+  P5.item=null;P5.assetMode=false;P5.customItem=null;
+  var _reopen=window._questModalOpenAfterBuy;
+  window._questModalOpenAfterBuy=false;
+  closeOv('ov-buyitem');
+  save();renderParty();renderStore();
+  if(_reopen&&qddQuestLike){
+    // Refresh the quest modal info card to reflect the new purchase
+    qddRender(qddQuestLike,qddIsGrind);
+    updateQuestModal();
+    openOv('ov-quest');
+  }
 });
 
 /* ═══════════════════════ SETTINGS ═══════════════════════ */
@@ -12503,20 +12550,14 @@ function qddBuild6Slots(questLike,isGrind){return qddBuildCharSlots(questLike,is
 
 // Build non-char prereq info for the description card
 function qddBuildInfoPrereqs(questLike){
+  // Skills/tools/lang/faith are shown as peg-slots below — not repeated here.
+  // This card shows only: gold, item prereqs, vehicle/building bonuses, squad size.
   var pr=questLike.pre||{};
   var rows=[];
-  // Skill / tool / lang / rel — show coverage from available party
-  var avail=S.party.map(function(c,ci){return c;});
-  var sk=[],to=[],la=[],re=[];
-  avail.forEach(function(c){if(!c)return;(c.skills||[]).forEach(function(s){sk.push(s);});(c.tools||[]).forEach(function(t){to.push(t);});(c.lang||[]).forEach(function(l){la.push(l);});if(c.rel)re.push(c.rel);});
-  (pr.skills||[]).forEach(function(s){var met=sk.indexOf(s)!==-1;rows.push({icon:'\u2605',label:'Skill: '+s,met:met,note:met?'covered':'needed',reqType:'skill',reqValue:s});});
-  (pr.tools||[]).forEach(function(t){var met=to.indexOf(t)!==-1;rows.push({icon:'\uD83D\uDD27',label:'Tool: '+t,met:met,note:met?'covered':'needed',reqType:'tool',reqValue:t});});
-  (pr.lang||[]).forEach(function(l){var met=la.indexOf(l)!==-1;rows.push({icon:'\uD83D\uDDE3',label:'Lang: '+l,met:met,note:met?'covered':'needed',reqType:'lang',reqValue:l});});
-  if(pr.rel&&pr.rel!==''){var met=re.indexOf(pr.rel)!==-1;rows.push({icon:'\u271D',label:'Faith: '+pr.rel,met:met,note:met?'covered':'needed',reqType:'rel',reqValue:pr.rel});}
   // Gold
   if(pr.gold&&pr.gold>0){
     var met=S.gold>=pr.gold;
-    rows.push({icon:'\uD83E\uDE99',label:'Gold: '+pr.gold+' gp',met:met,note:met?'have it':'need more'});
+    rows.push({icon:'\uD83E\uDE99',label:'Gold: '+pr.gold+' gp',met:met});
   }
   // Items (franchise-satisfiable)
   var asN=(S.partyAssets||[]).map(function(a){return a.name||'';});
@@ -12524,22 +12565,22 @@ function qddBuildInfoPrereqs(questLike){
   (pr.items||[]).forEach(function(x){
     var met=inventoryHasPrereqItem(asN.concat(stN),x)||
       (S.party||[]).some(function(c){return c&&inventoryHasPrereqItem(c.inv||[],x);});
-    rows.push({icon:'\uD83C\uDF92',label:x,met:met,note:met?'available':'not found'});
+    rows.push({icon:'\uD83C\uDF92',label:x,met:met,isItem:true,itemName:x});
   });
-  // Vehicle req (bonus, not hard gate — still show)
+  // Vehicle req (bonus, not hard gate)
   if(questLike.vehicleReq){
     var hasV=(S.partyAssets||[]).some(function(a){return a.name===questLike.vehicleReq.name;});
-    rows.push({icon:questLike.vehicleReq.ic||'\uD83D\uDE97',label:questLike.vehicleReq.name,met:hasV,note:hasV?'+reward':'optional'});
+    rows.push({icon:questLike.vehicleReq.ic||'\uD83D\uDE97',label:questLike.vehicleReq.name,met:hasV,note:'+reward'});
   }
   if(questLike.buildingReq){
     var hasB=(S.partyAssets||[]).some(function(a){return a.name===questLike.buildingReq.name;});
-    rows.push({icon:questLike.buildingReq.ic||'\uD83C\uDFDB',label:questLike.buildingReq.name,met:hasB,note:hasB?'+reward':'optional'});
+    rows.push({icon:questLike.buildingReq.ic||'\uD83C\uDFDB',label:questLike.buildingReq.name,met:hasB,note:'+reward'});
   }
   // Squad size
   if(questLike.squadReqMin>0){
     var sz=(S.party||[]).filter(function(c){return c&&(c.level||0)>=1;}).length;
     var met2=sz>=questLike.squadReqMin;
-    rows.push({icon:'\u2694\uFE0F',label:'Squad \u2265'+questLike.squadReqMin,met:met2,note:sz+' available'});
+    rows.push({icon:'\u2694\uFE0F',label:'Squad \u2265'+questLike.squadReqMin,met:met2});
   }
   return rows;
 }
@@ -12819,18 +12860,27 @@ function qddAnimatePegToHole(pegEl,holeEl,cb){
 function qddInfoPrereqHtml(questLike){
   var rows=qddBuildInfoPrereqs(questLike);
   if(!rows.length)return '';
-  return'<div class="qcs-info-rows">'+rows.map(function(r){
-    var hireBtn=(!r.met&&r.reqType)?
-      ' <button class="qhp-open" data-rtype="'+r.reqType+'" data-rval="'+esc(r.reqValue)+'" '+
-      'style="font-size:.65em;padding:1px 6px;border:1px solid var(--crimson);border-radius:3px;'+
-      'background:rgba(139,26,26,.08);color:var(--crimson);cursor:pointer;vertical-align:middle">'+
-      '\uD83E\uDE93 Hire</button>':'';
-    return'<div class="qcs-info-row">'+
+  var twoCol=rows.length>3;
+  var wrapStyle=twoCol
+    ?'display:grid;grid-template-columns:1fr 1fr;gap:3px 8px;margin-top:6px;border-top:1px solid var(--parchment-deep);padding-top:5px;'
+    :'display:flex;flex-direction:column;gap:3px;margin-top:6px;border-top:1px solid var(--parchment-deep);padding-top:5px;';
+  var rowHtml=rows.map(function(r){
+    // Unmet item: show a store-link button
+    var storeBtn='';
+    if(!r.met&&r.isItem){
+      storeBtn=' <button class="qcs-store-link" data-item="'+esc(r.itemName)+'" '+
+        'style="font-size:.62em;padding:1px 5px;border:1px solid var(--gold-dark);border-radius:3px;'+
+        'background:rgba(201,146,42,.1);color:var(--gold-dark);cursor:pointer;vertical-align:middle">'+
+        '\uD83D\uDED2</button>';
+    }
+    // Show +reward note only for vehicle/building bonuses
+    var noteHtml=r.note?'<span style="font-size:.65em;color:var(--ink-light);margin-left:2px">('+esc(r.note)+')</span>':'';
+    return'<div class="qcs-info-row" style="min-width:0">'+
       '<span class="'+(r.met?'qcs-info-met':'qcs-info-unmet')+'">'+(r.met?'\u2713':'\u2717')+'</span>'+
-      '<span style="font-size:.85em">'+r.icon+' '+esc(r.label)+hireBtn+'</span>'+
-      '<span style="font-size:.72em;color:var(--ink-light);margin-left:auto">'+esc(r.note)+'</span>'+
+      '<span style="font-size:.82em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+r.icon+' '+esc(r.label)+noteHtml+storeBtn+'</span>'+
       '</div>';
-  }).join('')+'</div>';
+  }).join('');
+  return'<div style="'+wrapStyle+'">'+rowHtml+'</div>';
 }
 
 function qddRender(questLike,isGrind){
