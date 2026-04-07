@@ -1879,7 +1879,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.472
+      Version 1.474
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -12219,7 +12219,11 @@ function edShowCycleForm(){
   document.getElementById('ed-form-inner').innerHTML=html;
 
   document.getElementById('ec-save').addEventListener('click',function(){
-    var setMeta=getCustomQuestSets();
+    // Resolve scope from the set's stored visibility — not the dropdown — same fix as quest save
+    var _setScope=normalizeContentScope(
+      (set._visibility)||(isAppAdmin()?currentContentScope():'private')
+    );
+    var setMeta=contentItemsForScope(_setScope,'_customQuestSets');
     var idx=-1;
     for(var i=0;i<setMeta.length;i++){if(setMeta[i]&&setMeta[i].id===set.id){idx=i;break;}}
     var nextMeta=idx>=0?Object.assign({},setMeta[idx]):{id:set.id,name:set.name,theme:set.theme,dndTier:set.dndTier,capstoneIdx:set.capstoneIdx};
@@ -12234,9 +12238,13 @@ function edShowCycleForm(){
       minAvgSquadLevel:Math.max(0,parseFloat(document.getElementById('ec-avg-level').value)||0)
     };
     if(idx>=0)setMeta[idx]=nextMeta; else setMeta.push(nextMeta);
-    saveCustom('_customQuestSets',setMeta);
+    // Also pre-update the bucket so mergeCustomContent sees the new data immediately
+    contentBucket(_setScope).questSets=clone(setMeta);
+    saveCustom('_customQuestSets',setMeta,_setScope);
     mergeCustomContent();
+    edScopeFlash();
     edRenderList();
+    edShowCycleForm(); // re-render form to confirm saved values
   });
   document.getElementById('ec-clear').addEventListener('click',function(){
     var setMeta=getCustomQuestSets();
@@ -12245,7 +12253,8 @@ function edShowCycleForm(){
     if(idx>=0){
       if(confirm('Clear cycle rules for '+set.name+'?')){
         setMeta[idx].cycleGate={visibility:'fully_visible'};
-        saveCustom('_customQuestSets',setMeta);
+        contentBucket(_setScope).questSets=clone(setMeta);
+        saveCustom('_customQuestSets',setMeta,_setScope);
         mergeCustomContent();
         edShowCycleForm();
       }
@@ -12726,7 +12735,7 @@ function edShowGrindForm(){
     var selSkills=Array.from(document.getElementById('ef-gskills').selectedOptions).map(function(o){return o.value;});
     var selTools=Array.from(document.getElementById('ef-gtools').selectedOptions).map(function(o){return o.value;});
     var selLang=Array.from(document.getElementById('ef-glang').selectedOptions).map(function(o){return o.value;});
-    var targetScope=(isBuiltin&&isAppAdmin())?'official':edFormScope();
+    var targetScope=(!isNew&&g&&g._visibility)?normalizeContentScope(g._visibility):(isBuiltin&&isAppAdmin()?'official':edFormScope());
     var newId=g?g.id:('gc_'+Date.now());
     var newG={_custom:true,id:newId,title:title,desc:desc,
       type:document.getElementById('ef-gtype').value,
@@ -12755,7 +12764,7 @@ function edShowGrindForm(){
         localStorage.setItem('rq_grind_tombstones',JSON.stringify(tombstones));
         mergeCustomContent();
       } else {
-        saveCustom('_customGrind',getCustomGrind().filter(function(x){return x.id!==gid;}));
+        saveCustom('_customGrind',contentItemsForScope(targetScope,'_customGrind').filter(function(x){return x.id!==gid;}),targetScope);
         mergeCustomContent();
       }
       edSelected=null;edRenderList();edShowPlaceholder();
@@ -12828,7 +12837,7 @@ function edShowGearForm(){
       bagOfHolding:document.getElementById('ef-ibag').checked||undefined
     };
     if(!newItem.bagOfHolding)delete newItem.bagOfHolding;
-    var targetScope=(isBuiltin&&isAppAdmin())?'official':edFormScope();
+    var targetScope=(!isNew&&g&&g._visibility)?normalizeContentScope(g._visibility):(isBuiltin&&isAppAdmin()?'official':edFormScope());
     var arr=contentItemsForScope(targetScope,'_customGear');
     if(!isNew){arr=arr.map(function(x){return x.name===gname?newItem:x;});}
     else{arr.push(newItem);}
@@ -12847,7 +12856,7 @@ function edShowGearForm(){
         localStorage.setItem('rq_gear_tombstones',JSON.stringify(tombstones));
         mergeCustomContent();
       } else {
-        saveCustom('_customGear',getCustomGear().filter(function(x){return x.name!==gname;}));
+        saveCustom('_customGear',contentItemsForScope(targetScope,'_customGear').filter(function(x){return x.name!==gname;}),targetScope);
         mergeCustomContent();
       }
       edSelected=null;edRenderList();edShowPlaceholder();
@@ -12945,7 +12954,9 @@ function edShowAssetForm(){
 
     // Determine which custom key to save to based on selected category
     var saveKey=cat==='vehicle'?'_customVehicles':cat==='building'?'_customBuildings':'_customPets';
-    var asScope=edFormScope();
+    var asScope=(!isNew&&a&&a._visibility)
+      ?normalizeContentScope(a._visibility)
+      :(isBuiltin&&isAppAdmin()?'official':edFormScope());
 
     // Build updated array for the destination category
     var destArr=contentItemsForScope(asScope,saveKey);
