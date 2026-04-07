@@ -1794,10 +1794,10 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.453
+      Version 1.456
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
-      Auto-advance to page 2 is now animated: next-arrow pulses, viewport flashes gold, slide uses a springy bounce transition.
+      Fixed duplicate capstone rewards on page load: localPending restore now filters already-collected quests; awardCapstonReward guarded against double-fire.
     </div>
   </div>
   <div class="set-sec" id="settings-branding-sec">
@@ -1819,6 +1819,10 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.456</strong> &mdash; Fixed duplicate capstone rewards on page reload. Root cause: autoCollectExpired() fires twice on startup &mdash; once from local data, then again after sbPull returns. The first pass collected the capstone and removed it from pending. But the sbPull restore logic then put localPending back (because the pulled state had fewer entries), re-adding the collected quest. The second autoCollectExpired fired awardCapstonReward again. Two fixes: (1) the localPending restore now filters out any quest indices already in qs.done so already-collected quests are never re-added to pending; (2) collectQuest now checks qs.done before calling awardCapstonReward as a secondary guard.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.455</strong> &mdash; Custom content now visible in store for all users. Root cause: loadContentLibrary() is asynchronous but renderStore() was not called after it completed, so custom gear and pets from Supabase only appeared after a manual navigation. Fixed by calling renderStore() and renderAdv() at the end of loadContentLibrary() success path. Also cleared the gear stock date cache (S.stockDate) when content loads, so custom gear items can appear in that day's stock immediately rather than waiting until the next day's reroll.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.455</strong> &mdash; Content editor scope fix: the editor was defaulting to Private scope, so all saved gear/pets/vehicles/buildings/quests were only visible to the saving account. The Supabase RLS SELECT policy was correct (allows shared+official with status=published) but nothing was being saved as shared. Fixed: editor now defaults to Shared when opened (Official for admins). Non-admin users can no longer accidentally select Official (downgraded to Shared instead of Private). To fix existing rows in Supabase, run: UPDATE content_items SET visibility = 'shared' WHERE visibility = 'private' AND status = 'published' AND content_type IN ('gear','pet','vehicle','building'); Add quest_set and quest to the IN list if those should also be shared.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.454</strong> &mdash; Content editor persistence fixed. Root cause: CONTENT_LIB was a standalone global never saved to localStorage, so all custom content (gear, pets, vehicles, buildings, quest cycles, quests) was lost on every page reload regardless of Supabase status. Fixes: (1) saveLocalState() now also writes CONTENT_LIB to localStorage under key rq_content:{uid}. (2) load() restores CONTENT_LIB from that key before mergeCustomContent runs, so custom content is available immediately on startup and for guests. (3) loadContentLibrary() guest path no longer wipes CONTENT_LIB (it was overwriting the just-restored local data). (4) After a successful Supabase pull, the fresh CONTENT_LIB is cached to localStorage so it is available offline. (5) persistContentScope() now has a .catch() that surfaces Supabase errors in the sync status bar instead of silently swallowing them. Note: if content still fails to save to Supabase, check the content_type_check constraint on the content_items table allows all 7 types: quest_set, quest, grind, gear, vehicle, building, pet.</div>
         <div style="margin-bottom:9px"><strong>Version 1.453</strong> &mdash; Auto-advance animation: when all page-1 slots are filled the carousel now signals the transition clearly. After a 180ms pause: the next-arrow pulses with a scale bounce (qhole-page-nudge keyframe), the viewport border flashes gold (qhole-vp-flash keyframe), and the slide itself uses a springy overshoot easing (cubic-bezier .34,1.22,.64,1) instead of the normal ease-in-out. The springy transition is applied only for the auto-advance and restored to the default immediately after.</div>
         <div style="margin-bottom:9px"><strong>Version 1.452</strong> &mdash; Hole carousel auto-advances to page 2 when all four slots on page 1 are filled. Triggers inside qddAssignToSlot after both explicit assignment and auto-fill propagation complete, so it fires whether the user dragged a peg, tapped a hole, or a hireling was auto-placed. Support slots (always filled) count toward the "page full" check, so quests with fewer than four character prereqs advance as soon as the actual prereq slots are all covered.</div>
         <div style="margin-bottom:9px"><strong>Version 1.451</strong> &mdash; Fixed hole carousel page 2 rendering blank. Root cause: qholeCarApply used translateX(-100%) to advance one page, but CSS translateX percentages are relative to the element's own width. With a 2-page track (width:200% of viewport), translateX(-100%) moved the track 200% of the viewport &mdash; twice as far as needed, sending page 2 completely off-screen. Fixed by computing pageWidthPct = 100/pages and using translateX(-(offset * pageWidthPct)%) so each page step moves exactly one viewport-width.</div>
@@ -1964,7 +1968,7 @@ button.squad-tag.squad-tag-active{
       <label for="ed-content-scope" style="font-family:\'Cinzel\',serif;font-size:.68em;color:var(--parchment-deep);text-transform:uppercase;letter-spacing:.05em">Save as</label>
       <select id="ed-content-scope" style="padding:4px 8px;font-size:.8em;border:1px solid rgba(201,146,42,.4);border-radius:4px;background:rgba(255,255,255,.12);color:var(--parchment);min-width:112px">
         <option value="private">Private</option>
-        <option value="shared">Shared</option>
+        <option value="shared" selected>Shared</option>
         <option value="official">Official</option>
       </select>
       <span id="ed-scope-note" style="font-size:.72em;color:var(--parchment-deep);font-style:italic"></span>
@@ -3297,6 +3301,11 @@ function localSaveKey(){
 
 function saveLocalState(){
   try{localStorage.setItem(localSaveKey(),JSON.stringify(S));}catch(e){}
+  // Also persist CONTENT_LIB locally so custom content survives page reload
+  try{
+    var _clKey='rq_content:'+(uid()||'guest');
+    localStorage.setItem(_clKey,JSON.stringify(CONTENT_LIB));
+  }catch(e){}
 }
 
 function load(){
@@ -3315,6 +3324,22 @@ function load(){
   });
   if(!S.taskGroups)S.taskGroups=[];
   if((S.settings&&S.settings.testQuestMins||0)===1)S.gold=150;
+  // Restore CONTENT_LIB from localStorage (Supabase will overwrite this on login)
+  try{
+    var _clKey='rq_content:'+(uid()||'guest');
+    var _clRaw=localStorage.getItem(_clKey);
+    if(_clRaw){
+      var _cl=JSON.parse(_clRaw);
+      if(_cl&&_cl.private){
+        ['official','shared','private'].forEach(function(sc){
+          if(!_cl[sc])return;
+          ['questSets','quests','grind','gear','vehicles','buildings','pets'].forEach(function(k){
+            if(_cl[sc][k]&&_cl[sc][k].length)CONTENT_LIB[sc][k]=_cl[sc][k];
+          });
+        });
+      }
+    }
+  }catch(e){}
 }
 
 function save(){
@@ -7707,7 +7732,11 @@ function collectQuest(qi,pq,q,set){
   var pqIdx=-1;
   (S.questState.pending||[]).forEach(function(p,pi){if(p.idx===qi)pqIdx=pi;});
   if(pqIdx!==-1)S.questState.pending.splice(pqIdx,1);
-  if(q.capstone)awardCapstonReward(set);
+  if(q.capstone){
+    // Only award if not already recorded in done (prevents duplicate on double-collect)
+    var _alreadyDone=(S.questState&&S.questState.done&&S.questState.done.indexOf(qi)!==-1);
+    if(!_alreadyDone)awardCapstonReward(set);
+  }
   saveActiveSetProgress();
 }
 
@@ -10368,7 +10397,12 @@ function initSession(pullFromCloud){
     var localGrind=(S.questState&&S.questState.grindPending&&S.questState.grindPending.length)?S.questState.grindPending.slice():[];
     return sbPull(false).then(function(){
       if(S.questState){
-        if((!S.questState.pending||!S.questState.pending.length)&&localPending.length)S.questState.pending=localPending;
+        if((!S.questState.pending||!S.questState.pending.length)&&localPending.length){
+          // Filter out any quests already collected during the first autoCollectExpired pass
+          var _done=S.questState.done||[];
+          var _filtered=localPending.filter(function(pq){return _done.indexOf(pq.idx)===-1;});
+          if(_filtered.length)S.questState.pending=_filtered;
+        }
         if((!S.questState.grindPending||!S.questState.grindPending.length)&&localGrind.length)S.questState.grindPending=localGrind;
       }
       checkQuestCycleReset();
@@ -10847,7 +10881,7 @@ function refreshEditorScopeOptions(){
   Array.from(sel.options).forEach(function(opt){
     if(opt.value==='official')opt.style.display=isAppAdmin()?'':'none';
   });
-  if(!isAppAdmin()&&sel.value==='official')sel.value='private';
+  if(!isAppAdmin()&&sel.value==='official')sel.value='shared';
   editorScopeNote();
 }
 function contentRow(type, key, title, data, scope, order){
@@ -10899,6 +10933,12 @@ function persistContentScope(scope,key,arr){
   }).then(function(){
     syncStatus('Content saved ('+scope+').','var(--gold-dark)');
     return true;
+  }).catch(function(err){
+    var msg=err&&err.message?err.message:String(err);
+    syncStatus('⚠ Content save failed: '+msg,'var(--crimson)');
+    console.error('[persistContentScope] Supabase error:',msg);
+    // Content is still saved locally — user will see it this session
+    return false;
   });
 }
 
@@ -10940,7 +10980,8 @@ function migrateLegacyContentIntoPrivateScope(){
 
 function loadContentLibrary(manual){
   if(!uid()){
-    CONTENT_LIB={official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]}};
+    // Guest: CONTENT_LIB was already restored from localStorage in load().
+    // Don't wipe it — just merge built-ins and return.
     mergeCustomContent();
     return Promise.resolve(false);
   }
@@ -10975,6 +11016,16 @@ function loadContentLibrary(manual){
       (CONTENT_LIB[scope].pets||[]).sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
     });
     mergeCustomContent();
+    // Persist the freshly-loaded content to localStorage for offline/guest access
+    try{
+      var _clKey='rq_content:'+(uid()||'guest');
+      localStorage.setItem(_clKey,JSON.stringify(CONTENT_LIB));
+    }catch(e){}
+    // Re-render anything that shows content-library data
+    // Also clear gear stock cache so new custom items can appear in today's stock
+    if(S&&S.stockDate)S.stockDate='';
+    if(typeof renderStore==='function')renderStore();
+    if(typeof renderAdv==='function')renderAdv();
     if(manual)syncStatus('☁ Content pulled.','var(--ink-light)');
     return migrateLegacyContentIntoPrivateScope();
   }).catch(function(err){
@@ -11304,6 +11355,9 @@ var edCollapsedCycles={};
 function openEditor(){
   if(!isDevModeActive()){alert('Developer mode only. Enable it in Settings.');return;}
   document.getElementById('ov-editor').style.display='flex';
+  // Default scope: official for admins, shared for everyone else
+  var scopeSel=document.getElementById('ed-content-scope');
+  if(scopeSel)scopeSel.value=isAppAdmin()?'official':'shared';
   refreshEditorScopeOptions();
   edTab='quests';
   edSelected=null;
