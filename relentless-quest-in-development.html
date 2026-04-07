@@ -1469,6 +1469,18 @@ button.squad-tag.squad-tag-active{
   min-width:0;
 }
 
+.q-carousel{display:flex;overflow-x:auto;gap:8px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;margin:8px 0 10px;padding-bottom:2px;}
+.q-info-card{min-width:88%;max-width:88%;scroll-snap-align:start;border:1px solid var(--parchment-deep);background:rgba(255,255,255,.66);border-radius:7px;padding:7px 8px;box-sizing:border-box;max-height:112px;overflow:auto;}
+.q-info-title{font-family:'Cinzel',serif;font-size:.76em;color:var(--gold-dark);margin-bottom:3px;text-transform:uppercase;letter-spacing:.03em}
+.pegboard{display:grid;grid-template-columns:1fr;gap:6px;margin-bottom:8px;max-height:180px;overflow:auto}
+.peg-hole{position:relative;border:1px dashed var(--parchment-deep);border-radius:6px;background:rgba(44,26,14,.03);padding:6px 7px;min-height:42px}
+.peg-hole.filled{border-style:solid;border-color:var(--forest);background:rgba(31,111,31,.09)}
+.peg-hole .ok{position:absolute;top:4px;right:5px;color:var(--forest);font-size:.84em}
+.peg-hole .remove{position:absolute;right:5px;bottom:4px;color:#111;font-size:.72em;cursor:pointer;border:1px solid #111;border-radius:10px;padding:0 4px;background:#fff}
+.peg-storage{display:flex;flex-wrap:wrap;gap:5px;max-height:120px;overflow:auto;padding:6px;border:1px solid var(--parchment-deep);border-radius:7px;background:rgba(255,255,255,.5)}
+.mini-peg{border:1px solid rgba(26,107,138,.45);background:rgba(26,107,138,.09);border-radius:5px;padding:4px 6px;font-size:.72em;cursor:grab;min-width:112px}
+.mini-peg small{display:block;color:var(--ink-light);font-size:.9em}
+
 </style>
 </head>
 <body class="login-open">
@@ -2096,23 +2108,30 @@ button.squad-tag.squad-tag-active{
     </div>
     <p id="ov-q-desc" style="font-style:italic;margin-bottom:8px;"></p>
 
-    <div class="quest-reward-box">
-      <div style="font-family:'Cinzel',serif;font-size:.95em;color:var(--gold-dark);font-weight:700;margin-bottom:2px">
-        💰 Estimated Reward: <span id="ov-q-reward">0</span> gp
+    <div class="q-carousel" id="ov-q-carousel">
+      <div class="q-info-card">
+        <div class="q-info-title">💰 Reward</div>
+        <div style="font-family:'Cinzel',serif;font-size:.95em;color:var(--gold-dark);font-weight:700">
+          Estimated: <span id="ov-q-reward">0</span> gp
+        </div>
+      </div>
+      <div class="q-info-card">
+        <div class="q-info-title">⏳ Details</div>
+        <div id="ov-q-detailtext">⏳ Locked for <span id="ov-q-dur-label">8 hrs</span> · 90% franchise, 10% split by level &amp; expertise</div>
+        <div id="ov-q-unmet" style="color:var(--crimson);font-size:.9em;margin-top:4px;display:none;line-height:1.4"></div>
+      </div>
+      <div class="q-info-card">
+        <div class="q-info-title">💡 Best Fit</div>
+        <div id="ov-q-best" class="best-fit" style="display:block;margin-bottom:0"></div>
       </div>
     </div>
-
-    <!-- Prerequisites -->
-    <div id="ov-q-prereqs" style="line-height:1.8;margin-bottom:10px"></div>
+    <div id="ov-q-prereqs" style="display:none"></div>
     <div id="quest-hire-panel" style="display:none"></div>
 
-    <details class="quest-details">
-      <summary>⏳ ⚖️ ⚠️ Details</summary>
-      <div class="quest-details-body">
-        <div id="ov-q-detailtext">⏳ Locked for <span id="ov-q-dur-label">8 hrs</span> · 90% franchise, 10% split by level &amp; expertise</div>
-        <div id="ov-q-unmet" style="color:var(--crimson);font-size:.98em;margin-top:6px;display:none;line-height:1.6"></div>
-      </div>
-    </details>
+    <div class="q-info-title" style="margin-top:2px">🧩 Prerequisite Pegboard</div>
+    <div id="ov-q-pegboard" class="pegboard"></div>
+    <div class="q-info-title">🎒 Character Storage</div>
+    <div id="ov-q-storage" class="peg-storage"></div>
 
     <div style="font-family:'Cinzel',serif;font-size:.78em;text-transform:uppercase;letter-spacing:.05em;color:var(--gold-dark);margin:12px 0 6px">Adventurers</div>
     <div class="frow" id="ov-q-squadrow" style="margin:0 0 8px">
@@ -2121,8 +2140,7 @@ button.squad-tag.squad-tag-active{
         <option value="">— Select squad —</option>
       </select>
     </div>
-    <div id="ov-q-best" class="best-fit" style="display:none;margin-bottom:8px"></div>
-    <div class="cblist" id="ov-q-chars" style="max-height:300px"></div>
+    <div class="cblist" id="ov-q-chars" style="max-height:300px;display:none"></div>
     <div class="frow" id="ov-q-goldrow" style="display:none;margin-top:8px">
       <label class="lbl">Gold Investment</label>
       <div class="hint" id="ov-q-goldnote"></div>
@@ -7461,7 +7479,7 @@ function fmtCountdown(ms){
 }
 
 /* ── Quest collect + XP ── */
-var P4={quest:null,grind:null,downtimeForfeit:null,cycleSetId:null};
+var P4={quest:null,grind:null,downtimeForfeit:null,cycleSetId:null,placedMap:{}};
 
 // Distribute charPool among chars with weighted shares, minimum 1 gp each.
 // Returns {shares:[], unspent, franchiseDebit} where franchiseDebit is extra taken from franchise.
@@ -8136,7 +8154,9 @@ document.getElementById('avcontent').addEventListener('click',function(e){
 
     // Show prereqs tab
     questModalShowTab('prereqs');
+    P4.placedMap={};
     updateQuestModal(); // populate prereqs for empty selection
+    renderQuestPegboard();
     openOv('ov-quest');
     return;
   }
@@ -8217,6 +8237,8 @@ document.getElementById('avcontent').addEventListener('click',function(e){
   else gpRow.style.display='none';
 
   updateQuestModal();
+  P4.placedMap={};
+  renderQuestPegboard();
   questModalShowTab('prereqs');
   openOv('ov-quest');
 });
@@ -8226,6 +8248,112 @@ function getQuestChars(){
   document.querySelectorAll('.qcb:checked').forEach(function(cb){r.push(parseInt(cb.value));});
   return r;
 }
+function setQuestChars(chars){
+  var pick={};
+  (chars||[]).forEach(function(ci){pick[ci]=true;});
+  document.querySelectorAll('#ov-q-chars .qcb').forEach(function(cb){
+    var ci=parseInt(cb.value,10);
+    cb.checked=!!pick[ci];
+  });
+}
+function questHoleDefs(questLike){
+  var pre=(questLike&&questLike.pre)||{};
+  var holes=[];
+  (pre.skills||[]).forEach(function(v){holes.push({id:'skill:'+v,label:'⭐ '+v,type:'skill',value:v});});
+  (pre.tools||[]).forEach(function(v){holes.push({id:'tool:'+v,label:'🔧 '+v,type:'tool',value:v});});
+  (pre.lang||[]).forEach(function(v){holes.push({id:'lang:'+v,label:'🗣 '+v,type:'lang',value:v});});
+  if(pre.rel)holes.push({id:'rel:'+pre.rel,label:'🙏 '+pre.rel,type:'rel',value:pre.rel});
+  return holes;
+}
+function characterFitsHole(ci,hole){
+  var c=S.party[ci];if(!c||!hole)return false;
+  if(hole.type==='skill')return (c.skills||[]).indexOf(hole.value)!==-1;
+  if(hole.type==='tool')return (c.tools||[]).indexOf(hole.value)!==-1;
+  if(hole.type==='lang')return (c.lang||[]).indexOf(hole.value)!==-1;
+  if(hole.type==='rel')return c.rel===hole.value;
+  return false;
+}
+function renderQuestPegboard(){
+  var questLike=P4.grind!==null?(GRIND.filter(function(g){return g.id===P4.grind;})[0]):(P4.quest!==null?(activeQuestSet().quests[P4.quest]||null):null);
+  var board=document.getElementById('ov-q-pegboard'),storage=document.getElementById('ov-q-storage');
+  if(!questLike||!board||!storage)return;
+  var holes=questHoleDefs(questLike);
+  var chars=(S.party||[]).map(function(_,ci){return ci;}).filter(function(ci){
+    var cb=document.querySelector('#ov-q-chars .qcb[value="'+ci+'"]');
+    return cb&&!cb.disabled;
+  });
+  var placed=(P4.placedMap||{});
+  if(!holes.length){
+    board.innerHTML='<div class="hint">No explicit skill/tool/language/religion holes for this assignment.</div>';
+  }else{
+    board.innerHTML=holes.map(function(h){
+      var ci=placed[h.id];
+      var c=(ci!==undefined)?S.party[ci]:null;
+      return '<div class="peg-hole'+(c?' filled':'')+'" data-hole="'+esc(h.id)+'">'+
+        '<div style="font-size:.74em;color:var(--ink-light)">'+esc(h.label)+'</div>'+
+        (c?'<div class="ok">✓</div><div style="font-size:.78em;margin-top:3px"><strong>'+esc(c.name)+'</strong></div><div class="remove" data-a="peg-remove" data-hole="'+esc(h.id)+'">x</div>':'<div style="font-size:.72em;color:var(--ink-light);margin-top:4px">Drop peg here</div>')+
+      '</div>';
+    }).join('');
+  }
+  var used={};
+  Object.keys(placed).forEach(function(k){if(placed[k]!==undefined)used[placed[k]]=true;});
+  var placedAnyLeveled=Object.keys(used).some(function(ci){var c=S.party[ci];return c&&(c.level||0)>0;});
+  chars.sort(function(a,b){
+    var ha=holes.filter(function(h){return !placed[h.id]&&characterFitsHole(a,h);}).length;
+    var hb=holes.filter(function(h){return !placed[h.id]&&characterFitsHole(b,h);}).length;
+    var ca=S.party[a],cb=S.party[b];
+    var la=(ca&&ca.level>0)?1:0,lb=(cb&&cb.level>0)?1:0;
+    var ma=(la&&ha>=2)?1:0,mb=(lb&&hb>=2)?1:0;
+    if(ma!==mb)return mb-ma;
+    if(placedAnyLeveled){
+      var haHire=ca&&ca.hireling&&ha>0?1:0,hbHire=cb&&cb.hireling&&hb>0?1:0;
+      if(haHire!==hbHire)return hbHire-haHire;
+    }
+    if(ha!==hb)return hb-ha;
+    if(la!==lb)return lb-la;
+    return (ca.name||'').localeCompare(cb.name||'');
+  });
+  storage.innerHTML=chars.filter(function(ci){return !used[ci];}).map(function(ci){
+    var c=S.party[ci];
+    var contrib=holes.filter(function(h){return !placed[h.id]&&characterFitsHole(ci,h);}).map(function(h){return h.label.replace(/^.. /,'');}).slice(0,2).join(', ');
+    return '<div class="mini-peg" draggable="true" data-ci="'+ci+'"><strong>'+esc(c.name)+'</strong><small>'+(contrib?esc(contrib):'General support')+'</small></div>';
+  }).join('')||'<div class="hint">All available pegs placed.</div>';
+  setQuestChars(Object.keys(used).map(function(ci){return parseInt(ci,10);}));
+}
+function placePegForChar(ci){
+  var questLike=P4.grind!==null?(GRIND.filter(function(g){return g.id===P4.grind;})[0]):(P4.quest!==null?(activeQuestSet().quests[P4.quest]||null):null);
+  if(!questLike)return;
+  var holes=questHoleDefs(questLike);
+  if(!P4.placedMap)P4.placedMap={};
+  holes.forEach(function(h){
+    if(P4.placedMap[h.id]!==undefined)return;
+    if(characterFitsHole(ci,h))P4.placedMap[h.id]=ci;
+  });
+  renderQuestPegboard();
+  updateQuestModal();
+}
+document.getElementById('ov-q-pegboard').addEventListener('dragover',function(e){
+  if(e.target.closest('.peg-hole'))e.preventDefault();
+});
+document.getElementById('ov-q-pegboard').addEventListener('drop',function(e){
+  var hole=e.target.closest('.peg-hole');if(!hole)return;
+  var ci=parseInt(e.dataTransfer.getData('text/ci'),10);
+  if(isNaN(ci))return;
+  placePegForChar(ci);
+});
+document.getElementById('ov-q-storage').addEventListener('dragstart',function(e){
+  var peg=e.target.closest('.mini-peg');if(!peg)return;
+  e.dataTransfer.setData('text/ci',peg.getAttribute('data-ci'));
+});
+document.getElementById('ov-q-pegboard').addEventListener('click',function(e){
+  var rm=e.target.closest('[data-a=\"peg-remove\"]');if(!rm)return;
+  var holeId=rm.getAttribute('data-hole');
+  if(!P4.placedMap)return;
+  var ci=P4.placedMap[holeId];
+  Object.keys(P4.placedMap).forEach(function(k){if(P4.placedMap[k]===ci)delete P4.placedMap[k];});
+  renderQuestPegboard();
+  updateQuestModal();
+});
 
 function applyQuestSquadSelection(squadName){
   var map={};
@@ -8527,6 +8655,7 @@ document.getElementById('ov-q-chars').addEventListener('click',function(e){
 document.getElementById('ov-q-no').addEventListener('click',function(){
   P4.grind=null;
   P4.downtimeForfeit=null;
+  P4.placedMap={};
   questHirePanel={open:false,reqType:null,reqValue:null,candidates:[],rolled:false};
   closeOv('ov-quest');
 });
@@ -8629,7 +8758,7 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit){
     var cn2=chars.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', ')||'unassigned';
     logAdd('Grind: "'+gObj2.title+'" started ('+cn2+') — '+reward2+' gp in '+questDurationLabel(gObj2),'adv');
     saveActiveSetProgress();
-    P4.grind=null;closeOv('ov-quest');save();renderAdv();
+    P4.grind=null;P4.placedMap={};closeOv('ov-quest');save();renderAdv();
     return;
   }
 
@@ -8654,7 +8783,7 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit){
   var cn=chars.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', ')||'unassigned';
   logAdd('Quest started: "'+q.title+'" ('+cn+') — '+reward+' gp in '+questDurationLabel(q),'adv');
   saveActiveSetProgress();
-  P4.quest=null;closeOv('ov-quest');save();renderAdv();
+  P4.quest=null;P4.placedMap={};closeOv('ov-quest');save();renderAdv();
 }
 document.getElementById('ov-q-yes').addEventListener('click',function(){
   confirmQuestAssignment(false);
