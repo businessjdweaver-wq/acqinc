@@ -1902,7 +1902,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.482
+      Version 1.484
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -1927,6 +1927,8 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.484</strong> &mdash; Quest assignment modal abandon behavior: Cancel button and clicking outside the modal now call questModalAbandon() which clears all peg-slot assignments and resets modal state before closing — so the modal always opens blank. Recruiting from the modal (via 🧑 Recruit button) does NOT clear assignments since the user is not abandoning, just stepping away briefly. Auto-assign (⚡ Auto) now calls qddAutoAssignAndSubmit(): if QP was spent, after filling slots it flashes the Begin Quest button (scale pulse + green glow) and then auto-presses it, so the full flow completes in one tap. In dev mode the button is free but does NOT auto-submit (intentional — dev users may want to inspect before beginning).</div>
+        <div style="margin-bottom:9px"><strong>Version 1.483</strong> &mdash; Fixed ⚡ Auto button not appearing in non-dev mode when QP is enabled. Root cause: qddRender was hiding the button whenever S.qpBalance &lt; cost, so players with 0 QP never saw it existed. Fixed: button now always shows when QP is enabled (or in dev mode), and is visually disabled (opacity 0.45, disabled attribute) when balance is insufficient — tapping it shows an informative alert. Also clarified: the "auto-running on load" appearance is intentional — the modal restores previously assigned characters from S.questState.assigned on open, so a quest you previously auto-assigned will re-populate those characters. This is not the auto-assign firing; it is assignment memory.</div>
         <div style="margin-bottom:9px"><strong>Version 1.482</strong> &mdash; Store and auto-assign revisions: (1) Magic tab sub-tabs reduced to two: Common (all common items + 5 randomly selected uncommon) and Rare (10 randomly selected rare items). buildStock() updated accordingly. (2) Adventuring Gear price ranges tightened to 1–4 gp / 5–10 gp / 11+ gp. (3) Auto-assign (⚡ Auto button on quest assignment modal) cost reduced from 5 QP to 1 QP. Auto-assign already implemented: fills prerequisite peg-slots with the minimum number of characters using a coverage-maximising greedy algorithm, spending 1 QP per use (free in dev mode).</div>
         <div style="margin-bottom:9px"><strong>Version 1.481</strong> &mdash; Expanded magic item pool using SRD content. Common: added Potion of Climbing, Cantrip Spell Scroll, 1st-Level Spell Scroll, Potion of Animal Friendship (5 total, was 1). Uncommon: added 31 items including Alchemy Jug, Boots of Elvenkind, Broom of Flying, Cloak of Elvenkind, Gauntlets of Ogre Power, Hat of Disguise, Headband of Intellect, Helm of Comprehending Languages, Portable Hole, Ring of Jumping/Mind Shielding/Warmth/Water Walking, Slippers of Spider Climbing, spell scrolls (2nd and 3rd level), +1 Armor, Wand of Web, Wind Fan, and more (48 total, was 17). Rare: added 16 items including Boots of Levitation, Cube of Force, Folding Boat, Ioun Stone (Reserve), Mantle of Spell Resistance, Ring of Feather Falling/Free Action/Spell Storing, Robe of Eyes, Wand of Lightning Bolts/Paralysis, Wings of Flying, and more (29 total, was 13). Veryrare unchanged at 7 — kept in system but not shown in store.</div>
         <div style="margin-bottom:9px"><strong>Version 1.480</strong> &mdash; Store restructured: (1) Magic divorced from Gear — now its own tab with Common/Uncommon/Rare sub-tabs; veryrare and legendary items exist in the system but are not shown in the store. Reroll applies only to the Magic tab. (2) Adventuring Gear merges the existing GEAR non-magic items (weapons, armor, kits, mundane gear) with the ADVENTURING_GEAR array, split into three price sub-tabs (&lt;10 gp / 10–50 gp / 50+ gp). (3) Buildings merged into Expedition Assets under a two sub-tab system (Vehicles &amp; Mounts / Buildings). (4) All tabs with sub-categories use a slide-out drawer animation (max-height transition) that opens on tab select and closes when another tab is chosen. (5) buildStock() now draws only from magic items by rarity.</div>
@@ -9436,7 +9438,7 @@ document.getElementById('ov-quest').addEventListener('click',function(e){
   // Recruit button: navigate to recruit screen to find a Lv1+ adventurer
   var recruitLink=e.target.closest('.qcs-recruit-link');
   if(recruitLink){
-    closeOv('ov-quest');
+    closeOv('ov-quest'); // keep assignments — user is recruiting, not abandoning
     navTo('recruit');
     // Auto-roll candidates if none exist yet
     setTimeout(function(){
@@ -9529,10 +9531,7 @@ document.getElementById('ov-q-chars').addEventListener('click',function(e){
   openOv('ov-lvlup');
 });
 document.getElementById('ov-q-no').addEventListener('click',function(){
-  P4.grind=null;
-  P4.downtimeForfeit=null;
-  questHirePanel={open:false,reqType:null,reqValue:null,candidates:[],rolled:false};
-  closeOv('ov-quest');
+  questModalAbandon();
 });
 document.getElementById('ov-q-nosquad-no').addEventListener('click',function(){
   closeOv('ov-q-nosquad');
@@ -9669,7 +9668,7 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit){
   P4.quest=null;closeOv('ov-quest');save();renderAdv();
 }
 document.getElementById('ov-q-auto').addEventListener('click',function(){
-  qddAutoAssign();
+  qddAutoAssignAndSubmit();
 });
 document.getElementById('ov-q-yes').addEventListener('click',function(){
   confirmQuestAssignment(false);
@@ -11153,8 +11152,12 @@ window.addEventListener('resize',updateHeaderCompactState);
 document.querySelectorAll('.ov').forEach(function(ov){
   ov.addEventListener('click',function(e){
     if(e.target===ov){
-      if(ov.id)closeOv(ov.id);
-      else{
+      if(ov.id==='ov-quest'){
+        // Quest modal: abandon clears assignments
+        questModalAbandon();
+      } else if(ov.id){
+        closeOv(ov.id);
+      } else {
         ov.classList.remove('on');
         syncOverlayLock();
       }
@@ -11162,6 +11165,45 @@ document.querySelectorAll('.ov').forEach(function(ov){
     }
   });
 });
+
+// Quest modal abandon — clears assignments, called on Cancel or click-outside
+function questModalAbandon(){
+  qddSlotAssignments={};qcarSelected=null;
+  P4.grind=null;
+  P4.downtimeForfeit=null;
+  questHirePanel={open:false,reqType:null,reqValue:null,candidates:[],rolled:false};
+  closeOv('ov-quest');
+}
+
+// Auto-assign with QP cost: fill slots, animate, then auto-submit if QP was spent
+function qddAutoAssignAndSubmit(){
+  var cost=qpCfg().costAutoAssign||1;
+  var paidQP=!isDevModeActive()&&qpEnabled()&&cost>0;
+
+  // Run the assignment algorithm — returns true if QP spent or dev mode
+  var didAssign=qddAutoAssign();
+
+  // If QP was spent, animate then auto-submit
+  if(didAssign&&paidQP){
+    // Flash the Begin button to signal auto-submit
+    var beginBtn=document.getElementById('ov-q-yes');
+    if(beginBtn){
+      beginBtn.style.transition='transform .15s ease,box-shadow .15s ease';
+      beginBtn.style.transform='scale(1.08)';
+      beginBtn.style.boxShadow='0 0 14px rgba(31,111,31,.6)';
+      setTimeout(function(){
+        beginBtn.style.transform='';
+        beginBtn.style.boxShadow='';
+        // Auto-press Begin after the flash
+        setTimeout(function(){
+          confirmQuestAssignment(false);
+        },180);
+      },280);
+    } else {
+      setTimeout(function(){confirmQuestAssignment(false);},300);
+    }
+  }
+}
 
 /* ═══════════════════════ INIT ═══════════════════════ */
 restoreLogin();
@@ -13452,8 +13494,10 @@ function qddAutoAssign(){
   if(!prereqSlots.length){alert('No prerequisite slots to fill.');return;}
 
   // Spend QP if not dev mode
+  var _qpSpent=false;
   if(!isDevModeActive()&&qpEnabled()){
-    if(!qpSpend(qpCfg().costAutoAssign||1,'auto_assign','Auto-assign quest'))return;
+    if(!qpSpend(qpCfg().costAutoAssign||1,'auto_assign','Auto-assign quest'))return false;
+    _qpSpent=true;
   }
 
   // Clear existing assignments (start fresh)
@@ -13505,6 +13549,7 @@ function qddAutoAssign(){
 
   qddSyncCheckboxes();
   qddRender(qddQuestLike,qddIsGrind);
+  return _qpSpent||isDevModeActive();
 }
 
 function qddSyncCheckboxes(){
@@ -13807,10 +13852,17 @@ function qddRender(questLike,isGrind){
   // Show Auto button if dev mode or has QP
   var autoBtn=document.getElementById('ov-q-auto');
   if(autoBtn){
-    var canAuto=isDevModeActive()||(qpEnabled()&&(S.qpBalance||0)>=(qpCfg().costAutoAssign||1));
-    autoBtn.style.display=canAuto?'':'none';
     var cost=qpCfg().costAutoAssign||1;
-    autoBtn.title=isDevModeActive()?'Auto-assign (Dev Mode — free)':'Auto-assign best party members ('+cost+' QP)';
+    var hasBalance=isDevModeActive()||(qpEnabled()&&(S.qpBalance||0)>=cost);
+    // Always show button when QP is enabled or dev mode; grey out when insufficient balance
+    autoBtn.style.display=(isDevModeActive()||qpEnabled())?'':'none';
+    autoBtn.disabled=!hasBalance;
+    autoBtn.style.opacity=hasBalance?'1':'0.45';
+    autoBtn.title=isDevModeActive()
+      ?'Auto-assign (Dev Mode — free)'
+      :hasBalance
+        ?'Auto-assign best party members ('+cost+' QP)'
+        :'Need '+cost+' QP to auto-assign (you have '+(S.qpBalance||0)+')';
     autoBtn.textContent=isDevModeActive()?'⚡ Auto':'⚡ Auto ('+cost+' QP)';
   }
   qddQuestLike=questLike;qddIsGrind=isGrind;
@@ -14016,13 +14068,7 @@ renderQuestAssignmentList=function(extraChecked){
   var slots=qddBuildCharSlots(questLike,isGrind);
   // Only init non-support, non-fixed slots
   slots.forEach(function(s){if(!s.support&&!s.fixed)qddSlotAssignments[s.key]=null;});
-  if(!isGrind&&P4.quest!==null){
-    var prev=(S.questState&&S.questState.assigned&&(S.questState.assigned[P4.quest]||S.questState.assigned[String(P4.quest)]))||[];
-    prev.forEach(function(ci){
-      var c=S.party[ci];if(!c)return;
-      slots.forEach(function(sl){if(!sl.support&&!sl.fixed&&qddSlotAssignments[sl.key]===null&&qddCharCoversSlot(c,sl))qddSlotAssignments[sl.key]=ci;});
-    });
-  }
+  // Assignment memory removed — always open blank per user preference
   qddRender(questLike,isGrind);
 };
 // ── EDITOR BUTTON WIRING ──
