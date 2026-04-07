@@ -1792,10 +1792,10 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.449
+      Version 1.451
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
-      Editor: + New quest defaults to currently-browsed cycle; + New asset remembers last category; duplicate var removed in grind form.
+      Fixed: hole carousel page 2 now scrolls correctly; translateX was overshooting by 2x because percentage was relative to track width, not viewport.
     </div>
   </div>
   <div class="set-sec" id="settings-branding-sec">
@@ -1817,6 +1817,8 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.451</strong> &mdash; Fixed hole carousel page 2 rendering blank. Root cause: qholeCarApply used translateX(-100%) to advance one page, but CSS translateX percentages are relative to the element's own width. With a 2-page track (width:200% of viewport), translateX(-100%) moved the track 200% of the viewport &mdash; twice as far as needed, sending page 2 completely off-screen. Fixed by computing pageWidthPct = 100/pages and using translateX(-(offset * pageWidthPct)%) so each page step moves exactly one viewport-width.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.450</strong> &mdash; Quest modal peg cards now show item prerequisite coverage tags. Previously, a character carrying a Longsword would satisfy "Martial Weapons" once assigned to a slot (gate check used inventoryHasPrereqItem correctly) but showed no match indicator on their card in the carousel, because item slots are not hole slots. Fixed: qddRenderPeg now checks the quest's item prereqs against each character's inventory and displays a green bag tag (e.g. "Martial Weapons") when covered. Characters covering item prereqs also sort higher in the carousel.</div>
         <div style="margin-bottom:9px"><strong>Version 1.449</strong> &mdash; Content editor polish: (1) clicking "+ New" on the Quests tab now defaults the quest set selector to whichever cycle you were most recently browsing, instead of always QUESTSETS[0]; (2) clicking "+ New" on Assets tab remembers the last-selected category (vehicle/building/pet) instead of always defaulting to vehicle; (3) removed a duplicate "var canEditBuiltin" declaration in the grind form editor that could cause unexpected behaviour in strict mode.</div>
         <div style="margin-bottom:9px"><strong>Version 1.448</strong> &mdash; Data consistency audit: cross-checked every quest/grind prerequisite (skills, tools, languages, faith) against the DND character generation arrays used by the hire/level-up UI and the content editor dropdowns. Found and fixed one mismatch: four quest prereqs used "Gloriosus, the Braggart" while DND.rel defines "Gloriosus, the Bold". Affected quests: "Negotiate the Truce", "Drive Off the River Scavengers", and related content, plus a prefab NPC. All now use the canonical name. Martial Weapons in quest prereqs is correctly an item prereq (party must own them), not a skill &mdash; no change needed.</div>
         <div style="margin-bottom:9px"><strong>Version 1.447</strong> &mdash; Quest assignment modal UX improvements: (1) Skill/tool/language/faith prerequisites now shown in the description card info rows alongside gold/item prereqs, with live party coverage check and a Hire button for each unmet req. (2) Unmet skill/tool holes in the slot carousel now show "tap to hire" and open the hire panel directly when tapped without a character selected &mdash; no need to locate the recruit peg card. (3) Hire button delegation moved from hidden #ov-q-prereqs to the modal container so buttons from both the card stack and prereq panel work. (4) Char carousel counter shows "No adventurers" instead of "1-0 of 0" when party list is empty.</div>
@@ -12539,8 +12541,10 @@ function qholeCarApply(slots){
   var track=document.getElementById('qhole-car-track');if(!track)return;
   var pages=Math.max(1,Math.ceil(slots.length/HOLES_PER_PAGE));
   if(qholeCarOffset>=pages)qholeCarOffset=Math.max(0,pages-1);
-  // Each page is 100% of the viewport width
-  track.style.transform='translateX(-'+(qholeCarOffset*100)+'%)';
+  // Each page occupies (100/pages)% of the track width = 100% of the viewport
+  // translateX percentage is relative to the track's own width, so divide by pages
+  var pageWidthPct=100/pages;
+  track.style.transform='translateX(-'+(qholeCarOffset*pageWidthPct)+'%)';
   var dotsEl=document.getElementById('qhole-car-dots');
   if(dotsEl){
     dotsEl.innerHTML='';
@@ -12597,12 +12601,22 @@ function qddRenderPeg(entry,slots,busy){
   var c=entry.c,ci=entry.ci;
   var isBusy=!!busy[ci];var isSel=(qcarSelected===ci);
   var matchedSlots=slots.filter(function(s){return!s.support&&qddCharCoversSlot(c,s);});
-  var personalMatched=matchedSlots; // already personal-only since qddCharCoversSlot no longer checks franchise
-  var tagHtml=personalMatched.length
-    ?personalMatched.map(function(s){return'<span class="qpeg-tag match">'+esc(s.value)+'</span>';}).join('')
+  // Also check item prereqs — items aren't hole slots but char may carry matching weapons/gear
+  var itemTags=[];
+  if(qddQuestLike&&qddQuestLike.pre&&(qddQuestLike.pre.items||[]).length){
+    (qddQuestLike.pre.items||[]).forEach(function(reqItem){
+      if(inventoryHasPrereqItem(c.inv||[],reqItem)){
+        itemTags.push('<span class="qpeg-tag match" style="background:rgba(31,111,31,.18)">\uD83C\uDF92 '+esc(reqItem)+'</span>');
+      }
+    });
+  }
+  var allMatchTags=matchedSlots.map(function(s){return'<span class="qpeg-tag match">'+esc(s.value)+'</span>';}).concat(itemTags);
+  var tagHtml=allMatchTags.length
+    ?allMatchTags.join('')
     :'<span class="qpeg-tag" style="font-size:.7em">\uD83E\uDD1D support</span>';
+  var hasAnyMatch=matchedSlots.length>0||itemTags.length>0;
   var inSlot=Object.keys(qddSlotAssignments).some(function(k){return qddSlotAssignments[k]===ci;});
-  var cls='qpeg'+(isBusy?' busy':'')+(matchedSlots.length&&!isBusy?' can-fill':'')+(isSel?' selected':'');
+  var cls='qpeg'+(isBusy?' busy':'')+(hasAnyMatch&&!isBusy?' can-fill':'')+(isSel?' selected':'');
   return'<div class="'+cls+'" data-peg-ci="'+ci+'">'+
     (inSlot?'<span class="qpeg-check">\u2713</span>':'')+
     (inSlot?'<span class="qpeg-remove" data-peg-remove="'+ci+'">\u2715</span>':'')+
@@ -12624,7 +12638,18 @@ function qcarBuildEntries(partyEntries,slots,busy){
     ?partyEntries.filter(function(e){return !!squadIdxSet[e.ci];})
     :partyEntries;
   var openSlots=slots.filter(function(s){return!s.support&&(qddSlotAssignments[s.key]===null||qddSlotAssignments[s.key]===undefined);});
-  function scoreChar(e){if(busy[e.ci])return-999;return openSlots.filter(function(s){return qddCharCoversSlot(e.c,s);}).length;}
+  function scoreChar(e){
+    if(busy[e.ci])return-999;
+    var slotScore=openSlots.filter(function(s){return qddCharCoversSlot(e.c,s);}).length;
+    // Bonus for covering item prereqs (not in holes but still matters)
+    var itemScore=0;
+    if(qddQuestLike&&qddQuestLike.pre){
+      (qddQuestLike.pre.items||[]).forEach(function(reqItem){
+        if(inventoryHasPrereqItem(e.c.inv||[],reqItem))itemScore++;
+      });
+    }
+    return slotScore+itemScore;
+  }
   var sorted=filtered.slice().sort(function(a,b){return scoreChar(b)-scoreChar(a);});
   var entries=[];var hireInserted={};
   slots.forEach(function(slot){
