@@ -1879,7 +1879,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.471
+      Version 1.472
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -3824,7 +3824,7 @@ function questDifficultyRequirementMet(q,charIdxs){
 function qpEnabled(){return !!(S.settings&&S.settings.qp&&S.settings.qp.enabled);}
 function qpCfg(){return (S.settings&&S.settings.qp)||{};}
 
-function qpAward(amount,type,note){
+function qpAward(amount,type,note,eventKey){
   if(!qpEnabled()||amount<=0)return;
   var cfg=qpCfg();
   var todayStr=todayKey();
@@ -3841,6 +3841,15 @@ function qpAward(amount,type,note){
   if(S.qpLedger.length>100)S.qpLedger=S.qpLedger.slice(0,100);
   updateQpDisplay();
   save();
+  // Sync to Supabase qp_transactions (idempotent via event_key)
+  if(uid()){
+    var row={user_id:uid(),amount:actual,balance_after:S.qpBalance,
+      event_type:type,note:note||type,created_at:new Date().toISOString()};
+    if(eventKey)row.event_key=eventKey;
+    sbInsert('qp_transactions',[row]).catch(function(err){
+      console.warn('[QP] Supabase insert failed:',err&&err.message);
+    });
+  }
 }
 
 function qpSpend(amount,type,note){
@@ -3852,6 +3861,12 @@ function qpSpend(amount,type,note){
   if(S.qpLedger.length>100)S.qpLedger=S.qpLedger.slice(0,100);
   updateQpDisplay();
   save();
+  // Sync spend to Supabase
+  if(uid()){
+    sbInsert('qp_transactions',[{user_id:uid(),amount:-amount,balance_after:S.qpBalance,
+      event_type:type,note:note||type,created_at:new Date().toISOString()}])
+    .catch(function(err){console.warn('[QP] Supabase spend failed:',err&&err.message);});
+  }
   return true;
 }
 
@@ -3893,7 +3908,7 @@ function qpProcessPending(){
       exists=(S.taskGroups||[]).some(function(g){return (g.id||g.name)===p.tid;});
     }
     if(exists){
-      qpAward(p.amount,p.type,p.note||p.type);
+      qpAward(p.amount,p.type,p.note||p.type,p.tid+'::'+p.type);
     }
   });
   if(vested.length)save();
@@ -10285,7 +10300,12 @@ function sbPush(manual){
         _partyAssetsBackup:S.partyAssets||[],
         _archivedBackup:S.archived||[],
         _downtimeJobs:S.downtimeJobs||[],
-        _questStateBackup:S.questState||null
+        _questStateBackup:S.questState||null,
+        _qpBalance:S.qpBalance||0,
+        _qpPending:S.qpPending||[],
+        _qpLedger:(S.qpLedger||[]).slice(0,100),
+        _qpEarnedToday:S.qpEarnedToday||0,
+        _qpEarnDate:S.qpEarnDate||''
       }),
       last_sync:new Date().toISOString()
     }]);
@@ -10457,6 +10477,16 @@ function sbPull(manual){
       delete cleanSettings._archivedBackup;
       delete cleanSettings._downtimeJobs;
       delete cleanSettings._questStateBackup;
+      S.qpBalance=rawSettings._qpBalance||0;
+      S.qpPending=rawSettings._qpPending||[];
+      S.qpLedger=rawSettings._qpLedger||[];
+      S.qpEarnedToday=rawSettings._qpEarnedToday||0;
+      S.qpEarnDate=rawSettings._qpEarnDate||'';
+      delete cleanSettings._qpBalance;
+      delete cleanSettings._qpPending;
+      delete cleanSettings._qpLedger;
+      delete cleanSettings._qpEarnedToday;
+      delete cleanSettings._qpEarnDate;
       S.settings=normalizeSettings(cleanSettings);
     }
     if(party&&party.length){
