@@ -1878,7 +1878,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.476
+      Version 1.477
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -5574,21 +5574,41 @@ function charCardHtml(c,ci,opts){
         return '<div style="font-size:.72em;color:'+col+';margin:2px 0 4px;font-weight:700">'+
           label+' ('+carried+' / '+cap+' lbs)</div>';
       }())+
-      (realInv.length?realInv.map(function(x,xi){
-        var wt=ITEM_WEIGHT[x];
-        var wtStr=(wt!==undefined&&wt>0)?' <span style="font-size:.75em;color:var(--ink-light)">('+wt+'lb)</span>':'';
-        var isOwned=(c.ownedItems||[]).indexOf(x)!==-1;
-        var actionBtn=isOwned?
-          '<span title="Personal property — cannot be stored in franchise storage" style="font-size:.6em;color:var(--gold-dark);border:1px solid var(--gold-dark);border-radius:4px;padding:1px 5px;white-space:nowrap;user-select:none">🔒 Personal</span>':
-          '<span style="display:flex;gap:4px">'+
-          '<button class="btn bink sm inv-mini-btn" data-a="to-storage" data-ci="'+ci+'" data-item="'+esc(x)+'" style="font-size:.6em;padding:1px 5px;min-height:18px;white-space:nowrap">→ Storage</button>'+
-          '<button class="btn bink sm inv-mini-btn" data-a="sell-inv" data-ci="'+ci+'" data-item="'+esc(x)+'" style="font-size:.6em;padding:1px 5px;min-height:18px;white-space:nowrap">Sell</button>'+
-        '</span>';
-        return '<div class="inv-item" style="display:flex;align-items:center;justify-content:space-between;gap:4px">'+
-          '<span>'+ptag('· '+esc(x),x,af)+wtStr+'</span>'+
-          actionBtn+
-          '</div>';
-      }).join(''):'<div style="font-size:.8em;color:var(--ink-light);font-style:italic">Empty.</div>'))
+      (realInv.length?(function(){
+        // Cluster items by category
+        var clusters={weapons:[],armor:[],packs:[],magic:[],other:[]};
+        var clusterOrder=['weapons','armor','packs','magic','other'];
+        var clusterLabels={weapons:'⚔ Weapons',armor:'🛡 Armor',packs:'🎒 Packs & Kits',magic:'✨ Magic',other:'📦 Other'};
+        realInv.forEach(function(x){
+          var gObj=GEAR.filter(function(g){return g.name===x;})[0];
+          var t=gObj?gObj.type:'';
+          if(t==='weapon'||weaponGroupFromItemName(x))clusters.weapons.push(x);
+          else if(t==='armor')clusters.armor.push(x);
+          else if(t==='kit'||x.indexOf('Pack')!==-1||x.indexOf('Kit')!==-1)clusters.packs.push(x);
+          else if(t==='magic'||x.indexOf('+1')!==-1||x.indexOf('+2')!==-1)clusters.magic.push(x);
+          else clusters.other.push(x);
+        });
+        function invItemHtml(x){
+          var wt=ITEM_WEIGHT[x];
+          var wtStr=(wt!==undefined&&wt>0)?' <span style="font-size:.75em;color:var(--ink-light)">('+wt+'lb)</span>':'';
+          var isOwned=(c.ownedItems||[]).indexOf(x)!==-1;
+          var actionBtn=isOwned?
+            '<span title="Personal property" style="font-size:.6em;color:var(--gold-dark);border:1px solid var(--gold-dark);border-radius:4px;padding:1px 5px;white-space:nowrap;user-select:none">🔒</span>':
+            '<span style="display:flex;gap:4px">'+
+            '<button class="btn bink sm inv-mini-btn" data-a="to-storage" data-ci="'+ci+'" data-item="'+esc(x)+'" style="font-size:.6em;padding:1px 5px;min-height:18px;white-space:nowrap">→ Storage</button>'+
+            '<button class="btn bink sm inv-mini-btn" data-a="sell-inv" data-ci="'+ci+'" data-item="'+esc(x)+'" style="font-size:.6em;padding:1px 5px;min-height:18px;white-space:nowrap">Sell</button>'+
+            '</span>';
+          return '<div class="inv-item" style="display:flex;align-items:center;justify-content:space-between;gap:4px">'+
+            '<span>'+ptag('· '+esc(x),x,af)+wtStr+'</span>'+actionBtn+'</div>';
+        }
+        var html='';
+        clusterOrder.forEach(function(key){
+          if(!clusters[key].length)return;
+          html+='<div style="font-size:.68em;color:var(--gold-dark);font-family:\'Cinzel\',serif;margin:5px 0 2px;text-transform:uppercase;letter-spacing:.04em">'+clusterLabels[key]+'</div>';
+          html+=clusters[key].map(invItemHtml).join('');
+        });
+        return html;
+      }()):'<div style="font-size:.8em;color:var(--ink-light);font-style:italic">Empty.</div>'))
     )+
     '</div>'+
     dtHtml+
@@ -6724,12 +6744,12 @@ function renderCandidates(){
     ? '<div class="hint" style="margin-bottom:8px;color:var(--gold-dark);font-weight:700">🧭 Recommended first hire highlighted below: includes Survival and Navigator\'s Tools and costs 125 gp.</div>'
     : '';
   el.innerHTML=
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
-    '<span style="font-size:.8em;color:var(--ink-light)">Choose one to hire:</span>'+
-    '<button class="btn bink sm" id="btn-reroll-std">🎲 Reroll'+(rerollCost?' ('+rerollCost+' gp)':' (free)')+'</button>'+
-    '</div>'+
+    '<div style="font-size:.8em;color:var(--ink-light);margin-bottom:8px">Choose one to hire:</div>'+
     starterNote+
-    recruitCandidates.map(function(c,i){return candidateCardHtml(c,i,'std');}).join('');
+    recruitCandidates.map(function(c,i){return candidateCardHtml(c,i,'std');}).join('')+
+    '<div style="margin-top:10px;text-align:right">'+
+    '<button class="btn bink sm" id="btn-reroll-std">🎲 Reroll'+(rerollCost?' ('+rerollCost+' gp)':' (free)')+'</button>'+
+    '</div>';
 }
 
 document.getElementById('btn-randall').addEventListener('click',function(){
@@ -6958,10 +6978,7 @@ function renderHirelings(){
   var rolled=S.settings.hirelRollDate===todayStr();
   var rerollCost=rolled?5:0;
   el.innerHTML=
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
-    '<span style="font-size:.8em;color:var(--ink-light)">Choose one to hire:</span>'+
-    '<button class="btn bink sm" id="btn-reroll-hir">🎲 Reroll'+(rerollCost?' ('+rerollCost+' gp)':' (free)')+'</button>'+
-    '</div>'+
+    '<div style="font-size:.8em;color:var(--ink-light);margin-bottom:8px">Choose one to hire:</div>'+
     hirelCandidates.map(function(c,i){
       return '<div class="card" style="margin-bottom:10px">'+
         '<div class="cname" style="font-size:.9em">'+esc(c.name)+'</div>'+
@@ -6977,7 +6994,10 @@ function renderHirelings(){
         '<div style="text-align:right;margin-top:6px">'+
         '<button class="btn bink sm" data-hire="'+i+'" data-htype="hir">🪓 Hire (50 gp)</button>'+
         '</div></div>';
-    }).join('');
+    }).join('')+
+    '<div style="margin-top:10px;text-align:right">'+
+    '<button class="btn bink sm" id="btn-reroll-hir">🎲 Reroll'+(rerollCost?' ('+rerollCost+' gp)':' (free)')+'</button>'+
+    '</div>';
 }
 
 document.getElementById('btn-hir-roll').addEventListener('click',function(){
@@ -8553,13 +8573,7 @@ function renderAdv(){
     '<div style="font-family:\'Cinzel\',serif;font-size:.78em;color:var(--gold-dark);margin-bottom:5px">'+esc(set.name)+'</div>'+
     '<div style="font-size:.78em;color:var(--ink-light);margin-bottom:8px;font-style:italic">'+esc(set.theme)+'</div>'+
     '</div>'+
-    '<div style="display:flex;align-items:center;gap:6px">'+
-    '<label class="lbl" style="margin:0">Sort</label>'+
-    '<select id="quest-sort" style="width:auto;padding:.3em .5em;font-size:.85em">'+
-    '<option value="sequence"'+(sortMode==='sequence'?' selected':'')+'>Published order</option>'+
-    '<option value="prereqs"'+(sortMode==='prereqs'?' selected':'')+'>Most prerequisites met</option>'+
-    '<option value="reward"'+(sortMode==='reward'?' selected':'')+'>Reward value</option>'+
-    '</select></div></div>'+
+    '</div>'+
     '<div class="adv-prog"><div class="adv-bar" style="width:'+pct+'%"></div></div>'+
     '<div style="font-size:.95em;color:#000;font-weight:700;margin-top:3px">'+doneCount+' / '+totalQ+' quests completed</div>'+
     '</div>';
@@ -8664,7 +8678,22 @@ function renderAdv(){
       (metaLine?'<div style="font-size:.7em;color:var(--ink-light);margin-top:3px">'+esc(metaLine)+'</div>':'')+
       statusHtml+
       (names.length&&!inProgress&&!isDone?'<div style="font-size:.72em;color:var(--ink-light);margin-top:3px">Previously: '+names.map(function(n){return esc(n);}).join(', ')+'</div>':'')+
-      (!isDone&&!inProgress?'<button class="btn bg sm" style="margin-top:7px" data-a="qassign" data-qi="'+q.idx+'">⚔ Assign & Begin</button>':'')+
+      (!isDone&&!inProgress?(function(){
+        var pr=q.pre||{};
+        var reqLv=resolveQuestLikeRequiredLevel(q,false);
+        var preItems=[];
+        if(reqLv>1)preItems.push('Lv '+reqLv+'+ adventurer');
+        (pr.skills||[]).forEach(function(s){preItems.push('⭐ '+s);});
+        (pr.tools||[]).forEach(function(t){preItems.push('🔧 '+t);});
+        (pr.lang||[]).forEach(function(l){preItems.push('🗣 '+l);});
+        if(pr.rel)preItems.push('🙏 '+pr.rel);
+        (pr.items||[]).forEach(function(x){preItems.push('🎒 '+x);});
+        if(pr.gold>0)preItems.push('🪙 '+pr.gold+' gp');
+        var prereqLine=preItems.length
+          ?'<div style="font-size:.68em;color:var(--ink-light);margin-top:4px;margin-bottom:2px">Needs: '+preItems.join(' · ')+'</div>'
+          :'';
+        return prereqLine+'<button class="btn bg sm" style="margin-top:5px" data-a="qassign" data-qi="'+q.idx+'">⚔ Assign & Begin</button>';
+      }()):'')+
       (isDevModeActive()?
         '<div style="display:flex;gap:5px;margin-top:6px;padding-top:6px;border-top:1px dashed rgba(44,26,14,.15)">'+
         '<span style="font-size:.6em;color:var(--ink-light);align-self:center">🧪</span>'+
@@ -9271,6 +9300,17 @@ SQUAD COMMENTED OUT */
 // Hire button delegation on prereq panel
 // qhp-open delegation on modal body — catches clicks from card stack info rows AND prereqs panel
 document.getElementById('ov-quest').addEventListener('click',function(e){
+  // Recruit button: navigate to recruit screen to find a Lv1+ adventurer
+  var recruitLink=e.target.closest('.qcs-recruit-link');
+  if(recruitLink){
+    closeOv('ov-quest');
+    navTo('recruit');
+    // Auto-roll candidates if none exist yet
+    setTimeout(function(){
+      if(!recruitCandidates.length)document.getElementById('btn-randall').click();
+    },80);
+    return;
+  }
   // Store-link button: open buy modal for a specific item
   var storeBtn=e.target.closest('.qcs-store-link');
   if(storeBtn){
@@ -13095,9 +13135,15 @@ function qddBuild6Slots(questLike,isGrind){return qddBuildCharSlots(questLike,is
 // Build non-char prereq info for the description card
 function qddBuildInfoPrereqs(questLike){
   // Skills/tools/lang/faith are shown as peg-slots below — not repeated here.
-  // This card shows only: gold, item prereqs, vehicle/building bonuses, squad size.
+  // This card shows: level req, gold, item prereqs, vehicle/building bonuses, squad size.
   var pr=questLike.pre||{};
   var rows=[];
+  // Level requirement
+  var reqLv=resolveQuestLikeRequiredLevel(questLike,false);
+  if(reqLv>1){
+    var hasLv=(S.party||[]).some(function(c){return c&&!c.hireling&&(c.level||0)>=reqLv;});
+    rows.push({icon:'🧑',label:'Level '+reqLv+'+ adventurer',met:hasLv,isLevelReq:true,reqLv:reqLv});
+  }
   // Gold
   if(pr.gold&&pr.gold>0){
     var met=S.gold>=pr.gold;
@@ -13408,6 +13454,14 @@ function qddInfoPrereqHtml(questLike){
     ?'display:grid;grid-template-columns:1fr 1fr;gap:3px 8px;margin-top:6px;border-top:1px solid var(--parchment-deep);padding-top:5px;'
     :'display:flex;flex-direction:column;gap:3px;margin-top:6px;border-top:1px solid var(--parchment-deep);padding-top:5px;';
   var rowHtml=rows.map(function(r){
+    // Unmet level: show recruit button (opens level-1 character generator)
+    var recruitBtn='';
+    if(!r.met&&r.isLevelReq){
+      recruitBtn=' <button class="qcs-recruit-link" '+
+        'style="font-size:.62em;padding:1px 5px;border:1px solid var(--forest);border-radius:3px;'+
+        'background:rgba(31,111,31,.1);color:var(--forest);cursor:pointer;vertical-align:middle">'+
+        '\uD83E\uDDD1 Recruit</button>';
+    }
     // Unmet item: show a store-link button
     var storeBtn='';
     if(!r.met&&r.isItem){
@@ -13420,7 +13474,7 @@ function qddInfoPrereqHtml(questLike){
     var noteHtml=r.note?'<span style="font-size:.65em;color:var(--ink-light);margin-left:2px">('+esc(r.note)+')</span>':'';
     return'<div class="qcs-info-row" style="min-width:0">'+
       '<span class="'+(r.met?'qcs-info-met':'qcs-info-unmet')+'">'+(r.met?'\u2713':'\u2717')+'</span>'+
-      '<span style="font-size:.82em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+r.icon+' '+esc(r.label)+noteHtml+storeBtn+'</span>'+
+      '<span style="font-size:.82em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+r.icon+' '+esc(r.label)+noteHtml+storeBtn+recruitBtn+'</span>'+
       '</div>';
   }).join('');
   return'<div style="'+wrapStyle+'">'+rowHtml+'</div>';
