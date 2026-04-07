@@ -2781,6 +2781,19 @@ function activeQuestSet(){
   QUESTSETS.forEach(function(qs){if(qs.id===S.questState.setId)found=qs;});
   return found||QUESTSETS[0];
 }
+function questByIdxOrPos(set,idx){
+  if(!set||!set.quests||!set.quests.length)return null;
+  var idxNum=Number(idx);
+  if(!isFinite(idxNum))return null;
+  var byStableIdx=set.quests.filter(function(q){
+    if(!q)return false;
+    var qIdxNum=Number(q.idx);
+    return isFinite(qIdxNum) && qIdxNum===idxNum;
+  })[0]||null;
+  if(byStableIdx)return byStableIdx;
+  if(set.quests[idxNum])return set.quests[idxNum];
+  return null;
+}
 
 // Pick quest set by party tier and cycle count
 function questSetForCycle(cycleNum,dndTier){
@@ -4534,7 +4547,7 @@ document.getElementById('ov-lv-yes').addEventListener('click',function(){
     window._recentModalClose=Date.now();
     // Re-trigger the assign modal adventurer tab render
     if(P4.quest!==null){
-      var _q=activeQuestSet().quests[P4.quest];
+      var _q=questByIdxOrPos(activeQuestSet(),P4.quest);
       if(_q){
         var _qs=S.questState;
         var _busy={};var _now=Date.now();
@@ -6337,36 +6350,41 @@ function renderAdv(){
     '<div style="font-size:.95em;color:#000;font-weight:700;margin-top:3px">'+doneCount+' / '+totalQ+' quests completed</div>'+
     '</div>';
 
-  var questRows=set.quests.map(function(q){return {q:q, coverage:availableCoverageForQuestLike(q)};});
+  var questRows=set.quests.map(function(q,qi){
+    var qIdxNum=Number(q&&q.idx);
+    var questIdx=isFinite(qIdxNum)?qIdxNum:qi;
+    return {q:q, qi:questIdx, coverage:availableCoverageForQuestLike(q)};
+  });
   if(sortMode==='prereqs'){
     questRows.sort(function(a,b){
-      var ai=qs.done.indexOf(a.q.idx)!==-1||!!pendingByIdx[a.q.idx];
-      var bi=qs.done.indexOf(b.q.idx)!==-1||!!pendingByIdx[b.q.idx];
+      var ai=qs.done.indexOf(a.qi)!==-1||!!pendingByIdx[a.qi];
+      var bi=qs.done.indexOf(b.qi)!==-1||!!pendingByIdx[b.qi];
       if(ai!==bi)return ai?1:-1;
       if(b.coverage.pct!==a.coverage.pct)return b.coverage.pct-a.coverage.pct;
       if(b.coverage.met!==a.coverage.met)return b.coverage.met-a.coverage.met;
-      return a.q.idx-b.q.idx;
+      return a.qi-b.qi;
     });
   } else if(sortMode==='reward'){
     questRows.sort(function(a,b){
-      var ai=qs.done.indexOf(a.q.idx)!==-1||!!pendingByIdx[a.q.idx];
-      var bi=qs.done.indexOf(b.q.idx)!==-1||!!pendingByIdx[b.q.idx];
+      var ai=qs.done.indexOf(a.qi)!==-1||!!pendingByIdx[a.qi];
+      var bi=qs.done.indexOf(b.qi)!==-1||!!pendingByIdx[b.qi];
       if(ai!==bi)return ai?1:-1;
       if((b.q.baseGp||0)!==(a.q.baseGp||0))return (b.q.baseGp||0)-(a.q.baseGp||0);
-      return a.q.idx-b.q.idx;
+      return a.qi-b.qi;
     });
   } else {
-    questRows.sort(function(a,b){return a.q.idx-b.q.idx;});
+    questRows.sort(function(a,b){return a.qi-b.qi;});
   }
 
   questRows.forEach(function(row){
     var q=row.q;
-    var isDone=qs.done.indexOf(q.idx)!==-1;
-    var pq=pendingByIdx[q.idx];
+    var questIdx=row.qi;
+    var isDone=qs.done.indexOf(questIdx)!==-1;
+    var pq=pendingByIdx[questIdx];
     var inProgress=pq&&!isDone;
     var tier=QTIERS[q.tier]||QTIERS.common;
 
-    var nonCapstoneDone=qs.done.filter(function(di){var dq=set.quests[di];return dq&&!dq.capstone;}).length;
+    var nonCapstoneDone=qs.done.filter(function(di){var dq=questByIdxOrPos(set,di);return dq&&!dq.capstone;}).length;
     var capstoneUnlocked=nonCapstoneDone>=2;
     if(q.capstone&&!isDone&&!inProgress&&!capstoneUnlocked){
       html+='<div class="enc-card" style="border-color:var(--gold-dark);border-style:dashed">'+
@@ -6388,7 +6406,7 @@ function renderAdv(){
       q.capstone?'var(--gold-dark)':
       readiness==='ready'?'var(--forest)':readiness==='stretch'?'var(--gold-dark)':'var(--crimson)';
 
-    var nameSource=inProgress?(pq.chars||[]):(qs.assigned[q.idx]||qs.assigned[String(q.idx)]||[]);
+    var nameSource=inProgress?(pq.chars||[]):(qs.assigned[questIdx]||qs.assigned[String(questIdx)]||[]);
     var names=nameSource.map(function(ci){return S.party[ci]?S.party[ci].name:'?';});
 
     var statusHtml='';
@@ -6397,11 +6415,11 @@ function renderAdv(){
       var ready=remaining<=0;
       statusHtml='<div style="margin-top:6px;padding:7px 10px;background:rgba(201,146,42,.12);border:1px solid var(--gold-dark);border-radius:5px">'+
         '<div style="font-family:Cinzel,serif;font-size:.72em;color:var(--gold-dark);margin-bottom:3px">'+(ready?'✅ Quest complete — reward ready!':'⏳ In progress')+'</div>'+
-        '<div style="font-family:monospace;font-size:.82em;color:var(--ink)" id="qcd-'+q.idx+'">'+fmtCountdown(remaining)+'</div>'+
+        '<div style="font-family:monospace;font-size:.82em;color:var(--ink)" id="qcd-'+questIdx+'">'+fmtCountdown(remaining)+'</div>'+
         '<div style="font-size:.72em;color:var(--ink-light);margin-top:2px">'+
         names.map(function(n){return '<span style="background:rgba(139,26,26,.1);border:1px solid rgba(139,26,26,.3);border-radius:5px;padding:1px 5px;color:var(--crimson)">⚔ '+esc(n)+'</span>';}).join(' ')+
         '</div><div style="font-size:.72em;color:var(--gold-dark);margin-top:2px">💰 Reward: '+pq.reward+' gp</div>'+
-        (ready?'<button class="btn bgn sm" style="margin-top:6px" data-a="qcollect" data-qi="'+q.idx+'">🏆 Collect '+pq.reward+' gp</button>':'')+
+        (ready?'<button class="btn bgn sm" style="margin-top:6px" data-a="qcollect" data-qi="'+questIdx+'">🏆 Collect '+pq.reward+' gp</button>':'')+
         '</div>';
     } else if(isDone){
       statusHtml='<div style="color:var(--forest);font-size:.8em;margin-top:5px">✓ Completed this cycle</div>';
@@ -6420,7 +6438,7 @@ function renderAdv(){
       '<div class="edesc">'+esc(q.desc)+'</div>'+
       statusHtml+
       (names.length&&!inProgress&&!isDone?'<div style="font-size:.72em;color:var(--ink-light);margin-top:3px">Previously: '+names.map(function(n){return esc(n);}).join(', ')+'</div>':'')+
-      (!isDone&&!inProgress?'<button class="btn bg sm" style="margin-top:7px" data-a="qassign" data-qi="'+q.idx+'">⚔ Assign & Begin</button>':'')+
+      (!isDone&&!inProgress?'<button class="btn bg sm" style="margin-top:7px" data-a="qassign" data-qi="'+questIdx+'">⚔ Assign & Begin</button>':'')+
       '</div>';
   });
 
@@ -6543,7 +6561,7 @@ document.getElementById('avcontent').addEventListener('click',function(e){
     if(pqIdx2===-1)return;
     var pq2=qs.pending[pqIdx2];
     if(pq2.doneAt>Date.now()){alert('Not ready yet! '+fmtCountdown(pq2.doneAt-Date.now()));return;}
-    var q=set.quests[qi];if(!q)return;
+    var q=questByIdxOrPos(set,qi);if(!q)return;
     collectQuest(qi,pq2,q,set);
     save();setGold();renderAdv();
     return;
@@ -6676,7 +6694,7 @@ document.getElementById('avcontent').addEventListener('click',function(e){
   var qi2=parseInt(b.getAttribute('data-qi'));
   P4.quest=qi2;
   P4.grind=null;
-  var q2=set.quests[qi2];if(!q2)return;
+  var q2=questByIdxOrPos(set,qi2);if(!q2)return;
   var pr=q2.pre;
 
   document.getElementById('ov-q-title').textContent=q2.title;
@@ -6836,7 +6854,7 @@ function renderQuestAssignmentList(extraChecked){
   }
 
   if(P4.quest===null)return;
-  var q=activeQuestSet().quests[P4.quest];
+  var q=questByIdxOrPos(activeQuestSet(),P4.quest);
   if(!q){box.innerHTML='<div style="font-style:italic;padding:12px 4px">No adventurers yet.</div>';return;}
   var pr=q.pre||{};
   var busy={};
@@ -6892,7 +6910,7 @@ function renderQuestAssignmentList(extraChecked){
 function updateQuestModal(){
   var chars=getQuestChars();
   var detailEl=document.getElementById('ov-q-detailtext');
-  if(detailEl)detailEl.innerHTML='⏳ Locked for <span id="ov-q-dur-label">'+questDurationLabel(P4.grind!==null ? (GRIND.filter(function(g){return g.id===P4.grind;})[0]||'') : (P4.quest!==null ? (activeQuestSet().quests[P4.quest]||'') : ''))+'</span> · 90% franchise, 10% split by level &amp; expertise';
+  if(detailEl)detailEl.innerHTML='⏳ Locked for <span id="ov-q-dur-label">'+questDurationLabel(P4.grind!==null ? (GRIND.filter(function(g){return g.id===P4.grind;})[0]||'') : (P4.quest!==null ? (questByIdxOrPos(activeQuestSet(),P4.quest)||'') : ''))+'</span> · 90% franchise, 10% split by level &amp; expertise';
   if(P4.grind!==null){
     // Grind: update prereq display based on current selection
     var gObj3=GRIND.filter(function(g){return g.id===P4.grind;})[0];
@@ -6910,7 +6928,7 @@ function updateQuestModal(){
     return;
   }
   if(P4.quest===null)return;
-  var q=activeQuestSet().quests[P4.quest];if(!q)return;
+  var q=questByIdxOrPos(activeQuestSet(),P4.quest);if(!q)return;
   document.getElementById('ov-q-prereqs').innerHTML=questPrereqHtml(q,chars);
   document.getElementById('ov-q-reward').textContent=questCalcReward(q,chars);
   var missing=questPrereqCheck(q,chars);
@@ -7000,7 +7018,7 @@ document.getElementById('ov-q-yes').addEventListener('click',function(){
 
   // ── Main quest confirm ──
   if(P4.quest===null)return;
-  var q=activeQuestSet().quests[P4.quest];if(!q)return;
+  var q=questByIdxOrPos(activeQuestSet(),P4.quest);if(!q)return;
   var pr=q.pre;
   var reward=questCalcReward(q,chars);
   var rosterMain=regularQuestRosterStatus(chars);
