@@ -1496,6 +1496,13 @@ button.squad-tag.squad-tag-active{
 .qcs-info-unmet{color:var(--crimson);font-weight:600;}
 
 /* ── Hole carousel (4 slots visible, slides to show support) ── */
+#dev-bar{display:none;position:sticky;top:0;z-index:490;background:#1a2744;border-bottom:2px solid #2e4a8a;padding:4px 10px;}
+#dev-bar.active{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;}
+.dev-bar-btn{display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25);border-radius:5px;padding:4px 10px;color:#fff;font-size:.75em;cursor:pointer;white-space:nowrap;font-family:'Cinzel',serif;letter-spacing:.03em;transition:background .12s;}
+.dev-bar-btn:hover,.dev-bar-btn:active{background:rgba(255,255,255,.22);}
+.dev-bar-btn.danger{border-color:rgba(255,100,100,.5);color:#ffaaaa;}
+.dev-bar-btn.danger:hover{background:rgba(255,60,60,.2);}
+#dev-bar-version{font-size:.68em;color:rgba(255,255,255,.45);font-family:'Cinzel',serif;margin-left:auto;letter-spacing:.04em;}
 .qhole-car-wrap{margin-top:10px;}
 .qhole-car-label{font-family:'Cinzel',serif;font-size:.78em;text-transform:uppercase;letter-spacing:.05em;color:var(--gold-dark);margin-bottom:6px;display:flex;align-items:center;gap:8px;}
 .qhole-car-viewport{overflow:hidden;border-radius:10px;}
@@ -1605,6 +1612,14 @@ button.squad-tag.squad-tag-active{
     </div>
     <div class="hint" style="color:var(--parchment);margin-top:0;">Adjust readability inside the app without changing browser zoom or system settings.</div>
   </div>
+</div>
+
+<!-- DEV BAR -->
+<div id="dev-bar">
+  <button class="dev-bar-btn" id="dev-bar-ledger" title="Open Quest Log">📜 Ledger</button>
+  <button class="dev-bar-btn" id="dev-bar-editor" title="Open Content Editor">✏️ Editor</button>
+  <span id="dev-bar-version"></span>
+  <button class="dev-bar-btn danger" id="dev-bar-devoff" title="Disable Dev Mode">🧪 Exit Dev</button>
 </div>
 
 <!-- TASKS -->
@@ -1794,10 +1809,10 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.457
+      Version 1.463
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
-      Description card: skills/tools removed (shown in slots); two-column layout when >3 prereqs; unmet items show a shop button that opens the buy modal and refreshes the quest screen on purchase.
+      Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
     </div>
   </div>
   <div class="set-sec" id="settings-branding-sec">
@@ -1819,6 +1834,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.458</strong> &mdash; Dev mode quick-access bar: when developer mode is active a sticky navy bar appears below the header with four controls: Ledger (toggles the quest log panel), Editor (opens the content editor), version number label, and Exit Dev Mode (confirms and disables dev mode). The bar is hidden in normal play and shown/hidden via updateDevBar() which is called by renderSettings() and the dev mode toggle.</div>
         <div style="margin-bottom:9px"><strong>Version 1.457</strong> &mdash; Description card prereq list: (1) skill, tool, language, and faith rows removed &mdash; these are already represented by the peg-slot holes below; (2) the "covered"/"have it" status notes removed for a cleaner look, only vehicle/building bonus notes (+reward) are kept; (3) when more than 3 prereq rows remain, the list switches to a two-column CSS grid layout; (4) unmet item prerequisites show a small shop button (🛒) &mdash; tapping it opens the buy modal for that item directly from the quest screen, and after purchase the quest modal automatically re-opens with the description card updated to show the item as satisfied.</div>
         <div style="margin-bottom:9px"><strong>Version 1.456</strong> &mdash; Fixed duplicate capstone rewards on page reload. Root cause: autoCollectExpired() fires twice on startup &mdash; once from local data, then again after sbPull returns. The first pass collected the capstone and removed it from pending. But the sbPull restore logic then put localPending back (because the pulled state had fewer entries), re-adding the collected quest. The second autoCollectExpired fired awardCapstonReward again. Two fixes: (1) the localPending restore now filters out any quest indices already in qs.done so already-collected quests are never re-added to pending; (2) collectQuest now checks qs.done before calling awardCapstonReward as a secondary guard.</div>
         <div style="margin-bottom:9px"><strong>Version 1.455</strong> &mdash; Custom content now visible in store for all users. Root cause: loadContentLibrary() is asynchronous but renderStore() was not called after it completed, so custom gear and pets from Supabase only appeared after a manual navigation. Fixed by calling renderStore() and renderAdv() at the end of loadContentLibrary() success path. Also cleared the gear stock date cache (S.stockDate) when content loads, so custom gear items can appear in that day's stock immediately rather than waiting until the next day's reroll.</div>
@@ -7837,6 +7853,33 @@ function awardCapstonReward(set){
 }
 
 /* ── Quest Log ── */
+// ── Dev bar button wiring ──
+document.getElementById('dev-bar-ledger').addEventListener('click',function(){
+  var details=document.getElementById('changelog-details');
+  if(!details)return;
+  if(details.open){
+    // Second click: close and go back to previous screen
+    details.open=false;
+    navTo('adventure');
+  } else {
+    // First click: navigate to settings and open changelog
+    navTo('settings');
+    setTimeout(function(){
+      details.open=true;
+      details.scrollIntoView({behavior:'smooth',block:'start'});
+    },80);
+  }
+});
+document.getElementById('dev-bar-editor').addEventListener('click',function(){
+  openEditor();
+});
+document.getElementById('dev-bar-devoff').addEventListener('click',function(){
+  if(!confirm('Disable developer mode?'))return;
+  S.settings.devModeOverride=false;
+  logAdd('Developer mode disabled for '+(currentUserEmail()||'this account')+'.','gold');
+  save();renderSettings();updateDevBar();
+});
+
 document.getElementById('btn-quest-log').addEventListener('click',function(){
   var panel=document.getElementById('quest-log-panel');
   var open=panel.style.display!=='none';
@@ -9267,6 +9310,15 @@ function applySettings(){
   applyAccessibilitySettings();
 }
 
+function updateDevBar(){
+  var bar=document.getElementById('dev-bar');
+  if(!bar)return;
+  var active=isDevModeActive();
+  bar.className=active?'active':'';
+  var vEl=document.getElementById('dev-bar-version');
+  if(vEl)vEl.textContent='v'+((document.getElementById('app-version-badge')||{}).textContent||'').trim().replace(/^Version\s*/i,'');
+}
+
 function renderSettings(){
   var cfg=S.settings||{};
   if(document.getElementById('store-note') && typeof storeTab!=='undefined' && storeTab==='gear'){
@@ -9303,6 +9355,7 @@ function renderSettings(){
   }
   var cue=document.getElementById('current-user-display');
   if(cue)cue.textContent='Logged in as: '+(currentUserEmail()||'Guest')+(isDevModeActive()?' · Dev Mode':'');
+  updateDevBar();
   var cd=document.getElementById('changelog-details');
   if(cd)cd.open=false;
   applyDevModeAccess();
@@ -9343,6 +9396,7 @@ document.getElementById('btn-toggle-devmode').addEventListener('click',function(
   renderStore();
   renderTasks();
   renderArchive();
+  updateDevBar();
 });
 
 
@@ -11087,8 +11141,10 @@ function saveCustom(key,arr,scope){
   var fl=document.getElementById('ed-save-flash');
   if(fl){fl.style.opacity='1';setTimeout(function(){fl.style.opacity='0';},1200);}
   if(key==='_customQuests'){
-    // Always use in-memory contentBucket (not legacy S.settings) to avoid overwriting
+    // Pre-update quests bucket so mergeCustomContent in the set-save step
+    // already sees the new quest data — prevents the form re-rendering with stale values
     var setMeta=clone(contentBucket(scope).questSets||[]);
+    contentBucket(scope).quests=clone(arr||[]);
     return persistContentScope(scope,'_customQuestSets',setMeta).then(function(){
       return persistContentScope(scope,key,arr||[]);
     });
@@ -13273,19 +13329,31 @@ function edShowDupeCycleForm(){
       }));
     });
 
-    // Persist the new custom set metadata so it survives pull/new devices
-    var setMeta=getCustomQuestSets();
-    setMeta.push({
+    var newSetEntry={
+      _custom:true,
       id:newId,
       name:name,
       theme:theme||'Custom quest cycle duplicated from "'+set.name+'".',
       dndTier:set.dndTier||1,
       capstoneIdx:order.length-1
-    });
-    S.settings=normalizeSettings(S.settings);
-    S.settings._customQuestSets=JSON.parse(JSON.stringify(setMeta));
+    };
+    // Save set metadata into CONTENT_LIB (the authoritative path, not S.settings)
+    var scope=edFormScope()||currentContentScope();
+    var setMeta=contentItemsForScope(scope,'_customQuestSets');
+    setMeta.push(newSetEntry);
+    contentBucket(scope).questSets=clone(setMeta);
 
-    saveCustom('_customQuests',customArr);
+    // Save both set metadata and quests to Supabase + localStorage
+    persistContentScope(scope,'_customQuestSets',setMeta).then(function(){
+      return persistContentScope(scope,'_customQuests',customArr);
+    }).then(function(){
+      mergeCustomContent();
+      edSelected={type:'cycle',setId:newId};
+      edRenderList();
+      edShowCycleForm();
+    });
+    // Also update immediately in memory so UI responds without waiting
+    contentBucket(scope).quests=customArr.slice();
     mergeCustomContent();
     edSelected=null;
     edRenderList();
