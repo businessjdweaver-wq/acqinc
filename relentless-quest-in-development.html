@@ -1809,7 +1809,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.466
+      Version 1.467
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -3768,7 +3768,11 @@ function candidateSquadsForCycleGate(rule){
 function isSetCompleted(setId){
   var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
   if(!set)return false;
+  var totalQuests=(set.quests||[]).length;
+  if(!totalQuests)return false;
   var qs=S.questState||{};
+
+  // Check 1: setProgress entry for this setId (covers dev-complete and past active cycles)
   var sp=(qs.setProgress&&qs.setProgress[setId])||null;
   if(sp){
     var doneByCounts=(set.quests||[]).every(function(q){
@@ -3777,9 +3781,25 @@ function isSetCompleted(setId){
       return c>=1;
     });
     if(doneByCounts)return true;
+    // Also accept if done array covers all quests (dev-complete path)
+    if((sp.done||[]).length>=totalQuests)return true;
   }
+
+  // Check 2: currently active cycle that happens to be this set
+  if(qs.setId===setId){
+    var activeDone=(qs.done||[]);
+    if(activeDone.length>=totalQuests)return true;
+    var allDoneByCount=(set.quests||[]).every(function(q){
+      var c=parseInt((qs.repeatCounts&&qs.repeatCounts[q.idx]),10)||0;
+      if(!c&&activeDone.indexOf(q.idx)!==-1)c=1;
+      return c>=1;
+    });
+    if(allDoneByCount)return true;
+  }
+
+  // Check 3: questCycles history (end-of-month cycle archive)
   var hist=(S.questCycles||[]).filter(function(cy){return cy&&cy.setId===setId;});
-  return hist.some(function(cy){return (cy.completed||[]).length>=(set.quests||[]).length;});
+  return hist.some(function(cy){return (cy.completed||[]).length>=totalQuests;});
 }
 function cycleGateStatus(set){
   var rule=cycleGateForSet(set)||{};
