@@ -1902,7 +1902,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.484
+      Version 1.485
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -1927,6 +1927,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.485</strong> &mdash; Auto-assign button improvements: (1) Button is now greyed out (disabled) when non-character prerequisites are unmet (gold, items, level requirement) — character-slot prereqs are what auto-assign handles; the other blockers must be resolved manually first. Vehicle/building bonus rows are excluded from this check since they are not hard gates. (2) Animation slowed significantly: filled peg-slots each glow green in staggered sequence (180ms apart), then after all slots are lit the Begin Quest button pulses with a scale+glow animation (500ms), then fires after a further 350ms pause — giving the user time to see each step.</div>
         <div style="margin-bottom:9px"><strong>Version 1.484</strong> &mdash; Quest assignment modal abandon behavior: Cancel button and clicking outside the modal now call questModalAbandon() which clears all peg-slot assignments and resets modal state before closing — so the modal always opens blank. Recruiting from the modal (via 🧑 Recruit button) does NOT clear assignments since the user is not abandoning, just stepping away briefly. Auto-assign (⚡ Auto) now calls qddAutoAssignAndSubmit(): if QP was spent, after filling slots it flashes the Begin Quest button (scale pulse + green glow) and then auto-presses it, so the full flow completes in one tap. In dev mode the button is free but does NOT auto-submit (intentional — dev users may want to inspect before beginning).</div>
         <div style="margin-bottom:9px"><strong>Version 1.483</strong> &mdash; Fixed ⚡ Auto button not appearing in non-dev mode when QP is enabled. Root cause: qddRender was hiding the button whenever S.qpBalance &lt; cost, so players with 0 QP never saw it existed. Fixed: button now always shows when QP is enabled (or in dev mode), and is visually disabled (opacity 0.45, disabled attribute) when balance is insufficient — tapping it shows an informative alert. Also clarified: the "auto-running on load" appearance is intentional — the modal restores previously assigned characters from S.questState.assigned on open, so a quest you previously auto-assigned will re-populate those characters. This is not the auto-assign firing; it is assignment memory.</div>
         <div style="margin-bottom:9px"><strong>Version 1.482</strong> &mdash; Store and auto-assign revisions: (1) Magic tab sub-tabs reduced to two: Common (all common items + 5 randomly selected uncommon) and Rare (10 randomly selected rare items). buildStock() updated accordingly. (2) Adventuring Gear price ranges tightened to 1–4 gp / 5–10 gp / 11+ gp. (3) Auto-assign (⚡ Auto button on quest assignment modal) cost reduced from 5 QP to 1 QP. Auto-assign already implemented: fills prerequisite peg-slots with the minimum number of characters using a coverage-maximising greedy algorithm, spending 1 QP per use (free in dev mode).</div>
@@ -11183,25 +11184,36 @@ function qddAutoAssignAndSubmit(){
   // Run the assignment algorithm — returns true if QP spent or dev mode
   var didAssign=qddAutoAssign();
 
-  // If QP was spent, animate then auto-submit
+  // If QP was spent, animate slot fills then pulse Begin and auto-submit
   if(didAssign&&paidQP){
-    // Flash the Begin button to signal auto-submit
-    var beginBtn=document.getElementById('ov-q-yes');
-    if(beginBtn){
-      beginBtn.style.transition='transform .15s ease,box-shadow .15s ease';
-      beginBtn.style.transform='scale(1.08)';
-      beginBtn.style.boxShadow='0 0 14px rgba(31,111,31,.6)';
+    // Stagger-highlight the filled holes so user sees each slot light up
+    var _holes=document.querySelectorAll('.qhole-slot:not(.qhole-empty)');
+    _holes.forEach(function(hole,hi){
       setTimeout(function(){
-        beginBtn.style.transform='';
-        beginBtn.style.boxShadow='';
-        // Auto-press Begin after the flash
+        hole.style.transition='box-shadow .25s ease';
+        hole.style.boxShadow='0 0 10px 3px rgba(31,111,31,.7)';
+        setTimeout(function(){hole.style.boxShadow='';},400);
+      },hi*180);
+    });
+    // After slots animate, pulse Begin button and auto-press
+    var _slotDelay=Math.max(600,(_holes.length*180)+300);
+    setTimeout(function(){
+      var beginBtn=document.getElementById('ov-q-yes');
+      if(beginBtn){
+        beginBtn.style.transition='transform .3s ease,box-shadow .3s ease,background .3s ease';
+        beginBtn.style.transform='scale(1.1)';
+        beginBtn.style.boxShadow='0 0 20px rgba(31,111,31,.75)';
         setTimeout(function(){
-          confirmQuestAssignment(false);
-        },180);
-      },280);
-    } else {
-      setTimeout(function(){confirmQuestAssignment(false);},300);
-    }
+          beginBtn.style.transform='';
+          beginBtn.style.boxShadow='';
+          setTimeout(function(){
+            confirmQuestAssignment(false);
+          },350);
+        },500);
+      } else {
+        setTimeout(function(){confirmQuestAssignment(false);},400);
+      }
+    },_slotDelay);
   }
 }
 
@@ -13854,15 +13866,22 @@ function qddRender(questLike,isGrind){
   if(autoBtn){
     var cost=qpCfg().costAutoAssign||1;
     var hasBalance=isDevModeActive()||(qpEnabled()&&(S.qpBalance||0)>=cost);
-    // Always show button when QP is enabled or dev mode; grey out when insufficient balance
+    // Check non-character prerequisites (gold, items, level req)
+    var _prereqRows=qddBuildInfoPrereqs(questLike);
+    var _hardUnmet=_prereqRows.some(function(r){
+      return !r.met&&!r.note; // note rows are bonuses (vehicle/building), not blockers
+    });
+    var canAuto=hasBalance&&!_hardUnmet;
     autoBtn.style.display=(isDevModeActive()||qpEnabled())?'':'none';
-    autoBtn.disabled=!hasBalance;
-    autoBtn.style.opacity=hasBalance?'1':'0.45';
-    autoBtn.title=isDevModeActive()
+    autoBtn.disabled=!canAuto;
+    autoBtn.style.opacity=canAuto?'1':'0.45';
+    autoBtn.title=isDevModeActive()&&!_hardUnmet
       ?'Auto-assign (Dev Mode — free)'
-      :hasBalance
-        ?'Auto-assign best party members ('+cost+' QP)'
-        :'Need '+cost+' QP to auto-assign (you have '+(S.qpBalance||0)+')';
+      :_hardUnmet
+        ?'Cannot auto-assign: non-character prerequisites are not met'
+        :!hasBalance
+          ?'Need '+cost+' QP to auto-assign (you have '+(S.qpBalance||0)+')'
+          :'Auto-assign best party members ('+cost+' QP)';
     autoBtn.textContent=isDevModeActive()?'⚡ Auto':'⚡ Auto ('+cost+' QP)';
   }
   qddQuestLike=questLike;qddIsGrind=isGrind;
