@@ -1508,6 +1508,8 @@ button.squad-tag.squad-tag-active{
 .qhole-car-dots{display:flex;gap:5px;align-items:center;}
 .qhole-car-dot{width:6px;height:6px;border-radius:50%;background:var(--parchment-deep);cursor:pointer;transition:background .15s;}
 .qhole-car-dot.active{background:var(--gold-dark);}
+@keyframes qhole-page-nudge{0%{opacity:1;transform:scale(1)}40%{opacity:1;transform:scale(1.45) translateX(3px)}70%{opacity:1;transform:scale(1.2)}100%{opacity:1;transform:scale(1)}}
+@keyframes qhole-vp-flash{0%{box-shadow:none}30%{box-shadow:0 0 0 3px var(--gold-dark)}70%{box-shadow:0 0 0 6px rgba(201,146,42,.35)}100%{box-shadow:none}}
 /* Individual holes — larger since only 2 visible at a time */
 .qhole{border:2px dashed var(--parchment-deep);border-radius:10px;padding:10px 8px;font-size:.88em;text-align:center;background:rgba(255,255,255,.3);transition:border-color .15s,background .15s,box-shadow .25s;min-height:72px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;position:relative;}
 .qhole.filled{border-color:var(--forest);border-style:solid;background:rgba(31,111,31,.07);}
@@ -1792,10 +1794,10 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.451
+      Version 1.453
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
-      Fixed: hole carousel page 2 now scrolls correctly; translateX was overshooting by 2x because percentage was relative to track width, not viewport.
+      Auto-advance to page 2 is now animated: next-arrow pulses, viewport flashes gold, slide uses a springy bounce transition.
     </div>
   </div>
   <div class="set-sec" id="settings-branding-sec">
@@ -1817,6 +1819,8 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.453</strong> &mdash; Auto-advance animation: when all page-1 slots are filled the carousel now signals the transition clearly. After a 180ms pause: the next-arrow pulses with a scale bounce (qhole-page-nudge keyframe), the viewport border flashes gold (qhole-vp-flash keyframe), and the slide itself uses a springy overshoot easing (cubic-bezier .34,1.22,.64,1) instead of the normal ease-in-out. The springy transition is applied only for the auto-advance and restored to the default immediately after.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.452</strong> &mdash; Hole carousel auto-advances to page 2 when all four slots on page 1 are filled. Triggers inside qddAssignToSlot after both explicit assignment and auto-fill propagation complete, so it fires whether the user dragged a peg, tapped a hole, or a hireling was auto-placed. Support slots (always filled) count toward the "page full" check, so quests with fewer than four character prereqs advance as soon as the actual prereq slots are all covered.</div>
         <div style="margin-bottom:9px"><strong>Version 1.451</strong> &mdash; Fixed hole carousel page 2 rendering blank. Root cause: qholeCarApply used translateX(-100%) to advance one page, but CSS translateX percentages are relative to the element's own width. With a 2-page track (width:200% of viewport), translateX(-100%) moved the track 200% of the viewport &mdash; twice as far as needed, sending page 2 completely off-screen. Fixed by computing pageWidthPct = 100/pages and using translateX(-(offset * pageWidthPct)%) so each page step moves exactly one viewport-width.</div>
         <div style="margin-bottom:9px"><strong>Version 1.450</strong> &mdash; Quest modal peg cards now show item prerequisite coverage tags. Previously, a character carrying a Longsword would satisfy "Martial Weapons" once assigned to a slot (gate check used inventoryHasPrereqItem correctly) but showed no match indicator on their card in the carousel, because item slots are not hole slots. Fixed: qddRenderPeg now checks the quest's item prereqs against each character's inventory and displays a green bag tag (e.g. "Martial Weapons") when covered. Characters covering item prereqs also sort higher in the carousel.</div>
         <div style="margin-bottom:9px"><strong>Version 1.449</strong> &mdash; Content editor polish: (1) clicking "+ New" on the Quests tab now defaults the quest set selector to whichever cycle you were most recently browsing, instead of always QUESTSETS[0]; (2) clicking "+ New" on Assets tab remembers the last-selected category (vehicle/building/pet) instead of always defaulting to vehicle; (3) removed a duplicate "var canEditBuiltin" declaration in the grind form editor that could cause unexpected behaviour in strict mode.</div>
@@ -12528,6 +12532,44 @@ function qddAssignToSlot(slotKey,ci){
       qddSlotAssignments[s.key]=ci;
     }
   });
+  // Auto-advance to page 2 when all page-1 slots are filled and a page 2 exists
+  if(qholeCarOffset===0){
+    var allSlots=qddBuildCharSlots(qddQuestLike,qddIsGrind);
+    var pages=Math.ceil(allSlots.length/HOLES_PER_PAGE);
+    if(pages>1){
+      var page0Slots=allSlots.slice(0,HOLES_PER_PAGE);
+      var allPage0Filled=page0Slots.every(function(s){
+        return s.support||(qddSlotAssignments[s.key]!==null&&qddSlotAssignments[s.key]!==undefined);
+      });
+      if(allPage0Filled){
+        // Brief pause, then animate the slide with a bouncy transition
+        setTimeout(function(){
+          var track=document.getElementById('qhole-car-track');
+          var nextBtn=document.getElementById('qhole-car-next');
+          var vp=document.querySelector('.qhole-car-viewport');
+          // Pulse the next arrow to signal something is about to happen
+          if(nextBtn){
+            nextBtn.style.animation='qhole-page-nudge .55s ease-out';
+            setTimeout(function(){nextBtn.style.animation='';},600);
+          }
+          // Flash the viewport border
+          if(vp){
+            vp.style.animation='qhole-vp-flash .5s ease-out';
+            setTimeout(function(){vp.style.animation='';},600);
+          }
+          // Swap to a slower, springy transition for the auto-advance only
+          if(track)track.style.transition='transform .55s cubic-bezier(.34,1.22,.64,1)';
+          qholeCarOffset=1;
+          qholeCarApply(allSlots);
+          // Restore the normal transition after the animation completes
+          setTimeout(function(){
+            var t=document.getElementById('qhole-car-track');
+            if(t)t.style.transition='';
+          },650);
+        },180);
+      }
+    }
+  }
 }
 
 // ── Hole carousel state ──
