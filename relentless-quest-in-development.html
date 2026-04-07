@@ -1809,7 +1809,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.467
+      Version 1.468
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2395,6 +2395,16 @@ button.squad-tag.squad-tag-active{
   <div class="mbtns">
     <button class="btn bink" id="ov-cycle-squad-no">Cancel</button>
     <button class="btn bgn" id="ov-cycle-squad-yes">Activate Cycle</button>
+  </div>
+</div></div>
+
+<div class="ov" id="ov-cycle-abandon"><div class="modal" style="max-width:420px">
+  <h3>🏳 Abandon Quest Cycle</h3>
+  <p id="ov-cycle-abandon-msg" class="hint" style="margin-bottom:10px"></p>
+  <div id="ov-cycle-abandon-warn" style="display:none;margin-bottom:10px;padding:10px 12px;background:rgba(139,26,26,.08);border:1px solid var(--crimson);border-radius:6px;font-size:.85em;color:var(--crimson)"></div>
+  <div class="mbtns">
+    <button class="btn bink" id="ov-cycle-abandon-no">Cancel</button>
+    <button class="btn" id="ov-cycle-abandon-yes" style="background:var(--crimson);color:#fff;border:none">🏳 Abandon</button>
   </div>
 </div></div>
 
@@ -3844,6 +3854,53 @@ function cycleGateSummaryText(status){
   if(!status||!status.issues||!status.issues.length)return 'Available';
   return status.issues.join(' ');
 }
+function abandonQuestCycle(setId){
+  var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
+  if(!set)return;
+  var qs=S.questState||{};
+  var isActive=qs.setId===setId;
+
+  // Check for in-progress (pending) quests
+  var pendingForSet=isActive?(qs.pending||[]):[];
+  var pendingTitles=pendingForSet.map(function(pq){
+    var q=questByIdx(set,pq.idx);
+    return q?q.title:('Quest #'+pq.idx);
+  });
+
+  var msg='Abandon "'+set.name+'"?\n\n'+
+    'Completed quests will be preserved and count toward the cycle gate requirement.';
+  if(pendingTitles.length){
+    msg+='\n\n⚠ WARNING: The following quest'+(pendingTitles.length>1?'s are':' is')+' currently in progress and will be lost:\n';
+    msg+=pendingTitles.map(function(t){return '  • '+t;}).join('\n');
+  }
+  if(!confirm(msg))return;
+
+  // Preserve completed quest progress in setProgress
+  if(isActive)saveActiveSetProgress();
+  // Clear pending quests for this set in setProgress
+  if(qs.setProgress&&qs.setProgress[setId]){
+    qs.setProgress[setId].pending=[];
+    qs.setProgress[setId].grindPending=[];
+  }
+  // Remove squad assignment
+  delete cycleSquadMap()[setId];
+  // If this was the active cycle, clear it
+  if(isActive){
+    qs.pending=[];
+    qs.grindPending=[];
+    // Switch to first available assigned cycle, or leave as-is
+    var otherSetId=Object.keys(cycleSquadMap())[0]||null;
+    if(otherSetId){
+      loadSetProgress(otherSetId);
+      qs.setId=otherSetId;
+    }
+  }
+  save();
+  renderAdv();
+  renderCycleMapCards();
+  logAdd('Abandoned cycle: "'+set.name+'"','adv');
+}
+
 function activateQuestCycleSet(setId){
   var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
   if(!set)return;
@@ -3917,13 +3974,26 @@ function renderCycleMapCards(){
     var tierLabel=set.dndTier?('Tier '+set.dndTier+' \u00b7 '):'';
     var statusColor=isActive?'var(--forest)':st.ok?'var(--gold-dark)':'var(--ink-light)';
     var statusIcon=isActive?'\u2705':st.ok?'\u2694\uFE0F':'\uD83D\uDD12';
+    // Count in-progress quests for this set (only meaningful if active)
+    var pendingCount=isActive?(S.questState&&S.questState.pending?S.questState.pending.length:0):0;
+    var doneCount=isActive?(S.questState&&S.questState.done?S.questState.done.length:0):
+      (S.questState&&S.questState.setProgress&&S.questState.setProgress[set.id]?
+       (S.questState.setProgress[set.id].done||[]).length:0);
+    var totalQ=(set.quests||[]).length;
+    var progressStr=doneCount>0?(doneCount+'/'+totalQ+' done'):(totalQ+' quests');
+    var squadBadge=squadName?
+      '<span style="display:inline-flex;align-items:center;gap:3px;'+
+        (isActive?'background:rgba(31,111,31,.12);border:1px solid var(--forest);color:var(--forest);':'background:rgba(44,26,14,.08);border:1px solid rgba(44,26,14,.2);color:var(--ink);')+
+        'border-radius:4px;padding:1px 6px;font-size:.68em">'+
+        '\u2694\uFE0F '+esc(squadName)+(isActive?' \u25cf active':'')+'</span>':'';
+    var progressBadge='<span style="font-size:.68em;color:var(--ink-light)">'+esc(progressStr)+'</span>';
     var card=
       '<div class="enc-card" style="border-color:'+statusColor+';padding:0;overflow:hidden;">'+
         '<div style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px 12px;user-select:none" data-cycle-toggle="'+esc(set.id)+'">'+
           '<span style="font-size:1.1em;flex-shrink:0">'+statusIcon+'</span>'+
           '<div style="flex:1;min-width:0">'+
             '<div style="font-family:\'Cinzel\',serif;font-size:.88em;font-weight:700;color:var(--ink)">'+esc(tierLabel+set.name)+'</div>'+
-            (squadName?'<div style="font-size:.7em;color:var(--ink-light)">⚔ Squad: '+esc(squadName)+'</div>':'')+
+            '<div style="display:flex;align-items:center;gap:5px;margin-top:2px;flex-wrap:wrap">'+squadBadge+progressBadge+'</div>'+
           '</div>'+
           '<span style="font-size:.85em;color:var(--ink-light)">'+(expanded?'\u25b4':'\u25be')+'</span>'+
         '</div>'+
@@ -3931,8 +4001,14 @@ function renderCycleMapCards(){
           '<div style="padding:0 12px 12px;border-top:1px solid var(--parchment-deep)">'+
             '<div class="edesc" style="padding-top:8px;margin-bottom:8px">'+esc(set.theme||set.desc||'')+'</div>'+
             (st.ok?
+              '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
               '<button class="btn bg sm" data-a="cycle-activate" data-setid="'+esc(set.id)+'">'+
-              (isActive?'\u2713 Active Cycle':'\u2694 Activate Cycle')+'</button>'
+              (isActive?'\u2713 Active Cycle':'\u2694 Activate Cycle')+'</button>'+
+              (squadName?
+                '<button class="btn bink sm" data-a="cycle-abandon" data-setid="'+esc(set.id)+'" '+
+                'style="border-color:var(--crimson);color:var(--crimson)">\uD83D\uDEAB Abandon</button>'
+              :'')+
+              '</div>'
             :'<div style="font-size:.78em;color:var(--ink-light);padding:4px 0;">'+(vis==='obscured'?'Requires: ':'Locked: ')+esc(cycleGateSummaryText(st))+'</div>'
             )+
           '</div>'
@@ -8083,11 +8159,24 @@ document.getElementById('ov-cycle-map-cards').addEventListener('click',function(
     renderCycleMapCards();
     return;
   }
+  var abandonBtn=e.target.closest('[data-a="cycle-abandon"]');
+  if(abandonBtn){
+    var setId=abandonBtn.getAttribute('data-setid');
+    if(setId)abandonQuestCycle(setId);
+    return;
+  }
   var btn=e.target.closest('[data-a="cycle-activate"]');
-  if(!btn)return;
-  var setId=btn.getAttribute('data-setid');
-  if(!setId)return;
-  openCycleSquadPicker(setId);
+  if(btn){
+    var setId=btn.getAttribute('data-setid');
+    if(setId)openCycleSquadPicker(setId);
+    return;
+  }
+  var abBtn=e.target.closest('[data-a="cycle-abandon"]');
+  if(abBtn){
+    var setId=abBtn.getAttribute('data-setid');
+    if(setId)openCycleAbandon(setId);
+    return;
+  }
 });
 document.getElementById('ov-cycle-map-close').addEventListener('click',function(){
   closeOv('ov-cycle-map');
@@ -8107,6 +8196,75 @@ document.getElementById('ov-cycle-squad-yes').addEventListener('click',function(
   P4.cycleSetId=null;
   save();
   renderCycleMapCards();
+});
+
+// ── Abandon cycle ──
+function openCycleAbandon(setId){
+  var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
+  if(!set)return;
+  P4.abandonSetId=setId;
+  var msg=document.getElementById('ov-cycle-abandon-msg');
+  var warn=document.getElementById('ov-cycle-abandon-warn');
+  if(msg)msg.textContent='Abandon "'+set.name+'"? Completed quest progress will be saved, but the squad will be unassigned.';
+  // Check for in-progress (counting down) quests on this cycle
+  var qs=S.questState||{};
+  var isActive=qs.setId===setId;
+  var inProgress=[];
+  if(isActive){
+    var now=Date.now();
+    (qs.pending||[]).forEach(function(pq){
+      if(pq.doneAt>now){
+        var q=questByIdx(set,pq.idx);
+        inProgress.push(q?q.title:('Quest #'+pq.idx));
+      }
+    });
+  }
+  if(warn){
+    if(inProgress.length){
+      warn.style.display='block';
+      warn.textContent='⚠ These quests are in progress and will be lost: '+inProgress.join(', ')+'.';
+    } else {
+      warn.style.display='none';
+    }
+  }
+  openOv('ov-cycle-abandon');
+}
+document.getElementById('ov-cycle-abandon-no').addEventListener('click',function(){
+  P4.abandonSetId=null;
+  closeOv('ov-cycle-abandon');
+});
+document.getElementById('ov-cycle-abandon-yes').addEventListener('click',function(){
+  var setId=P4.abandonSetId;
+  if(!setId){closeOv('ov-cycle-abandon');return;}
+  var qs=S.questState||{};
+  var isActive=qs.setId===setId;
+  // Save progress before abandoning so done quests are preserved in setProgress
+  if(isActive)saveActiveSetProgress();
+  // Remove pending (in-progress) quests for this cycle if it's active
+  if(isActive&&qs.pending){
+    var now=Date.now();
+    qs.pending=qs.pending.filter(function(pq){return pq.doneAt<=now;});
+  }
+  // Unassign the squad from this cycle
+  delete cycleSquadMap()[setId];
+  // If this was the active cycle, switch to the first available other cycle
+  if(isActive){
+    var next=(QUESTSETS||[]).filter(function(s){
+      return s.id!==setId&&assignedSquadForSet(s.id);
+    })[0];
+    if(next){
+      loadSetProgress(next.id);
+      qs.setId=next.id;
+    } else {
+      qs.setId=null;
+    }
+  }
+  P4.abandonSetId=null;
+  closeOv('ov-cycle-abandon');
+  save();
+  renderAdv();
+  renderCycleMapCards();
+  logAdd('Abandoned quest cycle: "'+(((QUESTSETS||[]).filter(function(s){return s.id===setId;})[0]||{}).name||setId)+'"','adv');
 });
 
 /* ═══════════════════════ RENDER ADV ═══════════════════════ */
