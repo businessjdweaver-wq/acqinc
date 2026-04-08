@@ -1932,7 +1932,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.504
+      Version 1.505
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -1957,6 +1957,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.505</strong> &mdash; Three auto-assign improvements: (1) Candidate pool restricted to members of the active cycle's squad — characters from other squads can no longer be pulled in by auto-assign. Falls back to full party if no squad is assigned. (2) canAutoFill() simulation: dry-runs the full greedy covering algorithm (same squad restriction, same busy-character filter, adventurers then hirelings) without mutating state. Returns true only if all prereq slots can be covered by available squad members. (3) Auto button (⚡ 1 QP) is grayed out (disabled + opacity 0.4) whenever canAutoFill() returns false, with an updated tooltip. Re-enables automatically when conditions change (hireling hired, slot filled manually, etc.).</div>
         <div style="margin-bottom:9px"><strong>Version 1.504</strong> &mdash; Quest-map Activate button: if a squad is already assigned to the cycle, skip the squad-picker modal and instead close the map, navigate to the Adventure screen, and scroll to the first unfinished quest (first assign button, falling back to first collect button) with a smooth scroll. Squad picker still opens normally when no squad is assigned yet.</div>
         <div style="margin-bottom:9px"><strong>Version 1.503</strong> &mdash; Auto-assign algorithm rewritten. Old algorithm: greedy slot-by-slot, placed any available character into any slot regardless of whether they covered it, used hirelings. New algorithm: Phase 1 — find the minimum set of adventurers to cover all prereq slots using a set-cover greedy (pick the candidate covering the most remaining unfilled slots, assign them to all those slots, repeat until no adventurer covers any remaining slot or all slots filled). Phase 2 — fill support slots with remaining adventurers who meet the level requirement. Hirelings are excluded from auto-assign entirely (they require deliberate manual hire via the quest panel). Characters who cover no prereq slots (e.g. high-level generalists) are placed in support, not forced into prereq slots they cannot fill.</div>
         <div style="margin-bottom:9px"><strong>Version 1.502</strong> &mdash; averageLevelForIndices now excludes hirelings (level 0) from the calculation. Hirelings are temporary workers, not adventurers, and their level-0 status was unfairly dragging down the party average used for cycle gate requirements (minAvgSquadLevel checks). A squad of four level-5 adventurers plus two hirelings now correctly reports an average level of 5, not 3.3.</div>
@@ -9881,6 +9882,17 @@ function updateQuestModal(){
   if(issues.length){unmet.style.display='block';unmet.textContent='⚠ '+issues.join(' ');}
   else unmet.style.display='none';
   if(beginBtn)beginBtn.disabled=issues.length>0;
+  // Gray out auto button if simulation shows it can't fill all prereq slots
+  var autoBtn=document.getElementById('ov-q-auto');
+  if(autoBtn){
+    var q2=P4.quest!==null?questByIdx(activeQuestSet(),P4.quest):null;
+    var gObj2=P4.grind!==null?GRIND.filter(function(g){return g.id===P4.grind;})[0]:null;
+    var questLike2=q2||gObj2;
+    var canFill=questLike2?canAutoFill(questLike2,P4.grind!==null):false;
+    autoBtn.disabled=!canFill;
+    autoBtn.style.opacity=canFill?'':'0.4';
+    autoBtn.title=canFill?'Auto-assign (1 QP)':'Auto-assign unavailable — squad cannot cover all prerequisites';
+  }
 }
 
 document.getElementById('ov-q-chars').addEventListener('change',updateQuestModal);
@@ -14487,6 +14499,56 @@ function qddCharCoversSlot(c,slot){
   return false; // item/gold/vehicle never need a char in this system
 }
 
+function canAutoFill(questLike,isGrind){
+  // Dry-run of the auto-assign algorithm — returns true if all prereq slots
+  // can be filled from the current squad/party without hiring, purchasing, or leveling.
+  if(!questLike)return false;
+  var slots=qddBuildCharSlots(questLike,isGrind);
+  var prereqOnly=slots.filter(function(s){return !s.support;});
+  if(!prereqOnly.length)return true; // no prereqs — always fillable
+
+  // Build same candidate pool as qddAutoAssign
+  var now=Date.now();
+  var busy={};
+  (S.questState&&S.questState.pending||[]).forEach(function(pq){
+    if(pq.doneAt>now)(pq.chars||[]).forEach(function(ci){busy[ci]=true;});
+  });
+  (S.questState&&S.questState.grindPending||[]).forEach(function(gp){
+    if(gp.doneAt>now)(gp.chars||[]).forEach(function(ci){busy[ci]=true;});
+  });
+  var _sqName=activeCycleSquadName();
+  var _sq=_sqName?(S.squads||[]).filter(function(sq){return sq.name===_sqName;})[0]:null;
+  var _sqCis=_sq?(_sq.memberIdxs||[]).filter(function(ci){return S.party[ci];}):null;
+  var allAvail=(S.party||[]).map(function(c,ci){return{c:c,ci:ci};}).filter(function(e){
+    if(!e.c||busy[e.ci])return false;
+    if(_sqCis&&_sqCis.indexOf(e.ci)===-1)return false;
+    return true;
+  });
+
+  // Simulate greedy covering (adventurers then hirelings)
+  var remaining=prereqOnly.slice();
+  var usedCis={};
+  function tryFill(pool){
+    var progress=true;
+    while(remaining.length&&progress){
+      progress=false;
+      var bestCand=null,bestCov=-1;
+      pool.forEach(function(e){
+        if(usedCis[e.ci])return;
+        var cov=remaining.filter(function(s){return qddCharCoversSlot(e.c,s);}).length;
+        if(cov>bestCov){bestCov=cov;bestCand=e;}
+      });
+      if(!bestCand||bestCov===0)break;
+      usedCis[bestCand.ci]=true;
+      remaining=remaining.filter(function(s){return !qddCharCoversSlot(bestCand.c,s);});
+      progress=true;
+    }
+  }
+  tryFill(allAvail.filter(function(e){return !e.c.hireling;}));
+  tryFill(allAvail.filter(function(e){return !!e.c.hireling;}));
+  return remaining.length===0;
+}
+
 function qddAutoAssign(){
   // Check access: dev mode OR QP spend
   var canUse=isDevModeActive()||(qpEnabled()&&(S.qpBalance||0)>=(qpCfg().costAutoAssign||1));
@@ -14522,8 +14584,16 @@ function qddAutoAssign(){
     if(gp.doneAt>now)(gp.chars||[]).forEach(function(ci){busy[ci]=true;});
   });
 
+  // Restrict to squad members if the active cycle has a squad assigned
+  var _activeSquadName=activeCycleSquadName();
+  var _activeSq=_activeSquadName?(S.squads||[]).filter(function(sq){return sq.name===_activeSquadName;})[0]:null;
+  var _squadCis=_activeSq?(_activeSq.memberIdxs||[]).filter(function(ci){return S.party[ci];}):null;
+
   var allAvail=(S.party||[]).map(function(c,ci){return {c:c,ci:ci};}).filter(function(e){
-    return e.c&&!busy[e.ci];
+    if(!e.c||busy[e.ci])return false;
+    // If a squad is assigned to this cycle, only use squad members
+    if(_squadCis&&_squadCis.indexOf(e.ci)===-1)return false;
+    return true;
   });
   var adventurers=allAvail.filter(function(e){return !e.c.hireling;});
   var hirelings=allAvail.filter(function(e){return !!e.c.hireling;});
