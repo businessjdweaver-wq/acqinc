@@ -1542,7 +1542,7 @@ button.squad-tag.squad-tag-active{
 .qcs-info-unmet{color:var(--crimson);font-weight:600;}
 
 /* ── Hole carousel (4 slots visible, slides to show support) ── */
-#dev-bar{display:none;position:sticky;top:0;z-index:490;background:#1a2744;border-bottom:2px solid #2e4a8a;padding:4px 10px;}
+#dev-bar{display:none;position:sticky;top:0;z-index:490;background:#1a2744;border-bottom:2px solid #2e4a8a;padding:4px 10px;width:100%;max-width:480px;left:50%;transform:translateX(-50%);flex-wrap:wrap;box-sizing:border-box;}
 #dev-bar.active{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;}
 .dev-bar-btn{display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25);border-radius:5px;padding:4px 10px;color:#fff;font-size:.75em;cursor:pointer;white-space:nowrap;font-family:'Cinzel',serif;letter-spacing:.03em;transition:background .12s;}
 .dev-bar-btn:hover,.dev-bar-btn:active{background:rgba(255,255,255,.22);}
@@ -1954,7 +1954,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.527
+      Version 1.528
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4972,7 +4972,16 @@ document.getElementById('btn-addtask').addEventListener('click',function(){
   S.active.unshift({_tid:_newTid,name:n,gp:g,count:0,subtasks:[],collapsed:false});
   logAdd('New contract: "'+n+'"','task');
   document.getElementById('new-tname').value='';
-  qpScheduleVest(_newTid,'task_created',(S.settings&&S.settings.qp&&S.settings.qp.earnTask)||2);
+  // QP spam guard: skip if name is too short or first 5 chars look random
+  var _qpTaskOk=(function(name){
+    if(!name||name.length<10)return false;
+    var first5=name.slice(0,5);
+    // Detect random-looking: no spaces/vowels in first 5 chars
+    var vowels=/[aeiouAEIOU ]/;
+    if(!vowels.test(first5))return false;
+    return true;
+  })(n);
+  if(_qpTaskOk)qpScheduleVest(_newTid,'task_created',(S.settings&&S.settings.qp&&S.settings.qp.earnTask)||2);
   // On first ever task, reveal QP with shooting stars
   if(!_qpRevealed&&S.active.length===1)setTimeout(revealQpWithStars,400);
   save();renderTasks();
@@ -7466,8 +7475,18 @@ function candidateCardHtml(c,idx,type){
     '<div class="cmeta" style="font-size:.82em">'+esc(c.species)+' '+esc(c.cls)+' · '+esc(c.bg)+'</div>'+
     '<div class="clvl" style="font-size:.78em">'+c.age+' yrs · '+esc(c.height)+' · '+esc(c.weight)+'</div>'+
     '<div class="pills" style="margin-top:5px">'+
-    '<span class="pill">'+relIcon(c.rel)+' '+esc(c.rel)+'</span>'+
-    c.lang.map(function(l){return '<span class="pill">🗣 '+esc(l)+'</span>';}).join('')+
+    '<span class="pill"'+((_hireWishlist&&_hireWishlist.indexOf(c.rel)!==-1)?' style="background:rgba(31,111,31,.18);border-color:var(--forest);color:var(--forest);font-weight:700"':'')+'>'+(c.rel?relIcon(c.rel)+' '+esc(c.rel):'')+' </span>'+
+    c.lang.map(function(l){
+      var hl=_hireWishlist&&_hireWishlist.indexOf(l)!==-1;
+      return '<span class="pill"'+(hl?' style="background:rgba(31,111,31,.18);border-color:var(--forest);color:var(--forest);font-weight:700"':'')+'>🗣 '+esc(l)+'</span>';
+    }).join('')+
+    '</div><div class="pills">'+
+    (function(){
+      var hlCls=_hireWishlist&&_hireWishlist.indexOf(c.cls)!==-1;
+      var hlSp=_hireWishlist&&_hireWishlist.indexOf(c.species)!==-1;
+      return '<span class="pill"'+(hlCls?' style="background:rgba(31,111,31,.18);border-color:var(--forest);color:var(--forest);font-weight:700"':'')+'>⚔ '+esc(c.cls)+'</span>'+
+             '<span class="pill"'+(hlSp?' style="background:rgba(31,111,31,.18);border-color:var(--forest);color:var(--forest);font-weight:700"':'')+'>🧬 '+esc(c.species)+'</span>';
+    })()+
     '</div><div class="pills">'+
     c.skills.map(function(s){
       var hl=_hireWishlist&&_hireWishlist.indexOf(s)!==-1;
@@ -7494,16 +7513,37 @@ function renderCandidates(){
   var starterNote=(shouldOfferStarterGuide()&&recruitCandidates.some(function(c){return c.starterGuide;}))
     ? '<div class="hint" style="margin-bottom:8px;color:var(--gold-dark);font-weight:700">🧭 Recommended first hire highlighted below: includes Survival and Navigator\'s Tools and costs 125 gp.</div>'
     : '';
-  // Build wishlist pill selector from all available skills + tools
-  var _allSkillsTool=[].concat(DND.skills||[]).concat(DND.tools||[]);
-  var _wishHtml='<div style="margin-bottom:10px;background:rgba(31,111,31,.06);border:1px solid rgba(31,111,31,.2);border-radius:7px;padding:8px 10px">'+
-    '<div style="font-family:\'Cinzel\',serif;font-size:.72em;color:var(--forest);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">✅ Wish List — highlight recruits with these</div>'+
-    '<div style="display:flex;flex-wrap:wrap;gap:4px">'+
-    _allSkillsTool.map(function(v){
+  // Build wishlist ribbon — skills, tools, langs, classes, species
+  var _partySkills=[],_partyTools=[],_partyLangs=[],_partyCls=[],_partySp=[];
+  (S.party||[]).forEach(function(p){if(!p)return;
+    (p.skills||[]).forEach(function(s){if(_partySkills.indexOf(s)===-1)_partySkills.push(s);});
+    (p.tools||[]).forEach(function(t){if(_partyTools.indexOf(t)===-1)_partyTools.push(t);});
+    (p.lang||[]).forEach(function(l){if(_partyLangs.indexOf(l)===-1)_partyLangs.push(l);});
+    if(p.cls&&_partyCls.indexOf(p.cls)===-1)_partyCls.push(p.cls);
+    if(p.species&&_partySp.indexOf(p.species)===-1)_partySp.push(p.species);
+  });
+  function _wishRibbon(lbl,items,partyHas){
+    var pills=items.map(function(v){
       var active=_hireWishlist.indexOf(v)!==-1;
-      return '<button class="hire-wish-pill" data-wish="'+esc(v)+'" style="font-size:.65em;padding:1px 7px;border-radius:10px;cursor:pointer;border:1px solid '+(active?'var(--forest)':'rgba(44,26,14,.2)')+';background:'+(active?'rgba(31,111,31,.18)':'rgba(44,26,14,.04)')+';color:'+(active?'var(--forest)':'var(--ink-light)')+'">'+esc(v)+'</button>';
-    }).join('')+
-    '</div></div>';
+      var missing=partyHas.indexOf(v)===-1;
+      var targetIcon=missing?'<span style="position:absolute;top:-3px;right:-3px;font-size:.65em">🎯</span>':'';
+      return '<button class="sqmgr-skill-chip hire-wish-pill'+(active?' sqmgr-skill-active':'')+'" data-wish="'+esc(v)+'" style="position:relative">'+
+        esc(v)+targetIcon+'</button>';
+    }).join('');
+    if(!pills)return '';
+    return '<div class="sqmgr-ribbon-row">'+
+      '<span class="sqmgr-ribbon-lbl">'+lbl+'</span>'+
+      '<div class="sqmgr-ribbon-strip">'+pills+'</div>'+
+      '</div>';
+  }
+  var _wishHtml='<div style="margin-bottom:10px;background:rgba(31,111,31,.06);border:1px solid rgba(31,111,31,.2);border-radius:7px;overflow:hidden">'+
+    '<div style="font-family:\'Cinzel\',serif;font-size:.72em;color:var(--forest);text-transform:uppercase;letter-spacing:.05em;padding:6px 10px 2px">✅ Wish List <span style="font-size:.8em;color:var(--ink-light);font-weight:normal">— 🎯 = not in party yet</span></div>'+
+    _wishRibbon('⭐ Skills',DND.skills||[],_partySkills)+
+    _wishRibbon('🔧 Tools',DND.tools||[],_partyTools)+
+    _wishRibbon('🗣 Lang',DND.lang||[],_partyLangs)+
+    _wishRibbon('⚔ Class',Object.keys(CLASS_SKILLS||{}),_partyCls)+
+    _wishRibbon('🧬 Species',DND.species||[],_partySp)+
+    '</div>';
   el.innerHTML=
     _wishHtml+
     '<div style="font-size:.8em;color:var(--ink-light);margin-bottom:8px">Choose one to hire:</div>'+
@@ -8810,14 +8850,14 @@ function collectQuest(qi,pq,q,set){
   var prevCount=parseInt(S.questState.repeatCounts[qi],10)||0;
   var nextCount=Math.min(1,prevCount+1);
   S.questState.repeatCounts[qi]=nextCount;
-  if(nextCount>=1&&S.questState.done.indexOf(qi)===-1)S.questState.done.push(qi);
+  // Check BEFORE pushing to done — after push it would always appear 'already done'
+  var _alreadyDone=S.questState.done.indexOf(qi)!==-1;
+  if(nextCount>=1&&!_alreadyDone)S.questState.done.push(qi);
   var pqIdx=-1;
   (S.questState.pending||[]).forEach(function(p,pi){if(p.idx===qi)pqIdx=pi;});
   if(pqIdx!==-1)S.questState.pending.splice(pqIdx,1);
-  if(q.capstone){
-    // Only award if not already recorded in done (prevents duplicate on double-collect)
-    var _alreadyDone=(S.questState&&S.questState.done&&S.questState.done.indexOf(qi)!==-1);
-    if(!_alreadyDone)awardCapstonReward(set);
+  if(q.capstone&&!_alreadyDone){
+    awardCapstonReward(set);
   }
   saveActiveSetProgress();
 }
@@ -9004,6 +9044,8 @@ document.getElementById('qpm-btn-reset-today').addEventListener('click',function
 
 // ── Dev bar button wiring ──
 document.getElementById('dev-bar-ledger').addEventListener('click',function(){
+  navTo('log');
+  return;
   var details=document.getElementById('changelog-details');
   if(!details)return;
   if(details.open){
@@ -11948,10 +11990,14 @@ document.getElementById('btn-nav-log').addEventListener('click',function(){
   navTo('log');
 });
 
+var _baseViewportH=window.innerHeight;
 function updateKeyboardNavState(){
   var ae=document.activeElement;
-  var typing=!!(ae && (ae.tagName==='INPUT' || ae.tagName==='TEXTAREA' || ae.tagName==='SELECT' || ae.isContentEditable));
-  document.body.classList.toggle('kbd-open',typing);
+  var focused=!!(ae && (ae.tagName==='INPUT' || ae.tagName==='TEXTAREA' || ae.tagName==='SELECT' || ae.isContentEditable));
+  // Only hide nav when viewport actually shrinks (mobile keyboard) — not on desktop focus
+  var currentH=window.visualViewport?window.visualViewport.height:window.innerHeight;
+  var kbdOpen=focused&&(currentH<_baseViewportH*0.75);
+  document.body.classList.toggle('kbd-open',kbdOpen);
 }
 function updateHeaderCompactState(){
   var y=window.scrollY||window.pageYOffset||0;
@@ -11961,6 +12007,8 @@ document.addEventListener('focusin',updateKeyboardNavState);
 document.addEventListener('focusout',function(){setTimeout(updateKeyboardNavState,0);});
 window.addEventListener('scroll',updateHeaderCompactState,{passive:true});
 window.addEventListener('resize',updateHeaderCompactState);
+window.addEventListener('resize',function(){_baseViewportH=Math.max(_baseViewportH,window.innerHeight);});
+if(window.visualViewport)window.visualViewport.addEventListener('resize',updateKeyboardNavState);
 
 document.querySelectorAll('.ov').forEach(function(ov){
   ov.addEventListener('click',function(e){
