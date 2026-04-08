@@ -1954,7 +1954,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.524
+      Version 1.525
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2567,7 +2567,7 @@ button.squad-tag.squad-tag-active{
         <!-- Card 0: Quest description -->
         <div class="qcs-card qcs-card-desc qcs-front" id="qcs-0">
           <div class="qcs-card-title">📜 Description</div>
-          <div id="ov-q-desc" style="font-style:italic;font-size:.88em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;color:var(--ink-light)"></div>
+          <div id="ov-q-desc" style="font-style:italic;font-size:.88em;color:var(--ink-light)"></div>
           <div id="qcs-info-prereqs"></div>
         </div>
         <!-- Card 1: Details -->
@@ -5200,6 +5200,9 @@ document.getElementById('tlist').addEventListener('change',function(e){
       var tot=S.active[i].subtasks.length;
       var sg=Math.max(1,Math.floor(S.active[i].gp/tot));
       claimTaskGold(sg,'Sub-task: "'+S.active[i].subtasks[si].name+'" ('+S.active[i].name+')');
+      // Auto-increment parent task pie by one step (max 6)
+      var curPie=S.active[i].pct||0;
+      if(curPie<6)S.active[i].pct=curPie+1;
     }
     save();renderTasks();
   }
@@ -6672,7 +6675,7 @@ document.getElementById('plist').addEventListener('click',function(e){
     var c=S.party[ci];
     P3.lvl=ci;
     document.getElementById('ov-lv-msg').textContent=
-      'Level up '+c.name+' from Level '+c.level+' to Level '+(c.level+1)+' for '+(c.level===0?125:c.level*50)+' gp?'+
+      'Level up '+c.name+' from Level '+c.level+' to Level '+(c.level+1)+' for '+(c.hireling?200:(c.level===0?125:c.level*50))+' gp?'+
       (c.hireling&&c.level===0?' They will graduate to a full adventurer, gaining skills, tools, languages, and a surname.':'');
     openOv('ov-lvlup');
   } else if(a==='ptag'){
@@ -6710,7 +6713,7 @@ document.addEventListener('click',function(e){
 document.getElementById('ov-lv-yes').addEventListener('click',function(){
   if(P3.lvl===null)return;
   var c=S.party[P3.lvl];
-  var cost=window._lvupCost||(c.level===0?125:c.level*50);
+  var cost=window._lvupCost||(c.hireling?200:(c.level===0?125:c.level*50));
   window._lvupCost=null; // clear after use
   if(!goldSpend(cost,'Level up '+c.name+(window._lvupFromQuest?' (field surcharge)':''),'hire'))return;
   c.level++;
@@ -7449,6 +7452,24 @@ function makeCandidate(){
   };
 }
 
+function rosterCount(attr,value){
+  // Count non-hireling party members matching this attribute
+  return (S.party||[]).filter(function(p){
+    if(!p)return false;
+    if(attr==='skill')return (p.skills||[]).indexOf(value)!==-1;
+    if(attr==='lang')return (p.lang||[]).indexOf(value)!==-1;
+    if(attr==='tool')return (p.tools||[]).indexOf(value)!==-1;
+    if(attr==='rel')return p.rel===value;
+    if(attr==='cls')return p.cls===value;
+    if(attr==='species')return p.species===value;
+    return false;
+  }).length;
+}
+function rosterBadge(count){
+  // Green badge for zero (rare/valuable), grey for others
+  var bg=count===0?'background:rgba(31,111,31,.15);border-color:var(--forest);color:var(--forest);font-weight:700':'background:rgba(44,26,14,.08);border-color:rgba(44,26,14,.2);color:var(--ink-light)';
+  return '<span style="'+bg+';border:1px solid;border-radius:8px;font-size:.6em;padding:0 4px;margin-left:2px;vertical-align:middle">'+count+'</span>';
+}
 function candidateCardHtml(c,idx,type){
   return '<div class="card'+(c.starterGuide?' starter-candidate-card':'')+'" style="margin-bottom:10px">'+
     (c.starterGuide?'<div class="starter-guide-banner">🧭 '+esc(c.starterGuideLabel||'Recommended Starter')+'</div>':'')+
@@ -7456,12 +7477,15 @@ function candidateCardHtml(c,idx,type){
     '<div class="cmeta" style="font-size:.82em">'+esc(c.species)+' '+esc(c.cls)+' · '+esc(c.bg)+'</div>'+
     '<div class="clvl" style="font-size:.78em">'+c.age+' yrs · '+esc(c.height)+' · '+esc(c.weight)+'</div>'+
     '<div class="pills" style="margin-top:5px">'+
-    '<span class="pill">'+relIcon(c.rel)+' '+esc(c.rel)+'</span>'+
-    c.lang.map(function(l){return '<span class="pill">🗣 '+esc(l)+'</span>';}).join('')+
+    '<span class="pill">'+relIcon(c.rel)+' '+esc(c.rel)+rosterBadge(rosterCount('rel',c.rel))+'</span>'+
+    c.lang.map(function(l){return '<span class="pill">🗣 '+esc(l)+rosterBadge(rosterCount('lang',l))+'</span>';}).join('')+
     '</div><div class="pills">'+
-    c.skills.map(function(s){return '<span class="pill">⭐ '+esc(s)+'</span>';}).join('')+
+    '<span class="pill" style="font-size:.78em;color:var(--ink-light)">'+esc(c.cls)+rosterBadge(rosterCount('cls',c.cls))+'</span>'+
+    '<span class="pill" style="font-size:.78em;color:var(--ink-light)">'+esc(c.species)+rosterBadge(rosterCount('species',c.species))+'</span>'+
     '</div><div class="pills">'+
-    c.tools.map(function(s){return '<span class="pill">🔧 '+esc(s)+'</span>';}).join('')+
+    c.skills.map(function(s){return '<span class="pill">⭐ '+esc(s)+rosterBadge(rosterCount('skill',s))+'</span>';}).join('')+
+    '</div><div class="pills">'+
+    c.tools.map(function(s){return '<span class="pill">🔧 '+esc(s)+rosterBadge(rosterCount('tool',s))+'</span>';}).join('')+
     c.weapons.map(function(s){return '<span class="pill">⚔ '+esc(s)+'</span>';}).join('')+
     '</div>'+
     '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">'+
@@ -9891,7 +9915,7 @@ function focusNewHireling(ci){
       }
     }
     try{row.scrollIntoView({behavior:'instant',block:'center'});}catch(e){row.scrollIntoView(false);}
-    showHireRibbon(S.party[newHireCi]?S.party[newHireCi].name:'Hireling',newHireCi,true);
+    var _hc=S.party[ci];showHireRibbon(_hc?_hc.name:'Hireling',ci,true);
   },60);
 }
 
@@ -10105,6 +10129,7 @@ document.getElementById('ov-quest').addEventListener('click',function(e){
   var storeBtn=e.target.closest('.qcs-store-link');
   if(storeBtn){
     var itemName=storeBtn.getAttribute('data-item');
+    var _tab=storeBtn.getAttribute('data-tab');if(_tab)storeTab=_tab;
     // Find the item across GEAR, VEHICLES, PETS
     var allShop=[].concat(GEAR||[],VEHICLES||[],PETS||[]);
     var shopItem=allShop.filter(function(it){return it&&it.name===itemName;})[0];
@@ -10170,11 +10195,11 @@ document.getElementById('ov-q-chars').addEventListener('click',function(e){
   P3.lvl=ci;
   document.getElementById('ov-lv-msg').textContent=
     'Level up '+c.name+' from Level '+c.level+' to Level '+(c.level+1)+
-    ' for '+(c.level===0?125:c.level*50)+' gp?'+
+    ' for '+(c.hireling?200:(c.level===0?125:c.level*50))+' gp?'+
     (c.hireling&&c.level===0?' They will graduate to a full adventurer.':'');
   // After level-up modal closes, re-render quest adventurer list
   window._lvupFromQuest=true;
-  var _baseCost=c.level===0?125:c.level*50;
+  var _baseCost=c.hireling?200:(c.level===0?125:c.level*50);
   var _surcharge=Math.ceil(_baseCost*0.10);
   var _totalCost=_baseCost+_surcharge;
   document.getElementById('ov-lv-msg').textContent=
@@ -14760,11 +14785,11 @@ function qddBuildInfoPrereqs(questLike){
   // Vehicle req (bonus, not hard gate)
   if(questLike.vehicleReq){
     var hasV=(S.partyAssets||[]).some(function(a){return a.name===questLike.vehicleReq.name;});
-    rows.push({icon:questLike.vehicleReq.ic||'\uD83D\uDE97',label:questLike.vehicleReq.name,met:hasV,note:'+reward'});
+    rows.push({icon:questLike.vehicleReq.ic||'\uD83D\uDE97',label:questLike.vehicleReq.name,met:hasV,note:'+reward',isVehicle:true,itemName:questLike.vehicleReq.name});
   }
   if(questLike.buildingReq){
     var hasB=(S.partyAssets||[]).some(function(a){return a.name===questLike.buildingReq.name;});
-    rows.push({icon:questLike.buildingReq.ic||'\uD83C\uDFDB',label:questLike.buildingReq.name,met:hasB,note:'+reward'});
+    rows.push({icon:questLike.buildingReq.ic||'\uD83C\uDFDB',label:questLike.buildingReq.name,met:hasB,note:'+reward',isBuilding:true,itemName:questLike.buildingReq.name});
   }
   // Squad size
   if(questLike.squadReqMin>0){
@@ -15296,13 +15321,14 @@ function qddInfoPrereqHtml(questLike){
           }).join('');
       }
     }
-    // Unmet item: show a store-link button
+    // Unmet item/vehicle/building: show a store-link button
     var storeBtn='';
-    if(!r.met&&r.isItem){
-      storeBtn=' <button class="qcs-store-link" data-item="'+esc(r.itemName)+'" '+
+    if(!r.met&&(r.isItem||r.isVehicle||r.isBuilding)){
+      var _storeTab=r.isVehicle||r.isBuilding?'expedition':'adventuring';
+      storeBtn=' <button class="qcs-store-link" data-item="'+esc(r.itemName)+'" data-tab="'+_storeTab+'" '+
         'style="font-size:.62em;padding:1px 5px;border:1px solid var(--gold-dark);border-radius:3px;'+
         'background:rgba(201,146,42,.1);color:var(--gold-dark);cursor:pointer;vertical-align:middle">'+
-        '\uD83D\uDED2</button>';
+        '\uD83D\uDED2 Purchase</button>';
     }
     // Show +reward note only for vehicle/building bonuses
     var noteHtml=r.note?'<span style="font-size:.65em;color:var(--ink-light);margin-left:2px">('+esc(r.note)+')</span>':'';
