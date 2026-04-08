@@ -1954,7 +1954,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.526
+      Version 1.527
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -5112,6 +5112,9 @@ document.getElementById('tlist').addEventListener('click',function(e){
     if(!S.active[i].subtasks)S.active[i].subtasks=[];
     var _stIdx=S.active[i].subtasks.length;
     S.active[i].subtasks.push({name:sn,done:false});
+    // Recalculate pie after subtask added — adding undone subs may lower the step
+    var _doneSubs2=S.active[i].subtasks.filter(function(s){return s.done;}).length;
+    S.active[i].pct=Math.min(6,Math.round(_doneSubs2/S.active[i].subtasks.length*6));
     var _stTid=(S.active[i]._tid||('t'+i))+'::'+_stIdx;
     qpScheduleVest(_stTid,'subtask_added',(S.settings&&S.settings.qp&&S.settings.qp.earnSubtask)||1);
     save();renderTasks();
@@ -5204,7 +5207,11 @@ document.getElementById('tlist').addEventListener('change',function(e){
       var doneSubs=S.active[i].subtasks.filter(function(s){return s.done;}).length;
       S.active[i].pct=Math.min(6,Math.round(doneSubs/S.active[i].subtasks.length*6));
     }
-    save();renderTasks();
+    save();
+    // Update pie in-place before re-render to avoid nav flicker
+    var _pegEl=document.querySelector('[data-a="tpct"][data-i="'+i+'"]');
+    if(_pegEl){var _ns=S.active[i].pct||0;_pegEl.setAttribute('data-step',_ns);_pegEl.innerHTML=pctTogSvg(_ns);}
+    renderTasks();
   }
 });
 
@@ -7487,13 +7494,34 @@ function renderCandidates(){
   var starterNote=(shouldOfferStarterGuide()&&recruitCandidates.some(function(c){return c.starterGuide;}))
     ? '<div class="hint" style="margin-bottom:8px;color:var(--gold-dark);font-weight:700">🧭 Recommended first hire highlighted below: includes Survival and Navigator\'s Tools and costs 125 gp.</div>'
     : '';
+  // Build wishlist pill selector from all available skills + tools
+  var _allSkillsTool=[].concat(DND.skills||[]).concat(DND.tools||[]);
+  var _wishHtml='<div style="margin-bottom:10px;background:rgba(31,111,31,.06);border:1px solid rgba(31,111,31,.2);border-radius:7px;padding:8px 10px">'+
+    '<div style="font-family:\'Cinzel\',serif;font-size:.72em;color:var(--forest);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">✅ Wish List — highlight recruits with these</div>'+
+    '<div style="display:flex;flex-wrap:wrap;gap:4px">'+
+    _allSkillsTool.map(function(v){
+      var active=_hireWishlist.indexOf(v)!==-1;
+      return '<button class="hire-wish-pill" data-wish="'+esc(v)+'" style="font-size:.65em;padding:1px 7px;border-radius:10px;cursor:pointer;border:1px solid '+(active?'var(--forest)':'rgba(44,26,14,.2)')+';background:'+(active?'rgba(31,111,31,.18)':'rgba(44,26,14,.04)')+';color:'+(active?'var(--forest)':'var(--ink-light)')+'">'+esc(v)+'</button>';
+    }).join('')+
+    '</div></div>';
   el.innerHTML=
+    _wishHtml+
     '<div style="font-size:.8em;color:var(--ink-light);margin-bottom:8px">Choose one to hire:</div>'+
     starterNote+
     recruitCandidates.map(function(c,i){return candidateCardHtml(c,i,'std');}).join('')+
     '<div style="margin-top:10px;text-align:right">'+
     '<button class="btn bink sm" id="btn-reroll-std">🎲 Reroll'+(rerollCost?' ('+rerollCost+' gp)':' (free)')+'</button>'+
     '</div>';
+  // Wire wish pills
+  el.querySelectorAll('.hire-wish-pill').forEach(function(btn){
+    btn.addEventListener('click',function(e){
+      e.stopPropagation();
+      var v=this.getAttribute('data-wish');
+      var idx=_hireWishlist.indexOf(v);
+      if(idx===-1)_hireWishlist.push(v);else _hireWishlist.splice(idx,1);
+      renderCandidates();
+    });
+  });
 }
 
 document.getElementById('btn-randall').addEventListener('click',function(){
@@ -10114,9 +10142,16 @@ document.getElementById('ov-quest').addEventListener('click',function(e){
   var storeBtn=e.target.closest('.qcs-store-link');
   if(storeBtn){
     var itemName=storeBtn.getAttribute('data-item');
-    var _tab=storeBtn.getAttribute('data-tab');if(_tab)storeTab=_tab;
+    var _tab=storeBtn.getAttribute('data-tab');if(_tab){
+      storeTab=_tab;
+      // Set correct subtab for expedition items
+      if(_tab==='expedition'){
+        var _itemInBuildings=BUILDINGS&&BUILDINGS.some(function(b){return b.name===storeBtn.getAttribute('data-item');});
+        storeSubTab.expedition=_itemInBuildings?'exp-buildings':'exp-vehicles';
+      }
+    }
     // Find the item across GEAR, VEHICLES, PETS
-    var allShop=[].concat(GEAR||[],VEHICLES||[],PETS||[]);
+    var allShop=[].concat(GEAR||[],VEHICLES||[],BUILDINGS||[],PETS||[]);
     var shopItem=allShop.filter(function(it){return it&&it.name===itemName;})[0];
     if(!shopItem){
       // Try fuzzy — item might be a weapon group like 'Martial Weapons'
@@ -15500,6 +15535,22 @@ function qddBindEvents(slotsArg){
     }
     var rmPeg=e.target.closest('[data-peg-remove]');
     if(rmPeg){var rci=parseInt(rmPeg.getAttribute('data-peg-remove'));Object.keys(qddSlotAssignments).forEach(function(k){if(qddSlotAssignments[k]===rci)qddSlotAssignments[k]=null;});qcarSelected=null;qddRender(qddQuestLike,qddIsGrind);return;}
+    // Level-up button inside peg card — must intercept before peg-ci handler
+    var lvBtn=e.target.closest('.qcb-lvup[data-ci]');
+    if(lvBtn){
+      e.stopPropagation();
+      var _lci=parseInt(lvBtn.getAttribute('data-ci'));
+      var _lc=S.party[_lci];if(!_lc)return;
+      P3.lvl=_lci;
+      var _baseCostPeg=_lc.hireling?200:(_lc.level===0?125:_lc.level*50);
+      document.getElementById('ov-lv-msg').textContent=
+        'Level up '+_lc.name+' from Level '+_lc.level+' to Level '+(_lc.level+1)+
+        ' for '+_baseCostPeg+' gp?'+(_lc.hireling&&_lc.level===0?' They will graduate to a full adventurer.':'');
+      window._lvupFromQuest=true;
+      window._lvupCost=_baseCostPeg;
+      openOv('ov-lvlup');
+      return;
+    }
     var peg=e.target.closest('[data-peg-ci]');
     if(peg){
       var ci=parseInt(peg.getAttribute('data-peg-ci'));
