@@ -1954,7 +1954,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.525
+      Version 1.526
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -5200,9 +5200,9 @@ document.getElementById('tlist').addEventListener('change',function(e){
       var tot=S.active[i].subtasks.length;
       var sg=Math.max(1,Math.floor(S.active[i].gp/tot));
       claimTaskGold(sg,'Sub-task: "'+S.active[i].subtasks[si].name+'" ('+S.active[i].name+')');
-      // Auto-increment parent task pie by one step (max 6)
-      var curPie=S.active[i].pct||0;
-      if(curPie<6)S.active[i].pct=curPie+1;
+      // Recalculate task pie: done subtasks / total * 6 (so full set = full pie)
+      var doneSubs=S.active[i].subtasks.filter(function(s){return s.done;}).length;
+      S.active[i].pct=Math.min(6,Math.round(doneSubs/S.active[i].subtasks.length*6));
     }
     save();renderTasks();
   }
@@ -7452,24 +7452,6 @@ function makeCandidate(){
   };
 }
 
-function rosterCount(attr,value){
-  // Count non-hireling party members matching this attribute
-  return (S.party||[]).filter(function(p){
-    if(!p)return false;
-    if(attr==='skill')return (p.skills||[]).indexOf(value)!==-1;
-    if(attr==='lang')return (p.lang||[]).indexOf(value)!==-1;
-    if(attr==='tool')return (p.tools||[]).indexOf(value)!==-1;
-    if(attr==='rel')return p.rel===value;
-    if(attr==='cls')return p.cls===value;
-    if(attr==='species')return p.species===value;
-    return false;
-  }).length;
-}
-function rosterBadge(count){
-  // Green badge for zero (rare/valuable), grey for others
-  var bg=count===0?'background:rgba(31,111,31,.15);border-color:var(--forest);color:var(--forest);font-weight:700':'background:rgba(44,26,14,.08);border-color:rgba(44,26,14,.2);color:var(--ink-light)';
-  return '<span style="'+bg+';border:1px solid;border-radius:8px;font-size:.6em;padding:0 4px;margin-left:2px;vertical-align:middle">'+count+'</span>';
-}
 function candidateCardHtml(c,idx,type){
   return '<div class="card'+(c.starterGuide?' starter-candidate-card':'')+'" style="margin-bottom:10px">'+
     (c.starterGuide?'<div class="starter-guide-banner">🧭 '+esc(c.starterGuideLabel||'Recommended Starter')+'</div>':'')+
@@ -7477,15 +7459,18 @@ function candidateCardHtml(c,idx,type){
     '<div class="cmeta" style="font-size:.82em">'+esc(c.species)+' '+esc(c.cls)+' · '+esc(c.bg)+'</div>'+
     '<div class="clvl" style="font-size:.78em">'+c.age+' yrs · '+esc(c.height)+' · '+esc(c.weight)+'</div>'+
     '<div class="pills" style="margin-top:5px">'+
-    '<span class="pill">'+relIcon(c.rel)+' '+esc(c.rel)+rosterBadge(rosterCount('rel',c.rel))+'</span>'+
-    c.lang.map(function(l){return '<span class="pill">🗣 '+esc(l)+rosterBadge(rosterCount('lang',l))+'</span>';}).join('')+
+    '<span class="pill">'+relIcon(c.rel)+' '+esc(c.rel)+'</span>'+
+    c.lang.map(function(l){return '<span class="pill">🗣 '+esc(l)+'</span>';}).join('')+
     '</div><div class="pills">'+
-    '<span class="pill" style="font-size:.78em;color:var(--ink-light)">'+esc(c.cls)+rosterBadge(rosterCount('cls',c.cls))+'</span>'+
-    '<span class="pill" style="font-size:.78em;color:var(--ink-light)">'+esc(c.species)+rosterBadge(rosterCount('species',c.species))+'</span>'+
+    c.skills.map(function(s){
+      var hl=_hireWishlist&&_hireWishlist.indexOf(s)!==-1;
+      return '<span class="pill"'+(hl?' style="background:rgba(31,111,31,.18);border-color:var(--forest);color:var(--forest);font-weight:700"':'')+'> ⭐ '+esc(s)+'</span>';
+    }).join('')+
     '</div><div class="pills">'+
-    c.skills.map(function(s){return '<span class="pill">⭐ '+esc(s)+rosterBadge(rosterCount('skill',s))+'</span>';}).join('')+
-    '</div><div class="pills">'+
-    c.tools.map(function(s){return '<span class="pill">🔧 '+esc(s)+rosterBadge(rosterCount('tool',s))+'</span>';}).join('')+
+    c.tools.map(function(s){
+      var hl=_hireWishlist&&_hireWishlist.indexOf(s)!==-1;
+      return '<span class="pill"'+(hl?' style="background:rgba(31,111,31,.18);border-color:var(--forest);color:var(--forest);font-weight:700"':'')+'> 🔧 '+esc(s)+'</span>';
+    }).join('')+
     c.weapons.map(function(s){return '<span class="pill">⚔ '+esc(s)+'</span>';}).join('')+
     '</div>'+
     '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">'+
@@ -14721,6 +14706,7 @@ var qddIsGrind=false;
 var qcarOffset=0;
 var qcarEntries=[];
 var qcarSelected=null;
+var _hireWishlist=[]; // skill/tool values the user wants to find
 
 function qddCurrentQuestLike(){
   if(P4.grind!==null)return GRIND.filter(function(g){return g.id===P4.grind;})[0]||null;
@@ -15184,12 +15170,19 @@ function qddRenderPeg(entry,slots,busy){
   var hasAnyMatch=matchedSlots.length>0||itemTags.length>0;
   var inSlot=Object.keys(qddSlotAssignments).some(function(k){return qddSlotAssignments[k]===ci;});
   var cls='qpeg'+(isBusy?' busy':'')+(hasAnyMatch&&!isBusy?' can-fill':'')+(isSel?' selected':'');
+  // Level-up button if quest has a level req and char doesn't meet it
+  var _reqLvPeg=resolveQuestLikeRequiredLevel(qddQuestLike,qddIsGrind);
+  var _showLvUp=!c.hireling&&_reqLvPeg>1&&(c.level||0)<_reqLvPeg&&!isBusy;
+  var lvUpBtn=_showLvUp
+    ?'<button class="qcb-lvup" data-ci="'+ci+'" style="display:block;width:100%;margin-top:4px;font-size:.65em;padding:2px 6px;border:1px solid var(--forest);border-radius:4px;background:rgba(31,111,31,.1);color:var(--forest);cursor:pointer">⬆ Level Up (need Lv '+_reqLvPeg+')</button>'
+    :'';
   return'<div class="'+cls+'" data-peg-ci="'+ci+'">'+
     (inSlot?'<span class="qpeg-check">\u2713</span>':'')+
     (inSlot?'<span class="qpeg-remove" data-peg-remove="'+ci+'">\u2715</span>':'')+
     '<div class="qpeg-name">'+esc(c.name)+(c.hireling?' <span style="font-size:.65em;color:var(--ink-light)">\uD83E\uDE93</span>':'')+'</div>'+
     '<div class="qpeg-meta">'+esc(c.cls)+' \u00b7 Lv '+c.level+(isBusy?' \u00b7 \u2694 busy':'')+'</div>'+
-    '<div class="qpeg-tags">'+tagHtml+'</div></div>';
+    '<div class="qpeg-tags">'+tagHtml+'</div>'+
+    lvUpBtn+'</div>';
 }
 
 function qcarBuildEntries(partyEntries,slots,busy){
