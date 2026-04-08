@@ -416,8 +416,12 @@ button.pill.ptag.ptag-active{background:var(--gold-dark)!important;color:#fff!im
 
 
 .new-hire-highlight{animation:newHireFlash 1.5s ease;}
-@keyframes ribbonSlide{0%{transform:translateY(-40px);opacity:0;}12%{transform:translateY(0);opacity:1;}80%{transform:translateY(0);opacity:1;}100%{transform:translateY(-40px);opacity:0;}}
-.hire-ribbon{position:fixed;top:0;left:0;right:0;z-index:99998;background:var(--forest);color:#fff;font-family:'Cinzel',serif;font-size:.88em;font-weight:700;padding:10px 16px;display:flex;align-items:center;gap:10px;animation:ribbonSlide 3s ease forwards;pointer-events:auto;box-shadow:0 2px 12px rgba(0,0,0,.25);}
+@keyframes hireModalIn{0%{transform:scale(.7);opacity:0;}100%{transform:scale(1);opacity:1;}}
+@keyframes hireModalShrink{0%{max-height:320px;opacity:1;}100%{max-height:44px;opacity:1;}}
+@keyframes hireRibbonOut{0%{opacity:1;transform:translateY(0);}100%{opacity:0;transform:translateY(-44px);}}
+.hire-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99997;display:flex;align-items:center;justify-content:center;}
+.hire-modal-box{background:#fff;border-radius:14px;padding:28px 24px;max-width:340px;width:90%;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.3);animation:hireModalIn .35s cubic-bezier(.2,1.4,.4,1) forwards;}
+.hire-ribbon{position:fixed;top:0;left:0;right:0;z-index:99998;background:var(--forest);color:#fff;font-family:'Cinzel',serif;font-size:.88em;font-weight:700;padding:10px 16px;display:flex;align-items:center;gap:10px;pointer-events:auto;box-shadow:0 2px 12px rgba(0,0,0,.25);cursor:pointer;}
 @keyframes newHireFlash{
   0%{background:rgba(240,180,41,.45);}
   100%{background:transparent;}
@@ -1669,6 +1673,7 @@ button.squad-tag.squad-tag-active{
   <button class="dev-bar-btn" id="dev-bar-ledger" title="Open Change Log">📜 Ledger</button>
   <button class="dev-bar-btn" id="dev-bar-editor" title="Open Content Editor">✏️ Editor</button>
   <button class="dev-bar-btn" id="dev-bar-qp" title="QP Manager">⭐ QP</button>
+  <button class="dev-bar-btn" id="dev-bar-advance-day" title="Advance one day: complete quests, +400 gp, +20 QP">⏩ +1 Day</button>
   <span id="dev-bar-version"></span>
   <button class="dev-bar-btn danger" id="dev-bar-devoff" title="Disable Dev Mode">🧪 Exit Dev</button>
 </div>
@@ -1949,7 +1954,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.523
+      Version 1.524
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4253,6 +4258,7 @@ function updateQpDisplay(){
 
 // Slide the header pill between GP and QP views
 var _hdrShowingQp=false;
+var _hdrQpAutoTimer=null;
 function hdrSlideToQp(){
   if(!qpEnabled())return;
   var qpSide=document.getElementById('hdr-qp-side');
@@ -4260,8 +4266,10 @@ function hdrSlideToQp(){
   var div=document.getElementById('hdr-sw-divider');
   if(!qpSide||!gpSide)return;
   _hdrShowingQp=true;
+  // Hide GP entirely, show QP only
+  gpSide.style.display='none';
+  if(div)div.style.display='none';
   qpSide.style.display='';
-  div.style.display='';
   qpSide.classList.add('hdr-sw-active');
   gpSide.classList.remove('hdr-sw-active');
 }
@@ -4271,8 +4279,10 @@ function hdrSlideToGp(){
   var div=document.getElementById('hdr-sw-divider');
   if(!qpSide||!gpSide)return;
   _hdrShowingQp=false;
+  // Hide QP entirely, show GP only
   qpSide.style.display='none';
   if(div)div.style.display='none';
+  gpSide.style.display='';
   qpSide.classList.remove('hdr-sw-active');
   gpSide.classList.add('hdr-sw-active');
 }
@@ -8500,11 +8510,9 @@ function questPrereqCheck(q,charIdxs){
   (pr.tools||[]).forEach(function(t){if(to.indexOf(t)===-1)missing.push('Tool: '+t);});
   (pr.lang||[]).forEach(function(l){if(la.indexOf(l)===-1)missing.push('Language: '+l);});
   if(pr.rel&&re.indexOf(pr.rel)===-1)missing.push('Faith: '+pr.rel);
-  // Also include franchise assets and storage as 'inventory' for item prereqs
-  var assetNames=(S.partyAssets||[]).map(function(a){return a.name||'';});
-  var storageNames=(S.franchiseStorage||[]).map(function(x){return typeof x==='string'?x:(x&&x.name)||'';});
-  var allItems=inv.concat(assetNames,storageNames);
-  (pr.items||[]).forEach(function(x){if(!inventoryHasPrereqItem(allItems,x))missing.push('Item: '+x);});
+  // Item prereqs: must be carried by an assigned character (in a peg slot), not just in storage
+  // inv[] is already built from charIdxs above
+  (pr.items||[]).forEach(function(x){if(!inventoryHasPrereqItem(inv,x))missing.push('Item: '+x);});
   if(pr.gold&&S.gold<pr.gold)missing.push('Gold: '+pr.gold+' gp');
   var topLevel=0;
   (charIdxs||[]).forEach(function(ci){
@@ -8979,6 +8987,22 @@ document.getElementById('dev-bar-editor').addEventListener('click',function(){
 });
 document.getElementById('dev-bar-qp').addEventListener('click',function(){
   openQpManager();
+});
+document.getElementById('dev-bar-advance-day').addEventListener('click',function(){
+  // Complete all active quests
+  var now=Date.now();
+  if(S.questState&&S.questState.pending){
+    S.questState.pending.forEach(function(pq){pq.doneAt=now-1;});
+  }
+  if(S.questState&&S.questState.grindPending){
+    S.questState.grindPending.forEach(function(gp){gp.doneAt=now-1;});
+  }
+  // Award gold and QP
+  S.gold=(S.gold||0)+400;
+  if(!S.qpBalance)S.qpBalance=0;
+  S.qpBalance+=20;
+  logAdd('\u23e9 Dev: Advanced 1 day — quests completed, +400 gp, +20 QP.','gold');
+  save();setGold();updateQpDisplay();renderAdv();renderParty();
 });
 document.getElementById('dev-bar-devoff').addEventListener('click',function(){
   if(!confirm('Disable developer mode?'))return;
@@ -11777,19 +11801,60 @@ var RENDER={
 
 
 function showHireRibbon(charName, newCi, fromQuestModal){
-  // Remove any existing ribbon
-  var old=document.getElementById('hire-ribbon');
-  if(old&&old.parentNode)old.parentNode.removeChild(old);
-  var ribbon=document.createElement('div');
-  ribbon.id='hire-ribbon';
-  ribbon.className='hire-ribbon';
-  var questLink=fromQuestModal
-    ?'<button style="margin-left:auto;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.5);color:#fff;border-radius:12px;padding:2px 10px;cursor:pointer;font-size:.82em" onclick="navTo(\'adventure\');document.getElementById(\'hire-ribbon\').remove()">↩ Back to Quest</button>'
-    :'';
-  var viewLink='<button style="'+(fromQuestModal?'':'margin-left:auto;')+'background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.5);color:#fff;border-radius:12px;padding:2px 10px;cursor:pointer;font-size:.82em" onclick="navTo(\'party\');setTimeout(function(){var r=document.querySelector(\'[data-party-ci=\''+newCi+'\'\']\');if(r)r.scrollIntoView({block:\'center\'});},80);document.getElementById(\'hire-ribbon\').remove()">View '+charName+'</button>';
-  ribbon.innerHTML='✅ '+charName+' joined the franchise!'+questLink+viewLink;
-  document.body.appendChild(ribbon);
-  setTimeout(function(){if(ribbon.parentNode)ribbon.parentNode.removeChild(ribbon);},3100);
+  // Remove any existing
+  ['hire-ribbon','hire-modal-overlay'].forEach(function(id){
+    var el=document.getElementById(id);if(el&&el.parentNode)el.parentNode.removeChild(el);
+  });
+  // Build modal
+  var overlay=document.createElement('div');
+  overlay.id='hire-modal-overlay';
+  overlay.className='hire-modal-overlay';
+  var box=document.createElement('div');
+  box.className='hire-modal-box';
+  box.innerHTML=
+    '<div style="font-size:2.2em;margin-bottom:8px">🎉</div>'+
+    '<div style="font-family:\'Cinzel\',serif;font-size:1.05em;font-weight:700;color:var(--forest);margin-bottom:6px">'+esc(charName)+' joined the franchise!</div>'+
+    '<div style="font-size:.82em;color:var(--ink-light);margin-bottom:18px">Welcome to the team.</div>'+
+    '<div style="display:flex;gap:10px;justify-content:center">'+
+    '<button id="hire-modal-quest" style="flex:1;padding:8px 6px;border-radius:8px;border:1px solid var(--gold-dark);background:rgba(201,146,42,.12);color:var(--gold-dark);font-family:\'Cinzel\',serif;font-size:.82em;cursor:pointer">⚔ Next Quest</button>'+
+    '<button id="hire-modal-view" style="flex:1;padding:8px 6px;border-radius:8px;border:1px solid var(--forest);background:rgba(31,111,31,.1);color:var(--forest);font-family:\'Cinzel\',serif;font-size:.82em;cursor:pointer">👤 View '+esc(charName)+'</button>'+
+    '</div>';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  // Button handlers
+  document.getElementById('hire-modal-quest').onclick=function(){
+    _dismissHireModal();
+    if(fromQuestModal)navTo('adventure');
+    else{navTo('adventure');setTimeout(function(){var a=document.querySelector('[data-a="qassign"]');if(a)a.scrollIntoView({block:'center'});},120);}
+  };
+  document.getElementById('hire-modal-view').onclick=function(){
+    _dismissHireModal();
+    navTo('party');
+    setTimeout(function(){var r=document.querySelector('[data-party-ci="'+newCi+'"]');if(r)r.scrollIntoView({block:'center'});},80);
+  };
+  // After 3s — shrink to ribbon
+  var _shrinkTimer=setTimeout(function(){
+    overlay.style.display='none';
+    var ribbon=document.createElement('div');
+    ribbon.id='hire-ribbon';
+    ribbon.className='hire-ribbon';
+    ribbon.innerHTML='✅ '+esc(charName)+' joined!'+
+      '<span style="margin-left:auto;font-size:.82em;opacity:.7">tap to dismiss</span>';
+    ribbon.onclick=function(){if(ribbon.parentNode)ribbon.parentNode.removeChild(ribbon);};
+    document.body.appendChild(ribbon);
+    // Ribbon vanishes after 2s
+    setTimeout(function(){
+      ribbon.style.animation='hireRibbonOut .4s ease forwards';
+      setTimeout(function(){if(ribbon.parentNode)ribbon.parentNode.removeChild(ribbon);},420);
+    },2000);
+  },3000);
+  function _dismissHireModal(){
+    clearTimeout(_shrinkTimer);
+    if(overlay.parentNode)overlay.parentNode.removeChild(overlay);
+    var rb=document.getElementById('hire-ribbon');
+    if(rb&&rb.parentNode)rb.parentNode.removeChild(rb);
+  }
+  overlay.addEventListener('click',function(e){if(e.target===overlay)_dismissHireModal();});
 }
 
 function focusPartyMember(ci){
@@ -15205,13 +15270,31 @@ function qddInfoPrereqHtml(questLike){
     ?'display:grid;grid-template-columns:1fr 1fr;gap:3px 8px;margin-top:6px;border-top:1px solid var(--parchment-deep);padding-top:5px;'
     :'display:flex;flex-direction:column;gap:3px;margin-top:6px;border-top:1px solid var(--parchment-deep);padding-top:5px;';
   var rowHtml=rows.map(function(r){
-    // Unmet level: show recruit button (opens level-1 character generator)
+    // Unmet level: show level-up buttons for squad members who are below the req
     var recruitBtn='';
     if(!r.met&&r.isLevelReq){
-      recruitBtn=' <button class="qcs-recruit-link" '+
-        'style="font-size:.62em;padding:1px 5px;border:1px solid var(--forest);border-radius:3px;'+
-        'background:rgba(31,111,31,.1);color:var(--forest);cursor:pointer;vertical-align:middle">'+
-        '\uD83E\uDDD1 Recruit</button>';
+      var reqLvBtn=r.reqLv||1;
+      // Find squad members (or full party if no squad) who are below req and not hirelings
+      var _sqName2=activeCycleSquadName();
+      var _sq2=_sqName2?(S.squads||[]).filter(function(sq){return sq.name===_sqName2;})[0]:null;
+      var _lvCandidates;
+      if(_sq2&&(_sq2.memberIdxs||[]).length){
+        _lvCandidates=(_sq2.memberIdxs||[]).filter(function(ci){
+          var c=S.party[ci];return c&&!c.hireling&&(c.level||0)<reqLvBtn;
+        });
+      } else {
+        _lvCandidates=S.party.map(function(_,ci){return ci;}).filter(function(ci){
+          var c=S.party[ci];return c&&!c.hireling&&(c.level||0)<reqLvBtn;
+        });
+      }
+      if(_lvCandidates.length){
+        recruitBtn='<div style="margin-top:4px;font-size:.72em;color:var(--ink-light)">Level up to meet requirement:</div>'+
+          _lvCandidates.map(function(ci){
+            var c=S.party[ci];
+            return '<button class="qcb-lvup" data-ci="'+ci+'" style="display:inline-block;margin:2px 3px 0 0;font-size:.62em;padding:1px 6px;border:1px solid var(--forest);border-radius:3px;background:rgba(31,111,31,.1);color:var(--forest);cursor:pointer">'+
+              '⬆ '+esc(c.name)+' (Lv '+c.level+'→'+(c.level+1)+')</button>';
+          }).join('');
+      }
     }
     // Unmet item: show a store-link button
     var storeBtn='';
