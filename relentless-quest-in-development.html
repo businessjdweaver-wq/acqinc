@@ -1932,7 +1932,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.502
+      Version 1.503
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -1957,6 +1957,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.503</strong> &mdash; Auto-assign algorithm rewritten. Old algorithm: greedy slot-by-slot, placed any available character into any slot regardless of whether they covered it, used hirelings. New algorithm: Phase 1 — find the minimum set of adventurers to cover all prereq slots using a set-cover greedy (pick the candidate covering the most remaining unfilled slots, assign them to all those slots, repeat until no adventurer covers any remaining slot or all slots filled). Phase 2 — fill support slots with remaining adventurers who meet the level requirement. Hirelings are excluded from auto-assign entirely (they require deliberate manual hire via the quest panel). Characters who cover no prereq slots (e.g. high-level generalists) are placed in support, not forced into prereq slots they cannot fill.</div>
         <div style="margin-bottom:9px"><strong>Version 1.502</strong> &mdash; averageLevelForIndices now excludes hirelings (level 0) from the calculation. Hirelings are temporary workers, not adventurers, and their level-0 status was unfairly dragging down the party average used for cycle gate requirements (minAvgSquadLevel checks). A squad of four level-5 adventurers plus two hirelings now correctly reports an average level of 5, not 3.3.</div>
         <div style="margin-bottom:9px"><strong>Version 1.501</strong> &mdash; Comprehensive squad system cleanup and quest-cycle integration: Squad inventory now appears for ALL squads on the party page (not just those with assets), showing member count and item count. Squad-owned assets are excluded from the Purchased Assets panel and Franchise Storage. Bag of Holding gets party:true so it routes through the asset-assignment modal when purchased. Enrollment adds bag directly to partyAssets (not franchiseStorage). Meta mutation set directly on asset object. cycleSquadMap() auto-cleans stale entries for disbanded squads on every call. Disband also explicitly removes cycle assignment. squadIsLockedByCycle() helper gates roster changes in sqmgrAssignChar, sqSave, and the squad edit modal — cycle-locked squads show a crimson notice with checkboxes disabled. Quest hire panel checks squad capacity and shows "Squad full" instead of Hire button when at 10; on hire, new hireling is auto-added to the active cycle squad if a spot exists. Stale squad badge removed from quest-map modal. Version numbering resumed at 1.501.</div>
         <div style="margin-bottom:9px"><strong>Version 1.500</strong> &mdash; Over-selection behaviour changed to next-to-last-out at all three points: the newest selection always succeeds; it is the second-newest (the one immediately before it) that gets evicted. (1) Squad Manager: assigning to a full squad removes the most recently added existing member (splice at length-1), animates them sliding left, then adds the new character. (2) Squad creation checkboxes: checking an 11th box slides away the second-to-last checked box (allChecked[length-2]). (3) Mercenary toggles: tapping when at the limit evicts list[length-1] with a scale-fade animation, then adds the new selection.</div>
@@ -14489,7 +14490,7 @@ function qddAutoAssign(){
   // Clear existing assignments (start fresh)
   slots.forEach(function(s){qddSlotAssignments[s.key]=null;});
 
-  // Build candidate list: available (not busy, not already assigned elsewhere)
+  // Build candidate list: non-busy adventurers only (not hirelings for prereq slots)
   var now=Date.now();
   var busy={};
   (S.questState&&S.questState.pending||[]).forEach(function(pq){
@@ -14499,37 +14500,56 @@ function qddAutoAssign(){
     if(gp.doneAt>now)(gp.chars||[]).forEach(function(ci){busy[ci]=true;});
   });
 
-  var candidates=(S.party||[]).map(function(c,ci){return {c:c,ci:ci};}).filter(function(e){
-    return e.c && !e.c.hireling && !busy[e.ci];
+  var allAvail=(S.party||[]).map(function(c,ci){return {c:c,ci:ci};}).filter(function(e){
+    return e.c&&!busy[e.ci];
+  });
+  var adventurers=allAvail.filter(function(e){return !e.c.hireling;});
+  var hirelings=allAvail.filter(function(e){return !!e.c.hireling;});
+
+  // ── Phase 1: fill prereq slots with minimum adventurers ──
+  // Sort candidates by how many prereq slots they cover (descending) — most-useful first
+  var prereqOnly=prereqSlots.filter(function(s){return !s.support;});
+  adventurers.sort(function(a,b){
+    var ca=prereqOnly.filter(function(s){return qddCharCoversSlot(a.c,s);}).length;
+    var cb=prereqOnly.filter(function(s){return qddCharCoversSlot(b.c,s);}).length;
+    return cb-ca;
   });
 
-  // For each prereq slot, assign the best unassigned character
-  // Score: covers this slot = 3pts, covers most other slots = tiebreak
   var assignedCis={};
-  prereqSlots.forEach(function(slot){
-    // Score each candidate
-    var best=null,bestScore=-1;
-    candidates.forEach(function(e){
-      if(assignedCis[e.ci])return; // already placed
-      var coversThis=qddCharCoversSlot(e.c,slot)?3:0;
-      // Bonus: how many OTHER unfilled prereq slots does this char cover?
-      var otherBonus=prereqSlots.filter(function(s2){
-        return s2.key!==slot.key&&
-          qddSlotAssignments[s2.key]===null&&
-          qddCharCoversSlot(e.c,s2);
-      }).length;
-      var score=coversThis+otherBonus;
-      if(score>bestScore){bestScore=score;best=e;}
+  // Greedy: pick character who covers the most remaining unfilled prereq slots
+  var remaining=prereqOnly.slice();
+  while(remaining.length>0){
+    var bestCand=null,bestCov=-1;
+    adventurers.forEach(function(e){
+      if(assignedCis[e.ci])return;
+      var cov=remaining.filter(function(s){return qddCharCoversSlot(e.c,s);}).length;
+      if(cov>bestCov){bestCov=cov;bestCand=e;}
     });
-    if(best){
-      qddSlotAssignments[slot.key]=best.ci;
-      assignedCis[best.ci]=true;
-      // Propagate: fill any other slots this char also covers
-      prereqSlots.forEach(function(s2){
-        if(s2.key!==slot.key&&(qddSlotAssignments[s2.key]===null||qddSlotAssignments[s2.key]===undefined)&&qddCharCoversSlot(best.c,s2)){
-          qddSlotAssignments[s2.key]=best.ci;
-        }
-      });
+    if(!bestCand||bestCov===0)break; // no adventurer covers any remaining slot
+    // Assign this candidate to all slots they cover
+    assignedCis[bestCand.ci]=true;
+    remaining=remaining.filter(function(s){
+      if(qddCharCoversSlot(bestCand.c,s)){
+        qddSlotAssignments[s.key]=bestCand.ci;
+        return false; // remove from remaining
+      }
+      return true;
+    });
+  }
+
+  // ── Phase 2: fill support slots with remaining adventurers (level req, no prereq) ──
+  var supportSlots=slots.filter(function(s){return s.support;});
+  var reqLv=resolveQuestLikeRequiredLevel(qddQuestLike,qddIsGrind);
+  // Adventurers not yet assigned who meet level req go into support
+  adventurers.forEach(function(e){
+    if(assignedCis[e.ci])return;
+    if(reqLv>1&&(e.c.level||0)<reqLv)return; // doesn't meet level req
+    for(var i=0;i<supportSlots.length;i++){
+      if(qddSlotAssignments[supportSlots[i].key]===null||qddSlotAssignments[supportSlots[i].key]===undefined){
+        qddSlotAssignments[supportSlots[i].key]=e.ci;
+        assignedCis[e.ci]=true;
+        break;
+      }
     }
   });
 
