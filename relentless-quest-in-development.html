@@ -1934,7 +1934,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.511
+      Version 1.512
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4040,8 +4040,9 @@ function availableCoverageForQuestLike(q){
   var qs=S.questState||{};
   var now=Date.now();
   var busy={};
-  ((qs.pending)||[]).forEach(function(pq){if(pq.doneAt>now)(pq.chars||[]).forEach(function(ci){busy[ci]=true;});});
-  ((qs.grindPending)||[]).forEach(function(gp){if(gp.doneAt>now)(gp.chars||[]).forEach(function(ci){busy[ci]=true;});});
+  // Hold chars busy until gold is claimed — even after timer expires
+  ((qs.pending)||[]).forEach(function(pq){(pq.chars||[]).forEach(function(ci){busy[ci]=true;});});
+  ((qs.grindPending)||[]).forEach(function(gp){(gp.chars||[]).forEach(function(ci){busy[ci]=true;});});
   var available=S.party.filter(function(c,ci){return c&&!busy[ci];});
   var sk=[],to=[],la=[],re=[],inv=[];
   available.forEach(function(c){
@@ -6655,8 +6656,8 @@ document.getElementById('ov-lv-yes').addEventListener('click',function(){
       if(_q){
         var _qs=S.questState;
         var _busy={};var _now=Date.now();
-        (_qs.pending||[]).forEach(function(pq){if(pq.idx!==P4.quest&&pq.doneAt>_now)(pq.chars||[]).forEach(function(ci){_busy[ci]=true;});});
-        (_qs.grindPending||[]).forEach(function(gp){if(gp.doneAt>_now)(gp.chars||[]).forEach(function(ci){_busy[ci]=true;});});
+        (_qs.pending||[]).forEach(function(pq){if(pq.idx!==P4.quest)(pq.chars||[]).forEach(function(ci){_busy[ci]=true;});});
+        (_qs.grindPending||[]).forEach(function(gp){(gp.chars||[]).forEach(function(ci){_busy[ci]=true;});});
         var _pr=_q.pre;
         var _total=((_pr.skills||[]).length+(_pr.tools||[]).length+(_pr.lang||[]).length+(_pr.rel?1:0));
         function _score(ch){var s=0;(_pr.skills||[]).forEach(function(x){if((ch.skills||[]).indexOf(x)!=-1)s++;});(_pr.tools||[]).forEach(function(x){if((ch.tools||[]).indexOf(x)!=-1)s++;});return s;}
@@ -14818,10 +14819,12 @@ function qddSyncCheckboxes(){
 
 function qddAssignToSlot(slotKey,ci){
   var prev=qddSlotAssignments[slotKey];
-  if(prev!==null&&prev!==undefined&&prev!==ci){
-    Object.keys(qddSlotAssignments).forEach(function(k){if(qddSlotAssignments[k]===prev)qddSlotAssignments[k]=null;});
-  }
+  // Only clear prev from this specific slot — don't evict from other slots they legitimately fill
   qddSlotAssignments[slotKey]=ci;
+  // If the new char (ci) was already in another slot, remove them from that other slot only
+  Object.keys(qddSlotAssignments).forEach(function(k){
+    if(k!==slotKey&&qddSlotAssignments[k]===ci)qddSlotAssignments[k]=null;
+  });
   // Auto-fill OTHER compatible empty char slots (never support, never non-char types)
   var c=S.party[ci];
   qddBuildCharSlots(qddQuestLike,qddIsGrind).forEach(function(s){
