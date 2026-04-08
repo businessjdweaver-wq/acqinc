@@ -1917,7 +1917,7 @@ button.squad-tag.squad-tag-active{
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.487
+      Version 1.488
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -1942,6 +1942,7 @@ button.squad-tag.squad-tag-active{
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.488</strong> &mdash; Two fixes: (1) Quest character assignment: tapping ✕ on a filled peg-slot (hole-remove) now clears ALL slots that character occupies, matching the behavior of removing the character card from the carousel. Previously only the tapped slot was cleared, leaving the character silently filling other slots. (2) Squad manager redesigned as a flat list: all party members appear in one scrollable list with icon and background color indicating squad membership — no grouping headers. Characters with no squad show a neutral row. Swiping left cycles to the next squad (or back to unassigned after the last), swiping right goes the other direction. The legend at the top shows squad chips with name, emoji, member count, and an edit button. One-squad-per-character rule enforced: swipe removes from current squad before adding to the next.</div>
         <div style="margin-bottom:9px"><strong>Version 1.487</strong> &mdash; Squad management overhaul: (1) Squad creation/edit modal now includes emoji selector (16 options: ⚔🛡🗡🏹🔥❄⚡🌿💀🐺🦅🌙☀⭐🎯🪄) and color picker (10 rich background colors). Emoji and color saved to squad object. (2) New Squad Manager overlay (⚔ Manage button on party screen): 2-column Pinterest-style grid of squad cards, each showing emoji, name, member count, and a compact single-row card per member (emoji · name · class · level · primary skill). (3) Swiping a member row left/right cycles the character through available squads with an animated emoji/color transition and re-renders on completion. (4) Re-sort button at top reorders S.party so squad members are grouped together, updating all memberIdxs to match the new indices.</div>
         <div style="margin-bottom:9px"><strong>Version 1.486</strong> &mdash; Three quest modal fixes: (1) Auto-advance to page 2 of the peg-hole carousel now only triggers if all 4 non-support prerequisite slots on page 1 are filled — quests with fewer than 4 prereqs no longer trigger the slide. (2) Store sub-tab drawer max-height increased to 120px and buttons given min-width:0 plus smaller padding/font so all three Adventuring Gear tabs fit on narrow mobile screens without clipping. (3) Quest assignment modal footer buttons condensed: Cancel shows ✕ only, Auto shows ⚡ 1 QP, Begin shows ⚔ Begin — all with title attributes for accessibility. Each fits on one row at default accessibility font size.</div>
         <div style="margin-bottom:9px"><strong>Version 1.485</strong> &mdash; Auto-assign button improvements: (1) Button is now greyed out (disabled) when non-character prerequisites are unmet (gold, items, level requirement) — character-slot prereqs are what auto-assign handles; the other blockers must be resolved manually first. Vehicle/building bonus rows are excluded from this check since they are not hard gates. (2) Animation slowed significantly: filled peg-slots each glow green in staggered sequence (180ms apart), then after all slots are lit the Begin Quest button pulses with a scale+glow animation (500ms), then fires after a further 350ms pause — giving the user time to see each step.</div>
@@ -11263,40 +11264,56 @@ function renderSquadManager(){
   var body=document.getElementById('sqmgr-body');
   if(!body)return;
   var squads=S.squads||[];
-  if(!squads.length){
-    body.innerHTML='<div style="text-align:center;padding:30px;color:var(--ink-light);font-style:italic">No squads yet. Create one to get started.</div>';
+  // Build a lookup: ci -> squad
+  var charSqMap={};
+  squads.forEach(function(sq,sqi){
+    (sq.memberIdxs||[]).forEach(function(ci){charSqMap[ci]=sqi;});
+  });
+
+  // Legend row — one chip per squad
+  var legendHtml='';
+  if(squads.length){
+    legendHtml='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;align-items:center">'+
+      '<span style="font-size:.7em;color:var(--ink-light);font-family:\"Cinzel\",serif;text-transform:uppercase;letter-spacing:.04em;margin-right:2px">Squads:</span>'+
+      squads.map(function(sq,sqi){
+        var col=squadColor(sq);
+        var ic=squadEmoji(sq);
+        var cnt=(sq.memberIdxs||[]).filter(function(ci){return S.party[ci];}).length;
+        return '<span style="display:inline-flex;align-items:center;gap:4px;background:'+col+';color:#fff;border-radius:5px;padding:3px 8px;font-size:.72em">'+
+          ic+' <strong>'+esc(sq.name)+'</strong> <span style="opacity:.75">('+cnt+')</span>'+
+          '<button class="sqmgr-edit-btn" data-a="sqedit" data-sqi="'+sqi+'" style="font-size:.9em;padding:1px 4px;margin-left:4px">✏</button>'+
+          '</span>';
+      }).join('')+
+      '</div>';
+  }
+
+  // Flat list: all party members
+  if(!S.party||!S.party.length){
+    body.innerHTML=legendHtml+'<div style="text-align:center;padding:20px;color:var(--ink-light);font-style:italic">No party members yet.</div>';
     return;
   }
-  // Pinterest-style 2-column grid
-  body.innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
-    squads.map(function(sq,sqi){
-      var col=squadColor(sq);
-      var ic=squadEmoji(sq);
-      var members=(sq.memberIdxs||[]).filter(function(ci){return S.party[ci];});
-      var memberHtml=members.map(function(ci){
-        var c=S.party[ci];
-        if(!c)return '';
-        var skill=(c.skills&&c.skills[0])||'';
-        return '<div class="sqmgr-char-row" data-sqmgr-char="'+ci+'" data-sqi="'+sqi+'"'+
-          ' style="touch-action:pan-y">'+
-          '<span class="sqmgr-char-squad-ic">'+ic+'</span>'+
-          '<div style="flex:1;min-width:0">'+
-          '<div class="sqmgr-char-name">'+esc(c.name)+'</div>'+
-          '<div class="sqmgr-char-meta">'+esc(c.cls)+' · Lv '+(c.level||0)+'</div>'+
-          '</div>'+
-          (skill?'<div class="sqmgr-char-skill">'+esc(skill)+'</div>':'')+
-          '</div>';
-      }).join('');
-      return '<div class="sqmgr-squad-card" style="background:'+col+';grid-column:span 1">'+
-        '<div style="display:flex;align-items:flex-start;justify-content:space-between">'+
-        '<div><span class="sqmgr-squad-card-emoji">'+ic+'</span>'+
-        '<div class="sqmgr-squad-name">'+esc(sq.name)+'</div></div>'+
-        '<button class="sqmgr-edit-btn" data-a="sqedit" data-sqi="'+sqi+'">Edit</button>'+
-        '</div>'+
-        '<div style="font-size:.7em;opacity:.7;margin-bottom:8px">'+members.length+' member'+(members.length!==1?'s':'')+'</div>'+
-        memberHtml+
-        '</div>';
-    }).join('')+'</div>';
+  var rowsHtml=S.party.map(function(c,ci){
+    if(!c)return '';
+    var sqi=charSqMap.hasOwnProperty(ci)?charSqMap[ci]:-1;
+    var sq=sqi>=0?squads[sqi]:null;
+    var ic=sq?squadEmoji(sq):'·';
+    var col=sq?squadColor(sq):'rgba(44,26,14,.08)';
+    var textCol=sq?'#fff':'var(--ink)';
+    var skill=(c.skills&&c.skills[0])||'';
+    return '<div class="sqmgr-char-row" data-sqmgr-char="'+ci+'" data-sqi="'+sqi+'"'+
+      ' style="background:'+col+';color:'+textCol+';touch-action:pan-y">'+
+      '<span class="sqmgr-char-squad-ic" style="min-width:22px;text-align:center">'+ic+'</span>'+
+      '<div style="flex:1;min-width:0">'+
+      '<div class="sqmgr-char-name">'+esc(c.name)+'</div>'+
+      '<div class="sqmgr-char-meta" style="opacity:'+(sq?'.8':'.6')+'">'+esc(c.cls)+' · Lv '+(c.level||0)+'</div>'+
+      '</div>'+
+      (skill?'<div class="sqmgr-char-skill">'+esc(skill)+'</div>':'')+
+      '</div>';
+  }).join('');
+
+  body.innerHTML=legendHtml+
+    '<div style="font-size:.7em;color:var(--ink-light);margin-bottom:6px">Swipe ← / → to change squad</div>'+
+    rowsHtml;
 
   // Wire swipe on char rows
   body.querySelectorAll('.sqmgr-char-row').forEach(function(row){
@@ -11328,27 +11345,33 @@ function wireCharRowSwipe(row){
     if(!isDragging){row.style.transform='';return;}
     row.style.transform='';
     if(Math.abs(dx)<30)return;
-    // Cycle squad assignment
+    // Cycle squad assignment — includes 'unassigned' (-1) as a state
     var squads=S.squads||[];
     if(!squads.length)return;
     var curSqIdx=squads.findIndex(function(sq){return (sq.memberIdxs||[]).indexOf(ci)!==-1;});
-    var dir=dx>0?-1:1; // swipe right = previous, swipe left = next
-    var nextSqIdx=(curSqIdx+dir+squads.length)%squads.length;
-    var nextSq=squads[nextSqIdx];
-    // Remove from all squads
+    // curSqIdx=-1 means unassigned; total states = squads.length+1
+    var total=squads.length+1;
+    var curState=curSqIdx+1; // 0=unassigned, 1..n=squad index
+    var dir=dx>0?-1:1; // swipe left = next, swipe right = previous
+    var nextState=(curState+dir+total)%total;
+    var nextSqIdx=nextState-1; // -1=unassigned
+    var nextSq=nextSqIdx>=0?squads[nextSqIdx]:null;
+    // Remove from all squads (enforces one-squad rule)
     squads.forEach(function(sq){sq.memberIdxs=(sq.memberIdxs||[]).filter(function(x){return x!==ci;});});
-    // Add to next squad
-    if(!nextSq.memberIdxs)nextSq.memberIdxs=[];
-    nextSq.memberIdxs.push(ci);
+    // Add to next squad (or leave unassigned)
+    if(nextSq){
+      if(!nextSq.memberIdxs)nextSq.memberIdxs=[];
+      nextSq.memberIdxs.push(ci);
+    }
     save();
-    // Animate: flash the emoji and background change
-    var ic=row.querySelector('.sqmgr-char-squad-ic');
-    if(ic){
-      ic.style.transition='transform .2s ease,opacity .2s ease';
-      ic.style.transform='scale(1.6)';ic.style.opacity='0';
+    // Animate icon fade
+    var icEl=row.querySelector('.sqmgr-char-squad-ic');
+    if(icEl){
+      icEl.style.transition='transform .2s ease,opacity .2s ease';
+      icEl.style.transform='scale(1.5)';icEl.style.opacity='0';
       setTimeout(function(){
-        ic.textContent=squadEmoji(nextSq);
-        ic.style.transform='scale(1)';ic.style.opacity='1';
+        icEl.textContent=nextSq?squadEmoji(nextSq):'·';
+        icEl.style.transform='scale(1)';icEl.style.opacity='1';
       },200);
     }
     row.style.transition='background .35s ease';
@@ -14307,7 +14330,17 @@ function qddBindEvents(slotsArg){
   var freshHoleTrack=document.getElementById('qhole-car-track');
   if(freshHoleTrack)freshHoleTrack.addEventListener('click',function(e){
     var rmHole=e.target.closest('[data-hole-remove]');
-    if(rmHole){var key=rmHole.getAttribute('data-hole-remove');qddSlotAssignments[key]=null;qcarSelected=null;qddRender(qddQuestLike,qddIsGrind);return;}
+    if(rmHole){
+      var key=rmHole.getAttribute('data-hole-remove');
+      var removedCi=qddSlotAssignments[key];
+      // Clear ALL slots this character occupies, not just the tapped one
+      if(removedCi!==null&&removedCi!==undefined){
+        Object.keys(qddSlotAssignments).forEach(function(k){if(qddSlotAssignments[k]===removedCi)qddSlotAssignments[k]=null;});
+      } else {
+        qddSlotAssignments[key]=null;
+      }
+      qcarSelected=null;qddRender(qddQuestLike,qddIsGrind);return;
+    }
     // Tapping a needsHire hole with no char selected opens the hire panel
     if(qcarSelected===null){
       var hireHole=e.target.closest('[data-hire-slot]');
