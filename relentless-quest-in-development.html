@@ -2024,7 +2024,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.567
+      Version 1.568
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2049,6 +2049,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.568</strong> &mdash; Two fixes: (1) Manage Squads button now disabled (with tooltip) when no squads exist. (2) _capstoneCardEarned now treats any card with a dc_cap_ ID as a capstone card regardless of whether _fromCapstone is present — older cards saved before that field existed (like the Rope of Climbing with id dc_cap_rising-reputation_9) were missing the flag and showing unconditionally. SQL needed to backfill existing rows: UPDATE content_items SET data = data || '{"_fromCapstone":true}' WHERE content_type='dashboard_card' AND data->>'id' LIKE 'dc_cap_%' AND data->>'_fromCapstone' IS NULL;</div>
         <div style="margin-bottom:9px"><strong>Version 1.567</strong> &mdash; Dashboard cards overhaul: (1) Removed hard-coded partyAssets artifact/pet and party NPC auto-tiles — these were creating phantom cards for items not yet earned. Dashboard now only renders editor-managed cards (getDashboardCards) filtered by _capstoneCardEarned. (2) _autoCreateDashCard now stores quest provenance directly on the card object: _sourceSetId, _sourceQuestIdx, _sourceQuestTitle, _sourceCycleName, _unlockedCycles[]. (3) _dashCardClick looks up stored provenance fields first (reliable), falls back to parsing dc_cap_ ID encoding. The detail modal "Received From" and "Cycles Unlocked" panels now use the stored data, not runtime lookups that could fail when setId contains underscores or the card predates the encoding.</div>
         <div style="margin-bottom:9px"><strong>Version 1.566</strong> &mdash; Dashboard card visibility: added _capstoneCardEarned(card) helper. Auto-generated capstone cards (_fromCapstone:true) now only render if their source quest (decoded from dc_cap_{setId}_{questIdx}) appears in questState.done, setProgress[setId].done, or questCycles history. Manual cards (_fromCapstone not set) always show. This prevents un-earned capstone cards (e.g. Rope of Climbing reward for an uncompleted quest) from appearing in the dashboard. The test NPC card you created manually should be deleted from the Cards editor — manual cards are always visible by design.</div>
         <div style="margin-bottom:9px"><strong>Version 1.565</strong> &mdash; Franchise Dashboard tiles are now clickable. Every tile opens a card detail modal (ov-dash-card-detail) with a larger version. Quartermaster: shows 3-stat summary bar (total/franchise/party) plus full left-aligned quest log with per-character gold. Reward cards (artifact/pet/NPC/custom): show full description, "Received From" panel (quest title, cycle name, quest description) derived from card ID encoding dc_cap_{setId}_{questIdx}, and "Cycles Unlocked" panel listing any QUESTSETS whose requiredCycleSetId matches the source cycle. NPC contacts show class, species, and contact background. Tiles pass all data via data-dc-* attributes to keep renderDashboard clean.</div>
@@ -6468,7 +6469,7 @@ function renderParty(){
   // Slim action bar: Manage + New Squad
   var _notQFilter=activeFilter==='__not_questing__';
   var tagBar='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'+
-    '<button class="btn bink sm" data-a="sqmgr" style="font-size:.78em">⚔ Manage Squads</button>'+
+    '<button class="btn bink sm" data-a="sqmgr" style="font-size:.78em"'+(squads.length===0?' disabled title="No squads yet — create one first"':'')+'>⚔ Manage Squads</button>'+
     '<button class="btn bink sm" data-a="ptag" data-v="__not_questing__" style="font-size:.72em;'+(_notQFilter?'background:var(--forest);color:#fff;border-color:var(--forest);':'')+'">'+(_notQFilter?'✕ ':'')+' Available</button>'+
     (activeFilter&&!_notQFilter?'<button class="btn bink sm" data-a="ptag" data-v="" style="font-size:.72em">✕ Clear filter</button>':'')+
     (!activeFilter||_notQFilter?'':'')+ 
@@ -16694,11 +16695,13 @@ updateQpDisplay();
 document.getElementById('ov-dashboard-close').addEventListener('click',function(){closeOv('ov-dashboard');});
 
 function _capstoneCardEarned(card){
-  // Returns true if this auto-generated capstone card has been earned
-  if(!card._fromCapstone)return true; // manual cards always show
-  // Parse setId and questIdx from card id: dc_cap_{setId}_{questIdx}
+  // Returns true if this card should show on the dashboard
   var id=card.id||'';
-  if(id.indexOf('dc_cap_')!==0)return true;
+  // Any dc_cap_ card is a capstone card — check regardless of _fromCapstone flag
+  // (older cards may be missing _fromCapstone if saved before that field existed)
+  var isCapstoneId=id.indexOf('dc_cap_')===0;
+  if(!card._fromCapstone&&!isCapstoneId)return true; // manual cards always show
+  if(!isCapstoneId)return true; // _fromCapstone but no dc_cap_ ID — show it
   var rest=id.slice(7); // {setId}_{questIdx}
   var lastUnderscore=rest.lastIndexOf('_');
   if(lastUnderscore<0)return false;
