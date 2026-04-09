@@ -2026,7 +2026,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.576
+      Version 1.577
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2051,6 +2051,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.577</strong> &mdash; Territory swap now treats unassigned characters as a virtual swap partner. _unassignedVirtualSquad() builds a virtual squad {name:'__unassigned__', displayName:'Unassigned', memberIdxs:[...]} from all characters not in any named squad. renderSwapZone() adds this virtual squad as a partner for any territory that has at least one locked squad (when unassigned pool is non-empty). Unassigned characters can initiate a swap from the zone; locked-squad characters see "Unassigned" as a swap target. openSwapModal() accepts optional forcedPartner and handles virtual squad on both source and partner sides. Swap execution skips squadObj assignment for __unassigned__ side — removing from a squad without adding to another leaves the character unassigned, and vice versa. Coverage bars and headers use displayName for the virtual squad.</div>
         <div style="margin-bottom:9px"><strong>Version 1.576</strong> &mdash; Eight-item package: (1) QP balance now refreshed on login — updateQpDisplay() added to both sbPull().then() completion paths so the header shows the correct balance after Supabase data loads. (2) Downtime suggestions exclude in-progress tracks — _dtInProgressSet() checks dtProgress keys and active downtimeJobs; items being worked toward by any party member are moved to the bottom with a 🔄 prefix (still selectable). (3) Quest-assignment gold/reward badges moved from below quest title into the Details card (qcs-1), between the duration line and unmet prereqs. (4) Party screen: characters with active downtime jobs now show a teal 🕯 Downtime badge on their card instead of nothing; downtimeChars set built from S.downtimeJobs where endsAt > now. (5) Quest-map cycle activation with zero squads: routes to a new explanatory modal (ov-squad-intro, z-index 700) describing the squad system and territory mechanics; "Create Squad" closes it and opens the new-squad modal (z-index 710) above the cycle map. Previously-busy-squads path unchanged. (6) Encumbrance drop picker modal (ov-enc-drop) with dropdown. (7) Continue Downtime duration pill modal (ov-dt-dur). (8) Version consolidation.</div>
         <div style="margin-bottom:9px"><strong>Version 1.575</strong> &mdash; Six-item package: (1) Quest-assignment level prereq now checks only characters assigned to peg slots, not the whole squad/party — falls back to full pool only when no slots are filled yet. (2) Carousel page-number bubbles removed from all three carousels (info card stack, peg-slot carousel, character carousel); left/right arrows now show the page number they navigate to (e.g. ◀ 1, 2 ▶). (3) Downtime target dropdowns now surface franchise coverage gaps: skills/languages/faiths not covered by anyone in the party are prefixed ★ and sorted to the top; the ★ prefix is stripped before saving. (4) Encumbrance-on-transfer dialogue replaced with a proper modal (ov-enc-drop) showing a dropdown of droppable items with weights, replacing the numbered prompt(). (5) Continue Downtime duration replaced with a modal (ov-dt-dur) with 2/4/6/8 hr selectable pills (4 hr default, teal highlight), QP cost shown on confirm button. (6) Version bump consolidating all changes.</div>
         <div style="margin-bottom:9px"><strong>Version 1.574</strong> &mdash; Four-item package: (1) Task pie interface now requires 3 clicks to fill — each click advances 2 slices (0→2→4→6→0), tooltip updated to reflect "3 clicks = full". (2) Squad banner added to top of quest/adventure page (#adv-squad-banner div, populated in renderAdv) showing active cycle squad emoji, name, member count, and coverage %. Hidden when no squad assigned. (3) Squad roles system: SQUAD_ROLES array defines Captain/Quartermaster/Patrol Leader/Field Medic/Scout with icons, colors, and item effects. ROLE_KITS auto-generated and injected into GEAR at startup (type:kit, price:75gp, wt:5, squadRole field). getCharSquadRole(ci) helper finds a character's role across all squads. renderSqRoles(sq) renders role assignment UI in squad edit modal with dropdowns filtered to squad members (✓ marks kit owners); assignments stored on sq.roles={roleId:ci}. Role badge shown on character cards as colored pill with role icon+label+squad name. (4) Role kits appear in squad inventory collapsible on party screen with character name, assignment status badge (colored if assigned, grey "unassigned" if not), and "0 lb" weight label. Item count in summary includes role kits.</div>
@@ -17302,20 +17303,33 @@ function generateSwapSuggestions(sq1,sq2){
 var _swapSourceCi=null;
 var _swapSourceSqName=null;
 
+function _unassignedVirtualSquad(){
+  // Build a virtual squad object for unassigned characters (not in any squad)
+  var allAssigned={};
+  (S.squads||[]).forEach(function(sq){(sq.memberIdxs||[]).forEach(function(ci){allAssigned[ci]=true;});});
+  var unassignedIdxs=(S.party||[]).map(function(_,ci){return ci;}).filter(function(ci){return S.party[ci]&&!allAssigned[ci];});
+  return {name:'__unassigned__',displayName:'Unassigned',memberIdxs:unassignedIdxs,_virtual:true};
+}
+
 function renderSwapZone(){
   var zone=document.getElementById('sqmgr-swap-zone');
   var slots=document.getElementById('sqmgr-swap-slots');
   if(!zone||!slots)return;
-  // Find locked squads in same territory as any other locked squad
+  // Find locked squads that have a territory set
   var lockedSquads=(S.squads||[]).filter(function(sq){return squadIsLockedByCycle(sq.name)&&squadTerritory(sq);});
-  // Group by territory
+  // Group by territory — also include unassigned as a virtual swap partner for any territory with a locked squad
   var terrGroups={};
   lockedSquads.forEach(function(sq){
     var t=squadTerritory(sq);
     if(!terrGroups[t])terrGroups[t]=[];
     terrGroups[t].push(sq);
   });
-  // Only show zone if at least one territory has 2+ squads
+  // For each territory that has at least 1 locked squad, also add the unassigned pool as a partner
+  var unassignedSq=_unassignedVirtualSquad();
+  Object.keys(terrGroups).forEach(function(t){
+    if(unassignedSq.memberIdxs.length>0)terrGroups[t].push(unassignedSq);
+  });
+  // Only show zone if at least one territory has 2+ entries (locked squad + partner or 2 locked squads)
   var hasSwappable=Object.keys(terrGroups).some(function(t){return terrGroups[t].length>=2;});
   zone.style.display=hasSwappable?'':'none';
   if(!hasSwappable)return;
@@ -17339,10 +17353,20 @@ function renderSwapZone(){
       var ci=sqmgrSelectedChar;
       if(ci===null){alert('Select a character first, then tap the swap zone.');return;}
       var c=S.party[ci];if(!c)return;
-      // Find which squad this char is in
+      // Find which squad this char is in (may be unassigned)
       var charSq=null;
       (S.squads||[]).forEach(function(sq){if((sq.memberIdxs||[]).indexOf(ci)!==-1)charSq=sq;});
-      if(!charSq||!squadIsLockedByCycle(charSq.name)){alert('Only characters in locked squads can use the swap zone.');return;}
+      var isUnassigned=!charSq;
+      if(isUnassigned){
+        // Unassigned char: use virtual squad, open swap modal for the territory's first locked squad
+        var terrLockedSq=(S.squads||[]).filter(function(sq){return squadIsLockedByCycle(sq.name)&&squadTerritory(sq)===terr;})[0];
+        if(!terrLockedSq){alert('No locked squad found for this territory.');return;}
+        _swapSourceCi=ci;
+        _swapSourceSqName='__unassigned__';
+        openSwapModal(_unassignedVirtualSquad(),terr,terrLockedSq);
+        return;
+      }
+      if(!squadIsLockedByCycle(charSq.name)){alert('Only characters in locked squads (or unassigned) can use the swap zone.');return;}
       if(squadTerritory(charSq)!==terr){alert('This character\'s squad is not in the '+terr+' territory.');return;}
       _swapSourceCi=ci;
       _swapSourceSqName=charSq.name;
@@ -17351,8 +17375,20 @@ function renderSwapZone(){
   });
 }
 
-function openSwapModal(sq1,terr){
-  var partners=squadsInSameTerritory(sq1);
+function openSwapModal(sq1,terr,forcedPartner){
+  // partners: same-territory locked squads + unassigned pool (if any)
+  var partners;
+  if(sq1._virtual){
+    // Source is unassigned — partner is the locked squad(s) in this territory
+    partners=(S.squads||[]).filter(function(sq){return squadIsLockedByCycle(sq.name)&&squadTerritory(sq)===terr;});
+  } else {
+    partners=squadsInSameTerritory(sq1);
+    // Also add unassigned as a partner if they have members
+    var unassignedSq=_unassignedVirtualSquad();
+    if(unassignedSq.memberIdxs.length>0)partners=partners.concat([unassignedSq]);
+    // If a specific partner was forced (e.g. from unassigned source), use just that
+    if(forcedPartner)partners=[forcedPartner].concat(partners.filter(function(p){return p.name!==forcedPartner.name;}));
+  }
   var body=document.getElementById('ov-swap-body');
   if(!body)return;
   var swapCost=qpCfg().costSquadSwap||10;
@@ -17378,10 +17414,10 @@ function openSwapModal(sq1,terr){
   // Coverage header
   html+='<div style="margin-bottom:12px">'+
     '<div style="font-size:.72em;color:var(--ink-light);margin-bottom:6px">Current coverage for squads in <strong>'+esc(terr)+'</strong>:</div>'+
-    covBar(cov1,sq1.name,'var(--teal)');
+    covBar(cov1,sq1.displayName||sq1.name,'var(--teal)');
   partners.forEach(function(sq2){
     var cov2=squadCoverage(sq2);
-    html+=covBar(cov2,sq2.name,'var(--forest)');
+    html+=covBar(cov2,sq2.displayName||sq2.name,'var(--forest)');
   });
   html+='</div>';
   // Swapping character
@@ -17399,7 +17435,7 @@ function openSwapModal(sq1,terr){
     var mySuggestions=suggestions.filter(function(s){return s.ci1===ci||s.ci2===ci;});
     var cov2=squadCoverage(sq2);
     html+='<div style="margin-bottom:10px">'+
-      '<div style="font-family:\'Cinzel\',serif;font-size:.72em;color:var(--forest);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Swap with '+esc(sq2.name)+'</div>';
+      '<div style="font-family:\'Cinzel\',serif;font-size:.72em;color:var(--forest);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Swap with '+esc(sq2.displayName||sq2.name)+'</div>';
     if(!mySuggestions.length){
       html+='<div style="font-size:.78em;color:var(--ink-light);font-style:italic">No swap candidates found.</div>';
     } else {
@@ -17439,14 +17475,15 @@ function openSwapModal(sq1,terr){
       var sqn2=el.getAttribute('data-sq2');
       if(!confirm('Swap '+( S.party[ci1]?S.party[ci1].name:'?')+' ⇄ '+(S.party[ci2]?S.party[ci2].name:'?')+'?\n\nCost: '+swapCost+' QP'))return;
       if(!qpSpend(swapCost,'squad_swap','Territory squad swap'))return;
-      // Perform swap
-      var sq1obj=(S.squads||[]).filter(function(s){return s.name===sqn1;})[0];
-      var sq2obj=(S.squads||[]).filter(function(s){return s.name===sqn2;})[0];
-      if(!sq1obj||!sq2obj){alert('Squad not found.');return;}
-      sq1obj.memberIdxs=(sq1obj.memberIdxs||[]).filter(function(x){return x!==ci1;});
-      sq1obj.memberIdxs.push(ci2);
-      sq2obj.memberIdxs=(sq2obj.memberIdxs||[]).filter(function(x){return x!==ci2;});
-      sq2obj.memberIdxs.push(ci1);
+      // Perform swap — unassigned is treated as no squad (remove/add only for named squads)
+      var sq1obj=sqn1==='__unassigned__'?null:(S.squads||[]).filter(function(s){return s.name===sqn1;})[0];
+      var sq2obj=sqn2==='__unassigned__'?null:(S.squads||[]).filter(function(s){return s.name===sqn2;})[0];
+      if(sqn1!=='__unassigned__'&&!sq1obj){alert('Squad not found: '+sqn1);return;}
+      if(sqn2!=='__unassigned__'&&!sq2obj){alert('Squad not found: '+sqn2);return;}
+      if(sq1obj){sq1obj.memberIdxs=(sq1obj.memberIdxs||[]).filter(function(x){return x!==ci1;});}
+      if(sq2obj){sq2obj.memberIdxs=(sq2obj.memberIdxs||[]).filter(function(x){return x!==ci2;});}
+      if(sq1obj)sq1obj.memberIdxs.push(ci2);
+      if(sq2obj)sq2obj.memberIdxs.push(ci1);
       logAdd('⇄ Territory swap: '+( S.party[ci1]?S.party[ci1].name:'?')+' ↔ '+(S.party[ci2]?S.party[ci2].name:'?')+' ('+sqn1+' ↔ '+sqn2+')','adv');
       _swapSourceCi=null;_swapSourceSqName=null;
       sqmgrSelectedChar=null;
