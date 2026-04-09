@@ -2024,7 +2024,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.566
+      Version 1.567
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2049,6 +2049,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.567</strong> &mdash; Dashboard cards overhaul: (1) Removed hard-coded partyAssets artifact/pet and party NPC auto-tiles — these were creating phantom cards for items not yet earned. Dashboard now only renders editor-managed cards (getDashboardCards) filtered by _capstoneCardEarned. (2) _autoCreateDashCard now stores quest provenance directly on the card object: _sourceSetId, _sourceQuestIdx, _sourceQuestTitle, _sourceCycleName, _unlockedCycles[]. (3) _dashCardClick looks up stored provenance fields first (reliable), falls back to parsing dc_cap_ ID encoding. The detail modal "Received From" and "Cycles Unlocked" panels now use the stored data, not runtime lookups that could fail when setId contains underscores or the card predates the encoding.</div>
         <div style="margin-bottom:9px"><strong>Version 1.566</strong> &mdash; Dashboard card visibility: added _capstoneCardEarned(card) helper. Auto-generated capstone cards (_fromCapstone:true) now only render if their source quest (decoded from dc_cap_{setId}_{questIdx}) appears in questState.done, setProgress[setId].done, or questCycles history. Manual cards (_fromCapstone not set) always show. This prevents un-earned capstone cards (e.g. Rope of Climbing reward for an uncompleted quest) from appearing in the dashboard. The test NPC card you created manually should be deleted from the Cards editor — manual cards are always visible by design.</div>
         <div style="margin-bottom:9px"><strong>Version 1.565</strong> &mdash; Franchise Dashboard tiles are now clickable. Every tile opens a card detail modal (ov-dash-card-detail) with a larger version. Quartermaster: shows 3-stat summary bar (total/franchise/party) plus full left-aligned quest log with per-character gold. Reward cards (artifact/pet/NPC/custom): show full description, "Received From" panel (quest title, cycle name, quest description) derived from card ID encoding dc_cap_{setId}_{questIdx}, and "Cycles Unlocked" panel listing any QUESTSETS whose requiredCycleSetId matches the source cycle. NPC contacts show class, species, and contact background. Tiles pass all data via data-dc-* attributes to keep renderDashboard clean.</div>
         <div style="margin-bottom:9px"><strong>Version 1.564</strong> &mdash; Cards not showing in editor list: edRenderList() had no dashboard branch, so it always wrote empty html to #ed-list when edTab==='dashboard', showing "Nothing here yet." Added a guard at the top of edRenderList that delegates to renderDashboardEditor() and returns early when on the dashboard tab. All paths that call edRenderList() (tab switch, save, delete, scope change) now correctly render the card list.</div>
@@ -16746,24 +16747,37 @@ function cardTextColor(colors){
 }
 
 function _dashCardClick(type,data){
-  // Find source quest for capstone-origin cards
+  // Find source quest — prefer stored provenance on the card itself
   var sourceQuest=null,sourceCycle=null,unlockedCycles=[];
-  if(data.cardId&&data.cardId.indexOf('dc_cap_')===0){
-    var parts=data.cardId.slice(7).split('_');
-    // setId can contain underscores — questIdx is last segment
-    var qIdx=parseInt(parts[parts.length-1]);
-    var setId=parts.slice(0,-1).join('_');
+  var card=null;
+  if(data.cardId){
+    // Look up card object for stored provenance
+    getDashboardCards().forEach(function(c){if(c.id===data.cardId)card=c;});
+  }
+  if(card&&card._sourceSetId){
+    // Use stored provenance — reliable even if card ID encoding changes
     (QUESTSETS||[]).forEach(function(set){
-      if(set.id===setId){
+      if(set.id===card._sourceSetId){
         sourceCycle=set;
-        (set.quests||[]).forEach(function(q){if(q.idx===qIdx)sourceQuest=q;});
+        (set.quests||[]).forEach(function(q){if(q.idx===card._sourceQuestIdx)sourceQuest=q;});
       }
+      if((set.cycleGate||{}).requiredCycleSetId===card._sourceSetId)unlockedCycles.push(set);
     });
-    // Find cycles unlocked by this set
-    (QUESTSETS||[]).forEach(function(set){
-      var gate=set.cycleGate||{};
-      if(gate.requiredCycleSetId===setId)unlockedCycles.push(set);
-    });
+  } else if(data.cardId&&data.cardId.indexOf('dc_cap_')===0){
+    // Fallback: parse from card ID
+    var rest2=data.cardId.slice(7);
+    var lastU=rest2.lastIndexOf('_');
+    if(lastU>=0){
+      var setId2=rest2.slice(0,lastU);
+      var qIdx2=parseInt(rest2.slice(lastU+1));
+      (QUESTSETS||[]).forEach(function(set){
+        if(set.id===setId2){
+          sourceCycle=set;
+          (set.quests||[]).forEach(function(q){if(q.idx===qIdx2)sourceQuest=q;});
+        }
+        if((set.cycleGate||{}).requiredCycleSetId===setId2)unlockedCycles.push(set);
+      });
+    }
   }
 
   var hdr=document.getElementById('dcd-header');
@@ -16875,39 +16889,18 @@ function renderDashboard(){
     'linear-gradient(135deg,#1a2744,#2e4a8a)','#fff',
     'data-dc-type="qm"');
 
-  var capTiles=[];
-  (S.partyAssets||[]).filter(function(a){return a&&assetBaseType(a)==='artifact';}).forEach(function(a){
-    var cardId='dc_cap_'+(assetMeta(a).sourceSetId||'')+'_'+(assetMeta(a).sourceQuestIdx||'');
-    capTiles.push(makeTile(a.ic||'✨',esc(assetDisplayName(a)),
-      a.desc?esc(a.desc.slice(0,40)+(a.desc.length>40?'…':'')):null,
-      'linear-gradient(135deg,#3a1f5c,#6a3fa0)','#fff',
-      'data-dc-type="artifact" data-dc-name="'+esc(assetDisplayName(a))+'" data-dc-ic="'+esc(a.ic||'✨')+'" data-dc-desc="'+esc(a.desc||'')+'" data-dc-cardid="'+esc(cardId)+'"'));
-  });
-  (S.partyAssets||[]).filter(function(a){return a&&assetBaseType(a)==='pet';}).forEach(function(a){
-    var petName=assetMeta(a).customName||assetDisplayName(a);
-    var cardId='dc_cap_'+(assetMeta(a).sourceSetId||'')+'_'+(assetMeta(a).sourceQuestIdx||'');
-    capTiles.push(makeTile(a.ic||'🐾',esc(petName),
-      a.desc?esc(a.desc.slice(0,40)+(a.desc.length>40?'…':'')):null,
-      'linear-gradient(135deg,#1a4a2a,#2e7a45)','#fff',
-      'data-dc-type="pet" data-dc-name="'+esc(petName)+'" data-dc-ic="'+esc(a.ic||'🐾')+'" data-dc-desc="'+esc(a.desc||'')+'" data-dc-subtitle="'+esc(a.name||'')+'" data-dc-cardid="'+esc(cardId)+'"'));
-  });
-  (S.party||[]).filter(function(c){return c&&c.contact;}).forEach(function(c){
-    capTiles.push(makeTile('🤝',esc(c.name),
-      c.contactBg?esc(c.contactBg.slice(0,40)+(c.contactBg.length>40?'…':'')):null,
-      'linear-gradient(135deg,#1a3a4a,#2a6070)','#fff',
-      'data-dc-type="npc" data-dc-name="'+esc(c.name)+'" data-dc-ic="🤝" data-dc-desc="'+esc(c.contactBg||'')+'" data-dc-extra="'+esc(c.exoticTrait||'')+'" data-dc-subtitle="'+esc(c.cls||'Contact')+' · '+esc(c.species||'')+'"'));
-  });
-
+  // Only render editor-managed cards (no hard-coded partyAssets tiles)
   var customTiles=cards.filter(function(c){return _capstoneCardEarned(c);}).map(function(c){
     var bg=cardGradient(c.colors);
     var tc=cardTextColor(c.colors);
     return makeTile(c.ic||'🃏',esc(c.name||''),
       c.desc?esc(c.desc.slice(0,40)+(c.desc.length>40?'…':'')):null,
       bg,tc,
-      'data-dc-type="custom" data-dc-cardid="'+esc(c.id)+'" data-dc-name="'+esc(c.name||'')+'" data-dc-ic="'+esc(c.ic||'🃏')+'" data-dc-desc="'+esc(c.desc||'')+'" data-dc-bg="'+esc(bg)+'" data-dc-tc="'+esc(tc)+'"');
+      'data-dc-type="custom" data-dc-cardid="'+esc(c.id)+'" data-dc-name="'+esc(c.name||'')+'" data-dc-ic="'+esc(c.ic||'🃏')+'" data-dc-desc="'+esc(c.desc||'')+'" data-dc-bg="'+esc(bg)+'" data-dc-tc="'+esc(tc)+'"'
+    );
   }).join('');
 
-  grid.innerHTML=qmHtml+capTiles.join('')+customTiles;
+  grid.innerHTML=qmHtml+customTiles;
 
   // Wire all tile clicks
   grid.querySelectorAll('.dash-card').forEach(function(tile){
@@ -17043,11 +17036,22 @@ function _autoCreateDashCard(quest,scope){
   var cr=quest.capstoneReward;
   if(!cr||!cr.type||cr.type==='random')return;
   var cardId='dc_cap_'+quest.setId+'_'+quest.idx;
-  var ic='\uD83C\uDCCF',name='',desc='',colors=[];
-  if(cr.type==='item'){ic=cr.ic||'\u2728';name=cr.name||'Artifact';desc=cr.desc||'';colors=['#3a1f5c','#6a3fa0','#9060c0'];}
-  else if(cr.type==='pet'){ic=cr.ic||'\uD83D\uDC3E';name=cr.name||'Companion';desc=cr.desc||'';colors=['#1a4a2a','#2e7a45','#40a060'];}
-  else if(cr.type==='npc'){ic='\uD83E\uDD1D';name=cr.name||'Contact';desc=cr.contactBg||cr.bg||'';colors=['#1a3a4a','#2a6070','#3a8090'];}
-  var newCard={id:cardId,name:name,ic:ic,desc:desc,colors:colors,_fromCapstone:true};
+  var ic='🃏',name='',desc='',colors=[];
+  if(cr.type==='item'){ic=cr.ic||'✨';name=cr.name||'Artifact';desc=cr.desc||'';colors=['#3a1f5c','#6a3fa0','#9060c0'];}
+  else if(cr.type==='pet'){ic=cr.ic||'🐾';name=cr.name||'Companion';desc=cr.desc||'';colors=['#1a4a2a','#2e7a45','#40a060'];}
+  else if(cr.type==='npc'){ic='🤝';name=cr.name||'Contact';desc=cr.contactBg||cr.bg||'';colors=['#1a3a4a','#2a6070','#3a8090'];}
+  // Find the source cycle and any cycles this unlocks
+  var sourceCycleName='';
+  var unlockedCycleNames=[];
+  (QUESTSETS||[]).forEach(function(set){
+    if(set.id===quest.setId)sourceCycleName=set.name||'';
+    if((set.cycleGate||{}).requiredCycleSetId===quest.setId)unlockedCycleNames.push(set.name||'');
+  });
+  var newCard={id:cardId,name:name,ic:ic,desc:desc,colors:colors,_fromCapstone:true,
+    _sourceSetId:quest.setId,_sourceQuestIdx:quest.idx,
+    _sourceQuestTitle:quest.title||'',
+    _sourceCycleName:sourceCycleName,
+    _unlockedCycles:unlockedCycleNames};
   var useScope=normalizeContentScope(scope)||'private';
   var bucket=contentBucket(useScope);
   if(!bucket.dashCards)bucket.dashCards=[];
