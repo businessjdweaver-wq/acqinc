@@ -2026,7 +2026,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.578
+      Version 1.579
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2051,6 +2051,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.579</strong> &mdash; Swap recommendation overhaul: (1) Added _dropScore(dropCi, squadMembers, namedSq) helper that ranks each squad member as a bump candidate across three tiers — redundant hirelings (skills/tools/lang fully covered by non-hirelings in the same squad, score ~0), non-redundant hirelings (score ~10000+), full adventurers (score ~20000+), all secondarily ranked by coverage loss then level. (2) At-capacity unassigned→squad path now attaches dropScore and dropNote to each suggestion. (3) Sort uses delta desc primary, dropScore asc secondary — so when all deltas are equal or negative (the user wants a specific character regardless of coverage), the most expendable member (redundant hireling first) floats to the top as ★ Best. (4) Redundant hireling suggestions show a gold "redundant hireling" badge in the modal row. (5) Swap zone display fix: territory no longer required — squads without a territory fall into an __any__ bucket labelled "Active Squads"; unassigned pool added to every bucket; squadsInSameTerritory() handles both-without-territory match.</div>
         <div style="margin-bottom:9px"><strong>Version 1.578</strong> &mdash; Swap zone now displays when any locked squad exists (territory no longer required). Previously the zone was hidden unless 2+ squads shared the same territory — but squads without a territory were excluded entirely, so the zone never appeared for single-squad setups. Fix: locked squads without a territory are grouped into an '__any__' bucket; unassigned characters are added to every bucket; zone shows if any bucket has 2+ entries. Territory label shows "Active Squads" for the __any__ bucket. squadsInSameTerritory() updated to return all other locked squads when neither squad has a territory set (both-without-territory match).</div>
         <div style="margin-bottom:9px"><strong>Version 1.577</strong> &mdash; Territory swap now treats unassigned characters as a virtual swap partner. _unassignedVirtualSquad() builds a virtual squad {name:'__unassigned__', displayName:'Unassigned', memberIdxs:[...]} from all characters not in any named squad. renderSwapZone() adds this virtual squad as a partner for any territory that has at least one locked squad (when unassigned pool is non-empty). Unassigned characters can initiate a swap from the zone; locked-squad characters see "Unassigned" as a swap target. openSwapModal() accepts optional forcedPartner and handles virtual squad on both source and partner sides. Swap execution skips squadObj assignment for __unassigned__ side — removing from a squad without adding to another leaves the character unassigned, and vice versa. Coverage bars and headers use displayName for the virtual squad.</div>
         <div style="margin-bottom:9px"><strong>Version 1.576</strong> &mdash; Eight-item package: (1) QP balance now refreshed on login — updateQpDisplay() added to both sbPull().then() completion paths so the header shows the correct balance after Supabase data loads. (2) Downtime suggestions exclude in-progress tracks — _dtInProgressSet() checks dtProgress keys and active downtimeJobs; items being worked toward by any party member are moved to the bottom with a 🔄 prefix (still selectable). (3) Quest-assignment gold/reward badges moved from below quest title into the Details card (qcs-1), between the duration line and unmet prereqs. (4) Party screen: characters with active downtime jobs now show a teal 🕯 Downtime badge on their card instead of nothing; downtimeChars set built from S.downtimeJobs where endsAt > now. (5) Quest-map cycle activation with zero squads: routes to a new explanatory modal (ov-squad-intro, z-index 700) describing the squad system and territory mechanics; "Create Squad" closes it and opens the new-squad modal (z-index 710) above the cycle map. Previously-busy-squads path unchanged. (6) Encumbrance drop picker modal (ov-enc-drop) with dropdown. (7) Continue Downtime duration pill modal (ov-dt-dur). (8) Version consolidation.</div>
@@ -17403,7 +17404,7 @@ function generateSwapSuggestions(sq1,sq2){
     if(a.dropScore!==undefined&&b.dropScore!==undefined)return a.dropScore-b.dropScore; // least valuable drop first
     return 0;
   });
-  return suggestions.slice(0,5);
+  return suggestions; // caller slices after filtering to specific char
 }
 
 // State for swap UI
@@ -17551,14 +17552,41 @@ function openSwapModal(sq1,terr,forcedPartner){
   partners.forEach(function(sq2){
     var suggestions=generateSwapSuggestions(sq1,sq2);
     // If source char is set, filter to suggestions involving them
+    // Filter to selected char first, then slice — ensures suboptimal bumps still shown
     var mySuggestions=ci!==null&&ci!==undefined
-      ? suggestions.filter(function(s){return s.addCi===ci||s.ci1===ci||s.ci2===ci;})
-      : suggestions;
+      ? suggestions.filter(function(s){return s.addCi===ci||s.ci1===ci||s.ci2===ci;}).slice(0,5)
+      : suggestions.slice(0,5);
     var cov2=squadCoverage(sq2);
     var isUnassignedPartner=sq2._virtual;
     html+='<div style="margin-bottom:10px">'+
       '<div style="font-family:\'Cinzel\',serif;font-size:.72em;color:var(--forest);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">'+
       (isUnassignedPartner?'Move into '+esc(sq1.displayName||sq1.name):'Swap with '+esc(sq2.displayName||sq2.name))+'</div>';
+    // If still no suggestions for the selected char, force-generate drop candidates
+    if(!mySuggestions.length&&ci!==null&&ci!==undefined&&!sq2._virtual){
+      var _namedSq2=sq2;
+      var _sqMembers2=(_namedSq2.memberIdxs||[]).filter(function(x){return S.party[x];});
+      var _base2=squadCoverage(_namedSq2).pct;
+      if(_sqMembers2.length>=SQUAD_MAX_SIZE){
+        mySuggestions=_sqMembers2.map(function(dropCi){
+          var newCov=squadCoverageWithSwap(_namedSq2,ci,dropCi).pct;
+          var delta=newCov-_base2;
+          var dropC=S.party[dropCi];
+          var score=_dropScore(dropCi,_sqMembers2,_namedSq2);
+          var isRedundantHire=dropC&&dropC.hireling&&score<10000;
+          return {
+            addCi:ci,dropCi:dropCi,
+            sqn1:'__unassigned__',sqn2:_namedSq2.name,
+            delta:delta,addOnly:false,
+            dropLabel:dropC?dropC.name:null,
+            dropScore:score,
+            dropNote:isRedundantHire?'redundant hireling':''
+          };
+        }).sort(function(a,b){
+          if(b.delta!==a.delta)return b.delta-a.delta;
+          return a.dropScore-b.dropScore;
+        }).slice(0,5);
+      }
+    }
     if(!mySuggestions.length){
       html+='<div style="font-size:.78em;color:var(--ink-light);font-style:italic">No candidates found.</div>';
     } else {
