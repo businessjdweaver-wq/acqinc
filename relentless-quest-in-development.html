@@ -1975,7 +1975,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.536
+      Version 1.537
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2000,6 +2000,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.537</strong> &mdash; Recruiting gold cost mismatch fixed. Root cause: when a max-gold filter was active in the wishlist, renderCandidates re-indexed the filtered results starting at 0, so data-hire="0" on a card pointed to index 0 of the filtered list. The hire handler used that index to look up recruitCandidates[0], which was a different (more expensive) character. Fixed by preserving original recruitCandidates indices when building the filtered display — the hire button now always refers to the correct candidate regardless of which wishlist filters are active.</div>
         <div style="margin-bottom:9px"><strong>Version 1.536</strong> &mdash; Two bug fixes: (1) Recruit screen no longer traps the user. Root cause: RENDER.party was redirecting to recruit whenever recruitCandidates was non-empty — but candidates were never cleared on close, so navTo(party) always bounced back. Fixed with a _recruitInProgress flag: set when candidates are rolled, cleared on close button click and on successful hire. RENDER.party only redirects when the flag is set. (2) Store panel was displaying on every screen. Root cause: s-store had an inline style="display:flex" which overrode the .scr{display:none} CSS rule, making it permanently visible. Fixed by removing the inline style and adding #s-store.on{display:flex;flex-direction:column} to the stylesheet so it only becomes flex when active.</div>
         <div style="margin-bottom:9px"><strong>Version 1.535</strong> &mdash; Database schema migration: sbPush and sbPull updated to use proper Supabase columns instead of JSON blobs. franchise table: qp_balance, qp_earned_today, qp_earn_date, franchise_storage, downtime_jobs, quest_log now stored as dedicated columns; settings blob is clean. party table: stats, xp, dt_progress, downtime_badges, coin_purse, is_contact, contact_bg, exotic_trait, former_hireling, owned_items, first_hire now in proper columns; inv array no longer contains __meta__ sentinel string. squads table: squad_name, emoji, color, member_names in proper columns; name column is clean squad name. quest_cycles table: set_id, cycle_num, grind_pending, repeat_counts, set_progress, quest_cycles_history, quest_cycle_squads in proper columns; assigned blob contains only explicit character assignments. All pulls include legacy blob fallbacks for old rows, so existing data is preserved through the migration automatically.</div>
         <div style="margin-bottom:9px"><strong>Version 1.534</strong> &mdash; Three fixes: (1) hasAnyOwnedBuildingAsset now checks franchiseStorage — buildings purchased via quest modal and stored there unlock franchise storage. (2) Store sub-category drawers are a vertical stack (flex-direction:column) sliding from the right via max-width animation. (3) navTo(party) redirects to recruit screen if candidates were rolled (recruitCandidates or hirelCandidates non-empty).</div>
@@ -7671,9 +7672,10 @@ function renderCandidates(){
     (function(){
       var _maxGpEntry=_hireWishlist.filter(function(v){return v.indexOf('maxgp:')===0;})[0];
       var _maxGp=_maxGpEntry?parseInt(_maxGpEntry.slice(6),10):null;
-      return recruitCandidates.filter(function(c){
-        return _maxGp===null||c.hireCost<=_maxGp;
-      }).map(function(c,i){return candidateCardHtml(c,i,'std');}).join('')||
+      // IMPORTANT: pass original recruitCandidates index so hire handler looks up the right candidate
+      var _filtered=recruitCandidates.map(function(c,origIdx){return {c:c,origIdx:origIdx};})
+        .filter(function(e){return _maxGp===null||e.c.hireCost<=_maxGp;});
+      return _filtered.map(function(e){return candidateCardHtml(e.c,e.origIdx,'std');}).join('')||
       '<div style="font-size:.82em;color:var(--ink-light);padding:8px">No candidates match max cost '+(_maxGp||'')+ ' gp — try rerolling.</div>';
     }())+
     '<div style="margin-top:10px;text-align:right">'+
