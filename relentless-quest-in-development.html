@@ -2010,7 +2010,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.555
+      Version 1.556
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2035,6 +2035,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.556</strong> &mdash; Fix "quest save failed" error when saving a pet capstone reward. _autoCreateDashCard was being called inside the saveCustom .then() chain — its own inner saveCustom call returned a Promise that rejected and propagated up to the outer .catch(), producing the misleading error. Fix: (1) call site wrapped in try/catch so any sync throw cannot bubble; (2) inner saveCustom().then().catch() chain isolated so its rejection never reaches the outer handler. Quest save and card auto-creation now run independently.</div>
         <div style="margin-bottom:9px"><strong>Version 1.555</strong> &mdash; Dashboard cards two fixes: (1) New Card button was broken — _customDashCards was missing from CONTENT_LIST_MAP (mapped to 'dashCards') and dashCards was not initialized in CONTENT_LIB buckets. getDashboardCards() now reads from bucket.dashCards via contentBucket(). saveCustom/contentItemsForScope now work correctly for dashboard cards. (2) Auto-create card from capstone reward: when a quest editor capstone reward (item/pet/npc) is saved, _autoCreateDashCard() runs and upserts a matching card into the dashboard with pre-filled icon, name, description, and gradient colors matching the reward type (purple for artifacts, green for pets, teal for NPCs). Card id is dc_cap_{setId}_{questIdx} so re-saves update rather than duplicate.</div>
         <div style="margin-bottom:9px"><strong>Version 1.554</strong> &mdash; Franchise Dashboard: the 📜 Log button on the quest screen now opens a Pinterest-style 3-column card grid overlay. First card is the Quartermaster (gold earned/franchise/party totals; tap to expand full quest log inline). Subsequent cards: any capstone artifact rewards in partyAssets, then custom cards from the editor. Custom cards support icon picker (30 emojis), 3 color pickers with live gradient preview, and a description field. A new 🃏 Cards tab in the Content Editor lets you create/edit/delete these cards. Card data stored in _customDashCards per scope. Card text color auto-selected based on primary color luminance.</div>
         <div style="margin-bottom:9px"><strong>Version 1.553</strong> &mdash; Two fixes: (1) Auto-assign grind button moved to appear between the quest collapse toggle and the Grind Missions header — only shown when all quests are done and QP balance ≥ 50; removed from grind header row. (2) Store footer completely rebuilt as a 2×2 CSS grid: top row Gear | Pets, bottom row Assets | Magic. Sub-drawers for Gear (⚔/🛡/🎒/🧰), Assets (Mounts/Buildings), Magic (Common/Rare) still animate up. Pets has no sub-drawer. store-tabs CSS changed from flex to grid. pointer-events:all on footer directly. Drawer open check simplified to storeTab===t.</div>
@@ -15065,7 +15066,7 @@ function edShowQuestForm(){
       edShowQuestForm();
       // Auto-create dashboard card from capstone reward if set
       if(newQ.capstoneReward&&newQ.capstoneReward.type&&newQ.capstoneReward.type!=='random'){
-        _autoCreateDashCard(newQ,targetScope);
+        try{_autoCreateDashCard(newQ,targetScope);}catch(e){console.warn('dashCard auto-create:',e);}
       }
     }).catch(function(err){
       alert('Quest save failed: '+(err&&err.message?err.message:err));
@@ -16907,8 +16908,9 @@ function _autoCreateDashCard(quest,scope){
   var idx=-1;
   for(var i=0;i<cards.length;i++){if(cards[i].id===cardId){idx=i;break;}}
   if(idx>=0)cards[idx]=newCard;else cards.push(newCard);
-  saveCustom('_customDashCards',cards,useScope);
-  mergeCustomContent();
+  var _p=saveCustom('_customDashCards',cards,useScope);
+  if(_p&&_p.then)_p.then(function(){mergeCustomContent();}).catch(function(e){console.warn('dashCard save:',e);});
+  else mergeCustomContent();
 }
 
 
