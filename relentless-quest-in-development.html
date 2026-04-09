@@ -2101,7 +2101,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.584
+      Version 1.585
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2126,6 +2126,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.585</strong> — Fixed cycle rules (minAvgSquadLevel, minSquadSize, etc.) reverting after save. Root cause: questSets bucket had 318 duplicate entries accumulated from repeated saves. mergeCustomContent iterated all of them in order so the last (stale) duplicate overrode the updated first entry. Fix: deduplicate by id (last-write-wins) in ec-save handler, mergeCustomContent, and loadContentLibrary. First save after this update also cleans the Supabase table via the existing sbDel+sbInsert path.</div>
         <div style="margin-bottom:9px"><strong>Version 1.584</strong> — Content editor fixes: (1) openEditor now pulls fresh Supabase content before rendering — 5th cycle always visible without manual Pull. (2) Race-condition fix: _pendingContentSaves counter prevents loadContentLibrary from rebuilding CONTENT_LIB while a Supabase write is in-flight, eliminating the cycle-rules revert. (3) Orphaned quest sets get a Clean button to delete their stranded quests from all scopes. (4) ed-form-active added to all 6 edShow* functions so form panel opens correctly on all screen sizes.</div>
         <div style="margin-bottom:9px"><strong>Version 1.581</strong> &mdash; Three changes: (1) App title h1 ⚔ emoji removed — now plain "Relentless Quest". (2) Seven emoji substitutions in item/quest catalog: Torch 🔦→🕯️, Sending Stones 📡→🪨, Ornithopter 🛥️→🌬️, Sailing Ship 🚢→⛵, Carriage 🪄→🐎, Scout role 🔭→👁️, Slippers of Spider Climbing 👞→🕸️. (3) Content Editor mobile responsive: below 600px the list and form panels become full-screen overlapping layers. Tapping an item adds .ed-form-active class to #ov-editor which slides the list off-screen and brings the form forward. A "‹ Back to list" button (hidden on desktop) returns to the list. Tab bar becomes horizontally scrollable with nowrap. edShowPlaceholder() removes ed-form-active to return to list view. Desktop (>600px) layout unchanged.</div>
         <div style="margin-bottom:9px"><strong>Version 1.580</strong> &mdash; Downtime badge glitch fix (three-part): (1) Auto-resume bestKey selector now filters dtProgress to only keys with progress > 0 before sorting — previously keys with 0 progress (e.g. faith:Pelor:0 from a long-ago completed track) would win the sort via JS object key ordering, causing a spurious different-type job to queue and add a wrong in-progress badge. (2) _healDowntimeBadges() now checks each badge against _DT_TYPE_BADGE map and removes it only if that type has zero dtProgress AND no active job — multi-track is valid (Celestial + Intel simultaneously = Polyglot Ember + Rune Sleuth both showing). (3) Completion badges (_DT_COMPLETION_BADGES: Skill Savant, Tongue Scholar, Devoted, etc.) are never removed by the healer — they are permanent achievements. The initial over-aggressive fix (strip all in-progress badges except one globally) was reverted as it would have wrongly removed valid multi-track badges.</div>
@@ -14516,6 +14517,14 @@ function loadContentLibrary(manual){
       CONTENT_LIB[scope][listKey].push(item);
     });
     ['official','shared','private'].forEach(function(scope){
+      // Deduplicate questSets after load
+      var _qs3=CONTENT_LIB[scope].questSets;
+      var _seen3={};var _dd3=[];
+      for(var _i3=_qs3.length-1;_i3>=0;_i3--){
+        var _m3=_qs3[_i3];
+        if(_m3&&_m3.id&&!_seen3[_m3.id]){_seen3[_m3.id]=true;_dd3.unshift(_m3);}
+      }
+      CONTENT_LIB[scope].questSets=_dd3;
       CONTENT_LIB[scope].questSets.sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
       CONTENT_LIB[scope].quests.sort(function(a,b){return (a.idx||0)-(b.idx||0);});
       CONTENT_LIB[scope].grind.sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
@@ -14583,7 +14592,15 @@ function mergeCustomContent(){
   if(_grt.length)GEAR=GEAR.filter(function(g){return _grt.indexOf(g.name)===-1;});
 
   ['official','shared','private'].forEach(function(scope){
-    (CONTENT_LIB[scope].questSets||[]).forEach(function(meta){
+    // Deduplicate: last entry per id wins
+    var _qs=CONTENT_LIB[scope].questSets||[];
+    var _qsSeen={};var _qsDeduped=[];
+    for(var _qi=_qs.length-1;_qi>=0;_qi--){
+      var _qitem=_qs[_qi];
+      if(_qitem&&_qitem.id&&!_qsSeen[_qitem.id]){_qsSeen[_qitem.id]=true;_qsDeduped.unshift(_qitem);}
+    }
+    CONTENT_LIB[scope].questSets=_qsDeduped;
+    (_qsDeduped).forEach(function(meta){
       if(!meta||!meta.id)return;
       var existing=QUESTSETS.filter(function(s){return s.id===meta.id;})[0];
       if(existing){
@@ -15230,7 +15247,13 @@ function edShowCycleForm(){
     var _setScope=normalizeContentScope(
       (set._visibility)||(isAppAdmin()?currentContentScope():'private')
     );
-    var setMeta=contentItemsForScope(_setScope,'_customQuestSets');
+    // Deduplicate bucket before saving: keep last entry per id
+    var _rawMeta=contentItemsForScope(_setScope,'_customQuestSets');
+    var _deduped={};var setMeta=[];
+    for(var _ri=_rawMeta.length-1;_ri>=0;_ri--){
+      var _rm=_rawMeta[_ri];
+      if(_rm&&_rm.id&&!_deduped[_rm.id]){_deduped[_rm.id]=true;setMeta.unshift(_rm);}
+    }
     var idx=-1;
     for(var i=0;i<setMeta.length;i++){if(setMeta[i]&&setMeta[i].id===set.id){idx=i;break;}}
     var newName=document.getElementById('ec-name').value.trim()||set.name;
@@ -15240,8 +15263,6 @@ function edShowCycleForm(){
     nextMeta.theme=newTheme;
     nextMeta.territory=(document.getElementById('ec-territory').value||'').trim()||undefined;
     if(!nextMeta.territory)delete nextMeta.territory;
-    var _rawAvgLevel=document.getElementById('ec-avg-level').value;
-    var _parsedAvgLevel=Math.max(0,parseFloat(_rawAvgLevel)||0);
     nextMeta.cycleGate={
       visibility:document.getElementById('ec-vis').value||'fully_visible',
       requiredCycleSetId:document.getElementById('ec-cycle-pre').value||'',
@@ -15250,18 +15271,12 @@ function edShowCycleForm(){
       requiredMountType:document.getElementById('ec-mount-type').value.trim(),
       requiredMountCount:Math.max(0,parseInt(document.getElementById('ec-mount-count').value,10)||0),
       minSquadSize:Math.max(0,parseInt(document.getElementById('ec-squad-size').value,10)||0),
-      minAvgSquadLevel:_parsedAvgLevel
+      minAvgSquadLevel:Math.max(0,parseFloat(document.getElementById('ec-avg-level').value)||0)
     };
-    console.log('[CycleSave] setId='+set.id+' scope='+_setScope+' idx='+idx
-      +' rawAvgLevel='+_rawAvgLevel+' parsed='+_parsedAvgLevel
-      +' setMetaLen='+setMeta.length+' set._visibility='+set._visibility);
     if(idx>=0)setMeta[idx]=nextMeta; else setMeta.push(nextMeta);
     contentBucket(_setScope).questSets=clone(setMeta);
     saveCustom('_customQuestSets',setMeta,_setScope);
     mergeCustomContent();
-    // Verify the value made it into QUESTSETS before re-rendering
-    var _chk=QUESTSETS.filter(function(s){return s.id===set.id;})[0];
-    console.log('[CycleSave] After merge: gate=',JSON.stringify(_chk&&_chk.cycleGate));
     edScopeFlash();
     edRenderList();
     edShowCycleForm(); // re-render form to confirm saved values
