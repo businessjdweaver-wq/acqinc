@@ -2024,7 +2024,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.569
+      Version 1.570
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2049,6 +2049,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.570</strong> &mdash; Item Effects added to gear content editor. New "⚙ Item Effects" section below the Bag of Holding checkbox with four fields: (1) Skill Bonus — select a skill + bonus value (e.g. Perception +2); (2) Advantage On — select a skill for advantage on checks; (3) Quest Type Bonus — select a quest type (combat/social/explore/wonder) + bonus value; (4) Counts as Prereq — comma-separated list of prereq names this item satisfies (e.g. "Simple Weapons"); (5) Effect Note — freeform text description of the effect. All fields optional; empty values omitted from saved data. Effect stored on item as item.effect = {skillBonus, advantage, questBonus, prereqAlias[], note}.</div>
         <div style="margin-bottom:9px"><strong>Version 1.569</strong> &mdash; (1) Quest-character-assignment description card: text enlarged from .88em italic light to 1em normal weight with full ink color and 1.55 line-height. (2) Auto-Assign Grind (50 QP) button now renders directly below the "⚙ Grind Missions — repeatable..." header, using the already-computed _canAutoGrind flag in the grind section. Previously the button only appeared above the toggle when all quests were done; it now also appears in its correct position below the header.</div>
         <div style="margin-bottom:9px"><strong>Version 1.568</strong> &mdash; Two fixes: (1) Manage Squads button now disabled (with tooltip) when no squads exist. (2) _capstoneCardEarned now treats any card with a dc_cap_ ID as a capstone card regardless of whether _fromCapstone is present — older cards saved before that field existed (like the Rope of Climbing with id dc_cap_rising-reputation_9) were missing the flag and showing unconditionally. SQL needed to backfill existing rows: UPDATE content_items SET data = data || '{"_fromCapstone":true}' WHERE content_type='dashboard_card' AND data->>'id' LIKE 'dc_cap_%' AND data->>'_fromCapstone' IS NULL;</div>
         <div style="margin-bottom:9px"><strong>Version 1.567</strong> &mdash; Dashboard cards overhaul: (1) Removed hard-coded partyAssets artifact/pet and party NPC auto-tiles — these were creating phantom cards for items not yet earned. Dashboard now only renders editor-managed cards (getDashboardCards) filtered by _capstoneCardEarned. (2) _autoCreateDashCard now stores quest provenance directly on the card object: _sourceSetId, _sourceQuestIdx, _sourceQuestTitle, _sourceCycleName, _unlockedCycles[]. (3) _dashCardClick looks up stored provenance fields first (reliable), falls back to parsing dc_cap_ ID encoding. The detail modal "Received From" and "Cycles Unlocked" panels now use the stored data, not runtime lookups that could fail when setId contains underscores or the card predates the encoding.</div>
@@ -15297,6 +15298,34 @@ function edShowGearForm(){
     '<input id="ef-iwt" type="number" min="0" step="0.5" value="'+(g?g.wt:1)+'" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
   html+='</div>';
   html+='<div style="margin-top:16px"><label style="display:flex;align-items:center;gap:8px;font-size:.95em;cursor:pointer"><input type="checkbox" id="ef-ibag"'+(g&&g.bagOfHolding?' checked':'')+' style="width:1.3em;height:1.3em"> Bag of Holding (items inside are weightless)</label></div>';
+  // ── Effect section ──
+  var eff=g&&g.effect?g.effect:{};
+  var questTypesEff=['combat','social','explore','wonder'];
+  var allSkillsEff=(DND&&DND.skills)||[];
+  html+='<div style="margin-top:20px;border-top:1px solid var(--parchment-deep);padding-top:16px">';
+  html+='<div style="font-family:\'Cinzel\',serif;font-size:.78em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:12px">⚙ Item Effects</div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 24px">';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Skill Bonus</label>';
+  html+='<div style="display:grid;grid-template-columns:1fr 56px;gap:6px">';
+  html+='<select id="ef-eff-skill" style="padding:7px 10px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)"><option value="">(none)</option>'+allSkillsEff.map(function(s){return '<option value="'+esc(s)+'"'+(eff.skillBonus&&eff.skillBonus.skill===s?' selected':'')+'>'+esc(s)+'</option>';}).join('')+'</select>';
+  html+='<input id="ef-eff-skill-val" type="number" min="1" max="10" value="'+(eff.skillBonus?eff.skillBonus.bonus:2)+'" placeholder="+" style="padding:7px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">';
+  html+='</div></div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Advantage On</label>';
+  html+='<select id="ef-eff-adv" style="width:100%;padding:7px 10px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)"><option value="">(none)</option>'+allSkillsEff.map(function(s){return '<option value="'+esc(s)+'"'+((eff.advantage||'')===s?' selected':'')+'>'+esc(s)+'</option>';}).join('')+'</select>';
+  html+='</div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Quest Type Bonus</label>';
+  html+='<div style="display:grid;grid-template-columns:1fr 56px;gap:6px">';
+  html+='<select id="ef-eff-qtype" style="padding:7px 10px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)"><option value="">(none)</option>'+questTypesEff.map(function(t){return '<option value="'+t+'"'+(eff.questBonus&&eff.questBonus.type===t?' selected':'')+'>'+t+'</option>';}).join('')+'</select>';
+  html+='<input id="ef-eff-qtype-val" type="number" min="1" max="5" value="'+(eff.questBonus?eff.questBonus.bonus:1)+'" placeholder="+" style="padding:7px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">';
+  html+='</div></div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Counts as Prereq</label>';
+  html+='<input id="ef-eff-alias" type="text" value="'+esc((eff.prereqAlias||[]).join(', '))+'" placeholder="e.g. Simple Weapons" style="width:100%;padding:7px 10px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box">';
+  html+='</div>';
+  html+='</div>';
+  html+='<div style="margin-top:10px"><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Effect Note (freeform)</label>';
+  html+='<input id="ef-eff-note" type="text" value="'+esc(eff.note||'')+'" placeholder="e.g. Grants darkvision 60ft" style="width:100%;padding:7px 10px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box">';
+  html+='</div></div>';
+
   html+=edScopeRow('ef-isave');
   html+='<div style="display:flex;gap:10px;margin-top:10px">'+
     (!isNew?'<button id="ef-idelete" style="padding:10px 20px;background:var(--crimson);color:#fff;border:none;border-radius:5px;font-size:.95em;cursor:pointer">🗑 Delete</button>':'')+
@@ -15314,6 +15343,21 @@ function edShowGearForm(){
     var desc=document.getElementById('ef-idesc').value.trim();
     if(!name||!desc){alert('Name and description are required.');return;}
     var wt=parseFloat(document.getElementById('ef-iwt').value)||0;
+    // Build effect object from form
+    var _effSkill=(document.getElementById('ef-eff-skill')||{}).value||'';
+    var _effSkillVal=parseInt((document.getElementById('ef-eff-skill-val')||{}).value)||2;
+    var _effAdv=(document.getElementById('ef-eff-adv')||{}).value||'';
+    var _effQtype=(document.getElementById('ef-eff-qtype')||{}).value||'';
+    var _effQtypeVal=parseInt((document.getElementById('ef-eff-qtype-val')||{}).value)||1;
+    var _effAliasRaw=((document.getElementById('ef-eff-alias')||{}).value||'').trim();
+    var _effAlias=_effAliasRaw?_effAliasRaw.split(',').map(function(x){return x.trim();}).filter(Boolean):[];
+    var _effNote=((document.getElementById('ef-eff-note')||{}).value||'').trim();
+    var _eff={};
+    if(_effSkill)_eff.skillBonus={skill:_effSkill,bonus:_effSkillVal};
+    if(_effAdv)_eff.advantage=_effAdv;
+    if(_effQtype)_eff.questBonus={type:_effQtype,bonus:_effQtypeVal};
+    if(_effAlias.length)_eff.prereqAlias=_effAlias;
+    if(_effNote)_eff.note=_effNote;
     var newItem={_custom:true,
       ic:document.getElementById('ef-iic').value||'🎁',
       name:name,desc:desc,
@@ -15321,9 +15365,11 @@ function edShowGearForm(){
       type:document.getElementById('ef-itype').value,
       price:parseInt(document.getElementById('ef-iprice').value)||50,
       wt:wt,
-      bagOfHolding:document.getElementById('ef-ibag').checked||undefined
+      bagOfHolding:document.getElementById('ef-ibag').checked||undefined,
+      effect:Object.keys(_eff).length?_eff:undefined
     };
     if(!newItem.bagOfHolding)delete newItem.bagOfHolding;
+    if(!newItem.effect)delete newItem.effect;
     var targetScope=(!isNew&&g&&g._visibility)?normalizeContentScope(g._visibility):(isBuiltin&&isAppAdmin()?'official':edFormScope());
     var arr=contentItemsForScope(targetScope,'_customGear');
     if(!isNew){arr=arr.map(function(x){return x.name===gname?newItem:x;});}
