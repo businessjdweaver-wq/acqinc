@@ -17282,6 +17282,41 @@ function squadsInSameTerritory(squad){
   });
 }
 
+function _dropScore(dropCi, squadMembers, namedSq){
+  // Lower score = better candidate to drop
+  // Factors: is a hireling whose capabilities are already covered by non-hirelings?
+  // Then: how much unique coverage would we lose by removing them?
+  // Then: level (lower is more expendable)
+  var c=S.party[dropCi];if(!c)return 999;
+  var others=squadMembers.filter(function(ci){return ci!==dropCi&&S.party[ci];});
+  var otherNonHire=others.filter(function(ci){return !S.party[ci].hireling;});
+  // Is this a hireling whose skills/tools/lang are ALL already covered by non-hirelings?
+  var isRedundantHireling=false;
+  if(c.hireling){
+    var coveredByNonHire=true;
+    (c.skills||[]).forEach(function(s){
+      if(!otherNonHire.some(function(ci){return (S.party[ci].skills||[]).indexOf(s)!==-1;}))
+        coveredByNonHire=false;
+    });
+    (c.tools||[]).forEach(function(t){
+      if(!otherNonHire.some(function(ci){return (S.party[ci].tools||[]).indexOf(t)!==-1||(S.party[ci].weapons||[]).indexOf(t)!==-1;}))
+        coveredByNonHire=false;
+    });
+    (c.lang||[]).filter(function(l){return l!=='Common';}).forEach(function(l){
+      if(!otherNonHire.some(function(ci){return (S.party[ci].lang||[]).indexOf(l)!==-1;}))
+        coveredByNonHire=false;
+    });
+    isRedundantHireling=coveredByNonHire;
+  }
+  // How much unique coverage is lost if this member is removed?
+  var covWithout=squadCoverageWithSwap(namedSq,null,dropCi).pct;
+  var covBase=squadCoverage(namedSq).pct;
+  var coverageLoss=covBase-covWithout; // 0=fully redundant, higher=more unique
+  // Score: redundant hirelings first (0), then by coverage loss, then by level desc
+  var hirelingScore=isRedundantHireling?0:(c.hireling?1:2);
+  return hirelingScore*10000 + coverageLoss*100 + (c.level||0);
+}
+
 function generateSwapSuggestions(sq1,sq2){
   // Handles both symmetric (squad↔squad) and asymmetric (unassigned↔squad) cases.
   // Returns array of {ci1, ci2, sqn1, sqn2, new1, new2, delta, dropLabel}
@@ -17334,11 +17369,14 @@ function generateSwapSuggestions(sq1,sq2){
         });
       } else {
         // Squad is full — must drop someone to add uci
-        squadMembers.forEach(function(dropCi){
+        // For each possible drop, compute coverage delta AND a drop score
+        var dropCandidates=squadMembers.map(function(dropCi){
           var newCov=squadCoverageWithSwap(namedSq,uci,dropCi).pct;
           var delta=newCov-baseNamed;
           var dropC=S.party[dropCi];
-          suggestions.push({
+          var score=_dropScore(dropCi,squadMembers,namedSq);
+          var isRedundantHire=dropC&&dropC.hireling&&score<10000;
+          return {
             ci1:isUnassigned1?uci:dropCi,
             ci2:isUnassigned2?uci:dropCi,
             sqn1:isUnassigned1?'__unassigned__':namedSq.name,
@@ -17349,13 +17387,22 @@ function generateSwapSuggestions(sq1,sq2){
             addCi:uci,
             dropCi:dropCi,
             targetSqName:namedSq.name,
-            dropLabel:dropC?dropC.name:null
-          });
+            dropLabel:dropC?dropC.name:null,
+            dropScore:score,
+            dropNote:isRedundantHire?'redundant hireling':''
+          };
         });
+        dropCandidates.forEach(function(d){suggestions.push(d);});
       }
     });
   }
-  suggestions.sort(function(a,b){return b.delta-a.delta;});
+  // Sort: for add-only suggestions, by delta desc.
+  // For drop suggestions, by (delta desc, then dropScore asc — lower dropScore = better bump candidate)
+  suggestions.sort(function(a,b){
+    if(b.delta!==a.delta)return b.delta-a.delta; // better coverage first
+    if(a.dropScore!==undefined&&b.dropScore!==undefined)return a.dropScore-b.dropScore; // least valuable drop first
+    return 0;
+  });
   return suggestions.slice(0,5);
 }
 
@@ -17532,6 +17579,7 @@ function openSwapModal(sq1,terr,forcedPartner){
           : (s.dropLabel
             ? '⇄ '+esc(addC?addC.name:'?')+' in, '+esc(s.dropLabel)+' out'
             : '⇄ '+esc(addC?addC.name:'?'));
+        var dropNoteHtml=s.dropNote?'<span style="font-size:.62em;background:rgba(201,146,42,.15);border:1px solid var(--gold-dark);border-radius:3px;padding:0 4px;color:var(--gold-dark);margin-left:4px;vertical-align:middle">'+esc(s.dropNote)+'</span>':'';
         var subLabel=(addC?esc(addC.cls||''):'')+
           (addC&&(addC.skills||[]).length?' · '+addC.skills.slice(0,2).join(', '):'');
         var ci1Out=s.addOnly?null:(s.sqn1==='__unassigned__'?s.addCi:s.ci1);
@@ -17544,7 +17592,7 @@ function openSwapModal(sq1,terr,forcedPartner){
           '" style="display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--parchment-deep);border-radius:6px;margin-bottom:5px;cursor:pointer;background:rgba(44,26,14,.02)" class="swap-candidate">'+
           (idx===0?'<span style="font-size:.7em;background:var(--gold-dark);color:#fff;border-radius:3px;padding:1px 5px;flex-shrink:0">★ Best</span>':'<span style="width:38px;flex-shrink:0"></span>')+
           '<div style="flex:1;min-width:0">'+
-            '<div style="font-size:.82em;font-weight:600">'+actionLabel+'</div>'+
+            '<div style="font-size:.82em;font-weight:600">'+actionLabel+dropNoteHtml+'</div>'+
             '<div style="font-size:.68em;color:var(--ink-light)">'+subLabel+'</div>'+
           '</div>'+
           '<div style="text-align:right;flex-shrink:0">'+
