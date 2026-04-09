@@ -1987,7 +1987,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.542
+      Version 1.543
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2012,6 +2012,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.543</strong> &mdash; Two fixes: (1) Task pie (pct) now persists: pct field added to active_tasks Supabase push row and restored on pull. Requires ALTER TABLE active_tasks ADD COLUMN IF NOT EXISTS pct integer NOT NULL DEFAULT 0 (already run). (2) Capstone Bag of Holding persistence fixed: the bag was awarded to S.partyAssets in memory but the Supabase push may not have completed before the next pull overwrote it. Fix: Bag of Holding is now also added to S.franchiseStorage (string entry) as a durable fallback that travels in the franchise row. awardCapstonReward now calls save() and schedules an explicit sbPush(false) 200ms after the alert is dismissed to guarantee the bag reaches Supabase before any reload.</div>
         <div style="margin-bottom:9px"><strong>Version 1.542</strong> &mdash; (1) Task pie (pct) now persists to Supabase: pct field added to active_tasks push row and restored in pull. Subtask pct values already travel in the subtasks JSONB column. A pct column is needed in Supabase (see SQL below). (2) Added top-level console.log calls at the entry of openSquadNew() logging partyAssets names/types, franchiseStorage contents, and the hasBag result to diagnose the Bag of Holding recognition issue.</div>
         <div style="margin-bottom:9px"><strong>Version 1.541</strong> &mdash; (1) Store category tab bar: footer now starts at bottom:0 and is repositioned to nav.offsetHeight in renderStore() so it sits flush on top of the nav regardless of device/safe-area. Scroll spacer updated via requestAnimationFrame after footer renders. (2) franchiseHasBagOfHolding() enhanced with [BagCheck] console logs for each check path to diagnose why the squad creation modal may still show the wrong card. The logic is: storage → inventory → partyAssets (any bag not ownerType=squad).</div>
         <div style="margin-bottom:9px"><strong>Version 1.540</strong> &mdash; (1) Dev bar now appears below the header, not over it. z-index lowered from 491 to 180 (below header's 220). updateDevBar() reads hdr.offsetHeight and sets bar.style.top dynamically so it always sits flush below the header regardless of its rendered height. (2) Bag of Holding recognition consolidated into franchiseHasBagOfHolding() helper that checks franchiseStorage (strings and objects), character inventories, and partyAssets (any bag whose meta.ownerType is not 'squad'). This correctly handles capstone-awarded bags with type:artifact and meta:{uid} but no ownerType. Both openSquadNew and sqSave now use this logic.</div>
@@ -9099,7 +9100,8 @@ function awardCapstonReward(set){
   if(override){
     if(override.type==='item'){
       if(!S.partyAssets)S.partyAssets=[];
-      S.partyAssets.push({name:override.name,ic:override.ic||'✨',type:'artifact',meta:{uid:newAssetUid()}});
+      S.partyAssets.push({name:override.name,ic:override.ic||'✨',type:'artifact',meta:{uid:newAssetUid(),ownerType:'',ownerRef:''}});
+      if(override.name==='Bag of Holding'){if(!S.franchiseStorage)S.franchiseStorage=[];if(S.franchiseStorage.indexOf('Bag of Holding')===-1)S.franchiseStorage.push('Bag of Holding');}
       logAdd('⭐ Capstone reward: '+override.name+' acquired!','adv');
       msg='✨ '+override.name+(override.desc?'\n'+override.desc:'');
     } else if(override.type==='pet'){
@@ -9151,7 +9153,13 @@ function awardCapstonReward(set){
     } else if(roll<0.66){
       reward=rnd(pool.items);
       if(!S.partyAssets)S.partyAssets=[];
-      S.partyAssets.push({name:reward.name,ic:reward.ic,type:'artifact',meta:{uid:newAssetUid()}});
+      var _capAsset={name:reward.name,ic:reward.ic,type:'artifact',meta:{uid:newAssetUid(),ownerType:'',ownerRef:''}};
+      S.partyAssets.push(_capAsset);
+      // Also add to franchiseStorage as a named string so all bag checks find it
+      if(!S.franchiseStorage)S.franchiseStorage=[];
+      if(reward.name==='Bag of Holding'&&S.franchiseStorage.indexOf('Bag of Holding')===-1){
+        S.franchiseStorage.push('Bag of Holding');
+      }
       logAdd('⭐ Capstone reward: '+reward.name+' acquired!','adv');
       msg='✨ '+reward.name+'\n'+reward.desc;
     } else {
@@ -9163,6 +9171,9 @@ function awardCapstonReward(set){
   }
 
   alert('⭐ CAPSTONE REWARD!\n\n'+msg);
+  // Force immediate push so bag persists to Supabase before page reload
+  save();
+  if(uid())setTimeout(function(){sbPush(false);},200);
 }
 
 /* ── Quest Log ── */
@@ -12385,18 +12396,20 @@ function franchiseHasBagOfHolding(){
     return (typeof x==='string'?x:(x&&x.name)||'')===bagName;
   });
   if(inStorage){console.log('[BagCheck] Found in franchiseStorage');return true;}
-  // 2. Character inventories
+  // 2. Character inventories — log all inv contents for diagnosis
+  var invLog=(S.party||[]).map(function(c,ci){return {ci:ci,name:c&&c.name,inv:c&&c.inv};});
+  console.log('[BagCheck] character inventories:',JSON.stringify(invLog));
   var inInv=(S.party||[]).some(function(c){return c&&(c.inv||[]).indexOf(bagName)!==-1;});
   if(inInv){console.log('[BagCheck] Found in character inventory');return true;}
-  // 3. Party assets — any bag not already squad-owned
+  // 3. Party assets
+  console.log('[BagCheck] all partyAssets:',JSON.stringify((S.partyAssets||[]).map(function(a){return {name:a.name,type:a.type,ownerType:a.meta&&a.meta.ownerType};})));
   var bags=(S.partyAssets||[]).filter(function(a){return a&&a.name===bagName;});
-  console.log('[BagCheck] partyAssets bags:',JSON.stringify(bags.map(function(a){return {type:a.type,ownerType:a.meta&&a.meta.ownerType};})));
   var unassignedBag=bags.some(function(a){
     var ot=(a.meta&&a.meta.ownerType)||'';
     return ot!=='squad';
   });
   if(unassignedBag){console.log('[BagCheck] Found unassigned bag in partyAssets');return true;}
-  console.log('[BagCheck] No bag found');
+  console.log('[BagCheck] No bag found anywhere');
   return false;
 }
 
