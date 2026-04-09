@@ -1921,6 +1921,7 @@ body.dev-active #app{margin-top:36px;}
     </div>
   </div>
   <div id="quest-log-panel" style="display:none"></div>
+  <div id="adv-squad-banner"></div>
   <div id="avcontent"></div>
 </div>
 
@@ -2025,7 +2026,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.573
+      Version 1.574
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2050,6 +2051,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.574</strong> &mdash; Four-item package: (1) Task pie interface now requires 3 clicks to fill — each click advances 2 slices (0→2→4→6→0), tooltip updated to reflect "3 clicks = full". (2) Squad banner added to top of quest/adventure page (#adv-squad-banner div, populated in renderAdv) showing active cycle squad emoji, name, member count, and coverage %. Hidden when no squad assigned. (3) Squad roles system: SQUAD_ROLES array defines Captain/Quartermaster/Patrol Leader/Field Medic/Scout with icons, colors, and item effects. ROLE_KITS auto-generated and injected into GEAR at startup (type:kit, price:75gp, wt:5, squadRole field). getCharSquadRole(ci) helper finds a character's role across all squads. renderSqRoles(sq) renders role assignment UI in squad edit modal with dropdowns filtered to squad members (✓ marks kit owners); assignments stored on sq.roles={roleId:ci}. Role badge shown on character cards as colored pill with role icon+label+squad name. (4) Role kits appear in squad inventory collapsible on party screen with character name, assignment status badge (colored if assigned, grey "unassigned" if not), and "0 lb" weight label. Item count in summary includes role kits.</div>
         <div style="margin-bottom:9px"><strong>Version 1.573</strong> &mdash; QP Manager now accessible to test accounts (N@test.com, N=27-37) in addition to app admins. Added isTestAccount() helper that matches emails against /^\d+@test\.com$/. openQpManager() guard updated from isAppAdmin()-only to isAppAdmin()||isTestAccount().</div>
         <div style="margin-bottom:9px"><strong>Version 1.572</strong> &mdash; Territory Squad Swap system: (1) Cycle editor gains a Territory field (freetext, e.g. "Midlands") — squads assigned to cycles in the same territory can swap members. (2) squadCoverage() formula: counts unique skills/tools/languages/faiths covered by squad members ÷ total possible, returns pct + detail breakdown. (3) Squad tiles now show "N members · X%" coverage and territory label for locked squads. (4) ⇄ Territory Swap Zone appears below squad grid when 2+ locked squads share a territory — shows coverage bars per squad. (5) Select a character then tap the swap zone to open the swap modal; it shows current coverage for all same-territory squads, suggests up to 3 swaps ranked by combined coverage delta (★ Best marked), and executes the swap for costSquadSwap QP (default 10, configurable in QP Manager). Swap is logged and forces an immediate sbPush.</div>
         <div style="margin-bottom:9px"><strong>Version 1.571</strong> &mdash; Comprehensive item effects editor. Replaced 5-field effect section with full structured system organized into 5 groups: (1) Prerequisite Overrides: overcome terrain, count as skill/tool/language/faith/item prereq. (2) Stat Modifiers: bonus to base stat (STR-CHA), skill check bonus, advantage on skill, level cap bonus, encumbrance bonus. (3) Proficiencies while carried: grant skill/tool/language/weapon proficiency. (4) Franchise/Economic: passive gold per reset, quest gold % bonus, hire cost reduction %, squad size max bonus. (5) Quest/Progression: quest type gold bonus, XP track bonus, QP multiplier, quest duration reduction %. (6) Logistical: unlock terrain type, unlock quest cycle (dropdown of all QUESTSETS), freeform note. All fields optional; empty values omitted from saved effect object.</div>
@@ -2624,6 +2626,7 @@ body.dev-active #app{margin-top:36px;}
         </div>
         <div id="sq-card-0-edit" style="display:none;padding:18px 18px 10px">
           <h3 id="ov-sq-title" style="font-family:\'Cinzel\',serif;margin-bottom:14px">⚔ Edit Squad</h3>
+          <div id="sq-roles-section" style="margin-bottom:12px"></div>
           <div class="frow"><label class="lbl">Squad Name</label><input type="text" id="ov-sq-name" placeholder="e.g. Vanguard" style="width:100%"></div>
           <div style="text-align:right;margin-top:4px">
             <button class="btn bg sm" id="btn-sq-next-0">Identity →</button>
@@ -3312,6 +3315,35 @@ var PETS=[
   {name:'Owlbear Chick',ic:'🦉',desc:'Ferocious companion. Grows to full Owlbear in 1 year.',rar:'rare',price:2000,type:'pet',party:true},
   {name:'Phase Spider (Tamed)',ic:'🕷️',desc:'Can Ethereal Jaunt as bonus action. Unnerving.',rar:'veryrare',price:8000,type:'pet',party:true}
 ];
+
+// ── Squad Roles ──────────────────────────────────────────
+var SQUAD_ROLES=[
+  {id:'captain',       label:'Captain',        ic:'🎖', color:'#8a3a1a',
+   desc:'Leads the squad. Commands respect and inspires courage.',
+   effect:{skillBonus:{skill:'Persuasion',bonus:2},questBonus:{type:'social',bonus:1}}},
+  {id:'quartermaster', label:'Quartermaster',   ic:'📦', color:'#1a4a8a',
+   desc:'Manages supplies and logistics. Keeps the squad provisioned.',
+   effect:{goldPct:5,skillBonus:{skill:'Investigation',bonus:2}}},
+  {id:'patrol_leader', label:'Patrol Leader',  ic:'🗡', color:'#1a5a2a',
+   desc:'Leads patrols and scouting missions. Expert in terrain.',
+   effect:{questBonus:{type:'explore',bonus:2},skillBonus:{skill:'Survival',bonus:2}}},
+  {id:'field_medic',   label:'Field Medic',    ic:'🏥', color:'#5a1a5a',
+   desc:'Keeps the squad healthy in the field. Stabilizes the wounded.',
+   effect:{skillBonus:{skill:'Medicine',bonus:3},advantage:'Athletics'}}  ,
+  {id:'scout',         label:'Scout',          ic:'🔭', color:'#5a4a1a',
+   desc:'Ranges ahead of the squad. Eyes and ears of the operation.',
+   effect:{skillBonus:{skill:'Perception',bonus:2},questBonus:{type:'explore',bonus:1}}}
+];
+// Role kits in the store
+var ROLE_KITS=SQUAD_ROLES.map(function(r){
+  return {name:r.label+"'s Kit",ic:r.ic,
+    desc:'Equips a squad member for the '+r.label+' role. '+r.desc,
+    rar:'uncommon',type:'kit',price:75,wt:5,squadRole:r.id,effect:r.effect};
+});
+// Inject role kits into GEAR at startup (after GEAR is defined)
+ROLE_KITS.forEach(function(kit){
+  if(!GEAR.some(function(g){return g.name===kit.name;}))GEAR.push(kit);
+});
 
 // Immutable snapshots so mergeCustomContent() can reset to built-in state each call
 var BUILTIN_VEHICLES=JSON.parse(JSON.stringify(VEHICLES));
@@ -5070,7 +5102,7 @@ function taskCardHtml(t,showArrows,nbIdxs){
     var stRows=subs.map(function(s,si){
       var cbId='stcb-'+i+'-'+si;
       return '<div class="strow">'+
-        '<button type="button" class="pct-tog" data-a="stpct" data-i="'+i+'" data-si="'+si+'" data-step="'+(s.pct||0)+'" title="'+Math.round((s.pct||0)/6*100)+'% complete — click to advance">'+pctTogSvg(s.pct||0)+'</button>'+
+        '<button type="button" class="pct-tog" data-a="stpct" data-i="'+i+'" data-si="'+si+'" data-step="'+(s.pct||0)+'" title="'+Math.round((s.pct||0)/6*100)+'% complete — click to advance (3 clicks = full)">'+pctTogSvg(s.pct||0)+'</button>'+
         '<label for="'+cbId+'">'+
         '<input type="checkbox" id="'+cbId+'" data-a="stck" data-i="'+i+'" data-si="'+si+'"'+
         (s.done?' checked':'')+'>'+
@@ -5107,7 +5139,7 @@ function taskCardHtml(t,showArrows,nbIdxs){
     '<div class="trow">'+
     '<div class="tinfo">'+
     '<div class="tname" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">'+
-    '<button type="button" class="pct-tog" data-a="tpct" data-i="'+i+'" data-step="'+(t.pct||0)+'" title="'+Math.round((t.pct||0)/6*100)+'% complete — click to advance">'+pctTogSvg(t.pct||0)+'</button>'+
+    '<button type="button" class="pct-tog" data-a="tpct" data-i="'+i+'" data-step="'+(t.pct||0)+'" title="'+Math.round((t.pct||0)/6*100)+'% complete — click to advance (3 clicks = full)">'+pctTogSvg(t.pct||0)+'</button>'+
     '<button class="tname-main" data-a="edit" data-i="'+i+'" type="button" style="background:none;border:none;padding:0;margin:0;color:inherit;font:inherit;text-align:left;cursor:pointer;text-decoration:underline;text-decoration-color:rgba(44,26,14,.25);text-underline-offset:2px" title="Edit contract">'+esc(t.name)+'</button>'+
     colBtn+
     '</div>'+
@@ -5364,7 +5396,8 @@ document.getElementById('tlist').addEventListener('click',function(e){
   // Progress toggle: cycle 0→25→50→75→100→0
   var tog=e.target.closest('.pct-tog');if(!tog)return;
   var cur=parseInt(tog.getAttribute('data-step'),10)||0;
-  var next=(cur+1)%7; // 0–6 steps
+  // 3-click cycle: advance 2 slices per click (0→2→4→6→0)
+  var next=cur>=6?0:Math.min(6,cur+2);
   tog.setAttribute('data-step',next);
   tog.innerHTML=pctTogSvg(next);
   tog.title=Math.round(next/6*100)+'% complete — click to advance';
@@ -6221,7 +6254,14 @@ function charCardHtml(c,ci,opts){
       var dtBadges=(c.downtimeBadges||[]).map(function(db){
         return '<button class="xp-badge-btn" data-a="dt-badge" data-ci="'+ci+'" data-badge="'+esc(db)+'" style="display:block;margin-top:3px;background:none;border:1px solid rgba(26,107,138,.35);border-radius:6px;padding:2px 7px;font-size:.68em;color:var(--teal);cursor:pointer;text-align:left;font-family:inherit">🕯 '+esc(db)+'</button>';
       }).join('');
-      return (badges.length||dtBadges)?'<div>'+badges.join('')+(dtBadges?'<div style="margin-top:2px">'+dtBadges+'</div>':'')+'</div>':'';
+      // Squad role badge
+      var roleInfo=getCharSquadRole(ci);
+      var roleBadge=roleInfo?'<div style="margin-top:2px">'+
+        '<span style="display:inline-flex;align-items:center;gap:3px;font-size:.68em;'+
+        'background:'+roleInfo.role.color+';color:#fff;border-radius:6px;padding:2px 7px;font-family:inherit">'+
+        roleInfo.role.ic+' '+esc(roleInfo.role.label)+' · '+esc(roleInfo.squad.name)+'</span></div>':'';
+      return (badges.length||dtBadges||roleBadge)?
+        '<div>'+badges.join('')+(dtBadges?'<div style="margin-top:2px">'+dtBadges+'</div>':'')+(roleBadge||'')+'</div>':'';
     }())+
     '<div class="cmeta">'+(filtered?esc(c.cls):(esc(c.species)+' '+esc(c.cls)+' · '+esc(c.bg)))+'</div>'+
     '<div class="clvl">'+('Level '+c.level)+(filtered?'':(' · '+c.age+' yrs · '+esc(c.height)+' · '+esc(c.weight)))+'</div>'+
@@ -6523,7 +6563,14 @@ function renderParty(){
           '<button class="sqmgr-edit-btn" data-a="ptag" data-v="'+esc(sq.name)+'" style="flex-shrink:0;font-size:.7em;padding:2px 7px;'+(activeFilter===sq.name?'background:rgba(255,255,255,.35);font-weight:700;':'')+'" title="Filter party by this squad">'+(activeFilter===sq.name?'✕ Unfilter':'Filter by')+'</button>'+
           '<span style="font-size:1.1em">'+ic+'</span>'+
           '<span style="font-family:\'Cinzel\',serif;font-size:.82em;font-weight:700;flex:1">'+esc(sq.name)+'</span>'+
-          '<span style="font-size:.72em;opacity:.8">'+memberCnt+' member'+(memberCnt!==1?'s':'')+(sqAssets.length?' · '+sqAssets.length+' item'+(sqAssets.length!==1?'s':''):'')+'</span>'+
+          (function(){
+            var roleKitCount=(sq.memberIdxs||[]).reduce(function(acc,ci){
+              var c=S.party[ci];if(!c)return acc;
+              return acc+(c.inv||[]).filter(function(it){return (ROLE_KITS||[]).some(function(k){return k.name===it;});}).length;
+            },0);
+            var totalItems=sqAssets.length+roleKitCount;
+            return '<span style="font-size:.72em;opacity:.8">'+memberCnt+' member'+(memberCnt!==1?'s':'')+(totalItems?' · '+totalItems+' item'+(totalItems!==1?'s':''):'')+'</span>';
+          }())+
         '</summary>'+
         '<div style="padding:8px 12px;background:rgba(44,26,14,.04)">'+
         (sqAssets.length?sqAssets.map(function(a){
@@ -6532,7 +6579,38 @@ function renderParty(){
             '<span style="font-size:.88em">'+esc(a.name)+'</span>'+
             '<span style="font-size:.7em;opacity:.65;margin-left:auto;font-style:italic">squad only</span>'+
             '</div>';
-        }).join(''):'<div style="font-size:.8em;color:var(--ink-light);font-style:italic;padding:4px 0">No items assigned.</div>')+
+        }).join(''):'')+
+        (function(){
+          // Role kits carried by squad members
+          var roleKitRows=[];
+          (sq.memberIdxs||[]).forEach(function(ci){
+            var c=S.party[ci];if(!c)return;
+            (c.inv||[]).forEach(function(item){
+              var kit=(ROLE_KITS||[]).filter(function(k){return k.name===item;})[0];
+              if(!kit)return;
+              var role=(SQUAD_ROLES||[]).filter(function(r){return r.id===kit.squadRole;})[0];
+              var isAssigned=sq.roles&&sq.roles[kit.squadRole]===ci;
+              roleKitRows.push(
+                '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.15)">'+
+                '<span style="font-size:1.1em">'+(kit.ic||'🎖')+'</span>'+
+                '<div style="flex:1;min-width:0">'+
+                  '<span style="font-size:.88em">'+esc(kit.name)+'</span>'+
+                  '<span style="font-size:.68em;color:rgba(44,26,14,.55);margin-left:6px">'+esc(c.name)+'</span>'+
+                '</div>'+
+                '<span style="font-size:.65em;opacity:.75;font-style:italic;flex-shrink:0;padding:1px 5px;border-radius:4px;'+
+                  (isAssigned?'background:'+( role?role.color:'#555')+';color:#fff':'background:rgba(44,26,14,.08);color:var(--ink-light)')+'">'+
+                  (isAssigned?(role?role.ic+' '+role.label:'Role'):'unassigned')+
+                '</span>'+
+                '<span style="font-size:.65em;opacity:.55;flex-shrink:0">0 lb</span>'+
+                '</div>'
+              );
+            });
+          });
+          return roleKitRows.join('');
+        }())+
+        (!sqAssets.length&&!(sq.memberIdxs||[]).some(function(ci){
+          var c=S.party[ci];return c&&(c.inv||[]).some(function(it){return (ROLE_KITS||[]).some(function(k){return k.name===it;});});
+        })?'<div style="font-size:.8em;color:var(--ink-light);font-style:italic;padding:4px 0">No items assigned.</div>':'')+
         '</div>'+
         '</details>';
     });
@@ -9842,6 +9920,30 @@ var advQuestLastSetId=null; // track active set to reset collapse on cycle chang
 function renderAdv(){
   var el=document.getElementById('avcontent');
   if(!el)return;
+  // Squad banner
+  (function(){
+    var banner=document.getElementById('adv-squad-banner');
+    if(!banner)return;
+    var sqName=activeCycleSquadName();
+    var sq=(S.squads||[]).filter(function(s){return s.name===sqName;})[0];
+    if(!sq){banner.innerHTML='';return;}
+    var cnt=(sq.memberIdxs||[]).filter(function(ci){return S.party[ci];}).length;
+    var cov=typeof squadCoverage==='function'?squadCoverage(sq):null;
+    var col=sq.color||'#3a2a1a';
+    var ic=sq.emoji||'⚔';
+    banner.innerHTML='<div style="display:flex;align-items:center;gap:10px;'+
+      'background:'+col+';border-radius:8px;padding:7px 12px;margin-bottom:8px;color:#fff">'+
+      '<span style="font-size:1.3em;flex-shrink:0">'+ic+'</span>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-family:\'Cinzel\',serif;font-size:.82em;font-weight:700;'+
+          'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(sq.name)+'</div>'+
+        '<div style="font-size:.65em;opacity:.8;margin-top:1px">'+cnt+' member'+(cnt!==1?'s':'')+
+          (cov?' · '+cov.pct+'% coverage':'')+
+        '</div>'+
+      '</div>'+
+      '<div style="font-size:.7em;opacity:.75;text-align:right;flex-shrink:0">Active Squad</div>'+
+      '</div>';
+  }());
   var qs=S.questState;
   // Auto-collapse when quest cycle changes
   var _curSetId=qs&&qs.setId;
@@ -12767,7 +12869,69 @@ function openSquadEdit(sqi){
   // Disable checkboxes if locked
   document.querySelectorAll('.sqcb').forEach(function(cb){cb.disabled=!!isLocked;});
   sqGo(1); // edit jumps straight to identity
+  renderSqRoles(sq);
   openOv('ov-squad');
+}
+
+function renderSqRoles(sq){
+  var el=document.getElementById('sq-roles-section');
+  if(!el||!sq)return;
+  var members=(sq.memberIdxs||[]).filter(function(ci){return S.party[ci];});
+  var roles=sq.roles||{};
+  var html='<div style="border:1px solid var(--parchment-deep);border-radius:7px;padding:10px 12px;background:rgba(44,26,14,.03)">';
+  html+='<div style="font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">🎖 Squad Roles</div>';
+  // Check which roles this squad has kits available for
+  var kitNames=ROLE_KITS.map(function(k){return k.name;});
+  // Find chars who own a role kit (in their inv)
+  var kitOwners={}; // roleId -> [ci]
+  members.forEach(function(ci){
+    var c=S.party[ci];if(!c)return;
+    (c.inv||[]).forEach(function(item){
+      var kit=ROLE_KITS.filter(function(k){return k.name===item;})[0];
+      if(kit){
+        if(!kitOwners[kit.squadRole])kitOwners[kit.squadRole]=[];
+        kitOwners[kit.squadRole].push(ci);
+      }
+    });
+  });
+  SQUAD_ROLES.forEach(function(r){
+    var assignedCi=roles[r.id]!==undefined?roles[r.id]:null;
+    var assignedC=assignedCi!==null?S.party[assignedCi]:null;
+    var candidates=kitOwners[r.id]||[];
+    var memberOpts=members.map(function(ci){
+      var c=S.party[ci];if(!c)return '';
+      var hasKit=(c.inv||[]).some(function(it){return ROLE_KITS.some(function(k){return k.name===it&&k.squadRole===r.id;});});
+      return '<option value="'+ci+'"'+(assignedCi===ci?' selected':'')+
+        (hasKit?' style="font-weight:700"':'')+'>'+esc(c.name)+(hasKit?' ✓':'')+'</option>';
+    }).join('');
+    html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+    html+='<span style="font-size:1em;width:22px;text-align:center;flex-shrink:0">'+r.ic+'</span>';
+    html+='<div style="font-size:.75em;font-weight:600;width:90px;flex-shrink:0;color:var(--ink)">'+esc(r.label)+'</div>';
+    html+='<select class="sq-role-sel" data-role="'+r.id+'" style="flex:1;padding:4px 6px;font-size:.8em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">';
+    html+='<option value="">(unassigned)</option>'+memberOpts;
+    html+='</select>';
+    html+='</div>';
+  });
+  html+='<div style="font-size:.65em;color:var(--ink-light);margin-top:4px">✓ = character has the role kit in inventory. Kits available in Store → 🧰 Kits.</div>';
+  html+='</div>';
+  el.innerHTML=html;
+  // Wire selects
+  el.querySelectorAll('.sq-role-sel').forEach(function(sel){
+    sel.addEventListener('change',function(){
+      var roleId=sel.getAttribute('data-role');
+      var ci=sel.value===''?undefined:parseInt(sel.value);
+      if(!sq.roles)sq.roles={};
+      // One role per character — remove this char from any other role
+      if(ci!==undefined){
+        Object.keys(sq.roles).forEach(function(rid){
+          if(rid!==roleId&&sq.roles[rid]===ci)delete sq.roles[rid];
+        });
+      }
+      if(ci===undefined)delete sq.roles[roleId];
+      else sq.roles[roleId]=ci;
+      save();renderParty();renderSqRoles(sq);
+    });
+  });
 }
 
 function renderSquadMembers(){
@@ -16896,6 +17060,22 @@ initSession=function(showStatus){
 
 
 // ── Squad Coverage & Territory Swap ─────────────────────────────
+
+// Squad role helpers
+function getCharSquadRole(ci){
+  // Returns {squad, roleId, role} if this char holds a role in any squad
+  var result=null;
+  (S.squads||[]).forEach(function(sq){
+    var roles=sq.roles||{};
+    SQUAD_ROLES.forEach(function(r){
+      if(roles[r.id]===ci)result={squad:sq,roleId:r.id,role:r};
+    });
+  });
+  return result;
+}
+function squadRoleHolder(sq,roleId){
+  return sq&&sq.roles&&sq.roles[roleId]!==undefined?sq.roles[roleId]:null;
+}
 
 function squadCoverage(squad){
   // Returns {pct, covered, total, detail} — skills/tools/langs/faiths
