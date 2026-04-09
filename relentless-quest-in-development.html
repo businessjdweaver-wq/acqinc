@@ -2026,7 +2026,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.579
+      Version 1.580
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2051,6 +2051,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.580</strong> &mdash; Downtime badge glitch fix (three-part): (1) Auto-resume bestKey selector now filters dtProgress to only keys with progress > 0 before sorting — previously keys with 0 progress (e.g. faith:Pelor:0 from a long-ago completed track) would win the sort via JS object key ordering, causing a spurious different-type job to queue and add a wrong in-progress badge. (2) _healDowntimeBadges() now checks each badge against _DT_TYPE_BADGE map and removes it only if that type has zero dtProgress AND no active job — multi-track is valid (Celestial + Intel simultaneously = Polyglot Ember + Rune Sleuth both showing). (3) Completion badges (_DT_COMPLETION_BADGES: Skill Savant, Tongue Scholar, Devoted, etc.) are never removed by the healer — they are permanent achievements. The initial over-aggressive fix (strip all in-progress badges except one globally) was reverted as it would have wrongly removed valid multi-track badges.</div>
         <div style="margin-bottom:9px"><strong>Version 1.579</strong> &mdash; Swap recommendation overhaul: (1) Added _dropScore(dropCi, squadMembers, namedSq) helper that ranks each squad member as a bump candidate across three tiers — redundant hirelings (skills/tools/lang fully covered by non-hirelings in the same squad, score ~0), non-redundant hirelings (score ~10000+), full adventurers (score ~20000+), all secondarily ranked by coverage loss then level. (2) At-capacity unassigned→squad path now attaches dropScore and dropNote to each suggestion. (3) Sort uses delta desc primary, dropScore asc secondary — so when all deltas are equal or negative (the user wants a specific character regardless of coverage), the most expendable member (redundant hireling first) floats to the top as ★ Best. (4) Redundant hireling suggestions show a gold "redundant hireling" badge in the modal row. (5) Swap zone display fix: territory no longer required — squads without a territory fall into an __any__ bucket labelled "Active Squads"; unassigned pool added to every bucket; squadsInSameTerritory() handles both-without-territory match.</div>
         <div style="margin-bottom:9px"><strong>Version 1.578</strong> &mdash; Swap zone now displays when any locked squad exists (territory no longer required). Previously the zone was hidden unless 2+ squads shared the same territory — but squads without a territory were excluded entirely, so the zone never appeared for single-squad setups. Fix: locked squads without a territory are grouped into an '__any__' bucket; unassigned characters are added to every bucket; zone shows if any bucket has 2+ entries. Territory label shows "Active Squads" for the __any__ bucket. squadsInSameTerritory() updated to return all other locked squads when neither squad has a territory set (both-without-territory match).</div>
         <div style="margin-bottom:9px"><strong>Version 1.577</strong> &mdash; Territory swap now treats unassigned characters as a virtual swap partner. _unassignedVirtualSquad() builds a virtual squad {name:'__unassigned__', displayName:'Unassigned', memberIdxs:[...]} from all characters not in any named squad. renderSwapZone() adds this virtual squad as a partner for any territory that has at least one locked squad (when unassigned pool is non-empty). Unassigned characters can initiate a swap from the zone; locked-squad characters see "Unassigned" as a swap target. openSwapModal() accepts optional forcedPartner and handles virtual squad on both source and partner sides. Swap execution skips squadObj assignment for __unassigned__ side — removing from a squad without adding to another leaves the character unassigned, and vice versa. Coverage bars and headers use displayName for the virtual squad.</div>
@@ -5923,6 +5924,13 @@ function downtimeTrackLabel(type,target){
   if(type==='intel')return 'Rumors';
   return target||type;
 }
+// In-progress badges: one allowed per downtime type (language, skill, faith, etc.)
+// Completion badges (Tongue Scholar etc.) are permanent achievements — never removed
+var _DT_TYPE_BADGE={
+  skill:'Night Owl',language:'Polyglot Ember',faith:'Devotee',
+  contacts:'Civic Sigil',intel:'Rune Sleuth'
+};
+var _DT_COMPLETION_BADGES=['Skill Savant','Tongue Scholar','Devoted','Franchise Connector','Lore Seeker','Skill Savant'];
 function addDowntimeBadge(c,label){
   if(!c.downtimeBadges)c.downtimeBadges=[];
   if(c.downtimeBadges.indexOf(label)===-1)c.downtimeBadges.push(label);
@@ -6565,7 +6573,42 @@ function relIcon(rel){
   return '✦';
 }
 
+function _healDowntimeBadges(){
+  // Cleanup: each downtime TYPE gets at most one in-progress badge.
+  // A badge is only valid if the character has actual progress on that track (dtProgress > 0)
+  // OR has an active job of that type. Badges for tracks with zero progress and no active job
+  // are stale and should be removed. Completion badges are never touched.
+  var now=Date.now();
+  (S.party||[]).forEach(function(c,ci){
+    if(!c||!c.downtimeBadges)return;
+    var prog=c.dtProgress||{};
+    var activeTypes={};
+    // Mark types with real progress > 0
+    Object.keys(prog).forEach(function(key){
+      if((prog[key]||0)>0){
+        var t=key.split(':')[0];
+        activeTypes[t]=true;
+      }
+    });
+    // Mark types with active jobs
+    (S.downtimeJobs||[]).forEach(function(j){
+      if(j.ci===ci&&(j.endsAt||0)>now)activeTypes[j.type]=true;
+    });
+    // Remove in-progress badges for types that have no progress and no active job
+    c.downtimeBadges=c.downtimeBadges.filter(function(b){
+      if(_DT_COMPLETION_BADGES.indexOf(b)!==-1)return true; // keep completion badges always
+      // Find which type this badge belongs to
+      var badgeType=null;
+      Object.keys(_DT_TYPE_BADGE).forEach(function(t){
+        if(_DT_TYPE_BADGE[t]===b)badgeType=t;
+      });
+      if(!badgeType)return true; // unknown badge — keep it
+      return !!activeTypes[badgeType]; // keep only if this type has progress or active job
+    });
+  });
+}
 function renderParty(){
+  _healDowntimeBadges();
   if(typeof partyStatsOpen!=='undefined'&&partyStatsOpen)renderPartyStats();
   var el=document.getElementById('plist');
   if(!S.party.length){el.innerHTML='<div class="empty">No adventurers. Visit the Recruitment Office!</div>';return;}
@@ -6634,7 +6677,10 @@ function renderParty(){
         var _endsAt=Date.now()+_ms;
         _resumable.forEach(function(e){
           var prog=e.c.dtProgress||{};
-          var bestKey=Object.keys(prog).sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
+          // Only resume tracks with actual progress > 0 to avoid spurious type switches
+          var bestKey=Object.keys(prog).filter(function(k){return (prog[k]||0)>0;})
+            .sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0]
+            || Object.keys(prog).sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
           if(!bestKey)return;
           var parts=bestKey.split(':');
           var type=parts[0],target=parts.slice(1).join(':')||'core';
