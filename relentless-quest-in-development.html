@@ -1748,6 +1748,7 @@ body.dev-active #app{margin-top:36px;}
         <label>Character rename / customize</label><input id="qpm-cost-rename" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Homebrew campaign access</label><input id="qpm-cost-homebrew" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Auto-assign (quest modal)</label><input id="qpm-cost-auto-assign" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
+        <label>Territory squad swap</label><input id="qpm-cost-squad-swap" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
       </div>
     </div>
 
@@ -2024,7 +2025,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.571
+      Version 1.572
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2049,6 +2050,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.572</strong> &mdash; Territory Squad Swap system: (1) Cycle editor gains a Territory field (freetext, e.g. "Midlands") — squads assigned to cycles in the same territory can swap members. (2) squadCoverage() formula: counts unique skills/tools/languages/faiths covered by squad members ÷ total possible, returns pct + detail breakdown. (3) Squad tiles now show "N members · X%" coverage and territory label for locked squads. (4) ⇄ Territory Swap Zone appears below squad grid when 2+ locked squads share a territory — shows coverage bars per squad. (5) Select a character then tap the swap zone to open the swap modal; it shows current coverage for all same-territory squads, suggests up to 3 swaps ranked by combined coverage delta (★ Best marked), and executes the swap for costSquadSwap QP (default 10, configurable in QP Manager). Swap is logged and forces an immediate sbPush.</div>
         <div style="margin-bottom:9px"><strong>Version 1.571</strong> &mdash; Comprehensive item effects editor. Replaced 5-field effect section with full structured system organized into 5 groups: (1) Prerequisite Overrides: overcome terrain, count as skill/tool/language/faith/item prereq. (2) Stat Modifiers: bonus to base stat (STR-CHA), skill check bonus, advantage on skill, level cap bonus, encumbrance bonus. (3) Proficiencies while carried: grant skill/tool/language/weapon proficiency. (4) Franchise/Economic: passive gold per reset, quest gold % bonus, hire cost reduction %, squad size max bonus. (5) Quest/Progression: quest type gold bonus, XP track bonus, QP multiplier, quest duration reduction %. (6) Logistical: unlock terrain type, unlock quest cycle (dropdown of all QUESTSETS), freeform note. All fields optional; empty values omitted from saved effect object.</div>
         <div style="margin-bottom:9px"><strong>Version 1.570</strong> &mdash; Item Effects added to gear content editor. New "⚙ Item Effects" section below the Bag of Holding checkbox with four fields: (1) Skill Bonus — select a skill + bonus value (e.g. Perception +2); (2) Advantage On — select a skill for advantage on checks; (3) Quest Type Bonus — select a quest type (combat/social/explore/wonder) + bonus value; (4) Counts as Prereq — comma-separated list of prereq names this item satisfies (e.g. "Simple Weapons"); (5) Effect Note — freeform text description of the effect. All fields optional; empty values omitted from saved data. Effect stored on item as item.effect = {skillBonus, advantage, questBonus, prereqAlias[], note}.</div>
         <div style="margin-bottom:9px"><strong>Version 1.569</strong> &mdash; (1) Quest-character-assignment description card: text enlarged from .88em italic light to 1em normal weight with full ink color and 1.55 line-height. (2) Auto-Assign Grind (50 QP) button now renders directly below the "⚙ Grind Missions — repeatable..." header, using the already-computed _canAutoGrind flag in the grind section. Previously the button only appeared above the toggle when all quests were done; it now also appears in its correct position below the header.</div>
@@ -2534,6 +2536,15 @@ body.dev-active #app{margin-top:36px;}
 </div></div>
 
 <!-- SQUAD MANAGER -->
+<!-- SQUAD SWAP MODAL -->
+<div class="ov" id="ov-squad-swap"><div class="modal" style="max-width:420px;padding:0;overflow:hidden;border-radius:12px">
+  <div style="background:linear-gradient(135deg,#1a3a4a,#2a6070);padding:14px 16px 12px;display:flex;align-items:center;justify-content:space-between">
+    <div style="font-family:'Cinzel',serif;font-size:.9em;font-weight:700;color:#fff">⇄ Territory Swap</div>
+    <button id="ov-swap-close" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);border-radius:50%;width:26px;height:26px;color:#fff;cursor:pointer;font-size:.85em;display:flex;align-items:center;justify-content:center">✕</button>
+  </div>
+  <div id="ov-swap-body" style="padding:14px 16px 18px;max-height:70vh;overflow-y:auto"></div>
+</div></div>
+
 <div class="ov" id="ov-squad-mgr" style="z-index:480"><div class="modal" style="max-width:520px;max-height:92vh;display:flex;flex-direction:column;padding:0;overflow:hidden">
   <!-- Header -->
   <div style="padding:10px 14px 8px;border-bottom:1px solid var(--parchment-deep);flex-shrink:0;display:flex;align-items:center;gap:8px">
@@ -2550,6 +2561,11 @@ body.dev-active #app{margin-top:36px;}
   </div>
   <!-- 4×2 squad grid (center) -->
   <div id="sqmgr-grid" style="flex-shrink:0;padding:8px 12px 6px;border-bottom:2px solid var(--parchment-deep);background:rgba(44,26,14,.04)"></div>
+  <!-- Swap zone: drop a character here to trigger inter-squad swap -->
+  <div id="sqmgr-swap-zone" style="flex-shrink:0;padding:6px 12px;border-bottom:1px solid var(--parchment-deep);background:rgba(26,107,138,.04);display:none">
+    <div style="font-family:'Cinzel',serif;font-size:.62em;color:var(--teal);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">⇄ Territory Swap Zone</div>
+    <div id="sqmgr-swap-slots" style="display:flex;gap:6px"></div>
+  </div>
   <!-- Hint bar -->
   <div id="sqmgr-hint" style="flex-shrink:0;padding:3px 12px;font-size:.7em;color:var(--ink-light);font-style:italic;background:rgba(44,26,14,.04);border-bottom:1px solid var(--parchment-deep)">Tap a character, then tap a squad.</div>
   <!-- Scrollable character cards -->
@@ -3761,6 +3777,7 @@ function normalizeSettings(raw){
   if(cfg.qp.costRename===undefined)cfg.qp.costRename=5;
   if(cfg.qp.costHomebrew===undefined)cfg.qp.costHomebrew=50;
   if(cfg.qp.costAutoAssign===undefined)cfg.qp.costAutoAssign=1;
+  if(cfg.qp.costSquadSwap===undefined)cfg.qp.costSquadSwap=10;
   return cfg;
 }
 function applyAccessibilitySettings(){
@@ -9375,6 +9392,7 @@ function openQpManager(){
   document.getElementById('qpm-cost-rename').value=cfg.costRename||5;
   document.getElementById('qpm-cost-homebrew').value=cfg.costHomebrew||50;
   document.getElementById('qpm-cost-auto-assign').value=cfg.costAutoAssign||1;
+  document.getElementById('qpm-cost-squad-swap').value=cfg.costSquadSwap||10;
   qpmRefreshTestPanel();
   document.getElementById('ov-qp-manager').style.display='flex';
 }
@@ -9415,6 +9433,7 @@ document.getElementById('qpm-save').addEventListener('click',function(){
   S.settings.qp.costRename=parseInt(document.getElementById('qpm-cost-rename').value)||5;
   S.settings.qp.costHomebrew=parseInt(document.getElementById('qpm-cost-homebrew').value)||50;
   S.settings.qp.costAutoAssign=parseInt(document.getElementById('qpm-cost-auto-assign').value)||5;
+  S.settings.qp.costSquadSwap=parseInt(document.getElementById('qpm-cost-squad-swap').value)||10;
   save();
   updateQpDisplay();
   var fl=document.getElementById('qpm-flash');
@@ -12829,6 +12848,7 @@ function renderSquadManager(){
   renderSqmgrGrid();
   renderSqmgrRibbons();
   renderSqmgrChars();
+  renderSwapZone();
   updateSqmgrHint();
 }
 
@@ -12863,7 +12883,8 @@ function renderSqmgrGrid(){
         ' style="background:'+col+'">'+
         '<div style="font-size:1.2em;line-height:1">'+ic+'</div>'+
         '<div style="font-size:.62em;font-weight:700;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+esc(sq.name)+'</div>'+
-        '<div class="sqmgr-tile-count" style="font-size:.6em;opacity:.85;margin-top:1px">'+cnt+' / 10</div>'+
+        '<div class="sqmgr-tile-count" style="font-size:.6em;opacity:.85;margin-top:1px">'+cnt+' members · '+squadCoverage(sq).pct+'%</div>'+
+        (squadIsLockedByCycle(sq.name)&&squadTerritory(sq)?'<div style="font-size:.52em;opacity:.7;color:#fff">📍 '+esc(squadTerritory(sq))+'</div>':'')+
         '</div>';
     }).join('')+
   '</div>';
@@ -14659,6 +14680,8 @@ function edShowCycleForm(){
     '<input id="ec-name" type="text" value="'+esc(set.name||'')+'" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
   html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Description / Theme</label>'+
     '<textarea id="ec-theme" rows="2" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);resize:vertical;box-sizing:border-box">'+esc(set.theme||'')+'</textarea></div>';
+  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Territory <span style="font-weight:400;font-family:inherit;text-transform:none;letter-spacing:0;color:var(--ink-light)">(squads in same territory can swap members)</span></label>'+
+    '<input id="ec-territory" type="text" value="'+esc(set.territory||'')+'" placeholder="e.g. Midlands, Coastal Reach, The Deep North" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
   html+='</div>';
   html+='<div style="font-size:.9em;color:var(--ink-light);margin-bottom:14px">Configure prerequisites and gate rules below. These power the Quest Map availability state.</div>';
   html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 20px">';
@@ -14711,6 +14734,8 @@ function edShowCycleForm(){
     var nextMeta=idx>=0?Object.assign({},setMeta[idx]):{id:set.id,name:newName,theme:newTheme,dndTier:set.dndTier,capstoneIdx:set.capstoneIdx};
     nextMeta.name=newName;
     nextMeta.theme=newTheme;
+    nextMeta.territory=(document.getElementById('ec-territory').value||'').trim()||undefined;
+    if(!nextMeta.territory)delete nextMeta.territory;
     nextMeta.cycleGate={
       visibility:document.getElementById('ec-vis').value||'fully_visible',
       requiredCycleSetId:document.getElementById('ec-cycle-pre').value||'',
@@ -16863,6 +16888,238 @@ initSession=function(showStatus){
   Promise.resolve(res).then(function(){ loadContentLibrary(false); });
   return res;
 };
+
+
+// ── Squad Coverage & Territory Swap ─────────────────────────────
+
+function squadCoverage(squad){
+  // Returns {pct, covered, total, detail} — skills/tools/langs/faiths
+  var members=(squad&&squad.memberIdxs||[]).map(function(ci){return S.party[ci];}).filter(Boolean);
+  var allSkills=DND.skills||[];
+  var allTools=(DND.tools||[]).concat(DND.weapons||[]);
+  var allLangs=(DND.lang||[]).filter(function(l){return l!=='Common';});
+  var allFaiths=DND.rel||[];
+  var covSk=allSkills.filter(function(s){return members.some(function(c){return (c.skills||[]).indexOf(s)!==-1;});}).length;
+  var covTl=allTools.filter(function(t){return members.some(function(c){return (c.tools||[]).indexOf(t)!==-1||(c.weapons||[]).indexOf(t)!==-1;});}).length;
+  var covLg=allLangs.filter(function(l){return members.some(function(c){return (c.lang||[]).indexOf(l)!==-1;});}).length;
+  var covFa=allFaiths.filter(function(f){return members.some(function(c){return c.rel===f;});}).length;
+  var total=allSkills.length+allTools.length+allLangs.length+allFaiths.length;
+  var covered=covSk+covTl+covLg+covFa;
+  return {pct:total?Math.round(covered/total*100):0,covered:covered,total:total,
+    detail:{skills:[covSk,allSkills.length],tools:[covTl,allTools.length],langs:[covLg,allLangs.length],faiths:[covFa,allFaiths.length]}};
+}
+
+function squadCoverageWithSwap(squad,addCi,removeCi){
+  // Compute coverage for squad after swapping removeCi out and addCi in
+  var fake={memberIdxs:(squad.memberIdxs||[]).filter(function(ci){return ci!==removeCi;})};
+  if(addCi!==null&&addCi!==undefined)fake.memberIdxs.push(addCi);
+  return squadCoverage(fake);
+}
+
+function squadTerritory(squad){
+  // Find the territory of the cycle this squad is assigned to
+  var map=cycleSquadMap();
+  for(var setId in map){
+    if((map[setId]||'').trim()===squad.name){
+      var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
+      return set&&set.territory?set.territory.trim():'';
+    }
+  }
+  return '';
+}
+
+function squadsInSameTerritory(squad){
+  // Returns other squads assigned to cycles in the same territory (excluding itself)
+  var myTerr=squadTerritory(squad);
+  if(!myTerr)return [];
+  return (S.squads||[]).filter(function(sq){
+    if(sq.name===squad.name)return false;
+    return squadTerritory(sq)===myTerr;
+  });
+}
+
+function generateSwapSuggestions(sq1,sq2){
+  // For each member of sq1 x each member of sq2, compute combined coverage improvement
+  var base1=squadCoverage(sq1).pct;
+  var base2=squadCoverage(sq2).pct;
+  var baseCombined=base1+base2;
+  var suggestions=[];
+  var m1=(sq1.memberIdxs||[]).filter(function(ci){return S.party[ci];});
+  var m2=(sq2.memberIdxs||[]).filter(function(ci){return S.party[ci];});
+  m1.forEach(function(ci1){
+    m2.forEach(function(ci2){
+      var new1=squadCoverageWithSwap(sq1,ci2,ci1).pct;
+      var new2=squadCoverageWithSwap(sq2,ci1,ci2).pct;
+      var delta=(new1+new2)-baseCombined;
+      suggestions.push({ci1:ci1,ci2:ci2,new1:new1,new2:new2,delta:delta});
+    });
+  });
+  suggestions.sort(function(a,b){return b.delta-a.delta;});
+  return suggestions.slice(0,5); // top 5
+}
+
+// State for swap UI
+var _swapSourceCi=null;
+var _swapSourceSqName=null;
+
+function renderSwapZone(){
+  var zone=document.getElementById('sqmgr-swap-zone');
+  var slots=document.getElementById('sqmgr-swap-slots');
+  if(!zone||!slots)return;
+  // Find locked squads in same territory as any other locked squad
+  var lockedSquads=(S.squads||[]).filter(function(sq){return squadIsLockedByCycle(sq.name)&&squadTerritory(sq);});
+  // Group by territory
+  var terrGroups={};
+  lockedSquads.forEach(function(sq){
+    var t=squadTerritory(sq);
+    if(!terrGroups[t])terrGroups[t]=[];
+    terrGroups[t].push(sq);
+  });
+  // Only show zone if at least one territory has 2+ squads
+  var hasSwappable=Object.keys(terrGroups).some(function(t){return terrGroups[t].length>=2;});
+  zone.style.display=hasSwappable?'':'none';
+  if(!hasSwappable)return;
+  // Show a drop-target peg for each territory group
+  var html='';
+  Object.keys(terrGroups).forEach(function(terr){
+    var grp=terrGroups[terr];
+    if(grp.length<2)return;
+    var cov=grp.map(function(sq){return sq.name+': '+squadCoverage(sq).pct+'%';}).join(' · ');
+    html+='<div data-swap-terr="'+esc(terr)+'" style="flex:1;min-width:80px;border:2px dashed var(--teal);border-radius:7px;padding:5px 8px;cursor:pointer;background:rgba(26,107,138,.06);text-align:center">'+
+      '<div style="font-size:.6em;color:var(--teal);font-family:\'Cinzel\',serif;text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px">'+esc(terr)+'</div>'+
+      '<div style="font-size:.55em;color:var(--ink-light)">'+esc(cov)+'</div>'+
+      '<div style="font-size:.7em;margin-top:3px">⇄ Swap</div>'+
+      '</div>';
+  });
+  slots.innerHTML=html;
+  slots.querySelectorAll('[data-swap-terr]').forEach(function(el){
+    el.addEventListener('click',function(){
+      var terr=el.getAttribute('data-swap-terr');
+      // If a char is selected, use them as swap source
+      var ci=sqmgrSelectedChar;
+      if(ci===null){alert('Select a character first, then tap the swap zone.');return;}
+      var c=S.party[ci];if(!c)return;
+      // Find which squad this char is in
+      var charSq=null;
+      (S.squads||[]).forEach(function(sq){if((sq.memberIdxs||[]).indexOf(ci)!==-1)charSq=sq;});
+      if(!charSq||!squadIsLockedByCycle(charSq.name)){alert('Only characters in locked squads can use the swap zone.');return;}
+      if(squadTerritory(charSq)!==terr){alert('This character\'s squad is not in the '+terr+' territory.');return;}
+      _swapSourceCi=ci;
+      _swapSourceSqName=charSq.name;
+      openSwapModal(charSq,terr);
+    });
+  });
+}
+
+function openSwapModal(sq1,terr){
+  var partners=squadsInSameTerritory(sq1);
+  var body=document.getElementById('ov-swap-body');
+  if(!body)return;
+  var swapCost=qpCfg().costSquadSwap||10;
+  var cov1=squadCoverage(sq1);
+  // Build coverage bar HTML
+  function covBar(cov,label,color){
+    return '<div style="margin-bottom:6px">'+
+      '<div style="display:flex;justify-content:space-between;font-size:.72em;margin-bottom:2px">'+
+      '<span style="font-family:\'Cinzel\',serif;color:'+color+'">'+esc(label)+'</span>'+
+      '<span style="color:var(--ink-light)">'+cov.pct+'% ('+cov.covered+'/'+cov.total+')</span>'+
+      '</div>'+
+      '<div style="height:6px;background:rgba(44,26,14,.1);border-radius:3px">'+
+      '<div style="width:'+cov.pct+'%;height:100%;background:'+color+';border-radius:3px;transition:width .3s"></div>'+
+      '</div>'+
+      '<div style="font-size:.58em;color:var(--ink-light);margin-top:1px">'+
+      'Skills '+cov.detail.skills[0]+'/'+cov.detail.skills[1]+
+      ' · Tools '+cov.detail.tools[0]+'/'+cov.detail.tools[1]+
+      ' · Lang '+cov.detail.langs[0]+'/'+cov.detail.langs[1]+
+      ' · Faith '+cov.detail.faiths[0]+'/'+cov.detail.faiths[1]+
+      '</div></div>';
+  }
+  var html='';
+  // Coverage header
+  html+='<div style="margin-bottom:12px">'+
+    '<div style="font-size:.72em;color:var(--ink-light);margin-bottom:6px">Current coverage for squads in <strong>'+esc(terr)+'</strong>:</div>'+
+    covBar(cov1,sq1.name,'var(--teal)');
+  partners.forEach(function(sq2){
+    var cov2=squadCoverage(sq2);
+    html+=covBar(cov2,sq2.name,'var(--forest)');
+  });
+  html+='</div>';
+  // Swapping character
+  var ci=_swapSourceCi;
+  var c=S.party[ci];
+  html+='<div style="background:rgba(26,107,138,.07);border:1px solid rgba(26,107,138,.25);border-radius:7px;padding:8px 10px;margin-bottom:12px">'+
+    '<div style="font-size:.7em;color:var(--teal);margin-bottom:4px;font-family:\'Cinzel\',serif">Swapping out from '+esc(sq1.name)+':</div>'+
+    '<div style="font-size:.88em;font-weight:600">'+esc(c?c.name:'?')+'</div>'+
+    '<div style="font-size:.7em;color:var(--ink-light)">'+(c?esc(c.cls):'')+(c&&c.skills&&c.skills.length?' · '+c.skills.slice(0,3).join(', '):'')+'</div>'+
+    '</div>';
+  // Suggestions per partner squad
+  partners.forEach(function(sq2){
+    var suggestions=generateSwapSuggestions({name:sq1.name,memberIdxs:sq1.memberIdxs},{name:sq2.name,memberIdxs:sq2.memberIdxs});
+    // Filter to swaps involving _swapSourceCi
+    var mySuggestions=suggestions.filter(function(s){return s.ci1===ci||s.ci2===ci;});
+    var cov2=squadCoverage(sq2);
+    html+='<div style="margin-bottom:10px">'+
+      '<div style="font-family:\'Cinzel\',serif;font-size:.72em;color:var(--forest);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Swap with '+esc(sq2.name)+'</div>';
+    if(!mySuggestions.length){
+      html+='<div style="font-size:.78em;color:var(--ink-light);font-style:italic">No swap candidates found.</div>';
+    } else {
+      mySuggestions.slice(0,3).forEach(function(s,idx){
+        var swapCi=s.ci1===ci?s.ci2:s.ci1;
+        var swapC=S.party[swapCi];
+        var delta=s.delta;
+        var deltaColor=delta>0?'var(--forest)':delta<0?'var(--crimson)':'var(--ink-light)';
+        var deltaStr=delta>0?'+'+delta:(delta===0?'±0':String(delta));
+        html+='<div data-swap-ci1="'+ci+'" data-swap-ci2="'+swapCi+'" data-sq1="'+esc(sq1.name)+'" data-sq2="'+esc(sq2.name)+'" '+
+          'style="display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--parchment-deep);border-radius:6px;margin-bottom:5px;cursor:pointer;background:rgba(44,26,14,.02)" class="swap-candidate">'+
+          (idx===0?'<span style="font-size:.7em;background:var(--gold-dark);color:#fff;border-radius:3px;padding:1px 5px;flex-shrink:0">★ Best</span>':'<span style="width:38px;flex-shrink:0"></span>')+
+          '<div style="flex:1;min-width:0">'+
+            '<div style="font-size:.82em;font-weight:600">'+esc(swapC?swapC.name:'?')+'</div>'+
+            '<div style="font-size:.68em;color:var(--ink-light)">'+(swapC?esc(swapC.cls):'')+(swapC&&swapC.skills&&swapC.skills.length?' · '+swapC.skills.slice(0,2).join(', '):'')+'</div>'+
+          '</div>'+
+          '<div style="text-align:right;flex-shrink:0">'+
+            '<div style="font-size:.75em;color:'+deltaColor+';font-weight:700">'+deltaStr+' pts</div>'+
+            '<div style="font-size:.6em;color:var(--ink-light)">combined</div>'+
+          '</div>'+
+          '</div>';
+      });
+    }
+    html+='</div>';
+  });
+  // Cost + confirm
+  html+='<div style="border-top:1px solid var(--parchment-deep);padding-top:10px;display:flex;align-items:center;gap:8px">'+
+    '<div style="flex:1;font-size:.78em;color:var(--ink-light)">Cost: <strong>⚡ '+swapCost+' QP</strong> per swap</div>'+
+    '</div>';
+  body.innerHTML=html;
+  // Wire swap candidate clicks
+  body.querySelectorAll('.swap-candidate').forEach(function(el){
+    el.addEventListener('click',function(){
+      var ci1=parseInt(el.getAttribute('data-swap-ci1'));
+      var ci2=parseInt(el.getAttribute('data-swap-ci2'));
+      var sqn1=el.getAttribute('data-sq1');
+      var sqn2=el.getAttribute('data-sq2');
+      if(!confirm('Swap '+( S.party[ci1]?S.party[ci1].name:'?')+' ⇄ '+(S.party[ci2]?S.party[ci2].name:'?')+'?\n\nCost: '+swapCost+' QP'))return;
+      if(!qpSpend(swapCost,'squad_swap','Territory squad swap'))return;
+      // Perform swap
+      var sq1obj=(S.squads||[]).filter(function(s){return s.name===sqn1;})[0];
+      var sq2obj=(S.squads||[]).filter(function(s){return s.name===sqn2;})[0];
+      if(!sq1obj||!sq2obj){alert('Squad not found.');return;}
+      sq1obj.memberIdxs=(sq1obj.memberIdxs||[]).filter(function(x){return x!==ci1;});
+      sq1obj.memberIdxs.push(ci2);
+      sq2obj.memberIdxs=(sq2obj.memberIdxs||[]).filter(function(x){return x!==ci2;});
+      sq2obj.memberIdxs.push(ci1);
+      logAdd('⇄ Territory swap: '+( S.party[ci1]?S.party[ci1].name:'?')+' ↔ '+(S.party[ci2]?S.party[ci2].name:'?')+' ('+sqn1+' ↔ '+sqn2+')','adv');
+      _swapSourceCi=null;_swapSourceSqName=null;
+      sqmgrSelectedChar=null;
+      save();sbPush(false);
+      closeOv('ov-squad-swap');
+      renderSquadManager();
+      renderParty();
+    });
+  });
+  openOv('ov-squad-swap');
+}
+
+document.getElementById('ov-swap-close').addEventListener('click',function(){closeOv('ov-squad-swap');});
 
 // Run merge on startup
 mergeCustomContent();
