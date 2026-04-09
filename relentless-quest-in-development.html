@@ -1993,7 +1993,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.551
+      Version 1.552
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2018,6 +2018,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.552</strong> &mdash; Grind auto-assign: an ⚡ Auto-Assign (50 QP) button appears in the Grind Missions header when QP is enabled, balance ≥ 50, and at least one squad member is available. Clicking spends 50 QP and greedily assigns available non-busy squad members (from the active cycle's assigned squad, or full party if none assigned) to as many ready/stretch grind missions as possible. Each mission gets the minimum viable roster (1 adventurer or 2 hirelings). Already-in-progress missions and hard overreach missions are skipped. Each assignment is logged. Falls back to an alert if no missions could be filled.</div>
         <div style="margin-bottom:9px"><strong>Version 1.551</strong> &mdash; Dev +1 Day now advances all cycles with assigned squads, not just the active one. Secondary cycle pending quests live in S.questState.setProgress[setId].pending — the handler now iterates all setProgress keys that have a squad assigned in S.questCycleSquads and marks their pending quests as done. The log message reports how many secondary-cycle quests were also completed.</div>
         <div style="margin-bottom:9px"><strong>Version 1.550</strong> &mdash; Five features: (1) Squad manager ribbons show squad-scoped counts when a squad is sorted/selected — format changes to "N/M" (squad count / party total); resets to full-party counts when squad is deselected; ribbon re-renders on squad tile tap. (2) Party screen action bar (Assets/Stats/Recruit) is now position:sticky below the header so it stays visible while scrolling the party list. (3) Faith added as 5th downtime option ("Deepen Faith") — uses WIS modifier, threshold 6, target is any faith the character doesn't already have; on completion sets c.rel to the studied faith and awards "Devotee" badge. (4) "Continue Downtime" button: appears above party list when any characters have in-progress downtime tracks but no active job. Costs 5 QP per character. Prompts for duration in hours, then resumes each character on their most-progressed track. (5) Hireling graduation: class is now auto-selected based on best skill/stat alignment — checks if any existing skill matches a class mandatory skill, otherwise maps best stat to a class (STR→Fighter, DEX→Rogue, CON→Barbarian, INT→Wizard, WIS→Cleric, CHA→Bard).</div>
         <div style="margin-bottom:9px"><strong>Version 1.549</strong> &mdash; Humdrum Arcana visibility confirmed and fixed. Console showed vis=obscured — the old editor used 'obscured' as the value for "Hidden (only appears when met)". v1.547 renamed 'obscured' to mean "show locked state", breaking existing saves. Fix: render check now treats both 'obscured' and 'hidden' as hide-until-met. Editor simplified to two options: Always Visible / Hidden. Debug log removed.</div>
@@ -9924,9 +9925,23 @@ function renderAdv(){
   if(doneCount>=totalQ){
     var gByIdx={};
     (qs.grindPending||[]).forEach(function(gp){gByIdx[gp.id]=gp;});
-    html+='<div style="font-family:\'Cinzel\',serif;font-size:.78em;color:var(--gold-dark);'+
-      'border-top:1px dashed var(--parchment-deep);margin-top:14px;padding-top:10px;margin-bottom:8px">'+
-      '⚙ Grind Missions <span style="font-weight:400;color:var(--ink-light);font-size:.9em">— repeatable, common reward, no expertise gained</span></div>';
+    // Build squad member pool for auto-assign
+    var _grindSquadName=activeCycleSquadName();
+    var _grindSq=_grindSquadName?(S.squads||[]).filter(function(s){return s.name===_grindSquadName;})[0]:null;
+    var _grindBusy={};
+    var _grindNow=Date.now();
+    (qs.pending||[]).forEach(function(pq){if(pq.doneAt>_grindNow)(pq.chars||[]).forEach(function(ci){_grindBusy[ci]=true;});});
+    (qs.grindPending||[]).forEach(function(gp){(gp.chars||[]).forEach(function(ci){_grindBusy[ci]=true;});});
+    (S.downtimeJobs||[]).forEach(function(j){if(j&&j.ci!==undefined&&(j.endsAt||0)>_grindNow)_grindBusy[j.ci]=true;});
+    var _grindAvail=_grindSq
+      ?(_grindSq.memberIdxs||[]).filter(function(ci){return S.party[ci]&&!_grindBusy[ci];})
+      :(S.party||[]).map(function(_,ci){return ci;}).filter(function(ci){return S.party[ci]&&!_grindBusy[ci];});
+    var _canAutoGrind=qpEnabled()&&(S.qpBalance||0)>=50&&_grindAvail.length>0;
+    html+='<div style="display:flex;align-items:center;gap:8px;border-top:1px dashed var(--parchment-deep);margin-top:14px;padding-top:10px;margin-bottom:8px">'+
+      '<div style="font-family:\'Cinzel\',serif;font-size:.78em;color:var(--gold-dark);flex:1">'+
+      '⚙ Grind Missions <span style="font-weight:400;color:var(--ink-light);font-size:.9em">— repeatable, common reward, no expertise gained</span></div>'+
+      (_canAutoGrind?'<button class="btn bpur sm" data-a="grind-auto" style="font-size:.68em;white-space:nowrap">⚡ Auto-Assign (50 QP)</button>':'')+
+      '</div>';
 
     var grindRows=(GRIND||[]).map(function(g){return {g:g, coverage:availableCoverageForQuestLike(g)};});
     if(sortMode==='prereqs'){
@@ -10067,6 +10082,52 @@ document.getElementById('avcontent').addEventListener('click',function(e){
     return;
   }
 
+  var gauto=e.target.closest('[data-a="grind-auto"]');
+  if(gauto){
+    if(!qpSpend(50,'grind_auto_assign','Auto-assigned squad to grind missions'))return;
+    // Get available squad members
+    var _qs2=S.questState;
+    var _sqNm=activeCycleSquadName();
+    var _sq2=_sqNm?(S.squads||[]).filter(function(s){return s.name===_sqNm;})[0]:null;
+    var _busy2={};var _now2=Date.now();
+    (_qs2.pending||[]).forEach(function(pq){if(pq.doneAt>_now2)(pq.chars||[]).forEach(function(ci){_busy2[ci]=true;});});
+    (_qs2.grindPending||[]).forEach(function(gp){(gp.chars||[]).forEach(function(ci){_busy2[ci]=true;});});
+    (S.downtimeJobs||[]).forEach(function(j){if(j&&j.ci!==undefined&&(j.endsAt||0)>_now2)_busy2[j.ci]=true;});
+    var _avail2=_sq2
+      ?(_sq2.memberIdxs||[]).filter(function(ci){return S.party[ci]&&!_busy2[ci];})
+      :(S.party||[]).map(function(_,ci){return ci;}).filter(function(ci){return S.party[ci]&&!_busy2[ci];});
+    // Try each grind mission — assign if roster is valid
+    var _assigned=0;
+    if(!_qs2.grindPending)_qs2.grindPending=[];
+    (GRIND||[]).forEach(function(g){
+      if(_avail2.length<1)return;
+      // Skip already in progress
+      if((_qs2.grindPending||[]).some(function(gp){return gp.id===g.id;}))return;
+      // Try with all available chars, then pairs, then singles
+      var roster=grindRosterStatus(_avail2);
+      if(!roster.ok)return;
+      // Check prereqs — use available pool
+      var missing=questPrereqCheck(g,_avail2);
+      if(missing.length>2)return; // skip hard overreach
+      // Assign: use minimum viable roster (1 qualified, or 2 hirelings)
+      var _toAssign=[];
+      var _nonHire=_avail2.filter(function(ci){return !S.party[ci].hireling;});
+      var _hire=_avail2.filter(function(ci){return S.party[ci].hireling;});
+      if(_nonHire.length>=1)_toAssign=[_nonHire[0]];
+      else if(_hire.length>=2)_toAssign=[_hire[0],_hire[1]];
+      else return;
+      var _reward=grindCalcReward(g);
+      _qs2.grindPending.push({id:g.id,title:g.title,chars:_toAssign,squadName:_sqNm||'',reward:_reward,doneAt:_now2+questDuration(g)});
+      // Remove assigned chars from available pool
+      _toAssign.forEach(function(ci){_avail2=_avail2.filter(function(x){return x!==ci;});_busy2[ci]=true;});
+      logAdd('⚡ Auto-grind: "'+g.title+'" started — '+_toAssign.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', '),'adv');
+      _assigned++;
+    });
+    saveActiveSetProgress();
+    save();renderAdv();
+    if(!_assigned)alert('No grind missions could be auto-assigned with the available squad members.');
+    return;
+  }
   var gc=e.target.closest('[data-a="gcollect"]');
   if(gc){
     var gid=gc.getAttribute('data-gid');
