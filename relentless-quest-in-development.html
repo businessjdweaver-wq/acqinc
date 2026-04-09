@@ -2010,7 +2010,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.554
+      Version 1.555
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2035,6 +2035,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.555</strong> &mdash; Dashboard cards two fixes: (1) New Card button was broken — _customDashCards was missing from CONTENT_LIST_MAP (mapped to 'dashCards') and dashCards was not initialized in CONTENT_LIB buckets. getDashboardCards() now reads from bucket.dashCards via contentBucket(). saveCustom/contentItemsForScope now work correctly for dashboard cards. (2) Auto-create card from capstone reward: when a quest editor capstone reward (item/pet/npc) is saved, _autoCreateDashCard() runs and upserts a matching card into the dashboard with pre-filled icon, name, description, and gradient colors matching the reward type (purple for artifacts, green for pets, teal for NPCs). Card id is dc_cap_{setId}_{questIdx} so re-saves update rather than duplicate.</div>
         <div style="margin-bottom:9px"><strong>Version 1.554</strong> &mdash; Franchise Dashboard: the 📜 Log button on the quest screen now opens a Pinterest-style 3-column card grid overlay. First card is the Quartermaster (gold earned/franchise/party totals; tap to expand full quest log inline). Subsequent cards: any capstone artifact rewards in partyAssets, then custom cards from the editor. Custom cards support icon picker (30 emojis), 3 color pickers with live gradient preview, and a description field. A new 🃏 Cards tab in the Content Editor lets you create/edit/delete these cards. Card data stored in _customDashCards per scope. Card text color auto-selected based on primary color luminance.</div>
         <div style="margin-bottom:9px"><strong>Version 1.553</strong> &mdash; Two fixes: (1) Auto-assign grind button moved to appear between the quest collapse toggle and the Grind Missions header — only shown when all quests are done and QP balance ≥ 50; removed from grind header row. (2) Store footer completely rebuilt as a 2×2 CSS grid: top row Gear | Pets, bottom row Assets | Magic. Sub-drawers for Gear (⚔/🛡/🎒/🧰), Assets (Mounts/Buildings), Magic (Common/Rare) still animate up. Pets has no sub-drawer. store-tabs CSS changed from flex to grid. pointer-events:all on footer directly. Drawer open check simplified to storeTab===t.</div>
         <div style="margin-bottom:9px"><strong>Version 1.552</strong> &mdash; Grind auto-assign: an ⚡ Auto-Assign (50 QP) button appears in the Grind Missions header when QP is enabled, balance ≥ 50, and at least one squad member is available. Clicking spends 50 QP and greedily assigns available non-busy squad members (from the active cycle's assigned squad, or full party if none assigned) to as many ready/stretch grind missions as possible. Each mission gets the minimum viable roster (1 adventurer or 2 hirelings). Already-in-progress missions and hard overreach missions are skipped. Each assignment is logged. Falls back to an alert if no missions could be filled.</div>
@@ -13747,9 +13748,9 @@ function wireMacroPanel(){
 
 // Shared content library stored in Supabase content_items
 var CONTENT_LIB={
-  official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},
-  shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},
-  private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]}
+  official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[]},
+  shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[]},
+  private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[]}
 };
 var CONTENT_TYPE_MAP={
   _customQuestSets:'quest_set',
@@ -13767,7 +13768,8 @@ var CONTENT_LIST_MAP={
   _customGear:'gear',
   _customVehicles:'vehicles',
   _customBuildings:'buildings',
-  _customPets:'pets'
+  _customPets:'pets',
+  _customDashCards:'dashCards'
 };
 
 function normalizeContentScope(v){
@@ -13930,7 +13932,7 @@ function loadContentLibrary(manual){
     return Promise.resolve(false);
   }
   return sbGet('content_items','select=*').then(function(rows){
-    CONTENT_LIB={official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]}};
+    CONTENT_LIB={official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[]},shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[]},private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[]}};
     (rows||[]).forEach(function(row){
       var scope=normalizeContentScope(row.visibility);
       var listKey =
@@ -14000,9 +14002,9 @@ function saveCustom(key,arr,scope){
 function mergeCustomContent(){
   if(!CONTENT_LIB||!CONTENT_LIB.official){
     CONTENT_LIB={
-      official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},
-      shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]},
-      private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[]}
+      official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[]},
+      shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[]},
+      private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[]}
     };
   }
   QUESTSETS=clone(BUILTIN_QUESTSETS);
@@ -14047,9 +14049,9 @@ function mergeCustomContent(){
     });
   });
 
-  // Merge dashboard cards
+  // Merge dashboard cards into bucket.dashCards
   ['official','shared','private'].forEach(function(scope){
-    if(!CONTENT_LIB[scope]._customDashCards)CONTENT_LIB[scope]._customDashCards=[];
+    CONTENT_LIB[scope].dashCards=clone(CONTENT_LIB[scope].dashCards||[]);
   });
 
   // Build allQuests with deduplication: private overrides shared overrides official.
@@ -15061,6 +15063,10 @@ function edShowQuestForm(){
       edSelected={type:'quest',setId:newQ.setId,idx:newQ.idx};
       edRenderList();
       edShowQuestForm();
+      // Auto-create dashboard card from capstone reward if set
+      if(newQ.capstoneReward&&newQ.capstoneReward.type&&newQ.capstoneReward.type!=='random'){
+        _autoCreateDashCard(newQ,targetScope);
+      }
     }).catch(function(err){
       alert('Quest save failed: '+(err&&err.message?err.message:err));
     });
@@ -16621,10 +16627,12 @@ updateQpDisplay();
 document.getElementById('ov-dashboard-close').addEventListener('click',function(){closeOv('ov-dashboard');});
 
 function getDashboardCards(){
-  // Custom cards from content library
-  var cards=[];
+  var seen={};var cards=[];
   ['official','shared','private'].forEach(function(scope){
-    ((CONTENT_LIB[scope]||{}).dashCards||[]).forEach(function(c){if(c&&c.id)cards.push(c);});
+    var bucket=contentBucket(scope);
+    (bucket.dashCards||[]).forEach(function(c){
+      if(c&&c.id&&!seen[c.id]){seen[c.id]=true;cards.push(c);}
+    });
   });
   return cards;
 }
@@ -16865,6 +16873,42 @@ function renderDashboardEditor(){
     edSelected=null;
     renderDashboardEditor();
   });
+}
+
+
+// Auto-create a dashboard card from a capstone reward definition
+function _autoCreateDashCard(quest,scope){
+  var cr=quest.capstoneReward;
+  if(!cr||!cr.type||cr.type==='random')return;
+  var cardId='dc_cap_'+quest.setId+'_'+quest.idx;
+  // Build card fields based on reward type
+  var ic='🃏',name='',desc='',colors=[];
+  if(cr.type==='item'){
+    ic=cr.ic||'✨';
+    name=cr.name||'Artifact';
+    desc=cr.desc||'';
+    colors=['#3a1f5c','#6a3fa0','#9060c0'];
+  }else if(cr.type==='pet'){
+    ic=cr.ic||'🐾';
+    name=cr.name||'Companion';
+    desc=cr.desc||'';
+    colors=['#1a4a2a','#2e7a45','#40a060'];
+  }else if(cr.type==='npc'){
+    ic='🤝';
+    name=cr.name||'Contact';
+    desc=cr.contactBg||cr.bg||'';
+    colors=['#1a3a4a','#2a6070','#3a8090'];
+  }
+  var newCard={id:cardId,name:name,ic:ic,desc:desc,colors:colors,_fromCapstone:true};
+  var useScope=normalizeContentScope(scope)||'private';
+  var bucket=contentBucket(useScope);
+  var cards=clone(bucket.dashCards||[]);
+  // Replace existing card with same id, or append
+  var idx=-1;
+  for(var i=0;i<cards.length;i++){if(cards[i].id===cardId){idx=i;break;}}
+  if(idx>=0)cards[idx]=newCard;else cards.push(newCard);
+  saveCustom('_customDashCards',cards,useScope);
+  mergeCustomContent();
 }
 
 
