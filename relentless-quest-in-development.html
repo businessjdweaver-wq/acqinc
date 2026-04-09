@@ -1992,7 +1992,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.545
+      Version 1.546
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2017,6 +2017,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.546</strong> &mdash; Six fixes: (1) Store footer: pointer-events:all on footer directly (not on children); nav height uses rAF retry loop until nav.offsetHeight is non-zero, fixing mobile tab bar positioning. (2) Squad manager target icons moved from card corner to individual skill/tool/lang/faith tags — a 🎯 appears as a superscript on each specific attribute the unassigned character has that the focused squad currently lacks. (3) QP balance hidden when zero — updateQpDisplay() hides hdr-qp-side and divider when bal===0, same as when QP is disabled. (4) EXOTIC_TOOLS: Poisoner's Kit and Cobbler's Tools replaced with Cartographer's Tools and Navigator's Tools. (5) Downtime badges styled to match XP badges: same border, border-radius, padding, font-size, and font-family; teal color. (6) Downtime badge dialog matches XP format: progress bars per track, percentage fill, all earned badges listed at bottom.</div>
         <div style="margin-bottom:9px"><strong>Version 1.545</strong> &mdash; (1) Squad manager target icons: when a squad is sorted/focused via the ribbon, unassigned characters who cover at least one attribute the squad lacks get a 🎯 icon in the top-right corner of their card. Hovering shows a tooltip listing the specific gap skills/tools/languages/faith. The icon only appears for unassigned characters (those in another squad are excluded). (2) Party screen "Available" filter button added to the action bar — filters to characters not currently on an active quest or grind mission, i.e. those who can use Downtime. Button toggles (active state shown in green); clears if clicked again. Uses __not_questing__ tag key via charHasTag.</div>
         <div style="margin-bottom:9px"><strong>Version 1.544</strong> &mdash; Six fixes for character 33 test: (1) Store mobile — store-content gets min-height:0 and -webkit-overflow-scrolling:touch so all tabs scroll correctly on mobile. (2) Gear sub-tabs changed from 3 price-based (1–4/5–10/11+) to 4 themed categories: ⚔ Weapons, 🛡 Armor, 🎒 Gear, 🧰 Kits (includes ADVENTURING_GEAR items). (3) Quest-character-assignment carousel arrows repositioned: absolute-positioned on sides of the viewport at vertical center (top:50%/translateY); viewports get margin:0 30-32px to create space. (4) GP display given border-radius:20px to match the QP pill shape. (5) Building assign dropdown: already excluded for non-artifact assets by canAssignReward flag — no change needed. (6) Bag of Holding recognition fixed with _isBagOfHolding() fuzzy helper checking name.includes('bag')&&name.includes('holding') — handles custom-named variants like "Longinus' Carpetbag of Holding". Capstone reward stores item under its actual name in franchiseStorage. Both openSquadNew and sqSave use the helper.</div>
         <div style="margin-bottom:9px"><strong>Version 1.543</strong> &mdash; Two fixes: (1) Task pie (pct) now persists: pct field added to active_tasks Supabase push row and restored on pull. Requires ALTER TABLE active_tasks ADD COLUMN IF NOT EXISTS pct integer NOT NULL DEFAULT 0 (already run). (2) Capstone Bag of Holding persistence fixed: the bag was awarded to S.partyAssets in memory but the Supabase push may not have completed before the next pull overwrote it. Fix: Bag of Holding is now also added to S.franchiseStorage (string entry) as a durable fallback that travels in the franchise row. awardCapstonReward now calls save() and schedules an explicit sbPush(false) 200ms after the alert is dismissed to guarantee the bag reaches Supabase before any reload.</div>
@@ -3377,7 +3378,7 @@ var CAPSTONE_REWARDS={
 // Exotic traits for NPC contacts
 var EXOTIC_LANG=['Terran','Aquan','Ignan','Auran','Druidic','Slaad','Modron','Yikaria'];
 var EXOTIC_REL=['The Traveler','The Keeper of the Eternal Flame','The Scaled God','The Dreaming Dark'];
-var EXOTIC_TOOLS=['Poisoner\'s Kit','Forgery Kit','Glassblower\'s Tools','Jeweler\'s Tools','Cobbler\'s Tools'];
+var EXOTIC_TOOLS=['Forgery Kit','Glassblower\'s Tools','Jeweler\'s Tools','Cartographer\'s Tools','Navigator\'s Tools'];
 var CONTACT_BG=[
   'A reformed fence with connections in the thieves\' guild.',
   'A wandering herbalist who speaks the old elemental tongues.',
@@ -4332,22 +4333,20 @@ function updateQpDisplay(){
   var el=document.getElementById('qp-balance-disp');
   if(!el)return;
   if(!qpEnabled()){el.style.display='none';return;}
-  var bal=S.qpBalance||0;
+  var bal=typeof S.qpBalance==='number'?S.qpBalance:0;
   el.textContent=bal;
-  // Show QP side of switch only when QP enabled
   var qpSide=document.getElementById('hdr-qp-side');
   var div=document.getElementById('hdr-sw-divider');
-  if(!qpEnabled()){
+  // Hide QP pill entirely when disabled OR balance is zero
+  if(!qpEnabled()||bal===0){
     if(qpSide)qpSide.style.display='none';
     if(div)div.style.display='none';
     _hdrShowingQp=false;
   } else {
-    // QP enabled — QP side shown only when user has toggled or earned first QP
+    // QP enabled and non-zero — show QP side when toggled or earned
     if(_hdrShowingQp){
-      var qpSide2=document.getElementById('hdr-qp-side');
-      var div2=document.getElementById('hdr-sw-divider');
-      if(qpSide2)qpSide2.style.display='';
-      if(div2)div2.style.display='';
+      if(qpSide)qpSide.style.display='';
+      if(div)div.style.display='';
     }
   }
 }
@@ -6128,9 +6127,9 @@ function charCardHtml(c,ci,opts){
         }
       });
       var dtBadges=(c.downtimeBadges||[]).map(function(db){
-        return '<button class="xp-badge-btn dt-badge" data-a="dt-badge" data-ci="'+ci+'" data-badge="'+esc(db)+'" style="display:block;margin-top:3px;background:none;cursor:pointer;text-align:left">🕯 '+esc(db)+'</button>';
+        return '<button class="xp-badge-btn" data-a="dt-badge" data-ci="'+ci+'" data-badge="'+esc(db)+'" style="display:block;margin-top:3px;background:none;border:1px solid rgba(26,107,138,.35);border-radius:6px;padding:2px 7px;font-size:.68em;color:var(--teal);cursor:pointer;text-align:left;font-family:inherit">🕯 '+esc(db)+'</button>';
       }).join('');
-      return (badges.length||dtBadges)?'<div>'+badges.join('')+(dtBadges?'<div class="pills" style="margin-top:4px">'+dtBadges+'</div>':'')+'</div>':'';
+      return (badges.length||dtBadges)?'<div>'+badges.join('')+(dtBadges?'<div style="margin-top:2px">'+dtBadges+'</div>':'')+'</div>':'';
     }())+
     '<div class="cmeta">'+(filtered?esc(c.cls):(esc(c.species)+' '+esc(c.cls)+' · '+esc(c.bg)))+'</div>'+
     '<div class="clvl">'+('Level '+c.level)+(filtered?'':(' · '+c.age+' yrs · '+esc(c.height)+' · '+esc(c.weight)))+'</div>'+
@@ -6790,20 +6789,35 @@ document.getElementById('plist').addEventListener('click',function(e){
     var bc2=S.party[ci];
     if(!bc2)return;
     var progressMap=bc2.dtProgress||{};
+    var allBadges=bc2.downtimeBadges||[];
+    // Build progress track rows matching XP badge format
     var rows=Object.keys(progressMap).filter(function(k){return (progressMap[k]||0)>0;}).map(function(k){
       var parts=k.split(':');
       var type=parts[0]||'';
       var target=parts.slice(1).join(':')||'core';
       var threshold=(type==='contacts'?6:(type==='intel'?5:8));
-      return '<div style="margin-bottom:4px">• '+esc(downtimeTrackLabel(type,target))+' — <strong>'+progressMap[k]+' / '+threshold+'</strong></div>';
+      var prog=progressMap[k]||0;
+      var pct=Math.min(100,Math.round(prog/threshold*100));
+      return '<div style="margin-bottom:8px">'+
+        '<div style="font-size:.82em;color:var(--teal);font-family:\'Cinzel\',serif;margin-bottom:3px">'+esc(downtimeTrackLabel(type,target))+'</div>'+
+        '<div style="font-size:.88em;margin-bottom:4px">'+prog+' / '+threshold+' progress points</div>'+
+        '<div style="height:6px;background:rgba(44,26,14,.1);border-radius:3px">'+
+        '<div style="width:'+pct+'%;height:100%;background:var(--teal);border-radius:3px"></div>'+
+        '</div></div>';
     });
     document.getElementById('ov-xp-title').textContent='🕯 '+dtBadgeName;
     document.getElementById('ov-xp-body').innerHTML=
       '<div style="font-family:\'Cinzel\',serif;font-size:.82em;color:var(--ink-light);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">'+esc(bc2.name)+' · Downtime</div>'+
-      '<div style="margin-bottom:10px">Downtime badges mark major progress milestones earned through off-quest training and research.</div>'+
+      '<div style="margin-bottom:10px">Downtime badges mark major milestones earned through off-quest training and research.</div>'+
       (rows.length
-        ?'<div style="background:rgba(26,107,138,.09);border:1px solid rgba(26,107,138,.38);border-radius:6px;padding:8px 10px"><div style="font-size:.82em;color:var(--teal);font-family:\'Cinzel\',serif;margin-bottom:6px">Active progress tracks</div>'+rows.join('')+'</div>'
-        :'<div style="color:var(--ink-light)">No active downtime progress currently tracked.</div>');
+        ?'<div style="background:rgba(26,107,138,.09);border:1px solid rgba(26,107,138,.38);border-radius:6px;padding:8px 10px">'+rows.join('')+'</div>'
+        :'<div style="color:var(--ink-light);font-size:.9em">No active downtime progress currently tracked.</div>')+
+      (allBadges.length>1
+        ?'<div style="margin-top:10px;font-size:.82em;color:var(--ink-light)">All earned badges: '+allBadges.map(function(bd){
+          var earned=true;
+          return '<span style="color:var(--teal)">✓ '+esc(bd)+'</span>';
+        }).join(' · ')+'</div>'
+        :'');
     openOv('ov-xpbadge');
   } else if(a==='lv'){
     if(window._recentModalClose&&Date.now()-window._recentModalClose<400)return;
@@ -10804,12 +10818,16 @@ function buildStock(){
 
 function renderStore(){
   var el=document.getElementById('slist');if(!el)return;
-  // Position footer directly above nav
+  // Position footer directly above nav — rAF retry until nav has height
   var _footer=document.getElementById('store-footer');
-  var _nav=document.getElementById('nav');
-  if(_footer&&_nav){
-    _footer.style.bottom=_nav.offsetHeight+'px';
-  }
+  (function _posFooter(){
+    var _nav=document.getElementById('nav');
+    if(_nav&&_nav.offsetHeight>0){
+      if(_footer)_footer.style.bottom=_nav.offsetHeight+'px';
+    } else {
+      requestAnimationFrame(_posFooter);
+    }
+  }());
   // Adjust scroll spacer to clear footer
   var _spacer=document.getElementById('store-scroll-spacer');
   if(_footer&&_spacer){
@@ -12796,21 +12814,33 @@ function renderSqmgrChars(){
         return '<span class="sqmgr-skill-tag" style="'+(hi?'background:rgba(255,255,255,.45);font-weight:700;':'')+'">'+esc(t)+'</span>';
       }).join('');
     } else {
-      // No filter: show all skills
+      // No filter: show all skills with 🎯 on gap attributes
       tagHtml=(c.skills||[]).map(function(s){
-        return '<span class="sqmgr-skill-tag">'+esc(s)+'</span>';
+        var isGapSkill=!!_gapSet[s];
+        return '<span class="sqmgr-skill-tag" style="'+(isGapSkill?'position:relative;padding-right:14px;':'')+'">'+esc(s)+(isGapSkill?'<span style="position:absolute;top:-3px;right:1px;font-size:.65em">🎯</span>':'')+'</span>';
       }).join('');
+      // Also tag tools, langs, faith gaps
+      if(_unassigned&&_focusSq){
+        tagHtml+=(c.tools||[]).filter(function(t){return !!_gapSet[t];}).map(function(t){
+          return '<span class="sqmgr-skill-tag" style="position:relative;padding-right:14px">'+esc(t)+'<span style="position:absolute;top:-3px;right:1px;font-size:.65em">🎯</span></span>';
+        }).join('');
+        tagHtml+=(c.lang||[]).filter(function(l){return !!_gapSet[l];}).map(function(l){
+          return '<span class="sqmgr-skill-tag" style="position:relative;padding-right:14px">🗣 '+esc(l)+'<span style="position:absolute;top:-3px;right:1px;font-size:.65em">🎯</span></span>';
+        }).join('');
+        if(c.rel&&_gapSet['🙏 '+c.rel]){
+          tagHtml+='<span class="sqmgr-skill-tag" style="position:relative;padding-right:14px">🙏 '+esc(c.rel)+'<span style="position:absolute;top:-3px;right:1px;font-size:.65em">🎯</span></span>';
+        }
+      }
     }
-    // Target icon: show on unassigned chars that cover a gap in the focused squad
+    // Track which attributes this unassigned char covers that the squad lacks
     var _unassigned=sqi===-1;
-    var _gaps=(_unassigned&&_focusSq)?_gapTags(c):[];
-    var _gapTitle='Fills squad gap: '+_gaps.slice(0,3).map(esc).join(', ')+(_gaps.length>3?'…':'');
-    var _targetHtml=_gaps.length
-      ?'<div title="'+_gapTitle+'" style="position:absolute;top:4px;right:4px;font-size:.8em;cursor:help">🎯</div>'
-      :'';
+    var _gapSet={};
+    if(_unassigned&&_focusSq){
+      _gapTags(c).forEach(function(g){_gapSet[g]=true;});
+    }
     return '<div class="sqmgr-char-card'+(isSelected?' sqmgr-char-sel':'')+'" data-sqmgr-char="'+ci+'"'+
-      ' style="background:'+col+';color:'+textCol+';position:relative">'+
-      _targetHtml+
+      ' style="background:'+col+';color:'+textCol+'">'+
+      /* no corner target */
       (ic?'<div class="sqmgr-char-badge">'+ic+'</div>':'')+
       '<div style="flex:1;min-width:0">'+
         '<div class="sqmgr-char-name">'+esc(c.name)+'</div>'+
