@@ -2024,7 +2024,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.570
+      Version 1.571
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2049,6 +2049,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.571</strong> &mdash; Comprehensive item effects editor. Replaced 5-field effect section with full structured system organized into 5 groups: (1) Prerequisite Overrides: overcome terrain, count as skill/tool/language/faith/item prereq. (2) Stat Modifiers: bonus to base stat (STR-CHA), skill check bonus, advantage on skill, level cap bonus, encumbrance bonus. (3) Proficiencies while carried: grant skill/tool/language/weapon proficiency. (4) Franchise/Economic: passive gold per reset, quest gold % bonus, hire cost reduction %, squad size max bonus. (5) Quest/Progression: quest type gold bonus, XP track bonus, QP multiplier, quest duration reduction %. (6) Logistical: unlock terrain type, unlock quest cycle (dropdown of all QUESTSETS), freeform note. All fields optional; empty values omitted from saved effect object.</div>
         <div style="margin-bottom:9px"><strong>Version 1.570</strong> &mdash; Item Effects added to gear content editor. New "⚙ Item Effects" section below the Bag of Holding checkbox with four fields: (1) Skill Bonus — select a skill + bonus value (e.g. Perception +2); (2) Advantage On — select a skill for advantage on checks; (3) Quest Type Bonus — select a quest type (combat/social/explore/wonder) + bonus value; (4) Counts as Prereq — comma-separated list of prereq names this item satisfies (e.g. "Simple Weapons"); (5) Effect Note — freeform text description of the effect. All fields optional; empty values omitted from saved data. Effect stored on item as item.effect = {skillBonus, advantage, questBonus, prereqAlias[], note}.</div>
         <div style="margin-bottom:9px"><strong>Version 1.569</strong> &mdash; (1) Quest-character-assignment description card: text enlarged from .88em italic light to 1em normal weight with full ink color and 1.55 line-height. (2) Auto-Assign Grind (50 QP) button now renders directly below the "⚙ Grind Missions — repeatable..." header, using the already-computed _canAutoGrind flag in the grind section. Previously the button only appeared above the toggle when all quests were done; it now also appears in its correct position below the header.</div>
         <div style="margin-bottom:9px"><strong>Version 1.568</strong> &mdash; Two fixes: (1) Manage Squads button now disabled (with tooltip) when no squads exist. (2) _capstoneCardEarned now treats any card with a dc_cap_ ID as a capstone card regardless of whether _fromCapstone is present — older cards saved before that field existed (like the Rope of Climbing with id dc_cap_rising-reputation_9) were missing the flag and showing unconditionally. SQL needed to backfill existing rows: UPDATE content_items SET data = data || '{"_fromCapstone":true}' WHERE content_type='dashboard_card' AND data->>'id' LIKE 'dc_cap_%' AND data->>'_fromCapstone' IS NULL;</div>
@@ -15298,34 +15299,91 @@ function edShowGearForm(){
     '<input id="ef-iwt" type="number" min="0" step="0.5" value="'+(g?g.wt:1)+'" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box"></div>';
   html+='</div>';
   html+='<div style="margin-top:16px"><label style="display:flex;align-items:center;gap:8px;font-size:.95em;cursor:pointer"><input type="checkbox" id="ef-ibag"'+(g&&g.bagOfHolding?' checked':'')+' style="width:1.3em;height:1.3em"> Bag of Holding (items inside are weightless)</label></div>';
-  // ── Effect section ──
+  // ── Comprehensive Effect section ──
   var eff=g&&g.effect?g.effect:{};
-  var questTypesEff=['combat','social','explore','wonder'];
-  var allSkillsEff=(DND&&DND.skills)||[];
+  var _sk=(DND&&DND.skills)||[];
+  var _tl=(DND&&DND.tools)||[];
+  var _wp=(DND&&DND.weapons)||[];
+  var _lg=(DND&&DND.lang)||[];
+  var _rl=(DND&&DND.rel)||[];
+  var _stats=['STR','DEX','CON','INT','WIS','CHA'];
+  var _qtypes=['combat','social','explore','wonder'];
+  var _xptracks=['combat','social','explore','wonder'];
+  var _terrains=['mountain','forest','coastal','arctic','desert','swamp','urban','underdark'];
+  var _cycleOpts=(QUESTSETS||[]).map(function(s){return '<option value="'+esc(s.id)+'"'+((eff.unlockCycle||'')=== s.id?' selected':'')+'>'+esc(s.name)+'</option>';}).join('');
+  function _eRow(label,content){
+    return '<div style="margin-bottom:10px"><label style="display:block;font-family:\'Cinzel\',serif;font-size:.68em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">'+label+'</label>'+content+'</div>';
+  }
+  function _sel(id,opts,val){
+    return '<select id="'+id+'" style="width:100%;padding:6px 8px;font-size:.85em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)"><option value="">(none)</option>'+opts+'</select>';
+  }
+  function _num(id,val,min,max){
+    min=min||0;max=max||99;
+    return '<input id="'+id+'" type="number" min="'+min+'" max="'+max+'" value="'+val+'" style="width:70px;padding:6px;font-size:.85em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">';
+  }
+  function _txt(id,val,ph){
+    return '<input id="'+id+'" type="text" value="'+esc(val)+'" placeholder="'+esc(ph||'')+'" style="width:100%;padding:6px 8px;font-size:.85em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box">';
+  }
+  function _selNum(selId,selOpts,selVal,numId,numVal,numMax){
+    return '<div style="display:grid;grid-template-columns:1fr 70px;gap:6px">'+_sel(selId,selOpts,selVal)+_num(numId,numVal,0,numMax||10)+'</div>';
+  }
   html+='<div style="margin-top:20px;border-top:1px solid var(--parchment-deep);padding-top:16px">';
-  html+='<div style="font-family:\'Cinzel\',serif;font-size:.78em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:12px">⚙ Item Effects</div>';
-  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 24px">';
-  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Skill Bonus</label>';
-  html+='<div style="display:grid;grid-template-columns:1fr 56px;gap:6px">';
-  html+='<select id="ef-eff-skill" style="padding:7px 10px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)"><option value="">(none)</option>'+allSkillsEff.map(function(s){return '<option value="'+esc(s)+'"'+(eff.skillBonus&&eff.skillBonus.skill===s?' selected':'')+'>'+esc(s)+'</option>';}).join('')+'</select>';
-  html+='<input id="ef-eff-skill-val" type="number" min="1" max="10" value="'+(eff.skillBonus?eff.skillBonus.bonus:2)+'" placeholder="+" style="padding:7px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">';
-  html+='</div></div>';
-  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Advantage On</label>';
-  html+='<select id="ef-eff-adv" style="width:100%;padding:7px 10px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)"><option value="">(none)</option>'+allSkillsEff.map(function(s){return '<option value="'+esc(s)+'"'+((eff.advantage||'')===s?' selected':'')+'>'+esc(s)+'</option>';}).join('')+'</select>';
+  html+='<div style="font-family:\'Cinzel\',serif;font-size:.78em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px">⚙ Item Effects</div>';
+  // -- Prerequisite / Gate overrides --
+  html+='<div style="font-size:.68em;color:var(--ink-light);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;margin-top:4px">Prerequisite Overrides</div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 20px">';
+  html+=_eRow('Overcome Terrain',_sel('ef-eff-terrain',_terrains.map(function(t){return '<option value="'+t+'"'+((eff.overcomeTerrain||'')=== t?' selected':'')+'>'+t+'</option>';}).join('')));
+  html+=_eRow('Counts as Skill Prereq',_sel('ef-eff-pre-skill',_sk.map(function(s){return '<option value="'+s+'"'+((eff.prereqSkill||'')=== s?' selected':'')+'>'+s+'</option>';}).join('')));
+  html+=_eRow('Counts as Tool Prereq',_sel('ef-eff-pre-tool',_tl.concat(_wp).map(function(t){return '<option value="'+t+'"'+((eff.prereqTool||'')=== t?' selected':'')+'>'+t+'</option>';}).join('')));
+  html+=_eRow('Counts as Language Prereq',_sel('ef-eff-pre-lang',_lg.map(function(l){return '<option value="'+l+'"'+((eff.prereqLang||'')=== l?' selected':'')+'>'+l+'</option>';}).join('')));
+  html+=_eRow('Counts as Faith Prereq',_sel('ef-eff-pre-rel',_rl.map(function(r){return '<option value="'+r+'"'+((eff.prereqRel||'')=== r?' selected':'')+'>'+r+'</option>';}).join('')));
+  html+=_eRow('Counts as Item Prereq (name)',_txt('ef-eff-pre-item',eff.prereqItem||'','e.g. Diving Bell'));
   html+='</div>';
-  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Quest Type Bonus</label>';
-  html+='<div style="display:grid;grid-template-columns:1fr 56px;gap:6px">';
-  html+='<select id="ef-eff-qtype" style="padding:7px 10px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)"><option value="">(none)</option>'+questTypesEff.map(function(t){return '<option value="'+t+'"'+(eff.questBonus&&eff.questBonus.type===t?' selected':'')+'>'+t+'</option>';}).join('')+'</select>';
-  html+='<input id="ef-eff-qtype-val" type="number" min="1" max="5" value="'+(eff.questBonus?eff.questBonus.bonus:1)+'" placeholder="+" style="padding:7px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">';
-  html+='</div></div>';
-  html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Counts as Prereq</label>';
-  html+='<input id="ef-eff-alias" type="text" value="'+esc((eff.prereqAlias||[]).join(', '))+'" placeholder="e.g. Simple Weapons" style="width:100%;padding:7px 10px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box">';
+  // -- Stat modifiers --
+  html+='<div style="font-size:.68em;color:var(--ink-light);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;margin-top:10px">Stat Modifiers (while equipped)</div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 20px">';
+  html+=_eRow('Bonus to Base Stat',_selNum('ef-eff-stat',_stats.map(function(s){return '<option value="'+s+'"'+((eff.statBonus&&eff.statBonus.stat===s)?' selected':'')+'>'+s+'</option>';}).join(''),'',
+    'ef-eff-stat-val',eff.statBonus?eff.statBonus.bonus:1,10));
+  html+=_eRow('Bonus to Skill Check',_selNum('ef-eff-skill',_sk.map(function(s){return '<option value="'+s+'"'+(eff.skillBonus&&eff.skillBonus.skill===s?' selected':'')+'>'+s+'</option>';}).join(''),'',
+    'ef-eff-skill-val',eff.skillBonus?eff.skillBonus.bonus:2,10));
+  html+=_eRow('Advantage On Skill',_sel('ef-eff-adv',_sk.map(function(s){return '<option value="'+s+'"'+((eff.advantage||'')=== s?' selected':'')+'>'+s+'</option>';}).join('')));
+  html+=_eRow('+N to Max Level Cap',_num('ef-eff-lvlcap',eff.levelCapBonus||0,0,5));
+  html+=_eRow('+N to Encumbrance',_num('ef-eff-enc',eff.encumbranceBonus||0,0,500));
+  html+='</div>';
+  // -- Proficiencies while carried --
+  html+='<div style="font-size:.68em;color:var(--ink-light);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;margin-top:10px">Proficiencies (while carried)</div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 20px">';
+  html+=_eRow('Add Skill Proficiency',_sel('ef-eff-grant-skill',_sk.map(function(s){return '<option value="'+s+'"'+((eff.grantSkill||'')=== s?' selected':'')+'>'+s+'</option>';}).join('')));
+  html+=_eRow('Add Tool Proficiency',_sel('ef-eff-grant-tool',_tl.concat(_wp).map(function(t){return '<option value="'+t+'"'+((eff.grantTool||'')=== t?' selected':'')+'>'+t+'</option>';}).join('')));
+  html+=_eRow('Add Language',_sel('ef-eff-grant-lang',_lg.map(function(l){return '<option value="'+l+'"'+((eff.grantLang||'')=== l?' selected':'')+'>'+l+'</option>';}).join('')));
+  html+=_eRow('Add Weapon Proficiency',_sel('ef-eff-grant-wp',_wp.map(function(w){return '<option value="'+w+'"'+((eff.grantWeapon||'')=== w?' selected':'')+'>'+w+'</option>';}).join('')));
+  html+='</div>';
+  // -- Franchise/economic --
+  html+='<div style="font-size:.68em;color:var(--ink-light);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;margin-top:10px">Franchise / Economic</div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 20px">';
+  html+=_eRow('Passive Gold / Reset (gp)',_num('ef-eff-gold-passive',eff.passiveGold||0,0,9999));
+  html+=_eRow('Quest Gold Bonus (%)',_num('ef-eff-gold-pct',eff.goldPct||0,0,100));
+  html+=_eRow('Hire Cost Reduction (%)',_num('ef-eff-hire-discount',eff.hireDiscount||0,0,100));
+  html+=_eRow('+N to Squad Size Max',_num('ef-eff-squad-size',eff.squadSizeBonus||0,0,10));
+  html+='</div>';
+  // -- Quest/progression --
+  html+='<div style="font-size:.68em;color:var(--ink-light);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;margin-top:10px">Quest / Progression</div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 20px">';
+  html+=_eRow('Quest Type Gold Bonus',_selNum('ef-eff-qtype',_qtypes.map(function(t){return '<option value="'+t+'"'+(eff.questBonus&&eff.questBonus.type===t?' selected':'')+'>'+t+'</option>';}).join(''),'',
+    'ef-eff-qtype-val',eff.questBonus?eff.questBonus.bonus:1,5));
+  html+=_eRow('+N to XP Track',_selNum('ef-eff-xptrack',_xptracks.map(function(t){return '<option value="'+t+'"'+(eff.xpBonus&&eff.xpBonus.track===t?' selected':'')+'>'+t+'</option>';}).join(''),'',
+    'ef-eff-xptrack-val',eff.xpBonus?eff.xpBonus.bonus:1,5));
+  html+=_eRow('QP Multiplier on Tasks',_num('ef-eff-qp-mult',eff.qpMultiplier||1,1,5));
+  html+=_eRow('Reduce Quest Duration (%)',_num('ef-eff-dur-pct',eff.questDurationPct||0,0,75));
+  html+='</div>';
+  // -- Logistical --
+  html+='<div style="font-size:.68em;color:var(--ink-light);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;margin-top:10px">Logistical</div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 20px">';
+  html+=_eRow('Unlock Terrain Type',_sel('ef-eff-terrain-unlock',_terrains.map(function(t){return '<option value="'+t+'"'+((eff.unlockTerrain||'')=== t?' selected':'')+'>'+t+'</option>';}).join('')));
+  html+=_eRow('Unlock Quest Cycle',('<select id="ef-eff-unlock-cycle" style="width:100%;padding:6px 8px;font-size:.85em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)"><option value="">(none)</option>'+_cycleOpts+'</select>'));
+  html+=_eRow('Effect Note (freeform)',_txt('ef-eff-note',eff.note||'','e.g. Grants darkvision 60ft'));
   html+='</div>';
   html+='</div>';
-  html+='<div style="margin-top:10px"><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Effect Note (freeform)</label>';
-  html+='<input id="ef-eff-note" type="text" value="'+esc(eff.note||'')+'" placeholder="e.g. Grants darkvision 60ft" style="width:100%;padding:7px 10px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);box-sizing:border-box">';
-  html+='</div></div>';
-
   html+=edScopeRow('ef-isave');
   html+='<div style="display:flex;gap:10px;margin-top:10px">'+
     (!isNew?'<button id="ef-idelete" style="padding:10px 20px;background:var(--crimson);color:#fff;border:none;border-radius:5px;font-size:.95em;cursor:pointer">🗑 Delete</button>':'')+
@@ -15343,33 +15401,102 @@ function edShowGearForm(){
     var desc=document.getElementById('ef-idesc').value.trim();
     if(!name||!desc){alert('Name and description are required.');return;}
     var wt=parseFloat(document.getElementById('ef-iwt').value)||0;
-    // Build effect object from form
-    var _effSkill=(document.getElementById('ef-eff-skill')||{}).value||'';
-    var _effSkillVal=parseInt((document.getElementById('ef-eff-skill-val')||{}).value)||2;
-    var _effAdv=(document.getElementById('ef-eff-adv')||{}).value||'';
-    var _effQtype=(document.getElementById('ef-eff-qtype')||{}).value||'';
-    var _effQtypeVal=parseInt((document.getElementById('ef-eff-qtype-val')||{}).value)||1;
-    var _effAliasRaw=((document.getElementById('ef-eff-alias')||{}).value||'').trim();
-    var _effAlias=_effAliasRaw?_effAliasRaw.split(',').map(function(x){return x.trim();}).filter(Boolean):[];
-    var _effNote=((document.getElementById('ef-eff-note')||{}).value||'').trim();
+    // Build comprehensive effect object from form
+
+    function _gv(id){var el=document.getElementById(id);return el?el.value:'';}  
+
+    function _gi(id,def){var el=document.getElementById(id);return el?parseInt(el.value)||def:def;}  
+
     var _eff={};
-    if(_effSkill)_eff.skillBonus={skill:_effSkill,bonus:_effSkillVal};
-    if(_effAdv)_eff.advantage=_effAdv;
-    if(_effQtype)_eff.questBonus={type:_effQtype,bonus:_effQtypeVal};
-    if(_effAlias.length)_eff.prereqAlias=_effAlias;
-    if(_effNote)_eff.note=_effNote;
+
+    // Prereq overrides
+
+    if(_gv('ef-eff-terrain'))_eff.overcomeTerrain=_gv('ef-eff-terrain');
+
+    if(_gv('ef-eff-pre-skill'))_eff.prereqSkill=_gv('ef-eff-pre-skill');
+
+    if(_gv('ef-eff-pre-tool'))_eff.prereqTool=_gv('ef-eff-pre-tool');
+
+    if(_gv('ef-eff-pre-lang'))_eff.prereqLang=_gv('ef-eff-pre-lang');
+
+    if(_gv('ef-eff-pre-rel'))_eff.prereqRel=_gv('ef-eff-pre-rel');
+
+    if((_gv('ef-eff-pre-item')||'').trim())_eff.prereqItem=_gv('ef-eff-pre-item').trim();
+
+    // Stat modifiers
+
+    if(_gv('ef-eff-stat'))_eff.statBonus={stat:_gv('ef-eff-stat'),bonus:_gi('ef-eff-stat-val',1)};
+
+    if(_gv('ef-eff-skill'))_eff.skillBonus={skill:_gv('ef-eff-skill'),bonus:_gi('ef-eff-skill-val',2)};
+
+    if(_gv('ef-eff-adv'))_eff.advantage=_gv('ef-eff-adv');
+
+    var _lvlcap=_gi('ef-eff-lvlcap',0);if(_lvlcap>0)_eff.levelCapBonus=_lvlcap;
+
+    var _enc=_gi('ef-eff-enc',0);if(_enc>0)_eff.encumbranceBonus=_enc;
+
+    // Proficiencies
+
+    if(_gv('ef-eff-grant-skill'))_eff.grantSkill=_gv('ef-eff-grant-skill');
+
+    if(_gv('ef-eff-grant-tool'))_eff.grantTool=_gv('ef-eff-grant-tool');
+
+    if(_gv('ef-eff-grant-lang'))_eff.grantLang=_gv('ef-eff-grant-lang');
+
+    if(_gv('ef-eff-grant-wp'))_eff.grantWeapon=_gv('ef-eff-grant-wp');
+
+    // Franchise/economic
+
+    var _pg=_gi('ef-eff-gold-passive',0);if(_pg>0)_eff.passiveGold=_pg;
+
+    var _gp=_gi('ef-eff-gold-pct',0);if(_gp>0)_eff.goldPct=_gp;
+
+    var _hd=_gi('ef-eff-hire-discount',0);if(_hd>0)_eff.hireDiscount=_hd;
+
+    var _ss=_gi('ef-eff-squad-size',0);if(_ss>0)_eff.squadSizeBonus=_ss;
+
+    // Quest/progression
+
+    if(_gv('ef-eff-qtype'))_eff.questBonus={type:_gv('ef-eff-qtype'),bonus:_gi('ef-eff-qtype-val',1)};
+
+    if(_gv('ef-eff-xptrack'))_eff.xpBonus={track:_gv('ef-eff-xptrack'),bonus:_gi('ef-eff-xptrack-val',1)};
+
+    var _qm=_gi('ef-eff-qp-mult',1);if(_qm>1)_eff.qpMultiplier=_qm;
+
+    var _dp=_gi('ef-eff-dur-pct',0);if(_dp>0)_eff.questDurationPct=_dp;
+
+    // Logistical
+
+    if(_gv('ef-eff-terrain-unlock'))_eff.unlockTerrain=_gv('ef-eff-terrain-unlock');
+
+    if(_gv('ef-eff-unlock-cycle'))_eff.unlockCycle=_gv('ef-eff-unlock-cycle');
+
+    if((_gv('ef-eff-note')||'').trim())_eff.note=_gv('ef-eff-note').trim();
+
     var newItem={_custom:true,
+
       ic:document.getElementById('ef-iic').value||'🎁',
+
       name:name,desc:desc,
+
       rar:document.getElementById('ef-irar').value,
+
       type:document.getElementById('ef-itype').value,
+
       price:parseInt(document.getElementById('ef-iprice').value)||50,
+
       wt:wt,
+
       bagOfHolding:document.getElementById('ef-ibag').checked||undefined,
+
       effect:Object.keys(_eff).length?_eff:undefined
+
     };
+
     if(!newItem.bagOfHolding)delete newItem.bagOfHolding;
+
     if(!newItem.effect)delete newItem.effect;
+
     var targetScope=(!isNew&&g&&g._visibility)?normalizeContentScope(g._visibility):(isBuiltin&&isAppAdmin()?'official':edFormScope());
     var arr=contentItemsForScope(targetScope,'_customGear');
     if(!isNew){arr=arr.map(function(x){return x.name===gname?newItem:x;});}
