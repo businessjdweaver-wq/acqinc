@@ -1992,7 +1992,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.546
+      Version 1.548
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2017,6 +2017,8 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.548</strong> &mdash; Humdrum Arcana visibility bug: two fixes. (1) Removed duplicate "hidden" option accidentally added in v1.547 — the editor already had the correct Hidden option. (2) cycleGateStatus requiredAsset check now searches character inventories in addition to partyAssets and franchiseStorage. Previously a Rope of Climbing sitting in a character's backpack would not count toward the gate, meaning the gate appeared unmet when it was actually met — or conversely if the item was in storage it would mark the gate met even if the user moved it. Now all three locations are checked consistently. Most likely cause of the display bug: Rope of Climbing is in franchise storage (check Assets screen), making st.ok=true and preventing the hidden condition from firing.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.547</strong> &mdash; Cycle visibility bug fixed. The content editor only offered "Fully Visible" and "Obscured" — there was no way to set true hidden-until-met behavior. The render check (vis==='hidden'&&!st.ok) was correct but unreachable. Added a third option "Hidden — don't show until met" (value:'hidden') to the cycle editor dropdown. To fix Humdrum Arcana: open the content editor, find the cycle, change visibility from Obscured to Hidden, save — it will disappear from the quest map until the Rope of Climbing prerequisite is met.</div>
         <div style="margin-bottom:9px"><strong>Version 1.546</strong> &mdash; Six fixes: (1) Store footer: pointer-events:all on footer directly (not on children); nav height uses rAF retry loop until nav.offsetHeight is non-zero, fixing mobile tab bar positioning. (2) Squad manager target icons moved from card corner to individual skill/tool/lang/faith tags — a 🎯 appears as a superscript on each specific attribute the unassigned character has that the focused squad currently lacks. (3) QP balance hidden when zero — updateQpDisplay() hides hdr-qp-side and divider when bal===0, same as when QP is disabled. (4) EXOTIC_TOOLS: Poisoner's Kit and Cobbler's Tools replaced with Cartographer's Tools and Navigator's Tools. (5) Downtime badges styled to match XP badges: same border, border-radius, padding, font-size, and font-family; teal color. (6) Downtime badge dialog matches XP format: progress bars per track, percentage fill, all earned badges listed at bottom.</div>
         <div style="margin-bottom:9px"><strong>Version 1.545</strong> &mdash; (1) Squad manager target icons: when a squad is sorted/focused via the ribbon, unassigned characters who cover at least one attribute the squad lacks get a 🎯 icon in the top-right corner of their card. Hovering shows a tooltip listing the specific gap skills/tools/languages/faith. The icon only appears for unassigned characters (those in another squad are excluded). (2) Party screen "Available" filter button added to the action bar — filters to characters not currently on an active quest or grind mission, i.e. those who can use Downtime. Button toggles (active state shown in green); clears if clicked again. Uses __not_questing__ tag key via charHasTag.</div>
         <div style="margin-bottom:9px"><strong>Version 1.544</strong> &mdash; Six fixes for character 33 test: (1) Store mobile — store-content gets min-height:0 and -webkit-overflow-scrolling:touch so all tabs scroll correctly on mobile. (2) Gear sub-tabs changed from 3 price-based (1–4/5–10/11+) to 4 themed categories: ⚔ Weapons, 🛡 Armor, 🎒 Gear, 🧰 Kits (includes ADVENTURING_GEAR items). (3) Quest-character-assignment carousel arrows repositioned: absolute-positioned on sides of the viewport at vertical center (top:50%/translateY); viewports get margin:0 30-32px to create space. (4) GP display given border-radius:20px to match the QP pill shape. (5) Building assign dropdown: already excluded for non-artifact assets by canAssignReward flag — no change needed. (6) Bag of Holding recognition fixed with _isBagOfHolding() fuzzy helper checking name.includes('bag')&&name.includes('holding') — handles custom-named variants like "Longinus' Carpetbag of Holding". Capstone reward stores item under its actual name in franchiseStorage. Both openSquadNew and sqSave use the helper.</div>
@@ -4543,8 +4545,11 @@ function cycleGateStatus(set){
     if(!isSetCompleted(rule.requiredCycleSetId))issues.push('Requires completion of cycle: '+rule.requiredCycleSetId);
   }
   if(rule.requiredAsset){
-    var has=(S.partyAssets||[]).some(function(a){return a&&a.name===rule.requiredAsset;})||(S.franchiseStorage||[]).indexOf(rule.requiredAsset)!==-1;
-    if(!has)issues.push('Requires franchise item: '+rule.requiredAsset);
+    var _ra=rule.requiredAsset;
+    var has=(S.partyAssets||[]).some(function(a){return a&&a.name===_ra;})
+      ||(S.franchiseStorage||[]).some(function(x){return (typeof x==='string'?x:(x&&x.name)||'')===_ra;})
+      ||(S.party||[]).some(function(c){return c&&(c.inv||[]).indexOf(_ra)!==-1;});
+    if(!has)issues.push('Requires franchise item: '+_ra);
   }
   if(rule.requiredMountCount){
     var kind=rule.requiredCompanionKind||'specific';
@@ -4675,6 +4680,9 @@ function renderCycleMapCards(){
   (QUESTSETS||[]).forEach(function(set){
     var st=cycleGateStatus(set);
     var vis=st.visibility||'fully_visible';
+    if(set.name&&set.name.toLowerCase().indexOf('humdrum')!==-1){
+      console.log('[CycleVis] '+set.name+' vis='+vis+' ok='+st.ok+' issues='+JSON.stringify(st.issues)+' gate='+JSON.stringify(set.cycleGate));
+    }
     if(vis==='hidden'&&!st.ok)return;
     var isActive=activeSet&&activeSet.id===set.id;
     var squadName=assignedSquadForSet(set.id);
@@ -14398,8 +14406,8 @@ function edShowCycleForm(){
   html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 20px">';
   html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Visibility Mode</label>'+
     '<select id="ec-vis" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">'+
-    '<option value="fully_visible"'+(vis==='fully_visible'?' selected':'')+'>Fully Visible</option>'+
-    '<option value="obscured"'+(vis==='obscured'?' selected':'')+'>Obscured (show prerequisite)</option>'+
+    '<option value="fully_visible"'+(vis==='fully_visible'?' selected':'')+'>Always Visible</option>'+
+    '<option value="obscured"'+(vis==='obscured'?' selected':'')+'>Obscured — show locked state until met</option>'+
     '<option value="hidden"'+(vis==='hidden'?' selected':'')+'>Hidden (only appears when met)</option>'+
     '</select></div>';
   html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Required Completed Cycle (optional)</label>'+
