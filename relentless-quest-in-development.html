@@ -1820,13 +1820,14 @@ body.dev-active #app{margin-top:36px;}
 <!-- PARTY -->
 <div class="scr" id="s-party">
   <div class="stitle">✦ The Adventuring Party</div>
-  <div style="position:sticky;top:var(--hdr-h,56px);z-index:100;background:var(--parchment);padding:6px 0 4px;margin-bottom:4px;display:flex;gap:6px;flex-wrap:nowrap;align-items:stretch">
+  <div style="position:sticky;top:var(--hdr-h,56px);z-index:10;background:var(--parchment);padding:6px 0 4px;margin-bottom:4px;display:flex;gap:6px;flex-wrap:nowrap;align-items:stretch">
     <button class="btn bink sm" id="btn-party-jump-assets" type="button" style="flex:1;min-height:36px">Assets</button>
     <button class="btn bink sm" id="btn-party-stats" style="flex:1;min-height:36px">📊 Stats</button>
     <button class="btn bg sm" id="btn-nav-recruit" style="flex:1;min-height:36px">🎲 Recruit</button>
   </div>
   <div id="party-stats-panel" style="display:none"></div>
   <div id="continue-downtime-bar" style="display:none;margin-bottom:8px"></div>
+  <div id="party-tagbar"></div>
   <div id="plist"></div>
 </div>
 
@@ -2010,7 +2011,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.558
+      Version 1.559
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2035,6 +2036,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.559</strong> &mdash; Two clickability fixes: (1) Manage Squads unclickable — the tagBar (Manage Squads / Available / + Squad) was rendered as the first child of #plist, sitting directly under the sticky Assets/Stats/Recruit bar at z-index:100. That bar physically intercepted clicks. Fix: tagBar is now rendered into a dedicated #party-tagbar div placed in the HTML between the sticky bar and #plist. A new click delegation listener on #party-tagbar handles sqmgr/sqnew/sqedit/ptag actions. Sticky bar z-index lowered from 100 to 10. (2) Cards editor + New button unclickable — renderDashboardEditor() was targeting non-existent #ed-list-items and #ed-list-inner elements, so the + New Card button inside the list was never rendered. The top-level + New button (ed-btn-new) called renderDashboardEditor() which wrote nothing, making it appear broken. Fixed to target the correct #ed-list element. addBtn handler now uses contentBucket() directly with async-safe saveCustom handling.</div>
         <div style="margin-bottom:9px"><strong>Version 1.558</strong> &mdash; Merges v1.557 fixes plus: Manage Squads button broken — root cause was renderParty() throwing a TypeError on every call. The Continue Downtime IIFE unconditionally called document.getElementById('btn-continue-dt').onclick=... but that button only exists when the bar is visible (has innerHTML). When hidden, getElementById returns null and .onclick throws, silently aborting renderParty before el.innerHTML=html runs — so #plist kept stale content and the Manage Squads button was never rendered. Fix: guarded with if(_dtBtn)_dtBtn.onclick=...</div>
         <div style="margin-bottom:9px"><strong>Version 1.557</strong> &mdash; Three fixes: (1) Forced sbPush after quest completion, grind completion, and goldSpend ≥50gp — these events call sbPush(false) immediately rather than relying on the 4-second debounce, preventing progress loss if the player closes the tab shortly after collecting rewards. (2) + New button in Cards editor now creates a new dashboard card (was missing the dashboard branch in ed-btn-new handler). Directly writes to contentBucket then calls saveCustom and renderDashboardEditor. (3) _customDashCards fully wired into CONTENT_TYPE_MAP ('dashboard_card') and sbPull content_type switch — cards now round-trip to Supabase correctly and reload on pull. Auto-created capstone cards will also persist properly across sessions.</div>
         <div style="margin-bottom:9px"><strong>Version 1.556</strong> &mdash; Fix "quest save failed" error when saving a pet capstone reward. _autoCreateDashCard was being called inside the saveCustom .then() chain — its own inner saveCustom call returned a Promise that rejected and propagated up to the outer .catch(), producing the misleading error. Fix: (1) call site wrapped in try/catch so any sync throw cannot bubble; (2) inner saveCustom().then().catch() chain isolated so its rejection never reaches the outer handler. Quest save and card auto-creation now run independently.</div>
@@ -6493,7 +6495,10 @@ function renderParty(){
     });
   }
 
-  var html=squadInventoryHtml+tagBar+(ordered.length?ordered.map(function(x){
+  // Render tagBar into its own div above plist (avoids sticky header overlap)
+  var tagBarEl=document.getElementById('party-tagbar');
+  if(tagBarEl)tagBarEl.innerHTML=tagBar;
+  var html=squadInventoryHtml+(ordered.length?ordered.map(function(x){
     var questing=questingChars[x.ci]||false;
     return charCardHtml(x.c,x.ci,{questing:questing});
   }).join(''):
@@ -6645,6 +6650,22 @@ function renderParty(){
     },1000);
   }
 }
+
+// Delegate tagbar clicks (sqmgr, sqnew, sqedit, ptag) — same logic as plist
+document.getElementById('party-tagbar').addEventListener('click',function(e){
+  var b=e.target.closest('[data-a]');if(!b)return;
+  var a=b.getAttribute('data-a');
+  var sqi=parseInt(b.getAttribute('data-sqi'));
+  if(a==='sqmgr'){openSquadManager();}
+  else if(a==='sqnew'){openSquadNew();}
+  else if(a==='sqedit'){openSquadEdit(sqi);}
+  else if(a==='ptag'){
+    var tagVal=b.getAttribute('data-v')||'';
+    S.partyTagFilter=(tagVal&&S.partyTagFilter!==tagVal)?tagVal:null;
+    save();renderParty();
+    scrollSectionIntoViewBelowHeader(document.getElementById('plist'));
+  }
+});
 
 document.getElementById('plist').addEventListener('click',function(e){
   var b=e.target.closest('[data-a]');
@@ -16765,8 +16786,7 @@ function renderDashboard(){
 
 // ── Dashboard editor section ─────────────────────────────
 function renderDashboardEditor(){
-  var formInner=document.getElementById('ed-list-inner')||document.getElementById('ed-form-inner');
-  var listEl=document.getElementById('ed-list-items');
+  var listEl=document.getElementById('ed-list');  // correct element
   // Render the card list on left, form on right
   var cards=getDashboardCards();
   if(listEl){
@@ -16789,12 +16809,14 @@ function renderDashboardEditor(){
     if(addBtn)addBtn.addEventListener('click',function(){
       var newId='dc_'+Date.now().toString(36);
       var scope=isAppAdmin()?currentContentScope():'private';
-      var cards2=contentItemsForScope(scope,'_customDashCards')||[];
-      cards2.push({id:newId,name:'New Card',ic:'🃏',desc:'',colors:['#3a2a1a','#5c4020','']});
-      saveCustom('_customDashCards',cards2,scope);
-      mergeCustomContent();
+      var bucket=contentBucket(scope);
+      if(!bucket.dashCards)bucket.dashCards=[];
+      var newCard={id:newId,name:'New Card',ic:'🃏',desc:'',colors:['#3a2a1a','#5c4020','#7a5828']};
+      bucket.dashCards.push(newCard);
+      var _p=saveCustom('_customDashCards',bucket.dashCards,scope);
+      if(_p&&_p.then)_p.then(function(){mergeCustomContent();renderDashboardEditor();}).catch(function(e){console.warn('dashCard new:',e);mergeCustomContent();renderDashboardEditor();});
+      else{mergeCustomContent();renderDashboardEditor();}
       edSelected={type:'dashcard',id:newId};
-      renderDashboardEditor();
     });
   }
   // Form area
