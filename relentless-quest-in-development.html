@@ -2024,7 +2024,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.565
+      Version 1.566
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2049,6 +2049,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.566</strong> &mdash; Dashboard card visibility: added _capstoneCardEarned(card) helper. Auto-generated capstone cards (_fromCapstone:true) now only render if their source quest (decoded from dc_cap_{setId}_{questIdx}) appears in questState.done, setProgress[setId].done, or questCycles history. Manual cards (_fromCapstone not set) always show. This prevents un-earned capstone cards (e.g. Rope of Climbing reward for an uncompleted quest) from appearing in the dashboard. The test NPC card you created manually should be deleted from the Cards editor — manual cards are always visible by design.</div>
         <div style="margin-bottom:9px"><strong>Version 1.565</strong> &mdash; Franchise Dashboard tiles are now clickable. Every tile opens a card detail modal (ov-dash-card-detail) with a larger version. Quartermaster: shows 3-stat summary bar (total/franchise/party) plus full left-aligned quest log with per-character gold. Reward cards (artifact/pet/NPC/custom): show full description, "Received From" panel (quest title, cycle name, quest description) derived from card ID encoding dc_cap_{setId}_{questIdx}, and "Cycles Unlocked" panel listing any QUESTSETS whose requiredCycleSetId matches the source cycle. NPC contacts show class, species, and contact background. Tiles pass all data via data-dc-* attributes to keep renderDashboard clean.</div>
         <div style="margin-bottom:9px"><strong>Version 1.564</strong> &mdash; Cards not showing in editor list: edRenderList() had no dashboard branch, so it always wrote empty html to #ed-list when edTab==='dashboard', showing "Nothing here yet." Added a guard at the top of edRenderList that delegates to renderDashboardEditor() and returns early when on the dashboard tab. All paths that call edRenderList() (tab switch, save, delete, scope change) now correctly render the card list.</div>
         <div style="margin-bottom:9px"><strong>Version 1.563</strong> &mdash; Capstone card auto-creation confirmed working (console log showed Sandy Claws 🦀 saved OK). Added: after _autoCreateDashCard successfully saves, if the content editor is open on the Cards tab it now calls renderDashboardEditor() to immediately show the new card in the list. Diagnostic console logs removed. The card also appears in the Dashboard overlay next time it is opened.</div>
@@ -16691,6 +16692,32 @@ updateQpDisplay();
 // ── Dashboard ──────────────────────────────────────────────
 document.getElementById('ov-dashboard-close').addEventListener('click',function(){closeOv('ov-dashboard');});
 
+function _capstoneCardEarned(card){
+  // Returns true if this auto-generated capstone card has been earned
+  if(!card._fromCapstone)return true; // manual cards always show
+  // Parse setId and questIdx from card id: dc_cap_{setId}_{questIdx}
+  var id=card.id||'';
+  if(id.indexOf('dc_cap_')!==0)return true;
+  var rest=id.slice(7); // {setId}_{questIdx}
+  var lastUnderscore=rest.lastIndexOf('_');
+  if(lastUnderscore<0)return false;
+  var setId=rest.slice(0,lastUnderscore);
+  var questIdx=parseInt(rest.slice(lastUnderscore+1));
+  if(!setId||isNaN(questIdx))return false;
+  // Check all quest state sources for this quest being done
+  var qs=S.questState||{};
+  // Active cycle
+  if(qs.setId===setId&&(qs.done||[]).indexOf(questIdx)!==-1)return true;
+  // setProgress
+  var sp=(qs.setProgress&&qs.setProgress[setId]);
+  if(sp&&(sp.done||[]).indexOf(questIdx)!==-1)return true;
+  // questCycles history
+  if((S.questCycles||[]).some(function(cy){
+    return cy&&cy.setId===setId&&(cy.completed||[]).indexOf(questIdx)!==-1;
+  }))return true;
+  return false;
+}
+
 function getDashboardCards(){
   var seen={};var cards=[];
   ['official','shared','private'].forEach(function(scope){
@@ -16871,7 +16898,7 @@ function renderDashboard(){
       'data-dc-type="npc" data-dc-name="'+esc(c.name)+'" data-dc-ic="🤝" data-dc-desc="'+esc(c.contactBg||'')+'" data-dc-extra="'+esc(c.exoticTrait||'')+'" data-dc-subtitle="'+esc(c.cls||'Contact')+' · '+esc(c.species||'')+'"'));
   });
 
-  var customTiles=cards.map(function(c){
+  var customTiles=cards.filter(function(c){return _capstoneCardEarned(c);}).map(function(c){
     var bg=cardGradient(c.colors);
     var tc=cardTextColor(c.colors);
     return makeTile(c.ic||'🃏',esc(c.name||''),
