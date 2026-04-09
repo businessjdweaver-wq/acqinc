@@ -2010,7 +2010,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.556
+      Version 1.558
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2035,6 +2035,8 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.558</strong> &mdash; Merges v1.557 fixes plus: Manage Squads button broken — root cause was renderParty() throwing a TypeError on every call. The Continue Downtime IIFE unconditionally called document.getElementById('btn-continue-dt').onclick=... but that button only exists when the bar is visible (has innerHTML). When hidden, getElementById returns null and .onclick throws, silently aborting renderParty before el.innerHTML=html runs — so #plist kept stale content and the Manage Squads button was never rendered. Fix: guarded with if(_dtBtn)_dtBtn.onclick=...</div>
+        <div style="margin-bottom:9px"><strong>Version 1.557</strong> &mdash; Three fixes: (1) Forced sbPush after quest completion, grind completion, and goldSpend ≥50gp — these events call sbPush(false) immediately rather than relying on the 4-second debounce, preventing progress loss if the player closes the tab shortly after collecting rewards. (2) + New button in Cards editor now creates a new dashboard card (was missing the dashboard branch in ed-btn-new handler). Directly writes to contentBucket then calls saveCustom and renderDashboardEditor. (3) _customDashCards fully wired into CONTENT_TYPE_MAP ('dashboard_card') and sbPull content_type switch — cards now round-trip to Supabase correctly and reload on pull. Auto-created capstone cards will also persist properly across sessions.</div>
         <div style="margin-bottom:9px"><strong>Version 1.556</strong> &mdash; Fix "quest save failed" error when saving a pet capstone reward. _autoCreateDashCard was being called inside the saveCustom .then() chain — its own inner saveCustom call returned a Promise that rejected and propagated up to the outer .catch(), producing the misleading error. Fix: (1) call site wrapped in try/catch so any sync throw cannot bubble; (2) inner saveCustom().then().catch() chain isolated so its rejection never reaches the outer handler. Quest save and card auto-creation now run independently.</div>
         <div style="margin-bottom:9px"><strong>Version 1.555</strong> &mdash; Dashboard cards two fixes: (1) New Card button was broken — _customDashCards was missing from CONTENT_LIST_MAP (mapped to 'dashCards') and dashCards was not initialized in CONTENT_LIB buckets. getDashboardCards() now reads from bucket.dashCards via contentBucket(). saveCustom/contentItemsForScope now work correctly for dashboard cards. (2) Auto-create card from capstone reward: when a quest editor capstone reward (item/pet/npc) is saved, _autoCreateDashCard() runs and upserts a matching card into the dashboard with pre-filled icon, name, description, and gradient colors matching the reward type (purple for artifacts, green for pets, teal for NPCs). Card id is dc_cap_{setId}_{questIdx} so re-saves update rather than duplicate.</div>
         <div style="margin-bottom:9px"><strong>Version 1.554</strong> &mdash; Franchise Dashboard: the 📜 Log button on the quest screen now opens a Pinterest-style 3-column card grid overlay. First card is the Quartermaster (gold earned/franchise/party totals; tap to expand full quest log inline). Subsequent cards: any capstone artifact rewards in partyAssets, then custom cards from the editor. Custom cards support icon picker (30 emojis), 3 color pickers with live gradient preview, and a description field. A new 🃏 Cards tab in the Content Editor lets you create/edit/delete these cards. Card data stored in _customDashCards per scope. Card text color auto-selected based on primary color luminance.</div>
@@ -4917,7 +4919,9 @@ function goldSpend(n,reason,type){
   if(S.gold<n){alert('Not enough gold!\nNeed: '+n+' gp\nHave: '+S.gold+' gp');return false;}
   S.gold-=n;
   logAdd('-'+n+' gp — '+reason,type||'buy');
-  setGold();save();return true;
+  setGold();save();
+  if(uid()&&n>=50)sbPush(false); // force push on significant gold spends
+  return true;
 }
 function logAdd(msg,type){
   var now=new Date();
@@ -6403,7 +6407,8 @@ function renderParty(){
       '⚡ '+qpCost+' QP</button>'+
       '</div>';
     var _resumable=resumable;
-    document.getElementById('btn-continue-dt').onclick=function(){
+    var _dtBtn=document.getElementById('btn-continue-dt');
+    if(_dtBtn)_dtBtn.onclick=function(){
       // Prompt for duration
       var _mins=prompt('Continue downtime for '+_resumable.length+' character'+(resumable.length!==1?'s':'')+'.\nEnter duration in hours (e.g. 4):','4');
       if(!_mins)return;
@@ -10102,6 +10107,7 @@ document.getElementById('avcontent').addEventListener('click',function(e){
     var q=questByIdx(set,qi);if(!q)return;
     collectQuest(qi,pq2,q,set);
     save();setGold();renderAdv();
+    if(uid())sbPush(false); // force push — quest completions must not be lost to debounce
     return;
   }
 
@@ -10208,6 +10214,7 @@ document.getElementById('avcontent').addEventListener('click',function(e){
     logAdd('Grind complete: "'+gpEntry.title+'" — '+gReward+' gp ('+franchiseCut+' franchise, '+charPool+' adventurers; unspent shares kept in coin purses)','adv');
     qs.grindPending.splice(gpIdx,1);
     save();setGold();renderAdv();
+    if(uid())sbPush(false); // force push — grind gold must not be lost to debounce
     return;
   }
 
@@ -13760,7 +13767,8 @@ var CONTENT_TYPE_MAP={
   _customGear:'gear',
   _customVehicles:'vehicle',
   _customBuildings:'building',
-  _customPets:'pet'
+  _customPets:'pet',
+  _customDashCards:'dashboard_card'
 };
 var CONTENT_LIST_MAP={
   _customQuestSets:'questSets',
@@ -13943,7 +13951,8 @@ function loadContentLibrary(manual){
         row.content_type==='gear' ? 'gear' :
         row.content_type==='vehicle' ? 'vehicles' :
         row.content_type==='building' ? 'buildings' :
-        row.content_type==='pet' ? 'pets' : null;
+        row.content_type==='pet' ? 'pets' :
+        row.content_type==='dashboard_card' ? 'dashCards' : null;
       if(!listKey)return;
       var item=clone(row.data||{});
       item._dbId=row.id;
@@ -16591,6 +16600,20 @@ document.getElementById('ed-btn-new').addEventListener('click',function(){
     var _lastKey=(edSelected&&edSelected.assetKey)||(edSelected&&edSelected.type==='asset'&&edSelected.assetKey)||'vehicle';
     edSelected={type:'asset',name:null,assetKey:_lastKey};
     edShowAssetForm();
+  }
+  else if(edTab==='dashboard'){
+    // Create new dashboard card
+    var _newId='dc_'+Date.now().toString(36);
+    var _scope=isAppAdmin()?currentContentScope():'private';
+    var _cards=clone(contentBucket(_scope).dashCards||[]);
+    var _newCard={id:_newId,name:'New Card',ic:'🃏',desc:'',colors:['#3a2a1a','#5c4020','#7a5828']};
+    _cards.push(_newCard);
+    contentBucket(_scope).dashCards=_cards;
+    saveCustom('_customDashCards',_cards,_scope);
+    mergeCustomContent();
+    edSelected={type:'dashcard',id:_newId};
+    renderDashboardEditor();
+    return; // renderDashboardEditor handles its own list render
   }
   edRenderList();
 });
