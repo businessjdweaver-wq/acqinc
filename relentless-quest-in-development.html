@@ -69,6 +69,7 @@ body.kbd-open #nav{display:none;}
 
 /* SCREENS */
 .scr{display:none;padding:14px 12px;}
+#s-store.on{display:flex;flex-direction:column;}
 .scr.on{display:block;}
 .stitle{font-family:\'Cinzel\',serif;font-size:.98em;color:var(--crimson);
   border-bottom:2px solid var(--parchment-deep);padding-bottom:5px;margin-bottom:12px;}
@@ -1902,7 +1903,7 @@ body.dev-active #app{margin-top:36px;}
 </div>
 
 <!-- STORE -->
-<div class="scr" id="s-store" style="display:flex;flex-direction:column;padding-bottom:0">
+<div class="scr" id="s-store" style="padding-bottom:0">
   <!-- Store: scrollable content panel -->
   <div id="store-panel" style="flex:1;overflow-y:auto;padding:12px 16px 0">
     <div class="stitle" id="store-panel-title">✦ The Wandering Emporium</div>
@@ -1974,7 +1975,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.535
+      Version 1.536
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -1999,6 +2000,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.536</strong> &mdash; Two bug fixes: (1) Recruit screen no longer traps the user. Root cause: RENDER.party was redirecting to recruit whenever recruitCandidates was non-empty — but candidates were never cleared on close, so navTo(party) always bounced back. Fixed with a _recruitInProgress flag: set when candidates are rolled, cleared on close button click and on successful hire. RENDER.party only redirects when the flag is set. (2) Store panel was displaying on every screen. Root cause: s-store had an inline style="display:flex" which overrode the .scr{display:none} CSS rule, making it permanently visible. Fixed by removing the inline style and adding #s-store.on{display:flex;flex-direction:column} to the stylesheet so it only becomes flex when active.</div>
         <div style="margin-bottom:9px"><strong>Version 1.535</strong> &mdash; Database schema migration: sbPush and sbPull updated to use proper Supabase columns instead of JSON blobs. franchise table: qp_balance, qp_earned_today, qp_earn_date, franchise_storage, downtime_jobs, quest_log now stored as dedicated columns; settings blob is clean. party table: stats, xp, dt_progress, downtime_badges, coin_purse, is_contact, contact_bg, exotic_trait, former_hireling, owned_items, first_hire now in proper columns; inv array no longer contains __meta__ sentinel string. squads table: squad_name, emoji, color, member_names in proper columns; name column is clean squad name. quest_cycles table: set_id, cycle_num, grind_pending, repeat_counts, set_progress, quest_cycles_history, quest_cycle_squads in proper columns; assigned blob contains only explicit character assignments. All pulls include legacy blob fallbacks for old rows, so existing data is preserved through the migration automatically.</div>
         <div style="margin-bottom:9px"><strong>Version 1.534</strong> &mdash; Three fixes: (1) hasAnyOwnedBuildingAsset now checks franchiseStorage — buildings purchased via quest modal and stored there unlock franchise storage. (2) Store sub-category drawers are a vertical stack (flex-direction:column) sliding from the right via max-width animation. (3) navTo(party) redirects to recruit screen if candidates were rolled (recruitCandidates or hirelCandidates non-empty).</div>
         <div style="margin-bottom:9px"><strong>Version 1.533</strong> &mdash; Ten fixes: (1) Hole tap flashes compatible peg cards yellow. (2) Common language is free — always included, not counted against random slots. (3) Dev bar uses position:fixed; body.dev-active adds margin-top. (4) GP gold text / QP white on bright blue. (5) Store two-column layout — category tabs stacked left, sub-drawers in right column. (6) Buildings skip char/squad assignment UI. (7) Slot assignments preserved when hiring hireling from quest modal. (8) qddRefreshInfoPrereqs() called after render to keep ⚠ warnings current. (9) QP balance uses typeof check on save/load. (10) Dev bar mobile fix.</div>
@@ -7519,6 +7521,7 @@ document.getElementById('btn-apply-milestone').addEventListener('click',function
 updateMilestoneControls();
 
 var recruitCandidates=[];
+var _recruitInProgress=false; // true while user is mid-recruit flow
 function makeStarterNavigatorCandidate(){
   var c=makeCandidate();
   c.cls='Ranger';
@@ -7704,6 +7707,7 @@ function renderCandidates(){
 document.getElementById('btn-randall').addEventListener('click',function(){
   var rolled=S.settings.recruitRollDate===todayStr();
   if(rolled&&!goldSpend(10,'Recruitment reroll','hire'))return;
+  _recruitInProgress=true;
   recruitCandidates=[];
   for(var i=0;i<5;i++)recruitCandidates.push(makeCandidate());
   if(shouldOfferStarterGuide()){
@@ -7743,6 +7747,7 @@ document.getElementById('rbox').addEventListener('click',function(e){
   }
   logAdd(c.name+' ('+c.species+' '+c.cls+') joined the party!','hire');
   recruitCandidates=[];S.settings.recruitRollDate='';
+  _recruitInProgress=false;
   document.getElementById('btn-randall').textContent='🎲 Find Candidates (Free)';
   renderCandidates();
   save();
@@ -7961,6 +7966,7 @@ function renderHirelings(){
 document.getElementById('btn-hir-roll').addEventListener('click',function(){
   var rolled=S.settings.hirelRollDate===todayStr();
   if(rolled&&!goldSpend(5,'Hireling reroll','hire'))return;
+  _recruitInProgress=true;
   hirelCandidates=[];
   for(var i=0;i<5;i++)hirelCandidates.push(makeHireling());
   S.settings.hirelRollDate=todayStr();
@@ -7980,6 +7986,7 @@ document.getElementById('hir-box').addEventListener('click',function(e){
     S.party.push(Object.assign({},c));
     logAdd('🪓 '+c.name+' hired ('+c.skills[0]+' / '+c.tools[0]+')','hire');
     hirelCandidates=[];S.settings.hirelRollDate='';
+    _recruitInProgress=false;
     document.getElementById('btn-hir-roll').textContent='🎲 Find Hirelings (Free)';
     renderHirelings();
     save();
@@ -12147,9 +12154,11 @@ var RENDER={
   tasks:renderTasks,archive:renderArchive,
   party:function(){
     renderParty();
-    // If recruiting was in progress, re-show the recruit screen
-    if(recruitCandidates.length||hirelCandidates.length){
+    // Only redirect to recruit if user was mid-flow (flag set) and didn't close it
+    if(_recruitInProgress&&(recruitCandidates.length||hirelCandidates.length)){
       setTimeout(function(){navTo('recruit');},80);
+    } else {
+      _recruitInProgress=false;
     }
   },
   recruit:function(){if(recruitCandidates.length)renderCandidates();if(hirelCandidates.length)renderHirelings();},
@@ -12260,7 +12269,12 @@ document.getElementById('nav').addEventListener('click',function(e){
 });
 
 document.getElementById('btn-nav-archive').addEventListener('click',function(){navTo('archive');});
-document.getElementById('btn-recruit-close').addEventListener('click',function(){navTo('party');});
+document.getElementById('btn-recruit-close').addEventListener('click',function(){
+  _recruitInProgress=false;
+  recruitCandidates=[];
+  hirelCandidates=[];
+  navTo('party');
+});
 document.getElementById('btn-hdr-settings').addEventListener('click',function(){navTo('settings');});
 document.getElementById('btn-nav-recruit').addEventListener('click',function(){
   navTo('recruit');
