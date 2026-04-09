@@ -2011,7 +2011,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.562
+      Version 1.563
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2036,6 +2036,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.563</strong> &mdash; Capstone card auto-creation confirmed working (console log showed Sandy Claws 🦀 saved OK). Added: after _autoCreateDashCard successfully saves, if the content editor is open on the Cards tab it now calls renderDashboardEditor() to immediately show the new card in the list. Diagnostic console logs removed. The card also appears in the Dashboard overlay next time it is opened.</div>
         <div style="margin-bottom:9px"><strong>Version 1.562</strong> &mdash; Added [DashCard] console logging to _autoCreateDashCard to diagnose why capstone rewards are not auto-generating dashboard cards. Logs: cr object, scope, card being saved, and success/failure of the saveCustom call.</div>
         <div style="margin-bottom:9px"><strong>Version 1.561</strong> &mdash; Dashboard functions (getDashboardCards, renderDashboard, renderDashboardEditor, _autoCreateDashCard, cardGradient, cardTextColor) were defined OUTSIDE the main IIFE, making contentBucket, saveCustom, esc, S, etc. all undefined. Re-inserted all dashboard functions inside the IIFE before its closing }()); so they share scope with all other app functions. Supabase check constraint also needs updating — see SQL note.</div>
         <div style="margin-bottom:9px"><strong>Version 1.560</strong> &mdash; Manage Squads crash fixed. renderSqmgrChars() declared _unassigned and _gapSet AFTER the tagHtml block that used them. JS var hoisting meant _gapSet was undefined (not {}) at the point of use, causing "Cannot read properties of undefined (reading 'Persuasion')" on any character with skills. Moved _gapSet/{} initialization and _gapTags() call to immediately before the tagHtml building block.</div>
@@ -16888,8 +16889,7 @@ function renderDashboardEditor(){
 
 function _autoCreateDashCard(quest,scope){
   var cr=quest.capstoneReward;
-  console.log('[DashCard] _autoCreateDashCard called, cr=',JSON.stringify(cr),'scope=',scope);
-  if(!cr||!cr.type||cr.type==='random'){console.log('[DashCard] skipped — no reward or random');return;}
+  if(!cr||!cr.type||cr.type==='random')return;
   var cardId='dc_cap_'+quest.setId+'_'+quest.idx;
   var ic='\uD83C\uDCCF',name='',desc='',colors=[];
   if(cr.type==='item'){ic=cr.ic||'\u2728';name=cr.name||'Artifact';desc=cr.desc||'';colors=['#3a1f5c','#6a3fa0','#9060c0'];}
@@ -16903,10 +16903,14 @@ function _autoCreateDashCard(quest,scope){
   var idx=-1;for(var i=0;i<cards.length;i++){if(cards[i].id===cardId){idx=i;break;}}
   if(idx>=0)cards[idx]=newCard;else cards.push(newCard);
   bucket.dashCards=cards;
-  console.log('[DashCard] saving card:',JSON.stringify(newCard),'to scope:',useScope);
   var _p=saveCustom('_customDashCards',cards,useScope);
-  if(_p&&_p.then)_p.then(function(){console.log('[DashCard] saved OK');mergeCustomContent();}).catch(function(e){console.warn('[DashCard] save failed:',e);});
-  else mergeCustomContent();
+  if(_p&&_p.then)_p.then(function(){
+    console.log('[DashCard] saved OK');
+    mergeCustomContent();
+    // Refresh editor list if on dashboard tab
+    if(typeof edTab!=='undefined'&&edTab==='dashboard')renderDashboardEditor();
+  }).catch(function(e){console.warn('[DashCard] save failed:',e);});
+  else{mergeCustomContent();if(typeof edTab!=='undefined'&&edTab==='dashboard')renderDashboardEditor();}
 }
 
 }());
