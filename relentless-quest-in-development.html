@@ -1814,12 +1814,13 @@ body.dev-active #app{margin-top:36px;}
 <!-- PARTY -->
 <div class="scr" id="s-party">
   <div class="stitle">✦ The Adventuring Party</div>
-  <div style="display:flex;gap:6px;flex-wrap:nowrap;align-items:stretch;margin-bottom:8px">
+  <div style="position:sticky;top:var(--hdr-h,56px);z-index:100;background:var(--parchment);padding:6px 0 4px;margin-bottom:4px;display:flex;gap:6px;flex-wrap:nowrap;align-items:stretch">
     <button class="btn bink sm" id="btn-party-jump-assets" type="button" style="flex:1;min-height:36px">Assets</button>
     <button class="btn bink sm" id="btn-party-stats" style="flex:1;min-height:36px">📊 Stats</button>
     <button class="btn bg sm" id="btn-nav-recruit" style="flex:1;min-height:36px">🎲 Recruit</button>
   </div>
   <div id="party-stats-panel" style="display:none"></div>
+  <div id="continue-downtime-bar" style="display:none;margin-bottom:8px"></div>
   <div id="plist"></div>
 </div>
 
@@ -1992,7 +1993,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.549
+      Version 1.551
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2017,6 +2018,8 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.551</strong> &mdash; Dev +1 Day now advances all cycles with assigned squads, not just the active one. Secondary cycle pending quests live in S.questState.setProgress[setId].pending — the handler now iterates all setProgress keys that have a squad assigned in S.questCycleSquads and marks their pending quests as done. The log message reports how many secondary-cycle quests were also completed.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.550</strong> &mdash; Five features: (1) Squad manager ribbons show squad-scoped counts when a squad is sorted/selected — format changes to "N/M" (squad count / party total); resets to full-party counts when squad is deselected; ribbon re-renders on squad tile tap. (2) Party screen action bar (Assets/Stats/Recruit) is now position:sticky below the header so it stays visible while scrolling the party list. (3) Faith added as 5th downtime option ("Deepen Faith") — uses WIS modifier, threshold 6, target is any faith the character doesn't already have; on completion sets c.rel to the studied faith and awards "Devotee" badge. (4) "Continue Downtime" button: appears above party list when any characters have in-progress downtime tracks but no active job. Costs 5 QP per character. Prompts for duration in hours, then resumes each character on their most-progressed track. (5) Hireling graduation: class is now auto-selected based on best skill/stat alignment — checks if any existing skill matches a class mandatory skill, otherwise maps best stat to a class (STR→Fighter, DEX→Rogue, CON→Barbarian, INT→Wizard, WIS→Cleric, CHA→Bard).</div>
         <div style="margin-bottom:9px"><strong>Version 1.549</strong> &mdash; Humdrum Arcana visibility confirmed and fixed. Console showed vis=obscured — the old editor used 'obscured' as the value for "Hidden (only appears when met)". v1.547 renamed 'obscured' to mean "show locked state", breaking existing saves. Fix: render check now treats both 'obscured' and 'hidden' as hide-until-met. Editor simplified to two options: Always Visible / Hidden. Debug log removed.</div>
         <div style="margin-bottom:9px"><strong>Version 1.548</strong> &mdash; Humdrum Arcana visibility bug: two fixes. (1) Removed duplicate "hidden" option accidentally added in v1.547 — the editor already had the correct Hidden option. (2) cycleGateStatus requiredAsset check now searches character inventories in addition to partyAssets and franchiseStorage. Previously a Rope of Climbing sitting in a character's backpack would not count toward the gate, meaning the gate appeared unmet when it was actually met — or conversely if the item was in storage it would mark the gate met even if the user moved it. Now all three locations are checked consistently. Most likely cause of the display bug: Rope of Climbing is in franchise storage (check Assets screen), making st.ok=true and preventing the hidden condition from firing.</div>
         <div style="margin-bottom:9px"><strong>Version 1.547</strong> &mdash; Cycle visibility bug fixed. The content editor only offered "Fully Visible" and "Obscured" — there was no way to set true hidden-until-met behavior. The render check (vis==='hidden'&&!st.ok) was correct but unreachable. Added a third option "Hidden — don't show until met" (value:'hidden') to the cycle editor dropdown. To fix Humdrum Arcana: open the content editor, find the cycle, change visibility from Obscured to Hidden, save — it will disappear from the quest map until the Rope of Climbing prerequisite is met.</div>
@@ -5716,6 +5719,7 @@ var downtimeWatchTimer=null;
 var DOWNTIME_OPTIONS=[
   {id:'skill',label:'Study a Skill',durations:[60,240,480]},
   {id:'language',label:'Learn a Language',durations:[60,240,480]},
+  {id:'faith',label:'Deepen Faith',durations:[60,240,480]},
   {id:'contacts',label:'Network for Contacts',durations:[60,240,480]},
   {id:'intel',label:'Research Rumors',durations:[60,240,480]}
 ];
@@ -5761,6 +5765,7 @@ function downtimeElapsedLabel(job){
 function downtimeTrackLabel(type,target){
   if(type==='skill')return 'Skill: '+target;
   if(type==='language')return 'Language: '+target;
+  if(type==='faith')return 'Faith: '+target;
   if(type==='contacts')return 'Contacts';
   if(type==='intel')return 'Rumors';
   return target||type;
@@ -5772,6 +5777,7 @@ function addDowntimeBadge(c,label){
 function downtimeBadgeForJob(job){
   if(!job)return 'Night Owl';
   if(job.type==='skill')return 'Night Owl';
+  if(job.type==='faith')return 'Devotee';
   if(job.type==='language')return 'Polyglot Ember';
   if(job.type==='contacts')return 'Civic Sigil';
   if(job.type==='intel')return 'Rune Sleuth';
@@ -5915,6 +5921,8 @@ function runDowntimeCompletion(job){
     mod=Math.max(iMod,wMod);
   }else if(job.type==='language'){
     mod=Math.floor((((c.stats&&c.stats.int)||10)-10)/2);
+  }else if(job.type==='faith'){
+    mod=Math.floor((((c.stats&&c.stats.wis)||10)-10)/2);
   }else if(job.type==='contacts'){
     mod=Math.floor((((c.stats&&c.stats.cha)||10)-10)/2);
   }
@@ -5924,7 +5932,7 @@ function runDowntimeCompletion(job){
   addDowntimeBadge(c,downtimeBadgeForJob(job));
   if(c.dtProgress[key]==null)c.dtProgress[key]=0;
   c.dtProgress[key]+=gain;
-  var threshold=(job.type==='contacts'?6:(job.type==='intel'?5:8));
+  var threshold=(job.type==='contacts'||job.type==='faith'?6:(job.type==='intel'?5:8));
   var unlocked=false;
   var unlockMsg='';
   if(c.dtProgress[key]>=threshold){
@@ -5938,6 +5946,10 @@ function runDowntimeCompletion(job){
       c.lang.push(job.target);
       addDowntimeBadge(c,'Tongue Scholar');
       unlockMsg='✅ '+c.name+' learned language: '+job.target+'.';
+    }else if(job.type==='faith'){
+      c.rel=job.target;
+      addDowntimeBadge(c,'Devoted');
+      unlockMsg='✅ '+c.name+' adopted faith: '+job.target+'.';
     }else if(job.type==='contacts'){
       c.contact=true;
       if((c.skills||[]).indexOf('Persuasion')===-1)c.skills.push('Persuasion');
@@ -5976,6 +5988,7 @@ function startDowntimeForChar(ci){
 function getDowntimeTargetOptions(c,type){
   if(type==='skill')return (DND.skills||[]).filter(function(s){return (c.skills||[]).indexOf(s)===-1;});
   if(type==='language')return (DND.lang||[]).filter(function(l){return (c.lang||[]).indexOf(l)===-1;});
+  if(type==='faith')return (DND.rel||[]).filter(function(r){return r!==c.rel;});
   if(type==='contacts')return ['Franchise Circle'];
   if(type==='intel')return ['Local Rumors'];
   return [];
@@ -6342,6 +6355,52 @@ function renderParty(){
   if(typeof partyStatsOpen!=='undefined'&&partyStatsOpen)renderPartyStats();
   var el=document.getElementById('plist');
   if(!S.party.length){el.innerHTML='<div class="empty">No adventurers. Visit the Recruitment Office!</div>';return;}
+  // Build Continue Downtime bar — chars with progress but no active job
+  (function(){
+    var bar=document.getElementById('continue-downtime-bar');
+    if(!bar)return;
+    var _now=Date.now();
+    // Find chars with dtProgress but not currently on a downtime job
+    var resumable=(S.party||[]).map(function(c,ci){return{c:c,ci:ci};}).filter(function(e){
+      if(!e.c)return false;
+      var hasProgress=e.c.dtProgress&&Object.keys(e.c.dtProgress).some(function(k){return (e.c.dtProgress[k]||0)>0;});
+      var isBusy=!!(S.downtimeJobs||[]).some(function(j){return j.ci===e.ci&&(j.endsAt||0)>_now;});
+      return hasProgress&&!isBusy;
+    });
+    if(!resumable.length||!qpEnabled()){bar.style.display='none';return;}
+    var qpCost=resumable.length*5;
+    bar.style.display='';
+    bar.innerHTML='<div style="background:rgba(26,107,138,.08);border:1px solid rgba(26,107,138,.3);border-radius:7px;padding:8px 12px;display:flex;align-items:center;gap:10px">'+
+      '<div style="flex:1;min-width:0">'+
+      '<div style="font-family:\'Cinzel\',serif;font-size:.78em;color:var(--teal);font-weight:700">🕯 Continue Downtime</div>'+
+      '<div style="font-size:.72em;color:var(--ink-light);margin-top:2px">'+resumable.length+' character'+(resumable.length!==1?'s':'')+' have in-progress downtime paths: '+
+      resumable.map(function(e){return esc(e.c.name.split(' ')[0]);}).join(', ')+'</div>'+
+      '</div>'+
+      '<button id="btn-continue-dt" style="background:var(--teal);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:.78em;cursor:pointer;white-space:nowrap;flex-shrink:0">'+
+      '⚡ '+qpCost+' QP</button>'+
+      '</div>';
+    var _resumable=resumable;
+    document.getElementById('btn-continue-dt').onclick=function(){
+      // Prompt for duration
+      var _mins=prompt('Continue downtime for '+_resumable.length+' character'+(resumable.length!==1?'s':'')+'.\nEnter duration in hours (e.g. 4):','4');
+      if(!_mins)return;
+      var _hours=parseFloat(_mins)||4;
+      var _ms=Math.round(_hours*60*60000);
+      if(!qpSpend(qpCost,'continue_downtime','Continue downtime for '+_resumable.length+' chars'))return;
+      var _endsAt=Date.now()+_ms;
+      _resumable.forEach(function(e){
+        var prog=e.c.dtProgress||{};
+        // Find the most-progressed active track
+        var bestKey=Object.keys(prog).sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
+        if(!bestKey)return;
+        var parts=bestKey.split(':');
+        var type=parts[0],target=parts.slice(1).join(':')||'core';
+        S.downtimeJobs.push({ci:e.ci,type:type,target:target,startedAt:Date.now(),endsAt:_endsAt,durationMins:Math.round(_hours*60)});
+        logAdd('🕯 '+e.c.name+' resumed downtime: '+downtimeTrackLabel(type,target)+'','adv');
+      });
+      save();renderParty();
+    };
+  }());
   var squads=S.squads||[];
   var activeFilter=S.partyTagFilter||null;
 
@@ -6880,6 +6939,23 @@ document.getElementById('ov-lv-yes').addEventListener('click',function(){
     c.hireling=false;
     var existSk=c.skills||[],existTl=c.tools||[],existLa=c.lang||[];
     // Grant class-appropriate skills for the new level 1 adventurer
+    // Pick best class based on hireling's existing skill + stat alignment
+    var _bestCls=(function(){
+      var statMap={str:'Athletics',dex:'Stealth',con:'Intimidation',int:'Arcana',wis:'Perception',cha:'Persuasion'};
+      var bestStat='str',bestVal=0;
+      if(c.stats){Object.keys(statMap).forEach(function(s){if((c.stats[s]||10)>bestVal){bestVal=c.stats[s]||10;bestStat=s;}});}
+      var bestSkill=statMap[bestStat];
+      // Match to class whose mandatory skill matches, or choose by best stat
+      var statClsMap={str:'Fighter',dex:'Rogue',con:'Barbarian',int:'Wizard',wis:'Cleric',cha:'Bard'};
+      // Check if existing hireling skill matches any class mandatory
+      var existSkills=c.skills||[];
+      var matched=Object.keys(CLASS_SKILLS).filter(function(cls){
+        return existSkills.indexOf(CLASS_SKILLS[cls].mandatory)!==-1;
+      });
+      if(matched.length)return matched[0];
+      return statClsMap[bestStat]||'Fighter';
+    })();
+    if(!c.cls||c.cls==='Hireling')c.cls=_bestCls;
     var fullSkills=pickClassSkills(c.cls||'Fighter');
     // Keep any existing skill the hireling already had, merge with class skills
     var mergedSk=fullSkills.slice();
@@ -9321,12 +9397,27 @@ document.getElementById('dev-bar-qp').addEventListener('click',function(){
 });
 document.getElementById('dev-bar-advance-day').addEventListener('click',function(){
   var now=Date.now();
-  // Complete all active quests
+  // Complete quests in the active cycle
   if(S.questState&&S.questState.pending){
     S.questState.pending.forEach(function(pq){pq.doneAt=now-1;});
   }
   if(S.questState&&S.questState.grindPending){
     S.questState.grindPending.forEach(function(gp){gp.doneAt=now-1;});
+  }
+  // Also complete quests in ALL secondary cycles (other squads' assigned cycles)
+  // These live in S.questState.setProgress[setId].pending
+  var secondaryCount=0;
+  if(S.questState&&S.questState.setProgress){
+    Object.keys(S.questState.setProgress).forEach(function(setId){
+      if(setId===S.questState.setId)return; // active cycle already handled above
+      var sp=S.questState.setProgress[setId];
+      if(!sp)return;
+      // Only advance if this cycle has a squad assigned (i.e. it's actively running)
+      var hasSquad=!!(S.questCycleSquads&&S.questCycleSquads[setId]);
+      if(!hasSquad)return;
+      (sp.pending||[]).forEach(function(pq){pq.doneAt=now-1;secondaryCount++;});
+      (sp.grindPending||[]).forEach(function(gp){gp.doneAt=now-1;});
+    });
   }
   // Complete all active downtime jobs and auto-resolve them
   var dtCompleted=0;
@@ -9340,7 +9431,11 @@ document.getElementById('dev-bar-advance-day').addEventListener('click',function
   S.gold=(S.gold||0)+400;
   if(!S.qpBalance)S.qpBalance=0;
   S.qpBalance+=20;
-  logAdd('\u23e9 Dev: Advanced 1 day — quests completed'+(dtCompleted?' + '+dtCompleted+' downtime job'+(dtCompleted!==1?'s':'')+' resolved':'')+', +400 gp, +20 QP.','gold');
+  var _log='\u23e9 Dev: Advanced 1 day — quests completed';
+  if(secondaryCount)_log+=' (incl. '+secondaryCount+' from secondary cycles)';
+  if(dtCompleted)_log+=' + '+dtCompleted+' downtime job'+(dtCompleted!==1?'s':'')+' resolved';
+  _log+=', +400 gp, +20 QP.';
+  logAdd(_log,'gold');
   save();setGold();updateQpDisplay();renderAdv();renderParty();
 });
 document.getElementById('dev-bar-devoff').addEventListener('click',function(){
@@ -12642,6 +12737,7 @@ function renderSqmgrGrid(){
       }
       // Otherwise: sort this squad/unassigned to top (toggle)
       sqmgrSortSquad=(sqmgrSortSquad===sqname)?null:sqname;
+      renderSqmgrRibbons();
       sqmgrRibbonFilter=null;
       renderSqmgrGrid();
       renderSqmgrRibbons();
@@ -12665,17 +12761,28 @@ function renderSqmgrRibbons(){
     var af=sqmgrRibbonFilter;
     strip.innerHTML=rb.items.map(function(val){
       var active=af&&af.type===rb.type&&af.value===val;
-      // Count members with this value
-      var cnt=(S.party||[]).filter(function(c){
+      // Count members with this value — restrict to squad if one is selected
+      var _sqFilter=sqmgrSortSquad&&sqmgrSortSquad!=='__unassigned__'
+        ?(S.squads||[]).filter(function(s){return s.name===sqmgrSortSquad;})[0]:null;
+      var _pool=_sqFilter
+        ?(_sqFilter.memberIdxs||[]).map(function(ci){return S.party[ci];}).filter(Boolean)
+        :(S.party||[]);
+      var cnt=_pool.filter(function(c){
         if(!c)return false;
         if(rb.single)return c[rb.charKey]===val;
         if(rb.charKey)return (c[rb.charKey]||[]).indexOf(val)!==-1;
-        // tools ribbon: check both weapons and tools arrays
         return (c.weapons||[]).indexOf(val)!==-1||(c.tools||[]).indexOf(val)!==-1;
       }).length;
-      if(!cnt)return ''; // hide items no one has
+      var totalCnt=_sqFilter?(S.party||[]).filter(function(c){
+        if(!c)return false;
+        if(rb.single)return c[rb.charKey]===val;
+        if(rb.charKey)return (c[rb.charKey]||[]).indexOf(val)!==-1;
+        return (c.weapons||[]).indexOf(val)!==-1||(c.tools||[]).indexOf(val)!==-1;
+      }).length:cnt;
+      if(!totalCnt)return ''; // hide items no one in full party has
+      var cntLabel=_sqFilter?(cnt+'/'+totalCnt):String(cnt);
       return '<button class="sqmgr-skill-chip'+(active?' sqmgr-skill-active':'')+'" data-rtype="'+rb.type+'" data-rval="'+esc(val)+'">'+
-        esc(val)+'<span style="opacity:.6;font-size:.8em"> ('+cnt+')</span>'+
+        esc(val)+'<span style="opacity:.6;font-size:.8em"> ('+cntLabel+')</span>'+
         '</button>';
     }).join('');
     strip.querySelectorAll('.sqmgr-skill-chip').forEach(function(btn){
