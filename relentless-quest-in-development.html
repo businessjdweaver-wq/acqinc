@@ -1992,7 +1992,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.544
+      Version 1.545
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2017,6 +2017,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.545</strong> &mdash; (1) Squad manager target icons: when a squad is sorted/focused via the ribbon, unassigned characters who cover at least one attribute the squad lacks get a 🎯 icon in the top-right corner of their card. Hovering shows a tooltip listing the specific gap skills/tools/languages/faith. The icon only appears for unassigned characters (those in another squad are excluded). (2) Party screen "Available" filter button added to the action bar — filters to characters not currently on an active quest or grind mission, i.e. those who can use Downtime. Button toggles (active state shown in green); clears if clicked again. Uses __not_questing__ tag key via charHasTag.</div>
         <div style="margin-bottom:9px"><strong>Version 1.544</strong> &mdash; Six fixes for character 33 test: (1) Store mobile — store-content gets min-height:0 and -webkit-overflow-scrolling:touch so all tabs scroll correctly on mobile. (2) Gear sub-tabs changed from 3 price-based (1–4/5–10/11+) to 4 themed categories: ⚔ Weapons, 🛡 Armor, 🎒 Gear, 🧰 Kits (includes ADVENTURING_GEAR items). (3) Quest-character-assignment carousel arrows repositioned: absolute-positioned on sides of the viewport at vertical center (top:50%/translateY); viewports get margin:0 30-32px to create space. (4) GP display given border-radius:20px to match the QP pill shape. (5) Building assign dropdown: already excluded for non-artifact assets by canAssignReward flag — no change needed. (6) Bag of Holding recognition fixed with _isBagOfHolding() fuzzy helper checking name.includes('bag')&&name.includes('holding') — handles custom-named variants like "Longinus' Carpetbag of Holding". Capstone reward stores item under its actual name in franchiseStorage. Both openSquadNew and sqSave use the helper.</div>
         <div style="margin-bottom:9px"><strong>Version 1.543</strong> &mdash; Two fixes: (1) Task pie (pct) now persists: pct field added to active_tasks Supabase push row and restored on pull. Requires ALTER TABLE active_tasks ADD COLUMN IF NOT EXISTS pct integer NOT NULL DEFAULT 0 (already run). (2) Capstone Bag of Holding persistence fixed: the bag was awarded to S.partyAssets in memory but the Supabase push may not have completed before the next pull overwrote it. Fix: Bag of Holding is now also added to S.franchiseStorage (string entry) as a durable fallback that travels in the franchise row. awardCapstonReward now calls save() and schedules an explicit sbPush(false) 200ms after the alert is dismissed to guarantee the bag reaches Supabase before any reload.</div>
         <div style="margin-bottom:9px"><strong>Version 1.542</strong> &mdash; (1) Task pie (pct) now persists to Supabase: pct field added to active_tasks push row and restored in pull. Subtask pct values already travel in the subtasks JSONB column. A pct column is needed in Supabase (see SQL below). (2) Added top-level console.log calls at the entry of openSquadNew() logging partyAssets names/types, franchiseStorage contents, and the hasBag result to diagnose the Bag of Holding recognition issue.</div>
@@ -6279,16 +6280,17 @@ function charHasTag(c,ci,tag){
   if((c.tools||[]).indexOf(tag)!==-1)return true;
   if((c.lang||[]).indexOf(tag)!==-1)return true;
   if((c.weapons||[]).indexOf(tag)!==-1)return true;
-  if(tag==='Questing'){
-    var now=Date.now();
-    var outQuesting=false;
+  if(tag==='Questing'||tag==='__not_questing__'){
+    var _now=Date.now();
+    var _outQ=false;
     (S.questState&&S.questState.pending||[]).forEach(function(pq){
-      if(pq.doneAt>now && (pq.chars||[]).indexOf(ci)!==-1)outQuesting=true;
+      if(pq.doneAt>_now && (pq.chars||[]).indexOf(ci)!==-1)_outQ=true;
     });
     (S.questState&&S.questState.grindPending||[]).forEach(function(gp){
-      if(gp.doneAt>now && (gp.chars||[]).indexOf(ci)!==-1)outQuesting=true;
+      if(gp.doneAt>_now && (gp.chars||[]).indexOf(ci)!==-1)_outQ=true;
     });
-    if(outQuesting)return true;
+    if(tag==='Questing')return _outQ;
+    if(tag==='__not_questing__')return !_outQ; // inverse: available
   }
   if((c.inv||[]).indexOf(tag)!==-1)return true;
   if((c.inv||[]).some(function(it){ return itemTypeBaseName(it)===tag; }))return true;
@@ -6348,9 +6350,12 @@ function renderParty(){
   });
 
   // Slim action bar: Manage + New Squad
-  var tagBar='<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">'+
+  var _notQFilter=activeFilter==='__not_questing__';
+  var tagBar='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'+
     '<button class="btn bink sm" data-a="sqmgr" style="font-size:.78em">⚔ Manage Squads</button>'+
-    (activeFilter?'<button class="btn bink sm" data-a="ptag" data-v="" style="font-size:.72em">✕ Clear filter</button>':'')+
+    '<button class="btn bink sm" data-a="ptag" data-v="__not_questing__" style="font-size:.72em;'+(_notQFilter?'background:var(--forest);color:#fff;border-color:var(--forest);':'')+'">'+(_notQFilter?'✕ ':'')+' Available</button>'+
+    (activeFilter&&!_notQFilter?'<button class="btn bink sm" data-a="ptag" data-v="" style="font-size:.72em">✕ Clear filter</button>':'')+
+    (!activeFilter||_notQFilter?'':'')+ 
     '<button class="btn bg sm" data-a="sqnew" style="margin-left:auto;font-size:.78em">+ Squad</button>'+
     '</div>';
 
@@ -12693,6 +12698,40 @@ function renderSqmgrChars(){
   squads.forEach(function(sq,sqi){
     (sq.memberIdxs||[]).forEach(function(ci){charSqMap[ci]=sqi;});
   });
+  // Compute what the sort/focus squad already covers so we can flag gaps
+  var _focusSq=sqmgrSortSquad&&sqmgrSortSquad!=='__unassigned__'
+    ?(squads.filter(function(s){return s.name===sqmgrSortSquad;})[0]||null):null;
+  var _sqSkills={},_sqTools={},_sqLangs={},_sqRels={};
+  if(_focusSq){
+    (_focusSq.memberIdxs||[]).forEach(function(ci){
+      var c=S.party[ci];if(!c)return;
+      (c.skills||[]).forEach(function(s){_sqSkills[s]=true;});
+      (c.tools||[]).forEach(function(t){_sqTools[t]=true;});
+      (c.weapons||[]).forEach(function(w){_sqTools[w]=true;});
+      (c.lang||[]).forEach(function(l){_sqLangs[l]=true;});
+      if(c.rel)_sqRels[c.rel]=true;
+    });
+  }
+  function _isGap(c){
+    if(!_focusSq)return false;
+    // Returns true if this char has at least one attribute the squad lacks
+    if((c.skills||[]).some(function(s){return !_sqSkills[s];}))return true;
+    if((c.tools||[]).some(function(t){return !_sqTools[t];}))return true;
+    if((c.weapons||[]).some(function(w){return !_sqTools[w];}))return true;
+    if((c.lang||[]).some(function(l){return !_sqLangs[l];}))return true;
+    if(c.rel&&!_sqRels[c.rel])return true;
+    return false;
+  }
+  function _gapTags(c){
+    // Returns list of specific attributes this char has that the squad lacks
+    var gaps=[];
+    (c.skills||[]).forEach(function(s){if(!_sqSkills[s])gaps.push(s);});
+    (c.tools||[]).forEach(function(t){if(!_sqTools[t])gaps.push(t);});
+    (c.weapons||[]).forEach(function(w){if(!_sqTools[w])gaps.push(w);});
+    (c.lang||[]).forEach(function(l){if(!_sqLangs[l])gaps.push(l);});
+    if(c.rel&&!_sqRels[c.rel])gaps.push('🙏 '+c.rel);
+    return gaps;
+  }
   if(!S.party||!S.party.length){
     zone.innerHTML='<div style="text-align:center;padding:20px;color:var(--ink-light);font-style:italic">No party members.</div>';
     return;
@@ -12762,8 +12801,16 @@ function renderSqmgrChars(){
         return '<span class="sqmgr-skill-tag">'+esc(s)+'</span>';
       }).join('');
     }
+    // Target icon: show on unassigned chars that cover a gap in the focused squad
+    var _unassigned=sqi===-1;
+    var _gaps=(_unassigned&&_focusSq)?_gapTags(c):[];
+    var _gapTitle='Fills squad gap: '+_gaps.slice(0,3).map(esc).join(', ')+(_gaps.length>3?'…':'');
+    var _targetHtml=_gaps.length
+      ?'<div title="'+_gapTitle+'" style="position:absolute;top:4px;right:4px;font-size:.8em;cursor:help">🎯</div>'
+      :'';
     return '<div class="sqmgr-char-card'+(isSelected?' sqmgr-char-sel':'')+'" data-sqmgr-char="'+ci+'"'+
-      ' style="background:'+col+';color:'+textCol+'">'+
+      ' style="background:'+col+';color:'+textCol+';position:relative">'+
+      _targetHtml+
       (ic?'<div class="sqmgr-char-badge">'+ic+'</div>':'')+
       '<div style="flex:1;min-width:0">'+
         '<div class="sqmgr-char-name">'+esc(c.name)+'</div>'+
