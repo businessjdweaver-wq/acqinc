@@ -2149,7 +2149,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.589
+      Version 1.590
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2174,6 +2174,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.590</strong> — Store/editor fixes for scrolls and potions: (1) getStoreItems and buildStock now recognise type=scroll/book/potion as magic items — they were previously excluded by the type==='magic' filter. Scrolls and potions now have dedicated stock pools. (2) Gear editor type dropdown includes scroll/book/potion. (3) Content editor Gear tab shows a Magic section at top listing all scrolls and potions.</div>
         <div style="margin-bottom:9px"><strong>Version 1.589</strong> — Store: (a) Sub-drawer buttons now navy/blue, distinct from gold category grid. (b) Page title updates to active sub-category label on both category and sub-category tap. (c) Added 5 scrolls (Fly, Misty Step, Water Breathing, Darkvision, Knock) and 5 potions (Giant Strength, Healing, Water Walking, Climbing, Resistance). Both routed to Magic > Scrolls & Books / Potions sub-tabs.</div>
         <div style="margin-bottom:9px"><strong>Version 1.588</strong> — Store footer redesigned: 2×2 category grid (Gear/Magic/Assets/Pets) always visible. Sub-drawer rows appear above grid when a category with sub-categories is tapped and stay visible until a different category is selected. 4-sub categories (Gear, Magic) show two drawer rows; 2-sub (Assets) shows one; Pets shows none. Sub-categories: Gear=Weapons/Armor/Consumables/Tools, Magic=Scrolls & Books/Potions/Common/Uncommon, Assets=Vehicles/Buildings.</div>
         <div style="margin-bottom:9px"><strong>Version 1.587</strong> — Quest assignment modal: right column is now a tab strip (Description / Contract / Best Fit). Clicking a tab loads its content into the left pane at larger font size. Modal height increased ~10% (94.6vh). Footer margin tightened. Card-stack animation fully retired.</div>
@@ -11553,18 +11554,18 @@ function getStoreItems(){
   // Magic tab: sub-tab pools
   if(storeTab==='magic'){
     var _magSub=storeSubTab.magic||'magic-common';
-    var magicOnly=GEAR.filter(function(g){return g.type==='magic'&&g.rar!=='veryrare'&&g.rar!=='legendary';});
+    var _isMagicType=function(g){return g.type==='magic'||g.type==='scroll'||g.type==='book'||g.type==='potion';};
+    var magicOnly=GEAR.filter(function(g){return _isMagicType(g)&&g.rar!=='veryrare'&&g.rar!=='legendary';});
     var byR=function(r){return magicOnly.filter(function(g){return g.rar===r;});};
     if(isDevModeActive()){
-      // Dev mode: show all items in each sub-tab
       if(_magSub==='magic-scrolls')return magicOnly.filter(function(g){return g.type==='scroll'||g.type==='book';});
       if(_magSub==='magic-potions')return magicOnly.filter(function(g){return g.type==='potion';});
       if(_magSub==='magic-uncommon')return byR('uncommon');
-      return byR('common'); // magic-common default
+      return byR('common');
     }
     if(!S.stock||!S.stock.magicCommon||S.stockDate!==todayStr())buildStock();
-    if(_magSub==='magic-scrolls')return (S.stock.magicCommon||[]).filter(function(g){return g.type==='scroll'||g.type==='book';});
-    if(_magSub==='magic-potions')return (S.stock.magicCommon||[]).filter(function(g){return g.type==='potion';});
+    if(_magSub==='magic-scrolls')return (S.stock.magicScrolls||[]);
+    if(_magSub==='magic-potions')return (S.stock.magicPotions||[]);
     if(_magSub==='magic-uncommon')return S.stock.magicRare||[];
     return S.stock.magicCommon||[];
   } else if(storeTab==='adventuring'){
@@ -11593,16 +11594,16 @@ function getStoreItems(){
 }
 
 function buildStock(){
-  // Magic tab stock:
-  // Common sub-tab: ALL common magic items + 5 randomly selected uncommon
-  // Rare sub-tab: 10 randomly selected rare items
-  var magicOnly=GEAR.filter(function(g){return g.type==='magic'&&g.rar!=='veryrare'&&g.rar!=='legendary';});
+  var _isMagicType=function(g){return g.type==='magic'||g.type==='scroll'||g.type==='book'||g.type==='potion';};
+  var magicOnly=GEAR.filter(function(g){return _isMagicType(g)&&g.rar!=='veryrare'&&g.rar!=='legendary';});
   var byR=function(r){return magicOnly.filter(function(g){return g.rar===r;});};
-  var allCommon=byR('common').slice(); // show every common
+  var allCommon=byR('common').slice();
   var fiveUncommon=pick(byR('uncommon'),5);
   S.stock={
     magicCommon: allCommon.concat(fiveUncommon),
-    magicRare: pick(byR('rare'),10)
+    magicRare:   pick(byR('rare'),10),
+    magicScrolls: magicOnly.filter(function(g){return g.type==='scroll'||g.type==='book';}),
+    magicPotions: magicOnly.filter(function(g){return g.type==='potion';})
   };
   S.stockDate=todayStr();save();
 }
@@ -15181,9 +15182,25 @@ function edRenderList(){
         '</div>';
     });
   } else if(edTab==='gear'){
+    // Magic items (scroll/book/potion) grouped separately at top
+    var _magTypes=['scroll','book','potion'];
+    var magicItems=GEAR.filter(function(g){return _magTypes.indexOf(g.type)!==-1;});
+    if(magicItems.length){
+      html+='<div style="padding:6px 12px 3px;font-family:\'Cinzel\',serif;font-size:.7em;text-transform:uppercase;letter-spacing:.05em;color:#5b8de8;border-top:1px solid var(--parchment-deep);margin-top:4px">✨ Magic — Scrolls & Potions</div>';
+      magicItems.forEach(function(g){
+        var isCustom=!!g._custom;
+        var isSel=edSelected&&edSelected.type==='gear'&&edSelected.name===g.name;
+        html+='<div class="ed-list-item'+(isSel?' ed-list-sel':'')+'" data-ed="gear" data-gname="'+esc(g.name)+'" style="padding:9px 14px;cursor:pointer;border-left:3px solid '+(isSel?'var(--crimson)':'transparent')+';background:'+(isSel?'rgba(139,26,26,.06)':'none')+';display:flex;align-items:center;gap:8px">'+
+          '<span style="margin-right:2px">'+g.ic+'</span>'+
+          '<span style="flex:1;font-size:.88em;'+(isCustom?'color:var(--crimson)':'')+'">'+esc(g.name)+'</span>'+
+          '<span style="font-size:.62em;color:var(--ink-light);border:1px solid var(--parchment-deep);border-radius:3px;padding:0 3px">'+g.type+'</span>'+
+          (isCustom?'<span style="font-size:.62em;color:var(--crimson);border:1px solid var(--crimson);border-radius:3px;padding:0 3px">custom</span>':'')+
+          '</div>';
+      });
+    }
     var rarOrder=['common','uncommon','rare','veryrare'];
     rarOrder.forEach(function(rar){
-      var items=GEAR.filter(function(g){return g.rar===rar;});
+      var items=GEAR.filter(function(g){return g.rar===rar&&_magTypes.indexOf(g.type)===-1;});
       if(!items.length)return;
       var rarLabels={common:'Common',uncommon:'Uncommon',rare:'Rare',veryrare:'Very Rare'};
       html+='<div style="padding:6px 12px 3px;font-family:\'Cinzel\',serif;font-size:.7em;text-transform:uppercase;letter-spacing:.05em;color:var(--gold-dark);border-top:1px solid var(--parchment-deep);margin-top:4px">'+rarLabels[rar]+'</div>';
@@ -15975,7 +15992,7 @@ function edShowGearForm(){
   }
 
   var rarOptions=['common','uncommon','rare','veryrare'].map(function(r){return '<option value="'+r+'"'+(g&&g.rar===r?' selected':'')+'>'+r+'</option>';}).join('');
-  var typeOptions=['gear','weapon','armor','kit','magic'].map(function(t){return '<option value="'+t+'"'+(g&&g.type===t?' selected':'')+'>'+t+'</option>';}).join('');
+  var typeOptions=['gear','weapon','armor','kit','magic','scroll','book','potion'].map(function(t){return '<option value="'+t+'"'+(g&&g.type===t?' selected':'')+'>'+t+'</option>';}).join('');
 
   html+='<div style="display:grid;grid-template-columns:80px 1fr;gap:16px 24px;align-items:start">';
   html+='<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Icon</label>'+
