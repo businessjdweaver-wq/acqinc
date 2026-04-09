@@ -2011,7 +2011,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.560
+      Version 1.561
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2036,6 +2036,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.561</strong> &mdash; Dashboard functions (getDashboardCards, renderDashboard, renderDashboardEditor, _autoCreateDashCard, cardGradient, cardTextColor) were defined OUTSIDE the main IIFE, making contentBucket, saveCustom, esc, S, etc. all undefined. Re-inserted all dashboard functions inside the IIFE before its closing }()); so they share scope with all other app functions. Supabase check constraint also needs updating — see SQL note.</div>
         <div style="margin-bottom:9px"><strong>Version 1.560</strong> &mdash; Manage Squads crash fixed. renderSqmgrChars() declared _unassigned and _gapSet AFTER the tagHtml block that used them. JS var hoisting meant _gapSet was undefined (not {}) at the point of use, causing "Cannot read properties of undefined (reading 'Persuasion')" on any character with skills. Moved _gapSet/{} initialization and _gapTags() call to immediately before the tagHtml building block.</div>
         <div style="margin-bottom:9px"><strong>Version 1.559</strong> &mdash; Two clickability fixes: (1) Manage Squads unclickable — the tagBar (Manage Squads / Available / + Squad) was rendered as the first child of #plist, sitting directly under the sticky Assets/Stats/Recruit bar at z-index:100. That bar physically intercepted clicks. Fix: tagBar is now rendered into a dedicated #party-tagbar div placed in the HTML between the sticky bar and #plist. A new click delegation listener on #party-tagbar handles sqmgr/sqnew/sqedit/ptag actions. Sticky bar z-index lowered from 100 to 10. (2) Cards editor + New button unclickable — renderDashboardEditor() was targeting non-existent #ed-list-items and #ed-list-inner elements, so the + New Card button inside the list was never rendered. The top-level + New button (ed-btn-new) called renderDashboardEditor() which wrote nothing, making it appear broken. Fixed to target the correct #ed-list element. addBtn handler now uses contentBucket() directly with async-safe saveCustom handling.</div>
         <div style="margin-bottom:9px"><strong>Version 1.558</strong> &mdash; Merges v1.557 fixes plus: Manage Squads button broken — root cause was renderParty() throwing a TypeError on every call. The Continue Downtime IIFE unconditionally called document.getElementById('btn-continue-dt').onclick=... but that button only exists when the bar is visible (has innerHTML). When hidden, getElementById returns null and .onclick throws, silently aborting renderParty before el.innerHTML=html runs — so #plist kept stale content and the Manage Squads button was never rendered. Fix: guarded with if(_dtBtn)_dtBtn.onclick=...</div>
@@ -16668,7 +16669,6 @@ refreshEditorScopeOptions();
 qpStartupSweep();
 updateQpDisplay();
 
-}());
 // ── Dashboard ──────────────────────────────────────────────
 document.getElementById('ov-dashboard-close').addEventListener('click',function(){closeOv('ov-dashboard');});
 
@@ -16684,7 +16684,6 @@ function getDashboardCards(){
 }
 
 function cardGradient(colors){
-  // colors: array of up to 3 hex strings
   var c=colors&&colors.filter(Boolean);
   if(!c||!c.length)return 'linear-gradient(135deg,#3a2a1a,#5c4020)';
   if(c.length===1)return 'linear-gradient(135deg,'+c[0]+','+c[0]+'cc)';
@@ -16693,7 +16692,6 @@ function cardGradient(colors){
 }
 
 function cardTextColor(colors){
-  // Pick white or dark text based on average luminance of first color
   var c=colors&&colors[0];
   if(!c)return '#fff';
   var r=parseInt(c.slice(1,3),16),g=parseInt(c.slice(3,5),16),b=parseInt(c.slice(5,7),16);
@@ -16706,77 +16704,68 @@ function renderDashboard(){
   if(!grid)return;
   var cards=getDashboardCards();
   var log=S.questLog||[];
-  // Compute QM stats
   var totalEarned=log.reduce(function(s,e){return s+(e.reward||0);},0);
   var totalFranchise=log.reduce(function(s,e){return s+(e.franchiseCut||0);},0);
   var totalChar=totalEarned-totalFranchise;
   var qmHtml='<div class="dash-card dash-card-qm" id="dash-qm-card" title="Tap for full log">'+
-    '<div class="dash-card-ic">📜</div>'+
+    '<div class="dash-card-ic">\u{1F4DC}</div>'+
     '<div class="dash-card-title">Quartermaster</div>'+
     '<div class="dash-card-desc" style="font-size:.54em;line-height:1.5">'+
-    '🪙 '+totalEarned.toLocaleString()+' gp total<br>'+
-    '🏰 '+totalFranchise.toLocaleString()+' franchise<br>'+
-    '⚔ '+totalChar.toLocaleString()+' to party'+
+    '\uD83E\uDE99 '+totalEarned.toLocaleString()+' gp total<br>'+
+    '\uD83C\uDFF0 '+totalFranchise.toLocaleString()+' franchise<br>'+
+    '\u2694 '+totalChar.toLocaleString()+' to party'+
     '</div>'+
     '</div>';
-  // Franchise reward cards: artifacts, pets, NPC contacts
+  // Artifacts
   var capCards=[];
-  // Artifacts (capstone rewards)
   (S.partyAssets||[]).filter(function(a){return a&&assetBaseType(a)==='artifact';}).forEach(function(a){
-    capCards.push(
-      '<div class="dash-card" style="background:linear-gradient(135deg,#3a1f5c,#6a3fa0);color:#fff">'+
-      '<div class="dash-card-ic">'+(a.ic||'✨')+'</div>'+
+    capCards.push('<div class="dash-card" style="background:linear-gradient(135deg,#3a1f5c,#6a3fa0);color:#fff">'+
+      '<div class="dash-card-ic">'+(a.ic||'\u2728')+'</div>'+
       '<div class="dash-card-title">'+esc(assetDisplayName(a))+'</div>'+
       (a.name!==assetDisplayName(a)?'<div class="dash-card-desc">'+esc(a.name)+'</div>':'')+
-      '</div>'
-    );
+      '</div>');
   });
   // Pets
   (S.partyAssets||[]).filter(function(a){return a&&assetBaseType(a)==='pet';}).forEach(function(a){
     var petName=assetMeta(a).customName||assetDisplayName(a);
-    capCards.push(
-      '<div class="dash-card" style="background:linear-gradient(135deg,#1a4a2a,#2e7a45);color:#fff">'+
-      '<div class="dash-card-ic">'+(a.ic||'🐾')+'</div>'+
+    capCards.push('<div class="dash-card" style="background:linear-gradient(135deg,#1a4a2a,#2e7a45);color:#fff">'+
+      '<div class="dash-card-ic">'+(a.ic||'\uD83D\uDC3E')+'</div>'+
       '<div class="dash-card-title">'+esc(petName)+'</div>'+
       (petName!==a.name?'<div class="dash-card-desc">'+esc(a.name)+'</div>':'')+
-      '</div>'
-    );
+      '</div>');
   });
-  // NPC contacts (party members with c.contact===true)
+  // NPC contacts
   (S.party||[]).filter(function(c){return c&&c.contact;}).forEach(function(c){
-    capCards.push(
-      '<div class="dash-card" style="background:linear-gradient(135deg,#1a3a4a,#2a6070);color:#fff">'+
-      '<div class="dash-card-ic">🤝</div>'+
+    capCards.push('<div class="dash-card" style="background:linear-gradient(135deg,#1a3a4a,#2a6070);color:#fff">'+
+      '<div class="dash-card-ic">\uD83E\uDD1D</div>'+
       '<div class="dash-card-title">'+esc(c.name)+'</div>'+
-      (c.contactBg?'<div class="dash-card-desc">'+esc(c.contactBg.slice(0,60)+(c.contactBg.length>60?'…':''))+'</div>':'')+
-      '</div>'
-    );
+      (c.contactBg?'<div class="dash-card-desc">'+esc(c.contactBg.slice(0,60)+(c.contactBg.length>60?'\u2026':''))+'</div>':'')+
+      '</div>');
   });
-  // Custom cards from editor
+  // Custom cards
   var customHtml=cards.map(function(c){
     var bg=cardGradient(c.colors);
     var tc=cardTextColor(c.colors);
     return '<div class="dash-card" style="background:'+bg+';color:'+tc+'">'+
-      '<div class="dash-card-ic">'+(c.ic||'🃏')+'</div>'+
+      '<div class="dash-card-ic">'+(c.ic||'\uD83C\uDCCF')+'</div>'+
       '<div class="dash-card-title">'+esc(c.name||'')+'</div>'+
       (c.desc?'<div class="dash-card-desc">'+esc(c.desc)+'</div>':'')+
       '</div>';
   }).join('');
   grid.innerHTML=qmHtml+capCards.join('')+customHtml;
-  // QM card tap — show full log
   var qmEl=document.getElementById('dash-qm-card');
   if(qmEl)qmEl.addEventListener('click',function(){
     var overlay=document.createElement('div');
     overlay.style.cssText='position:absolute;inset:0;background:rgba(26,14,4,.92);z-index:50;overflow-y:auto;padding:14px;border-radius:10px';
     var logHtml='<div style="font-family:\'Cinzel\',serif;font-size:.78em;color:var(--gold-bright);margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">'+
-      '📜 Quest Log <button id="qm-overlay-close" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);border-radius:4px;color:#fff;padding:2px 8px;cursor:pointer;font-size:.85em">✕</button></div>'+
-      ((log.length?log.map(function(e){
+      '\uD83D\uDCDC Quest Log <button id="qm-overlay-close" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);border-radius:4px;color:#fff;padding:2px 8px;cursor:pointer;font-size:.85em">\u2715</button></div>'+
+      (log.length?log.map(function(e){
         return '<div style="border-bottom:1px dashed rgba(255,255,255,.2);padding:6px 0;font-size:.62em;color:#e0d0c0">'+
           '<div style="font-weight:700;color:var(--gold-bright)">'+esc(e.questTitle)+'</div>'+
-          '<div style="opacity:.7">'+esc(e.completedAt)+' · 🪙 '+e.reward+' gp · 🏰 '+e.franchiseCut+' gp</div>'+
-          (e.chars&&e.chars.length?'<div>'+e.chars.map(function(cr){return '⚔ '+esc(cr.name)+' '+cr.cut+' gp';}).join(' · ')+'</div>':'')+
+          '<div style="opacity:.7">'+esc(e.completedAt)+' \u00b7 \uD83E\uDE99 '+e.reward+' gp \u00b7 \uD83C\uDFF0 '+e.franchiseCut+' gp</div>'+
+          (e.chars&&e.chars.length?'<div>'+e.chars.map(function(cr){return '\u2694 '+esc(cr.name)+' '+cr.cut+' gp';}).join(' \u00b7 ')+'</div>':'')+
           '</div>';
-      }).join(''):'<div style="color:rgba(255,255,255,.5);font-size:.72em">No completed quests yet.</div>'));
+      }).join(''):'<div style="color:rgba(255,255,255,.5);font-size:.72em">No completed quests yet.</div>');
     logHtml+='</div>';
     overlay.innerHTML=logHtml;
     qmEl.style.position='relative';
@@ -16785,24 +16774,21 @@ function renderDashboard(){
   });
 }
 
-// ── Dashboard editor section ─────────────────────────────
 function renderDashboardEditor(){
-  var listEl=document.getElementById('ed-list');  // correct element
-  // Render the card list on left, form on right
+  var listEl=document.getElementById('ed-list');
   var cards=getDashboardCards();
   if(listEl){
-    listEl.innerHTML=cards.map(function(c,i){
+    listEl.innerHTML=cards.map(function(c){
       var isSel=edSelected&&edSelected.type==='dashcard'&&edSelected.id===c.id;
       var bg=cardGradient(c.colors);
       return '<div class="ed-list-item'+(isSel?' ed-list-sel':'')+'" data-ed="dashcard" data-cardid="'+esc(c.id)+'" style="padding:9px 14px;cursor:pointer;border-left:3px solid '+(isSel?'var(--crimson)':'transparent')+';display:flex;align-items:center;gap:10px">'+
-        '<div style="width:28px;height:28px;border-radius:6px;background:'+bg+';display:flex;align-items:center;justify-content:center;font-size:1.1em;flex-shrink:0">'+(c.ic||'🃏')+'</div>'+
+        '<div style="width:28px;height:28px;border-radius:6px;background:'+bg+';display:flex;align-items:center;justify-content:center;font-size:1.1em;flex-shrink:0">'+(c.ic||'\uD83C\uDCCF')+'</div>'+
         '<span style="font-size:.85em;color:var(--ink)">'+esc(c.name||'Untitled Card')+'</span>'+
         '</div>';
     }).join('')+'<div style="padding:10px 14px"><button id="ed-add-dashcard" class="btn bg sm" style="width:100%;font-size:.78em">+ New Card</button></div>';
     listEl.querySelectorAll('[data-ed="dashcard"]').forEach(function(el){
       el.addEventListener('click',function(){
-        var cid=el.getAttribute('data-cardid');
-        edSelected={type:'dashcard',id:cid};
+        edSelected={type:'dashcard',id:el.getAttribute('data-cardid')};
         renderDashboardEditor();
       });
     });
@@ -16812,15 +16798,13 @@ function renderDashboardEditor(){
       var scope=isAppAdmin()?currentContentScope():'private';
       var bucket=contentBucket(scope);
       if(!bucket.dashCards)bucket.dashCards=[];
-      var newCard={id:newId,name:'New Card',ic:'🃏',desc:'',colors:['#3a2a1a','#5c4020','#7a5828']};
+      var newCard={id:newId,name:'New Card',ic:'\uD83C\uDCCF',desc:'',colors:['#3a2a1a','#5c4020','#7a5828']};
       bucket.dashCards.push(newCard);
       var _p=saveCustom('_customDashCards',bucket.dashCards,scope);
-      if(_p&&_p.then)_p.then(function(){mergeCustomContent();renderDashboardEditor();}).catch(function(e){console.warn('dashCard new:',e);mergeCustomContent();renderDashboardEditor();});
-      else{mergeCustomContent();renderDashboardEditor();}
-      edSelected={type:'dashcard',id:newId};
+      if(_p&&_p.then)_p.then(function(){mergeCustomContent();edSelected={type:'dashcard',id:newId};renderDashboardEditor();}).catch(function(e){console.warn('dashCard new:',e);mergeCustomContent();edSelected={type:'dashcard',id:newId};renderDashboardEditor();});
+      else{mergeCustomContent();edSelected={type:'dashcard',id:newId};renderDashboardEditor();}
     });
   }
-  // Form area
   var formEl=document.getElementById('ed-form-inner');
   if(!formEl)return;
   if(!edSelected||edSelected.type!=='dashcard'){
@@ -16832,11 +16816,10 @@ function renderDashboardEditor(){
   if(!card){formEl.innerHTML='<div style="padding:20px;color:var(--ink-light)">Card not found.</div>';return;}
   var c1=(card.colors&&card.colors[0])||'#3a2a1a';
   var c2=(card.colors&&card.colors[1])||'#5c4020';
-  var c3=(card.colors&&card.colors[2])||'';
-  // Icon picker — common emojis
+  var c3=(card.colors&&card.colors[2])||'#7a5828';
   var icons=['🃏','⚔️','🛡️','🔥','❄️','⚡','🌿','💀','🐉','🦅','🌙','☀️','⭐','🎯','🪄','💎','📜','🏆','🗡️','🔮','🪙','🎪','🦁','🌊','🌋','🏔️','🌟','💫','🎭','🗝️'];
   var iconHtml=icons.map(function(ic){
-    var sel=(card.ic||'🃏')===ic;
+    var sel=(card.ic||'\uD83C\uDCCF')===ic;
     return '<button class="dash-ic-pick" data-ic="'+ic+'" style="width:36px;height:36px;border-radius:6px;border:'+(sel?'2px solid var(--crimson)':'1px solid var(--parchment-deep)')+';background:'+(sel?'rgba(139,26,26,.1)':'none')+';font-size:1.2em;cursor:pointer">'+ic+'</button>';
   }).join('');
   formEl.innerHTML=
@@ -16849,33 +16832,22 @@ function renderDashboardEditor(){
     '<div style="display:flex;gap:8px;align-items:center">'+
     '<div style="display:flex;flex-direction:column;align-items:center;gap:3px"><input type="color" id="dc-c1" value="'+c1+'" style="width:44px;height:36px;border:1px solid var(--parchment-deep);border-radius:4px;cursor:pointer;padding:2px"><span style="font-size:.6em;color:var(--ink-light)">Primary</span></div>'+
     '<div style="display:flex;flex-direction:column;align-items:center;gap:3px"><input type="color" id="dc-c2" value="'+c2+'" style="width:44px;height:36px;border:1px solid var(--parchment-deep);border-radius:4px;cursor:pointer;padding:2px"><span style="font-size:.6em;color:var(--ink-light)">Secondary</span></div>'+
-    '<div style="display:flex;flex-direction:column;align-items:center;gap:3px"><input type="color" id="dc-c3" value="'+(c3||'#000000')+'" style="width:44px;height:36px;border:1px solid var(--parchment-deep);border-radius:4px;cursor:pointer;padding:2px"><span style="font-size:.6em;color:var(--ink-light)">Accent</span></div>'+
+    '<div style="display:flex;flex-direction:column;align-items:center;gap:3px"><input type="color" id="dc-c3" value="'+c3+'" style="width:44px;height:36px;border:1px solid var(--parchment-deep);border-radius:4px;cursor:pointer;padding:2px"><span style="font-size:.6em;color:var(--ink-light)">Accent</span></div>'+
     '<div style="flex:1;height:44px;border-radius:8px;border:1px solid var(--parchment-deep)" id="dc-preview-bg"></div>'+
     '</div></div>'+
     '<div><label style="display:block;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">Description</label>'+
     '<textarea id="dc-desc" rows="3" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);resize:vertical;box-sizing:border-box">'+esc(card.desc||'')+'</textarea></div>'+
     '<div style="display:flex;gap:8px">'+
-    '<button id="dc-save" style="flex:1;padding:9px;background:var(--forest);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:\'Cinzel\',serif">💾 Save Card</button>'+
-    '<button id="dc-delete" style="padding:9px 14px;background:var(--crimson);color:#fff;border:none;border-radius:5px;cursor:pointer">🗑</button>'+
+    '<button id="dc-save" style="flex:1;padding:9px;background:var(--forest);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:\'Cinzel\',serif">\uD83D\uDCBE Save Card</button>'+
+    '<button id="dc-delete" style="padding:9px 14px;background:var(--crimson);color:#fff;border:none;border-radius:5px;cursor:pointer">\uD83D\uDDD1</button>'+
     '</div></div>';
-
-  // Live preview
   function updatePreview(){
     var pb=document.getElementById('dc-preview-bg');
-    if(pb)pb.style.background=cardGradient([
-      document.getElementById('dc-c1').value,
-      document.getElementById('dc-c2').value,
-      document.getElementById('dc-c3').value
-    ]);
+    if(pb)pb.style.background=cardGradient([document.getElementById('dc-c1').value,document.getElementById('dc-c2').value,document.getElementById('dc-c3').value]);
   }
   updatePreview();
-  ['dc-c1','dc-c2','dc-c3'].forEach(function(id){
-    var el=document.getElementById(id);
-    if(el)el.addEventListener('input',updatePreview);
-  });
-
-  // Icon picker
-  var _selIc=card.ic||'🃏';
+  ['dc-c1','dc-c2','dc-c3'].forEach(function(id){var el=document.getElementById(id);if(el)el.addEventListener('input',updatePreview);});
+  var _selIc=card.ic||'\uD83C\uDCCF';
   formEl.querySelectorAll('.dash-ic-pick').forEach(function(btn){
     btn.addEventListener('click',function(){
       _selIc=btn.getAttribute('data-ic');
@@ -16886,79 +16858,55 @@ function renderDashboardEditor(){
       });
     });
   });
-
-  // Save
   document.getElementById('dc-save').addEventListener('click',function(){
-    var scope=isAppAdmin()?currentContentScope():'private';
-    // Find scope of existing card
     var foundScope=null;
-    ['official','shared','private'].forEach(function(s){
-      if((CONTENT_LIB[s]._customDashCards||[]).some(function(c){return c.id===edSelected.id;}))foundScope=s;
-    });
-    var useScope=foundScope||scope;
-    var cards2=contentItemsForScope(useScope,'_customDashCards')||[];
-    var idx=cards2.findIndex?cards2.findIndex(function(c){return c.id===edSelected.id;}):
-      (function(){for(var i=0;i<cards2.length;i++){if(cards2[i].id===edSelected.id)return i;}return -1;})();
-    var updated={id:edSelected.id,name:document.getElementById('dc-name').value.trim()||'Card',
-      ic:_selIc,desc:document.getElementById('dc-desc').value.trim(),
+    ['official','shared','private'].forEach(function(s){if((contentBucket(s).dashCards||[]).some(function(c){return c.id===edSelected.id;}))foundScope=s;});
+    var useScope=foundScope||(isAppAdmin()?currentContentScope():'private');
+    var bucket=contentBucket(useScope);
+    var cards2=bucket.dashCards||[];
+    var idx=-1;for(var i=0;i<cards2.length;i++){if(cards2[i].id===edSelected.id){idx=i;break;}}
+    var updated={id:edSelected.id,name:(document.getElementById('dc-name').value||'').trim()||'Card',
+      ic:_selIc,desc:(document.getElementById('dc-desc').value||'').trim(),
       colors:[document.getElementById('dc-c1').value,document.getElementById('dc-c2').value,document.getElementById('dc-c3').value]};
     if(idx>=0)cards2[idx]=updated;else cards2.push(updated);
-    saveCustom('_customDashCards',cards2,useScope);
-    mergeCustomContent();
-    renderDashboardEditor();
+    bucket.dashCards=cards2;
+    var _p=saveCustom('_customDashCards',cards2,useScope);
+    if(_p&&_p.then)_p.then(function(){mergeCustomContent();renderDashboardEditor();}).catch(function(e){console.warn(e);});
+    else{mergeCustomContent();renderDashboardEditor();}
   });
-
-  // Delete
   document.getElementById('dc-delete').addEventListener('click',function(){
     if(!confirm('Delete this card?'))return;
     ['official','shared','private'].forEach(function(s){
-      var c2=(CONTENT_LIB[s]._customDashCards||[]).filter(function(c){return c.id!==edSelected.id;});
-      CONTENT_LIB[s]._customDashCards=c2;
-      saveCustom('_customDashCards',c2,s);
+      var b=contentBucket(s);
+      b.dashCards=(b.dashCards||[]).filter(function(c){return c.id!==edSelected.id;});
+      saveCustom('_customDashCards',b.dashCards,s);
     });
-    mergeCustomContent();
-    edSelected=null;
-    renderDashboardEditor();
+    mergeCustomContent();edSelected=null;renderDashboardEditor();
   });
 }
 
-
-// Auto-create a dashboard card from a capstone reward definition
 function _autoCreateDashCard(quest,scope){
   var cr=quest.capstoneReward;
   if(!cr||!cr.type||cr.type==='random')return;
   var cardId='dc_cap_'+quest.setId+'_'+quest.idx;
-  // Build card fields based on reward type
-  var ic='🃏',name='',desc='',colors=[];
-  if(cr.type==='item'){
-    ic=cr.ic||'✨';
-    name=cr.name||'Artifact';
-    desc=cr.desc||'';
-    colors=['#3a1f5c','#6a3fa0','#9060c0'];
-  }else if(cr.type==='pet'){
-    ic=cr.ic||'🐾';
-    name=cr.name||'Companion';
-    desc=cr.desc||'';
-    colors=['#1a4a2a','#2e7a45','#40a060'];
-  }else if(cr.type==='npc'){
-    ic='🤝';
-    name=cr.name||'Contact';
-    desc=cr.contactBg||cr.bg||'';
-    colors=['#1a3a4a','#2a6070','#3a8090'];
-  }
+  var ic='\uD83C\uDCCF',name='',desc='',colors=[];
+  if(cr.type==='item'){ic=cr.ic||'\u2728';name=cr.name||'Artifact';desc=cr.desc||'';colors=['#3a1f5c','#6a3fa0','#9060c0'];}
+  else if(cr.type==='pet'){ic=cr.ic||'\uD83D\uDC3E';name=cr.name||'Companion';desc=cr.desc||'';colors=['#1a4a2a','#2e7a45','#40a060'];}
+  else if(cr.type==='npc'){ic='\uD83E\uDD1D';name=cr.name||'Contact';desc=cr.contactBg||cr.bg||'';colors=['#1a3a4a','#2a6070','#3a8090'];}
   var newCard={id:cardId,name:name,ic:ic,desc:desc,colors:colors,_fromCapstone:true};
   var useScope=normalizeContentScope(scope)||'private';
   var bucket=contentBucket(useScope);
-  var cards=clone(bucket.dashCards||[]);
-  // Replace existing card with same id, or append
-  var idx=-1;
-  for(var i=0;i<cards.length;i++){if(cards[i].id===cardId){idx=i;break;}}
+  if(!bucket.dashCards)bucket.dashCards=[];
+  var cards=bucket.dashCards;
+  var idx=-1;for(var i=0;i<cards.length;i++){if(cards[i].id===cardId){idx=i;break;}}
   if(idx>=0)cards[idx]=newCard;else cards.push(newCard);
+  bucket.dashCards=cards;
   var _p=saveCustom('_customDashCards',cards,useScope);
-  if(_p&&_p.then)_p.then(function(){mergeCustomContent();}).catch(function(e){console.warn('dashCard save:',e);});
+  if(_p&&_p.then)_p.then(function(){mergeCustomContent();}).catch(function(e){console.warn('dashCard auto-create:',e);});
   else mergeCustomContent();
 }
 
+}());
 
 </script>
 </body>
