@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.613
+      Version 1.614
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.614</strong> &mdash; (1) Level-up in quest modal now calls updateQuestModal() after re-rendering so the prereq check and Begin button refresh immediately. (2) buildQuestContributionHtml [indicator a] now respects isBusy for item contributions — busy chars no longer show 🎒 item match. (3) Carousel item tags [indicator c] now filters busy chars so item match tags only show for available chars. All three prereq indicators now agree.</div>
         <div style="margin-bottom:9px"><strong>Version 1.613</strong> &mdash; Auto-migrate misrouted gear assets: weapons/armor/gear that ended up in partyAssets (due to old party:true bug on all DB items) are automatically moved to the correct character's c.inv on pull. Unowned gear assets move to franchise storage. Runs once after sbPull completes.</div>
         <div style="margin-bottom:9px"><strong>Version 1.612</strong> &mdash; Fix prereq: busy chars (on another quest) can no longer satisfy item prerequisites. questPrereqCheck now builds a busy set from questState.pending and excludes busy char inventories from the item inv pool. Also fixed qddSyncCheckboxes to never check busy chars in peg slots. Skills/tools/lang prereqs still count all assigned chars since proficiencies exist regardless of current quest assignment.</div>
         <div style="margin-bottom:9px"><strong>Version 1.611</strong> &mdash; Fix 3 bugs: (1) Prereq check counting busy chars: getQuestChars now also checks questState.pending to exclude busy chars even if their checkbox is still enabled. (2) Sell price 1gp: mergeCustomContent was resetting GEAR to built-ins, wiping DB items like Longsword. DB items now stored in DB_GEAR/DB_VEHICLES/DB_BUILDINGS caches and re-applied after every mergeCustomContent via applyDBItemsToArrays(). (3) Item not leaving inventory: same root cause as (2) — GEAR lookup failed so item type routing broke. Fixed by same applyDBItemsToArrays mechanism.</div>
@@ -7455,6 +7456,8 @@ document.getElementById('ov-lv-yes').addEventListener('click',function(){
           return renderQuestAssignmentRow({ci:ci,c:c,isBusy:isBusy,chk:' '+chk,hl:hl,cl:'',pr:_pr,questLike:_q,isGrind:false});
         }).join('');
         questModalShowTab('adventurers');
+        // Refresh prereq check and Begin button state after level-up
+        updateQuestModal();
       }
     }
   }
@@ -8709,7 +8712,10 @@ function buildQuestContributionHtml(c,pr,isBusy){
   (pr.tools||[]).forEach(function(t){if((c.tools||[]).indexOf(t)!==-1)contrib.push('🔧 '+t);});
   (pr.lang||[]).forEach(function(l){if((c.lang||[]).indexOf(l)!==-1)contrib.push('🗣 '+l);});
   if(pr.rel&&c.rel===pr.rel)contrib.push('✝ '+pr.rel);
-  (pr.items||[]).forEach(function(it){if(inventoryHasPrereqItem(c.inv||[],it))contrib.push('🎒 '+it);});
+  // Only show item contribution if char is NOT busy on another quest
+  if(!isBusy){
+    (pr.items||[]).forEach(function(it){if(inventoryHasPrereqItem(c.inv||[],it))contrib.push('🎒 '+it);});
+  }
   return contrib.length?'<span style="font-size:.88em;color:var(--gold-dark);margin-left:6px">'+esc(contrib.join(' · '))+'</span>':'';
 }
 function buildQuestLevelActionHtml(c,ci,questLike,isGrind,isBusy){
@@ -16990,7 +16996,13 @@ function qddRenderPeg(entry,slots,busy){
   var matchedSlots=slots.filter(function(s){return!s.support&&qddCharCoversSlot(c,s);});
   // Also check item prereqs — items aren't hole slots but char may carry matching weapons/gear
   var itemTags=[];
-  if(qddQuestLike&&qddQuestLike.pre&&(qddQuestLike.pre.items||[]).length){
+  // Only show item match tag if char is NOT busy on another quest
+  var _carNow=Date.now();
+  var _carBusy={};
+  (S.questState&&S.questState.pending||[]).forEach(function(pq){
+    if(pq.doneAt>_carNow)(pq.chars||[]).forEach(function(bci){_carBusy[bci]=true;});
+  });
+  if(!_carBusy[ci]&&qddQuestLike&&qddQuestLike.pre&&(qddQuestLike.pre.items||[]).length){
     (qddQuestLike.pre.items||[]).forEach(function(reqItem){
       if(inventoryHasPrereqItem(c.inv||[],reqItem)){
         itemTags.push('<span class="qpeg-tag match" style="background:rgba(31,111,31,.18)">\uD83C\uDF92 '+esc(reqItem)+'</span>');
