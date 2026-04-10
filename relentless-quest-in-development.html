@@ -2127,7 +2127,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.634
+      Version 1.635
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2152,6 +2152,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.635</strong> &mdash; Bag of Holding recovery: after sbPull, if franchiseStorage contains a bag-of-holding name but partyAssets is missing it (lost in a failed push), the bag is automatically restored to partyAssets. sbPush party_assets insert failures now log a visible warning instead of silently losing data.</div>
         <div style="margin-bottom:9px"><strong>Version 1.634</strong> &mdash; Quest Map Collect All now sweeps both completed regular quests and completed grind missions. Grind collection uses the full gcollect flow: 90/10 split, char coin purses, item purchases, quest log entry, and immediate sbPush.</div>
         <div style="margin-bottom:9px"><strong>Version 1.633</strong> &mdash; Root &amp; Branch capstone reward set to "Longinus Carpetbag of Holding" (bagOfHolding:true so it counts for the 50 gp squad enrollment route).</div>
         <div style="margin-bottom:9px"><strong>Version 1.632</strong> &mdash; Squad swap: characters currently on an active quest, grind, or downtime job are now excluded from all swap candidate pools (symmetric squad↔squad, asymmetric unassigned↔squad, and the unassigned virtual squad). Added _buildBusySet() helper.</div>
@@ -12848,7 +12849,11 @@ function sbPush(manual){
     if(!(S.partyAssets||[]).length)return true;
     return sbInsert('party_assets',(S.partyAssets||[]).map(function(a,i){
       assetMeta(a); return {user_id:userId,sort_order:i,name:a.name,ic:a.ic||'',type:serializeAssetType(a)};
-    }));
+    })).catch(function(e){
+      // Insert failed after delete — log loudly so the issue is visible
+      console.error('[sbPush] party_assets re-insert FAILED after delete:',e);
+      logAdd('⚠️ Party assets push failed — your bags/mounts may need manual recovery. Check console.','task');
+    });
   }));
 
   ops.push(sbDel('squads','user_id=eq.'+encodeURIComponent(userId)).then(function(){
@@ -13117,6 +13122,22 @@ function sbPull(manual){
       ensureAssetMetas();
       logAdd('Recovered assets from franchise settings backup.','buy');
     }
+    // Safety net: if franchiseStorage contains a bag-of-holding but partyAssets
+    // doesn't have one (lost in a failed push), restore it to partyAssets
+    (S.franchiseStorage||[]).forEach(function(entry){
+      var bagName=typeof entry==='string'?entry:(entry&&entry.name)||'';
+      if(!bagName)return;
+      var bn=bagName.toLowerCase();
+      if(bn.indexOf('bag')===-1||bn.indexOf('holding')===-1)return;
+      // Check if already in partyAssets
+      var alreadyPresent=(S.partyAssets||[]).some(function(a){return _isBagOfHolding(a);});
+      if(!alreadyPresent){
+        if(!S.partyAssets)S.partyAssets=[];
+        S.partyAssets.push({name:bagName,ic:'🧳',type:'artifact',
+          bagOfHolding:true,meta:{uid:'recovered-bag-'+Date.now(),ownerType:'',ownerRef:''}});
+        logAdd('🛡 Bag of Holding ('+bagName+') recovered from franchiseStorage into partyAssets.','buy');
+      }
+    });
     if(squads&&squads.length){
       S.squads=squads.map(function(sq){
         // Block 3: read proper columns first, fall back to packed name for legacy rows
