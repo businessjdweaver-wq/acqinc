@@ -691,23 +691,9 @@ var BUILTIN_QUESTSETS = QUESTSETS.map(function(s) {
 });
 
 // ══════════════════════════════════════════════════
-// BUILT-IN PETS
+// PETS — loaded from Supabase pets table
 // ══════════════════════════════════════════════════
-var PETS=[
-  {name:'Cat',ic:'🐱',desc:'Independent companion. Advantage on Perception (hearing/smell).',rar:'common',price:5,type:'pet',party:true},
-  {name:'Dog (Hound)',ic:'🐶',desc:'Loyal tracker. Advantage on Survival (tracking).',rar:'common',price:25,type:'pet',party:true},
-  {name:'Raven',ic:'🐦‍⬛',desc:'Intelligent messenger. Can mimic short phrases.',rar:'common',price:50,type:'pet',party:true},
-  {name:'Toad',ic:'🐸',desc:'Unassuming familiar. Advantage on Nature checks near swamps.',rar:'common',price:1,type:'pet',party:true},
-  {name:'Ferret',ic:'🦦',desc:'Nimble thief-finder. Advantage on Sleight of Hand checks.',rar:'common',price:10,type:'pet',party:true},
-  {name:'Hawk',ic:'🦅',desc:'Scout from above. 60ft vision, spot tiny creatures.',rar:'uncommon',price:75,type:'pet',party:true},
-  {name:'Lizard (Giant)',ic:'🦎',desc:'Stealthy mount for Tiny creatures. Climb speed 30ft.',rar:'uncommon',price:200,type:'pet',party:true},
-  {name:'Wolf (Trained)',ic:'🐺',desc:'Pack hunter. +2 to attack when ally is adjacent to target.',rar:'uncommon',price:300,type:'pet',party:true},
-  {name:'Pseudo-Dragon',ic:'🐉',desc:'Magical familiar. Telepathy 100ft, venomous sting.',rar:'rare',price:1500,type:'pet',party:true},
-  {name:'Displacer Beast Cub',ic:'🐾',desc:'Displacement aura. Attacks against it have disadvantage once/round.',rar:'rare',price:2500,type:'pet',party:true},
-  {name:'Owlbear Chick',ic:'🦉',desc:'Ferocious companion. Grows to full Owlbear in 1 year.',rar:'rare',price:2000,type:'pet',party:true},
-  {name:'Phase Spider (Tamed)',ic:'🕷️',desc:'Can Ethereal Jaunt as bonus action. Unnerving.',rar:'veryrare',price:8000,type:'pet',party:true}
-];
-var BUILTIN_PETS = JSON.parse(JSON.stringify(PETS));
+// No hardcoded PETS array — all pets live in the database.
 
 // ══════════════════════════════════════════════════
 // DATA MODEL
@@ -719,7 +705,7 @@ var BUILTIN_PETS = JSON.parse(JSON.stringify(PETS));
 
 var cycles  = [];   // [{id, name, theme, published, _dbId}]
 var quests  = [];   // flat list, all quests across all cycles
-var pets    = [];   // custom pets from Supabase
+var pets    = [];   // all pets from Supabase pets table
 
 var activeTab = 'quests'; // 'quests' | 'pets'
 var collapsed = {}; // setId → bool
@@ -747,12 +733,12 @@ function pullData() {
   setStatus('Loading…');
   var filter = 'select=*' +
     '&owner_user_id=eq.' + encodeURIComponent(uid()) +
-    '&content_type=in.(quest_set,quest,pet)' +
+    '&content_type=in.(quest_set,quest)' +
     '&order=sort_order.asc';
   return sbGet(filter).then(function(rows) {
     cycles = [];
     quests = [];
-    pets   = [];
+    // pets reset inside the pets table fetch below
     (rows || []).forEach(function(row) {
       var d = row.data || {};
       // Strip fields that the main app embeds into data (stale/internal)
@@ -767,19 +753,32 @@ function pullData() {
         cycles.push(d);
       } else if (row.content_type === 'quest') {
         quests.push(d);
-      } else if (row.content_type === 'pet') {
-        // Tombstones (_deleted) are always unpublished in the editor
-        d.published = !d._deleted && (row.visibility === 'shared' || row.visibility === 'official');
-        d._tombstone = !!d._deleted; // flag for showPetForm
-        pets.push(d);
       }
     });
     // Default: collapse all cycles
     cycles.forEach(function(c) {
       if (!(c.id in collapsed)) collapsed[c.id] = true;
     });
-    setStatus('Loaded ' + cycles.length + ' cycles, ' + quests.length + ' quests, ' + pets.length + ' custom pets.');
-    renderList();
+    // Also fetch all pets from the dedicated pets table
+    return sbFetch(SB_URL + '/rest/v1/pets?order=sort_order.asc', {method:'GET'})
+      .then(function(r) { return r.json(); })
+      .then(function(petRows) {
+        pets = (petRows || []).map(function(row) {
+          return {
+            id:        row.id,
+            name:      row.name,
+            ic:        row.ic || '🐾',
+            desc:      row.description || '',
+            rar:       row.rar || 'common',
+            price:     row.price || 0,
+            published: !!row.published,
+            sort_order:row.sort_order || 0,
+            _dbId:     row.id
+          };
+        });
+        setStatus('Loaded ' + cycles.length + ' cycles, ' + quests.length + ' quests, ' + pets.length + ' pets.');
+        renderList();
+      });
   }).catch(function(err) {
     setStatus('Load failed: ' + (err.message || err), '#e55');
     renderList();
@@ -809,20 +808,49 @@ function cycleToRow(cycle, idx) {
     sort_order:    idx || 0
   };
 }
-function petToRow(p, idx, visOverride) {
-  var vis = visOverride || (p.published ? 'shared' : 'private');
-  var data = Object.assign({}, p);
-  delete data._dbId; delete data.published; delete data._visibility;
-  return {
-    content_type:  'pet',
-    content_key:   'pet::' + (p.name || ('pet-' + idx)),
-    title:         p.name || ('Pet ' + idx),
-    data:          data,
-    visibility:    vis,
-    status:        'published',
-    owner_user_id: uid(),
-    sort_order:    idx || 0
-  };
+// Direct pets table CRUD
+function savePetRow(p) {
+  var isNew = !p._dbId;
+  var body = JSON.stringify({
+    name:        p.name,
+    ic:          p.ic || '🐾',
+    description: p.desc || '',
+    rar:         p.rar || 'common',
+    price:       p.price || 0,
+    published:   !!p.published,
+    sort_order:  p.sort_order || 0
+  });
+  if (isNew) {
+    return sbFetch(SB_URL + '/rest/v1/pets', {
+      method: 'POST',
+      headers: { 'Prefer': 'return=representation' },
+      body: body
+    }).then(function(r) {
+      if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+      return r.json();
+    }).then(function(rows) {
+      if (rows && rows[0]) p._dbId = rows[0].id;
+      return p;
+    });
+  } else {
+    return sbFetch(SB_URL + '/rest/v1/pets?id=eq.' + encodeURIComponent(p._dbId), {
+      method: 'PATCH',
+      headers: { 'Prefer': 'return=minimal' },
+      body: body
+    }).then(function(r) {
+      if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+      return p;
+    });
+  }
+}
+function deletePetRow(p) {
+  if (!p._dbId) return Promise.resolve();
+  return sbFetch(SB_URL + '/rest/v1/pets?id=eq.' + encodeURIComponent(p._dbId), {
+    method: 'DELETE'
+  }).then(function(r) {
+    if (!r.ok && r.status !== 404)
+      return r.text().then(function(t) { throw new Error(t); });
+  });
 }
 
 function questToRow(q, idx) {
@@ -857,17 +885,13 @@ function saveQuest(q) {
   });
 }
 function savePet(p) {
-  var idx = pets.indexOf(p);
-  return sbUpsert(petToRow(p, idx < 0 ? pets.length : idx)).then(function() {
+  return savePetRow(p).then(function() {
     flash('✓ Pet saved');
     setStatus('Pet "' + p.name + '" saved.');
   });
 }
 function deletePet(p) {
-  var filter = 'content_type=eq.pet' +
-    '&content_key=eq.' + encodeURIComponent('pet::' + p.name) +
-    '&owner_user_id=eq.' + encodeURIComponent(uid());
-  return sbDelete(filter).then(function() {
+  return deletePetRow(p).then(function() {
     pets = pets.filter(function(x) { return x !== p; });
     sel = null;
     setStatus('Pet "' + p.name + '" deleted.');
@@ -923,14 +947,9 @@ function renderPetList() {
   var el = document.getElementById('list-scroll');
   if (!uid()) { el.innerHTML = '<div class="list-empty">Log in to load pets.</div>'; return; }
 
-  // Merge: built-ins overridden by custom pets
-  var allPets = BUILTIN_PETS.slice();
-  pets.forEach(function(p) {
-    var idx = allPets.findIndex(function(b) { return b.name === p.name; });
-    if (idx >= 0) allPets[idx] = p; else allPets.push(p);
-  });
+  var allPets = pets.slice();
   if (!allPets.length) {
-    el.innerHTML = '<div class="list-empty">No pets yet.</div>';
+    el.innerHTML = '<div class="list-empty">No pets yet. Pull to load.</div>';
     return;
   }
 
@@ -1092,21 +1111,16 @@ function esc(s) {
 // ══════════════════════════════════════════════════
 function showPetForm(name) {
   // Find in custom pets first, then built-ins
-  var p = pets.filter(function(x) { return x.name === name; })[0] ||
-          BUILTIN_PETS.filter(function(x) { return x.name === name; })[0] || null;
-  var isNew   = !p;
-  var isBuiltin = p && !p._custom;
+  var p = pets.filter(function(x) { return x.name === name; })[0] || null;
+  var isNew = !p;
 
   var fi = document.getElementById('form-inner');
   fi.innerHTML =
     '<div id="form-title-row">' +
     '<div id="form-heading">' + (isNew ? '🐾 New Pet' : '🐾 ' + esc(p.name)) + '</div>' +
-    (isBuiltin ? '<span class="builtin-badge">built-in</span>' : '') +
     '</div>' +
 
-    // Built-ins with no override are published by default (they're in the store).
-    // Tombstones and custom pets use their stored published flag.
-    pubRow(isBuiltin ? true : (p._tombstone ? false : !!p.published)) +
+    pubRow(p ? !!p.published : false) +
 
     '<div class="fsec">' +
     '<div class="fsec-title">Identity</div>' +
@@ -1127,8 +1141,7 @@ function showPetForm(name) {
 
     '<div id="action-row">' +
     '<button class="btn btn-save" id="pf-save">💾 Save Pet</button>' +
-    (!isNew && !isBuiltin ? '<button class="btn btn-del" id="pf-del">🗑 Delete</button>' : '') +
-    (!isNew && isBuiltin  ? '<button class="btn btn-new" id="pf-revert" style="font-size:.78em">↩ Revert to Built-in</button>' : '') +
+    (!isNew ? '<button class="btn btn-del" id="pf-del">🗑 Delete</button>' : '') +
     '<button class="btn btn-new" id="pf-new" style="margin-left:auto">+ New Pet</button>' +
     '<span id="save-flash"></span>' +
     '</div>';
@@ -1138,51 +1151,20 @@ function showPetForm(name) {
     var desc = (document.getElementById('pf-desc').value || '').trim();
     if (!nm || !desc) { alert('Name and description are required.'); return; }
     var isPublished = document.getElementById('pub-chk').checked;
-    var builtIn    = BUILTIN_PETS.filter(function(b) { return b.name === nm; })[0];
-    var isTombstone = !!(p && p._tombstone); // currently a hidden built-in
+    // Simple: build the updated pet object
+    var isPublished = document.getElementById('pub-chk').checked;
+    var newPet = {
+      name:      nm,
+      ic:        (document.getElementById('pf-ic').value || '').trim() || '🐾',
+      desc:      desc,
+      rar:       document.getElementById('pf-rar').value || 'common',
+      price:     Math.max(0, parseInt(document.getElementById('pf-price').value) || 0),
+      published: isPublished,
+      sort_order: p ? (p.sort_order || 0) : pets.length,
+      _dbId:     p ? p._dbId : null
+    };
 
-    var newPet;
-    var visOverride;
-
-    if (isTombstone && isPublished) {
-      // Case 1: Re-publishing a tombstoned built-in → remove tombstone,
-      // save a clean shared override so all devices see it again.
-      newPet = {
-        name:  nm,
-        ic:    (document.getElementById('pf-ic').value || '').trim() || (builtIn && builtIn.ic) || '🐾',
-        desc:  desc,
-        rar:   document.getElementById('pf-rar').value || (builtIn && builtIn.rar) || 'common',
-        price: Math.max(0, parseInt(document.getElementById('pf-price').value) || 0),
-        type: 'pet', party: true,
-        _custom: true, published: true
-        // no _deleted — this replaces the tombstone
-      };
-      visOverride = 'shared';
-    } else if (builtIn && !isPublished && !isTombstone) {
-      // Case 2: Unpublishing a built-in → save a SHARED tombstone.
-      // Must be shared so other devices can see and act on it.
-      newPet = {
-        name: nm, ic: builtIn.ic, desc: builtIn.desc,
-        rar: builtIn.rar, price: builtIn.price,
-        type: 'pet', party: true,
-        _custom: true, _deleted: true, published: false
-      };
-      visOverride = 'shared';
-    } else {
-      // Case 3: Pure custom pet or published built-in override.
-      newPet = {
-        name:      nm,
-        ic:        (document.getElementById('pf-ic').value || '').trim() || '🐾',
-        desc:      desc,
-        rar:       document.getElementById('pf-rar').value || 'common',
-        price:     Math.max(0, parseInt(document.getElementById('pf-price').value) || 0),
-        type: 'pet', party: true,
-        _custom: true, published: isPublished
-      };
-      visOverride = builtIn ? 'shared' : null;
-    }
-
-    // Update or add to local pets array
+    // Update in-memory then save to DB
     var existing = pets.filter(function(x) { return x.name === (p ? p.name : nm); })[0];
     if (existing) {
       Object.assign(existing, newPet);
@@ -1190,12 +1172,7 @@ function showPetForm(name) {
       pets.push(newPet);
       existing = newPet;
     }
-
-    // Save with correct visibility
-    var pidx = pets.indexOf(existing);
-    sbUpsert(petToRow(existing, pidx, visOverride)).then(function() {
-      flash(isTombstone && isPublished ? '✓ Pet restored to store' : (!isPublished && builtIn ? '✓ Pet hidden from store' : '✓ Pet saved'));
-      setStatus('Pet "' + nm + '" ' + (builtIn && !isPublished ? 'hidden from store (tombstone saved).' : 'saved.'));
+    savePet(existing).then(function() {
       return pullData();
     }).then(function() {
       sel = { kind: 'pet', name: nm };
@@ -1207,18 +1184,12 @@ function showPetForm(name) {
     });
   };
 
-  if (!isNew && !isBuiltin) {
+  if (!isNew) {
     document.getElementById('pf-del').onclick = function() {
       if (prompt('Type DELETE to confirm removing "' + p.name + '"') !== 'DELETE') {
         alert('Cancelled.'); return;
       }
       deletePet(p);
-    };
-  }
-  if (!isNew && isBuiltin) {
-    document.getElementById('pf-revert').onclick = function() {
-      if (!confirm('Remove your customisation and restore the built-in "' + p.name + '"?')) return;
-      deletePet(p).then(function() { showPetForm(p.name); });
     };
   }
   document.getElementById('pf-new').onclick = function() {
@@ -1587,7 +1558,7 @@ document.getElementById('btn-push').onclick = function() {
   var rows = [];
   cycles.forEach(function(c, i)  { rows.push(cycleToRow(c, i)); });
   quests.forEach(function(q, i)  { rows.push(questToRow(q, i)); });
-  pets.forEach(function(p, i)    { rows.push(petToRow(p, i)); });
+  // pets saved directly to pets table, not via push
   // Deduplicate by content_key — last entry wins (most specific scope)
   var seen = {};
   rows = rows.filter(function(r) {

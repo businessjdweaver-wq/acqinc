@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.596
+      Version 1.597
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.597</strong> &mdash; Pet system migrated from JS array + content_items JSON to dedicated Supabase pets table. PETS is now loaded via loadPetsFromDB() from the pets table directly. No more BUILTIN_PETS, tombstones, or three-way merge logic. published column is a single boolean — true = in store, false = hidden.</div>
         <div style="margin-bottom:9px"><strong>Version 1.596</strong> &mdash; Fix pet tombstone suppression: mergeCustomContent was filtering _deleted pets out of allPets before the suppression check could run, so tombstones never removed built-in pets from PETS. Fixed by running the suppression check first, then filtering. Also fixed editor: built-in pets now show as Published by default (they are in the store);</div>
         <div style="margin-bottom:9px"><strong>Version 1.595</strong> &mdash; Fix: content_items visibility enforcement. loadContentLibrary was fetching ALL rows with no filter, so private content (e.g. unpublished pets) was visible to every user on every device. Now only fetches shared/official rows for everyone, plus private rows owned by the current user. Unpublishing an item now correctly hides it from other users' stores and sessions.</div>
         <div style="margin-bottom:9px"><strong>Version 1.594</strong> &mdash; Content editor collapse/expand rebuilt with event delegation: single click listener on the list element handles toggle, reorder, and row selection in the correct priority order. Toggle no longer fights with row selection handler. Collapse state initialized after Supabase pull so custom cycles are visible. Quest reorder logic simplified.</div>
@@ -3435,54 +3436,9 @@ var BUILDINGS=[
   {name:'Fortress Keep',ic:'🏰',desc:'Houses 50. 20 gp/week income.',rar:'building',price:50000,type:'stronghold',party:true}
 ];
 
-var PETS=[
-  {name:'Cat',ic:'🐱',desc:'Independent companion. Advantage on Perception (hearing/smell).',rar:'common',price:5,type:'pet',party:true},
-  {name:'Dog (Hound)',ic:'🐶',desc:'Loyal tracker. Advantage on Survival (tracking).',rar:'common',price:25,type:'pet',party:true},
-  {name:'Raven',ic:'🐦‍⬛',desc:'Intelligent messenger. Can mimic short phrases.',rar:'common',price:50,type:'pet',party:true},
-  {name:'Toad',ic:'🐸',desc:'Unassuming familiar. Advantage on Nature checks near swamps.',rar:'common',price:1,type:'pet',party:true},
-  {name:'Ferret',ic:'🦦',desc:'Nimble thief-finder. Advantage on Sleight of Hand checks.',rar:'common',price:10,type:'pet',party:true},
-  {name:'Hawk',ic:'🦅',desc:'Scout from above. 60ft vision, spot tiny creatures.',rar:'uncommon',price:75,type:'pet',party:true},
-  {name:'Lizard (Giant)',ic:'🦎',desc:'Stealthy mount for Tiny creatures. Climb speed 30ft.',rar:'uncommon',price:200,type:'pet',party:true},
-  {name:'Wolf (Trained)',ic:'🐺',desc:'Pack hunter. +2 to attack when ally is adjacent to target.',rar:'uncommon',price:300,type:'pet',party:true},
-  {name:'Pseudo-Dragon',ic:'🐉',desc:'Magical familiar. Telepathy 100ft, venomous sting.',rar:'rare',price:1500,type:'pet',party:true},
-  {name:'Displacer Beast Cub',ic:'🐾',desc:'Displacement aura. Attacks against it have disadvantage once/round.',rar:'rare',price:2500,type:'pet',party:true},
-  {name:'Owlbear Chick',ic:'🦉',desc:'Ferocious companion. Grows to full Owlbear in 1 year.',rar:'rare',price:2000,type:'pet',party:true},
-  {name:'Phase Spider (Tamed)',ic:'🕷️',desc:'Can Ethereal Jaunt as bonus action. Unnerving.',rar:'veryrare',price:8000,type:'pet',party:true}
-];
-
-// ── Squad Roles ──────────────────────────────────────────
-var SQUAD_ROLES=[
-  {id:'captain',       label:'Captain',        ic:'🎖', color:'#8a3a1a',
-   desc:'Leads the squad. Commands respect and inspires courage.',
-   effect:{skillBonus:{skill:'Persuasion',bonus:2},questBonus:{type:'social',bonus:1}}},
-  {id:'quartermaster', label:'Quartermaster',   ic:'📦', color:'#1a4a8a',
-   desc:'Manages supplies and logistics. Keeps the squad provisioned.',
-   effect:{goldPct:5,skillBonus:{skill:'Investigation',bonus:2}}},
-  {id:'patrol_leader', label:'Patrol Leader',  ic:'🗡', color:'#1a5a2a',
-   desc:'Leads patrols and scouting missions. Expert in terrain.',
-   effect:{questBonus:{type:'explore',bonus:2},skillBonus:{skill:'Survival',bonus:2}}},
-  {id:'field_medic',   label:'Field Medic',    ic:'🏥', color:'#5a1a5a',
-   desc:'Keeps the squad healthy in the field. Stabilizes the wounded.',
-   effect:{skillBonus:{skill:'Medicine',bonus:3},advantage:'Athletics'}}  ,
-  {id:'scout',         label:'Scout',          ic:'👁️', color:'#5a4a1a',
-   desc:'Ranges ahead of the squad. Eyes and ears of the operation.',
-   effect:{skillBonus:{skill:'Perception',bonus:2},questBonus:{type:'explore',bonus:1}}}
-];
-// Role kits in the store
-var ROLE_KITS=SQUAD_ROLES.map(function(r){
-  return {name:r.label+"'s Kit",ic:r.ic,
-    desc:'Equips a squad member for the '+r.label+' role. '+r.desc,
-    rar:'uncommon',type:'kit',price:75,wt:5,squadRole:r.id,effect:r.effect};
-});
-// Inject role kits into GEAR at startup (after GEAR is defined)
-ROLE_KITS.forEach(function(kit){
-  if(!GEAR.some(function(g){return g.name===kit.name;}))GEAR.push(kit);
-});
-
-// Immutable snapshots so mergeCustomContent() can reset to built-in state each call
-var BUILTIN_VEHICLES=JSON.parse(JSON.stringify(VEHICLES));
-var BUILTIN_BUILDINGS=JSON.parse(JSON.stringify(BUILDINGS));
-var BUILTIN_PETS=JSON.parse(JSON.stringify(PETS));
+// PETS is now loaded from the 'pets' Supabase table.
+// Populated by loadPetsFromDB() called in initSession.
+var PETS=[];
 
 /* ═══════════════════════ QUEST SETS ═══════════════════════ */
 
@@ -14518,6 +14474,32 @@ function migrateLegacyContentIntoPrivateScope(){
   });
 }
 
+function loadPetsFromDB(){
+  if(!uid())return Promise.resolve([]);
+  return sbFetch(SB_URL+'/rest/v1/pets?order=sort_order.asc',{method:'GET'})
+    .then(function(r){return r.json();})
+    .then(function(rows){
+      PETS=(rows||[]).map(function(row){
+        return{
+          name:row.name,
+          ic:row.ic||'🐾',
+          desc:row.description||'',
+          rar:row.rar||'common',
+          price:row.price||0,
+          type:'pet',
+          party:true,
+          _dbId:row.id,
+          published:row.published
+        };
+      });
+      return PETS;
+    })
+    .catch(function(err){
+      console.error('loadPetsFromDB failed:',err);
+      return PETS;
+    });
+}
+
 function loadContentLibrary(manual){
   if(!uid()){
     // Guest: CONTENT_LIB was already restored from localStorage in load().
@@ -14755,20 +14737,7 @@ function mergeCustomContent(){
     else BUILDINGS.push(payload);
   });
 
-  // Merge custom pets
-  PETS=clone(BUILTIN_PETS||PETS);
-  var allPets=[].concat(CONTENT_LIB.official.pets||[],CONTENT_LIB.shared.pets||[],CONTENT_LIB.private.pets||[]);
-  // Remove tombstoned built-ins BEFORE filtering _deleted from allPets
-  PETS=PETS.filter(function(p){return !allPets.some(function(x){return x.name===p.name&&x._deleted;});});
-  allPets=allPets.filter(function(p){return !p._deleted;});
-  allPets.forEach(function(p){
-    var idx=-1;
-    for(var pi=0;pi<PETS.length;pi++){if(PETS[pi].name===p.name){idx=pi;break;}}
-    var payload=Object.assign({},p,{_custom:!!(p._editable||p._custom),_dbContent:true});
-    if(p._deleted){if(idx>=0)PETS.splice(idx,1);}
-    else if(idx>=0)PETS[idx]=Object.assign({},PETS[idx],payload);
-    else PETS.push(payload);
-  });
+  // Pets now loaded directly from DB via loadPetsFromDB()
 }
 
 
@@ -14944,7 +14913,7 @@ function openEditor(){
   // Reset collapse state only on fresh open (not tab switches)
   edCollapsedCycles={};
   // Pull fresh from Supabase so custom cycles appear without manual Pull
-  loadContentLibrary(false).then(function(){
+  Promise.all([loadContentLibrary(false),loadPetsFromDB()]).then(function(){
     mergeCustomContent();
     // Collapse all cycles initially — user can expand any
     QUESTSETS.forEach(function(s){
@@ -17204,7 +17173,7 @@ document.getElementById('btn-ed-push').addEventListener('click',function(){
 document.getElementById('btn-ed-pull').addEventListener('click',function(){
   if(!uid()){alert('Sign in to pull content from Supabase.');return;}
   var btn=this; btn.disabled=true; btn.textContent='⬇ Pulling…';
-  loadContentLibrary(true).then(function(){
+  Promise.all([loadContentLibrary(true),loadPetsFromDB()]).then(function(){
     btn.disabled=false; btn.textContent='⬇ Pull';
     edRenderList();
   }).catch(function(err){
