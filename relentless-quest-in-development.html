@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.609
+      Version 1.610
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.610</strong> &mdash; Fix: quest prereq check incorrectly passing when a busy character was previously assigned to the quest. Disabled+checked checkboxes were still read by querySelectorAll. Fixed in two places: getQuestChars now uses :not(:disabled) selector, and _prevAssigned filters out busy characters so they are never pre-checked.</div>
         <div style="margin-bottom:9px"><strong>Version 1.609</strong> &mdash; Fix: weapons, armor, and gear purchased from store were routing to party assets panel instead of character inventory. loadItemsFromDB was setting party:true on ALL items. Now only vehicles and buildings get party:true — gear/weapons/armor/magic go to c.inv as intended.</div>
         <div style="margin-bottom:9px"><strong>Version 1.608</strong> &mdash; Remove party debug logs. DB duplicates confirmed to be from a different user account (12080719…) — existing rows cleaned via SQL, push lock prevents future duplicates.</div>
         <div style="margin-bottom:9px"><strong>Version 1.607</strong> &mdash; Fix duplicate party/squad rows: sbPush runs all operations in Promise.all (parallel), so concurrent pushes race — both delete, then both insert, creating duplicates. Added _pushInProgress lock so only one push runs at a time. Concurrent push attempts are silently dropped. Also cleans up stale duplicate rows already in the DB.</div>
@@ -7437,7 +7438,8 @@ document.getElementById('ov-lv-yes').addEventListener('click',function(){
         var _pr=_q.pre;
         var _total=((_pr.skills||[]).length+(_pr.tools||[]).length+(_pr.lang||[]).length+(_pr.rel?1:0));
         function _score(ch){var s=0;(_pr.skills||[]).forEach(function(x){if((ch.skills||[]).indexOf(x)!=-1)s++;});(_pr.tools||[]).forEach(function(x){if((ch.tools||[]).indexOf(x)!=-1)s++;});return s;}
-        var _prevAssigned=(_qs.assigned&&(_qs.assigned[P4.quest]||_qs.assigned[String(P4.quest)]))||[];
+        var _prevAssigned=((_qs.assigned&&(_qs.assigned[P4.quest]||_qs.assigned[String(P4.quest)]))||[])
+          .filter(function(ci){return !_busy[ci];}); // exclude busy chars — disabled checkboxes still register as checked
         var _charList=S.party.map(function(ch,ci){return{ci:ci,c:ch,isBusy:!!_busy[ci],sc:_score(ch),pct:_total>0?Math.round(_score(ch)/_total*100):100};}).sort(function(a,b){if(a.isBusy!==b.isBusy)return a.isBusy?1:-1;return b.sc-a.sc;});
         document.getElementById('ov-q-chars').innerHTML=_charList.map(function(entry){
           var ci=entry.ci,c=entry.c,isBusy=entry.isBusy,pct=entry.pct;
@@ -10800,7 +10802,8 @@ function questByIdx(set,idx){
 
 function getQuestChars(){
   var r=[];
-  document.querySelectorAll('.qcb:checked').forEach(function(cb){r.push(parseInt(cb.value));});
+  // Exclude disabled checkboxes — busy chars have disabled+checked which would falsely include them
+  document.querySelectorAll('.qcb:checked:not(:disabled)').forEach(function(cb){r.push(parseInt(cb.value));});
   return r;
 }
 
