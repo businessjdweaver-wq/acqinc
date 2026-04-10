@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.587
+      Version 1.589
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,8 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.589</strong> &mdash; Quest save scope: _resolvedScope now re-reads the live quest object at click time (isBuiltin was a stale closure value from form-render time). Checks _visibility first (stamped from Supabase row visibility column), then only falls back to official for truly built-in content without a custom- setId prefix.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.588</strong> &mdash; Quest save scope fix: quests were being saved to the wrong scope (official) because (1) _visibility was not stamped on quest payloads during mergeCustomContent, so _resolvedScope could not find it; (2) isBuiltin was true for custom quests lacking the _editable flag. Fix: payload now includes _visibility=scope; quests loaded from Supabase get _visibility stamped immediately; _resolvedScope checks _visibility first and skips official for custom- setIds even when user is admin.</div>
         <div style="margin-bottom:9px"><strong>Version 1.587</strong> &mdash; Reconnected squad picker in quest and grind assignment modals: squad dropdown now populates, auto-selects the active cycle squad, and locks selection when a squad is already assigned to the cycle. Squad change listener restored. The old hard-validation blocks (squad-or-abort) removed &mdash; the peg-slot carousel already prevents assigning busy characters.</div>
         <div style="margin-bottom:9px"><strong>Version 1.586</strong> &mdash; Content editor: saved changes now display immediately. Root cause: mergeCustomContent rebuilt quests with _custom:false (missing _editable flag) and CONTENT_LIB had stale data. Fix: (1) saved quests now include _editable:true so mergeCustomContent preserves _custom:true. (2) After each save, loadContentLibrary pulls fresh data from Supabase before re-rendering the form, ensuring the editor always displays what is actually stored.</div>
         <div style="margin-bottom:9px"><strong>Version 1.585</strong> &mdash; Quest/grind/gear save deduplication: same fix as cycle rules (v1.582). contentItemsForScope returns duplicates from Supabase; last stale entry was overriding the saved value after mergeCustomContent. Now deduplicates by key (quests: setId+idx, grind: id, gear: name) in each save handler and in mergeCustomContent and loadContentLibrary.</div>
@@ -14667,7 +14669,8 @@ function mergeCustomContent(){
       var payload=Object.assign({}, q, {
         idx: builtIdx,
         _dbContent:true,
-        _custom:!!q._editable
+        _custom:!!(q._editable||q._custom||(q.setId&&q.setId.indexOf('custom-')===0)),
+        _visibility:q._visibility||scope
       });
       var replaced=false;
       for(var qi=0; qi<set.quests.length; qi++){
@@ -15558,8 +15561,11 @@ function edShowQuestForm(){
     // For existing custom quests, use their stored visibility — not the dropdown.
     // The dropdown is only authoritative for new quests.
     var _resolvedScope=(function(){
-      if(isBuiltin&&isAppAdmin())return 'official';
-      if(!isNew&&q&&q._visibility)return normalizeContentScope(q._visibility);
+      var _liveQ=edQuestObj();
+      if(!isNew&&_liveQ&&_liveQ._visibility)return normalizeContentScope(_liveQ._visibility);
+      var _isCustomSet=edSelected.setId&&edSelected.setId.indexOf('custom-')===0;
+      var _liveBuiltin=_liveQ&&!(_liveQ._custom||_liveQ._editable||_isCustomSet);
+      if(_liveBuiltin&&isAppAdmin())return 'official';
       return edFormScope();
     }());
     var selSkills=Array.from(document.getElementById('ef-skills').selectedOptions).map(function(o){return o.value;});
