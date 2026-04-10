@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.593
+      Version 1.594
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.594</strong> &mdash; Content editor collapse/expand rebuilt with event delegation: single click listener on the list element handles toggle, reorder, and row selection in the correct priority order. Toggle no longer fights with row selection handler. Collapse state initialized after Supabase pull so custom cycles are visible. Quest reorder logic simplified.</div>
         <div style="margin-bottom:9px"><strong>Version 1.593</strong> &mdash; Content editor full rebuild of save/load pipeline: (1) persistContentScope now uses upsert-by-content_key instead of delete-all + insert-all, eliminating the race condition that produced duplicate rows. (2) saveCustom simplified to a single call with no double quest-set save. (3) Quest scope resolution reads _visibility from Supabase row as ground truth. (4) After-save no longer does a full Supabase pull &mdash; in-memory state is already correct from upsert, so we just re-merge and re-render immediately. (5) Debug console.log noise removed from save handlers.</div>
         <div style="margin-bottom:9px"><strong>Version 1.592</strong> &mdash; Content editor: cycle collapse toggle now works. Row click handler was firing even when the toggle button was clicked (stopPropagation was not preventing sibling listener on the same ancestor). Fixed by checking ev.target.closest() in the row handler and returning early for toggle/reorder button clicks.</div>
         <div style="margin-bottom:9px"><strong>Version 1.591</strong> &mdash; Content scope system simplified for single-developer use. Replaced private/shared/official with Published/Unpublished. Published = shared (visible to all players); Unpublished = private (dev only). Scope dropdown removed from editor header. Each item now has a Published checkbox in its save row. All existing data preserved: private rows = unpublished, shared/official rows = published.</div>
@@ -14932,15 +14933,18 @@ function openEditor(){
   edSelected=null;
   edMacroManageOpen=false;
   edLastFocused=null;
-  // Auto-collapse all cycles on open
-  edCollapsedCycles={};
-  QUESTSETS.forEach(function(s){edCollapsedCycles[s.id]=true;});
   edRenderTabs();
   edShowPlaceholder();
   edTrackFocus();
+  // Reset collapse state only on fresh open (not tab switches)
+  edCollapsedCycles={};
   // Pull fresh from Supabase so custom cycles appear without manual Pull
   loadContentLibrary(false).then(function(){
     mergeCustomContent();
+    // Collapse all cycles initially — user can expand any
+    QUESTSETS.forEach(function(s){
+      if(!(s.id in edCollapsedCycles))edCollapsedCycles[s.id]=true;
+    });
     edRenderList();
   }).catch(function(){
     edRenderList(); // show whatever we have on error
@@ -15103,89 +15107,70 @@ function edRenderList(){
   }
   el.innerHTML=html||'<div style="padding:16px 14px;font-size:.85em;color:var(--ink-light);font-style:italic">Nothing here yet.</div>';
 
-  // Click handlers
-  el.querySelectorAll('[data-ed-togglecycle]').forEach(function(btn){
-    btn.addEventListener('click',function(ev){
-      ev.preventDefault();
+  // Single delegated listener — handles toggle, reorder, and row selection
+  el._edClickHandler&&el.removeEventListener('click',el._edClickHandler);
+  el._edClickHandler=function(ev){
+    var btn=ev.target.closest('button');
+
+    // ── Collapse/expand toggle ──────────────────────────────────
+    if(btn&&btn.hasAttribute('data-ed-togglecycle')){
       ev.stopPropagation();
-      var sid=this.getAttribute('data-ed-togglecycle');
+      var sid=btn.getAttribute('data-ed-togglecycle');
       edCollapsedCycles[sid]=!edCollapsedCycles[sid];
       edRenderList();
-    });
-  });
+      return;
+    }
 
-  // Quest reorder ▲▼ buttons
-  el.querySelectorAll('[data-ed-movequest]').forEach(function(btn){
-    btn.addEventListener('click',function(ev){
-      ev.preventDefault();
+    // ── Quest reorder ▲▼ ─────────────────────────────────────────
+    if(btn&&btn.hasAttribute('data-ed-movequest')){
       ev.stopPropagation();
-      var dir=this.getAttribute('data-ed-movequest');
-      var sid=this.getAttribute('data-setid');
-      var idx=parseInt(this.getAttribute('data-idx'),10);
+      var dir=btn.getAttribute('data-ed-movequest');
+      var sid=btn.getAttribute('data-setid');
+      var idx=parseInt(btn.getAttribute('data-idx'),10);
       var set=QUESTSETS.filter(function(s){return s.id===sid;})[0];
       if(!set)return;
       var qs=set.quests.slice().sort(function(a,b){return (a.idx||0)-(b.idx||0);});
       var pos=qs.findIndex(function(q){return q.idx===idx;});
       var swapPos=dir==='up'?pos-1:pos+1;
       if(swapPos<0||swapPos>=qs.length)return;
-      // Swap idx values
       var tmpIdx=qs[pos].idx;
       qs[pos].idx=qs[swapPos].idx;
       qs[swapPos].idx=tmpIdx;
-      // Persist: update custom quests for this set with new idx values
       var scope=currentContentScope();
-      var allCustom=contentItemsForScope(scope,'_customQuests');
-      // Build updated list: for each quest in the set, upsert a custom record with the new idx
-      qs.forEach(function(q){
-        var found=false;
-        allCustom=allCustom.map(function(item){
-          if(item.setId===sid&&item.idx===q.idx){found=true;return Object.assign({},item,{idx:q.idx});}
-          // Also catch items that still have the old idx (the ones we just swapped)
-          return item;
-        });
-        // Create a custom override to lock in the reordered idx
-        var existing=allCustom.filter(function(item){return item.setId===sid&&item.idx===q.idx;})[0];
-        if(!existing){
-          // Clone built-in quest with new idx as a custom override
-          var builtinQ=set.quests.filter(function(bq){return bq.idx===q.idx;})[0];
-          if(builtinQ){
-            var override=Object.assign({},builtinQ,{_custom:true,setId:sid,idx:q.idx});
-            allCustom.push(override);
-          }
-        }
-      });
-      // The two quests that swapped need their idx updated in allCustom
-      var idxA=qs[pos].idx, idxB=qs[swapPos].idx;
-      // Actually the simplest approach: just track which setId+old_idx pairs need updating
-      // Re-derive: find both quests by title (since we swapped idx already in qs)
-      // Better: save entire set's quests as custom overrides with new indices
-      var setCustom=allCustom.filter(function(item){return item.setId===sid;});
-      var otherCustom=allCustom.filter(function(item){return item.setId!==sid;});
-      // Ensure every quest in this set has a custom record with its current idx
+      var setCustom=contentItemsForScope(scope,'_customQuests').filter(function(q){return q.setId!==sid;});
       var newSetCustom=qs.map(function(q){
-        var existing=setCustom.filter(function(item){return item.title===q.title;})[0];
-        if(existing)return Object.assign({},existing,{idx:q.idx});
-        return Object.assign({},q,{_custom:true,setId:sid});
+        var existing=set.quests.filter(function(bq){return bq.title===q.title;})[0];
+        return Object.assign({},existing||q,{_custom:true,_editable:true,setId:sid,idx:q.idx});
       });
-      var finalCustom=otherCustom.concat(newSetCustom);
-      var result=saveCustom('_customQuests',finalCustom,scope);
+      var result=saveCustom('_customQuests',setCustom.concat(newSetCustom),scope);
       var afterMove=function(){mergeCustomContent();edRenderList();};
       if(result&&typeof result.then==='function'){result.then(afterMove);}else{afterMove();}
-    });
-  });
-  el.querySelectorAll('[data-ed]').forEach(function(row){
-    row.addEventListener('click',function(ev){
-      // Ignore clicks that originated from the collapse toggle or reorder buttons
-      if(ev.target.closest('[data-ed-togglecycle],[data-ed-movequest]'))return;
-      var type=this.getAttribute('data-ed');
-      if(type==='quest'){edSelected={type:'quest',setId:this.getAttribute('data-setid'),idx:parseInt(this.getAttribute('data-idx'))};edShowQuestForm();}
-      else if(type==='cycle'){edSelected={type:'cycle',setId:this.getAttribute('data-setid')};edShowCycleForm();}
-      else if(type==='grind'){edSelected={type:'grind',id:this.getAttribute('data-gid')};edShowGrindForm();}
-      else if(type==='gear'){edSelected={type:'gear',name:this.getAttribute('data-gname')};edShowGearForm();}
-      else if(type==='asset'){edSelected={type:'asset',name:this.getAttribute('data-aname'),assetKey:this.getAttribute('data-akey')};edShowAssetForm();}
-      edRenderList();
-    });
-  });
+      return;
+    }
+
+    // ── Row selection ─────────────────────────────────────────────
+    var row=ev.target.closest('[data-ed]');
+    if(!row)return;
+    var type=row.getAttribute('data-ed');
+    if(type==='quest'){
+      edSelected={type:'quest',setId:row.getAttribute('data-setid'),idx:parseInt(row.getAttribute('data-idx'))};
+      edShowQuestForm();
+    } else if(type==='cycle'){
+      edSelected={type:'cycle',setId:row.getAttribute('data-setid')};
+      edShowCycleForm();
+    } else if(type==='grind'){
+      edSelected={type:'grind',id:row.getAttribute('data-gid')};
+      edShowGrindForm();
+    } else if(type==='gear'){
+      edSelected={type:'gear',name:row.getAttribute('data-gname')};
+      edShowGearForm();
+    } else if(type==='asset'){
+      edSelected={type:'asset',name:row.getAttribute('data-aname'),assetKey:row.getAttribute('data-akey')};
+      edShowAssetForm();
+    }
+    edRenderList();
+  };
+  el.addEventListener('click',el._edClickHandler);
 }
 
 function edShowPlaceholder(){
