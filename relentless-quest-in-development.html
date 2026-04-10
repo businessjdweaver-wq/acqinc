@@ -2127,7 +2127,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.638
+      Version 1.639
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2152,6 +2152,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.639</strong> &mdash; Prereq precision fixes: (1) Bag/squad assets satisfy the nonChar prereq SLOT only — no longer marks individual char peg-cards. (2) Char-owned pets require that char to be placed in a peg slot; unowned/squad pets count freely. Gear prereqs restored to char-inv only.</div>
         <div style="margin-bottom:9px"><strong>Version 1.638</strong> &mdash; Prereq fixes: (1) Bag of Holding now recognized as an asset prereq (routes to partyAssets+storage, not char inv). (2) Pet prereqs check all party pets, not just peg-slot char's pet. (3) Gear prereqs also check squad partyAssets so shared party items count. (4) isPetItemName checks partyAssets entries for char-owned pets. (5) qddCharCoversSlot checks squad assets so dragging any char satisfies asset/bag prereq slots.</div>
         <div style="margin-bottom:9px"><strong>Version 1.637</strong> &mdash; Three bag-of-holding fixes: (1) sqSave now searches all bags not just unowned ones. (2) Squad deletion uses _isBagOfHolding() instead of exact name "Bag of Holding" so Longinus variants are returned to storage. (3) On load, bag ownerRefs pointing to renamed/deleted squads are cleared so franchiseHasBagOfHolding can find them.</div>
         <div style="margin-bottom:9px"><strong>Version 1.636</strong> &mdash; Bug fix: franchiseHasBagOfHolding() was excluding squad-assigned bags (ownerType==='squad'). Both franchise bags are assigned to squads so the 50 gp enrollment route was never unlocking. Squad-owned bags now count.</div>
@@ -9465,19 +9466,24 @@ function questPrereqCheck(q,charIdxs){
   (pr.items||[]).forEach(function(x){
     var met=false;
     if(isPetItemName(x)){
-      // Pet prereq: any pet asset in the party (not just peg-slot char's pet)
-      met=petNames.some(function(n){return canonicalItemName(n)===canonicalItemName(x);})
-        ||(S.partyAssets||[]).some(function(a){
-            return (a.type||'').indexOf('pet')===0
-              &&canonicalItemName(a.name)===canonicalItemName(x);
-          });
+      // Pet prereq: char-owned pets require that char in peg slots
+      // Unowned / squad pets count freely
+      met=petNames.some(function(n){return canonicalItemName(n)===canonicalItemName(x);});
+      if(!met){
+        // Also allow unowned pets (ownerType empty) anywhere in partyAssets
+        met=(S.partyAssets||[]).some(function(a){
+          if((a.type||'').indexOf('pet')!==0)return false;
+          if(canonicalItemName(a.name)!==canonicalItemName(x))return false;
+          var ot=(a.meta&&a.meta.ownerType)||'';
+          return ot===''||ot==='squad';
+        });
+      }
     } else if(isAssetItemName(x)||_isBagOfHolding({name:x})){
       // Vehicle/building/bag-of-holding: check partyAssets then storage
       met=inventoryHasPrereqItem(assetNames.concat(storageNames),x);
     } else {
-      // Gear/weapon/armor/magic: char inv OR squad partyAssets
-      met=inventoryHasPrereqItem(charInv,x)
-        ||inventoryHasPrereqItem(assetNames.concat(storageNames),x);
+      // Gear/weapon/armor/magic: must be in an assigned char's inv
+      met=inventoryHasPrereqItem(charInv,x);
     }
     if(!met)missing.push('Item: '+x);
   });
@@ -17084,12 +17090,10 @@ function qddCharCoversSlot(c,slot){
   if(slot.type==='rel')  return c.rel===slot.value;
   if(slot.type==='level')return !c.hireling&&(c.level||0)>=slot.value;
   if(slot.type==='item'){
+    // Char peg-cards: only items the character personally carries
+    // Squad/franchise assets satisfy the nonChar prereq SLOT, not individual cards
     var _inv=(c.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;});
-    if(inventoryHasPrereqItem(_inv,slot.value))return true;
-    // Also check squad/franchise assets (bags, party gear, etc.)
-    var _aN=(S.partyAssets||[]).map(function(a){return a.name||''});
-    var _sN=(S.franchiseStorage||[]).map(function(x){return typeof x==='string'?x:(x&&x.name)||''});
-    return inventoryHasPrereqItem(_aN.concat(_sN),slot.value);
+    return inventoryHasPrereqItem(_inv,slot.value);
   }
   return false;
 }
@@ -17439,20 +17443,26 @@ function qddRenderHole(slot,partyEntries,busy){
       var _asN=(S.partyAssets||[]).map(function(a){return a.name||''});
       var _stN=(S.franchiseStorage||[]).map(function(x){return typeof x==='string'?x:(x&&x.name)||''});
       if(slot.isPet){
-        // Any party pet matches — not restricted to peg-slot char's pet
+        // Char-owned pets: owner must be in peg slots
+        // Unowned / squad pets: count freely
         met=(S.partyAssets||[]).some(function(a){
           if((a.type||'').indexOf('pet')!==0)return false;
-          return canonicalItemName(a.name)===canonicalItemName(slot.value);
+          if(canonicalItemName(a.name)!==canonicalItemName(slot.value))return false;
+          var ot=(a.meta&&a.meta.ownerType)||'';
+          if(ot==='char'){
+            // Owner must be placed in a peg slot
+            return _pegNames.indexOf((a.meta&&a.meta.ownerRef)||'')!==-1;
+          }
+          return true; // unowned or squad pet always counts
         });
       } else if(slot.isAsset||_isBagOfHolding({name:slot.value})){
         // Vehicle/building/bag: check partyAssets + storage
         met=inventoryHasPrereqItem(_asN.concat(_stN),slot.value);
       } else {
-        // Gear: placed peg-slot char inv OR squad partyAssets/storage
+        // Gear: must be in a placed peg-slot char's inv
         var _cI=[];
         _pegCis.forEach(function(ci){(S.party[ci].inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;}).forEach(function(x){_cI.push(x);});});
-        met=inventoryHasPrereqItem(_cI,slot.value)
-          ||inventoryHasPrereqItem(_asN.concat(_stN),slot.value);
+        met=inventoryHasPrereqItem(_cI,slot.value);
       }
     }
     var _storeBtn='';
