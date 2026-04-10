@@ -768,7 +768,6 @@ function pullData() {
         // Tombstones (_deleted) are always unpublished in the editor
         d.published = !d._deleted && (row.visibility === 'shared' || row.visibility === 'official');
         d._tombstone = !!d._deleted; // flag for showPetForm
-        console.log('[PullPet]', d.name, 'vis='+row.visibility, '_deleted='+d._deleted, 'published='+d.published, '_tombstone='+d._tombstone);
         pets.push(d);
       }
     });
@@ -1094,7 +1093,6 @@ function showPetForm(name) {
           BUILTIN_PETS.filter(function(x) { return x.name === name; })[0] || null;
   var isNew   = !p;
   var isBuiltin = p && !p._custom;
-  console.log('[ShowPet]', name, 'p._custom='+(!!(p&&p._custom)), 'p._deleted='+(!!(p&&p._deleted)), 'p._tombstone='+(!!(p&&p._tombstone)), 'p.published='+(!!(p&&p.published)), 'isBuiltin='+isBuiltin);
 
   var fi = document.getElementById('form-inner');
   fi.innerHTML =
@@ -1135,51 +1133,48 @@ function showPetForm(name) {
     var desc = (document.getElementById('pf-desc').value || '').trim();
     if (!nm || !desc) { alert('Name and description are required.'); return; }
     var isPublished = document.getElementById('pub-chk').checked;
-    var builtIn = BUILTIN_PETS.filter(function(b) { return b.name === nm; })[0];
-    // If there's a tombstone for this name, treat like a built-in override
-    var existingTombstone = pets.filter(function(x) { return x.name === nm && x._tombstone; })[0];
-    if (existingTombstone && !builtIn) builtIn = existingTombstone; // treat as built-in-like
+    var builtIn    = BUILTIN_PETS.filter(function(b) { return b.name === nm; })[0];
+    var isTombstone = !!(p && p._tombstone); // currently a hidden built-in
 
     var newPet;
     var visOverride;
 
-    if (builtIn && !isPublished) {
-      // Unpublishing a built-in: save a SHARED tombstone so all devices
-      // suppress it. Private rows are invisible to other devices, so
-      // a private 'unpublished' flag would never reach them.
+    if (isTombstone && isPublished) {
+      // Case 1: Re-publishing a tombstoned built-in → remove tombstone,
+      // save a clean shared override so all devices see it again.
+      newPet = {
+        name:  nm,
+        ic:    (document.getElementById('pf-ic').value || '').trim() || (builtIn && builtIn.ic) || '🐾',
+        desc:  desc,
+        rar:   document.getElementById('pf-rar').value || (builtIn && builtIn.rar) || 'common',
+        price: Math.max(0, parseInt(document.getElementById('pf-price').value) || 0),
+        type: 'pet', party: true,
+        _custom: true, published: true
+        // no _deleted — this replaces the tombstone
+      };
+      visOverride = 'shared';
+    } else if (builtIn && !isPublished && !isTombstone) {
+      // Case 2: Unpublishing a built-in → save a SHARED tombstone.
+      // Must be shared so other devices can see and act on it.
       newPet = {
         name: nm, ic: builtIn.ic, desc: builtIn.desc,
         rar: builtIn.rar, price: builtIn.price,
         type: 'pet', party: true,
         _custom: true, _deleted: true, published: false
       };
-      visOverride = 'shared'; // must be shared so other devices can read it
-    } else if (builtIn && isPublished) {
-      // Publishing a built-in override: save shared so all devices see it
-      newPet = {
-        name: nm,
-        ic:   (document.getElementById('pf-ic').value || '').trim() || builtIn.ic,
-        desc: (document.getElementById('pf-desc').value || '').trim() || builtIn.desc,
-        rar:  document.getElementById('pf-rar').value || builtIn.rar,
-        price: Math.max(0, parseInt(document.getElementById('pf-price').value) || 0),
-        type: 'pet', party: true,
-        _custom: true, published: true
-      };
       visOverride = 'shared';
     } else {
-      // Pure custom pet: private = draft, shared = visible
+      // Case 3: Pure custom pet or published built-in override.
       newPet = {
         name:      nm,
         ic:        (document.getElementById('pf-ic').value || '').trim() || '🐾',
         desc:      desc,
         rar:       document.getElementById('pf-rar').value || 'common',
         price:     Math.max(0, parseInt(document.getElementById('pf-price').value) || 0),
-        type:      'pet',
-        party:     true,
-        _custom:   true,
-        published: isPublished
+        type: 'pet', party: true,
+        _custom: true, published: isPublished
       };
-      visOverride = null; // petToRow decides based on published flag
+      visOverride = builtIn ? 'shared' : null;
     }
 
     // Update or add to local pets array
@@ -1193,10 +1188,8 @@ function showPetForm(name) {
 
     // Save with correct visibility
     var pidx = pets.indexOf(existing);
-    var _rowToSave = petToRow(existing, pidx, visOverride);
-    console.log('[PetSave] row:', JSON.stringify(_rowToSave));
-    sbUpsert(_rowToSave).then(function() {
-      flash(builtIn && !isPublished ? '✓ Pet hidden from store' : '✓ Pet saved');
+    sbUpsert(petToRow(existing, pidx, visOverride)).then(function() {
+      flash(isTombstone && isPublished ? '✓ Pet restored to store' : (!isPublished && builtIn ? '✓ Pet hidden from store' : '✓ Pet saved'));
       setStatus('Pet "' + nm + '" ' + (builtIn && !isPublished ? 'hidden from store (tombstone saved).' : 'saved.'));
       return pullData();
     }).then(function() {
