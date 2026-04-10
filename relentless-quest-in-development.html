@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.610
+      Version 1.611
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.611</strong> &mdash; Fix 3 bugs: (1) Prereq check counting busy chars: getQuestChars now also checks questState.pending to exclude busy chars even if their checkbox is still enabled. (2) Sell price 1gp: mergeCustomContent was resetting GEAR to built-ins, wiping DB items like Longsword. DB items now stored in DB_GEAR/DB_VEHICLES/DB_BUILDINGS caches and re-applied after every mergeCustomContent via applyDBItemsToArrays(). (3) Item not leaving inventory: same root cause as (2) — GEAR lookup failed so item type routing broke. Fixed by same applyDBItemsToArrays mechanism.</div>
         <div style="margin-bottom:9px"><strong>Version 1.610</strong> &mdash; Fix: quest prereq check incorrectly passing when a busy character was previously assigned to the quest. Disabled+checked checkboxes were still read by querySelectorAll. Fixed in two places: getQuestChars now uses :not(:disabled) selector, and _prevAssigned filters out busy characters so they are never pre-checked.</div>
         <div style="margin-bottom:9px"><strong>Version 1.609</strong> &mdash; Fix: weapons, armor, and gear purchased from store were routing to party assets panel instead of character inventory. loadItemsFromDB was setting party:true on ALL items. Now only vehicles and buildings get party:true — gear/weapons/armor/magic go to c.inv as intended.</div>
         <div style="margin-bottom:9px"><strong>Version 1.608</strong> &mdash; Remove party debug logs. DB duplicates confirmed to be from a different user account (12080719…) — existing rows cleaned via SQL, push lock prevents future duplicates.</div>
@@ -3893,6 +3894,10 @@ var BUILTIN_GRIND=JSON.parse(JSON.stringify(GRIND));
 var BUILTIN_GEAR=JSON.parse(JSON.stringify(GEAR));
 var BUILTIN_VEHICLES=JSON.parse(JSON.stringify(VEHICLES));
 var BUILTIN_BUILDINGS=JSON.parse(JSON.stringify(BUILDINGS));
+// DB item caches — populated by loadItemsFromDB, preserved across mergeCustomContent calls
+var DB_GEAR=[];
+var DB_VEHICLES=[];
+var DB_BUILDINGS=[];
 
 // Select the right quest set for current party / month
 function activeQuestSet(){
@@ -10802,8 +10807,17 @@ function questByIdx(set,idx){
 
 function getQuestChars(){
   var r=[];
-  // Exclude disabled checkboxes — busy chars have disabled+checked which would falsely include them
-  document.querySelectorAll('.qcb:checked:not(:disabled)').forEach(function(cb){r.push(parseInt(cb.value));});
+  var now=Date.now();
+  var busy={};
+  (S.questState&&S.questState.pending||[]).forEach(function(pq){
+    if(pq.doneAt>now)(pq.chars||[]).forEach(function(ci){busy[ci]=true;});
+  });
+  // Exclude disabled checkboxes AND busy chars (their box may still be enabled if modal
+  // was opened before they were assigned to another quest)
+  document.querySelectorAll('.qcb:checked').forEach(function(cb){
+    var ci=parseInt(cb.value);
+    if(!cb.disabled&&!busy[ci])r.push(ci);
+  });
   return r;
 }
 
@@ -14583,6 +14597,34 @@ function loadPetsFromDB(){
     });
 }
 
+function applyDBItemsToArrays(){
+  // Merge DB items over whatever is currently in GEAR/VEHICLES/BUILDINGS
+  // DB items win by name; built-ins fill any gaps
+  function applyDB(builtins, dbItems){
+    if(!dbItems.length) return builtins.slice();
+    // Start with built-ins, then override/append DB items
+    var result=builtins.slice();
+    dbItems.forEach(function(dbItem){
+      var idx=result.findIndex(function(b){return b.name===dbItem.name;});
+      if(idx>=0) result[idx]=dbItem;
+      else result.push(dbItem);
+    });
+    return result;
+  }
+  if(DB_GEAR.length||DB_VEHICLES.length||DB_BUILDINGS.length){
+    GEAR      = applyDB(BUILTIN_GEAR,     DB_GEAR);
+    // Re-inject ROLE_KITS (runtime-generated, not in DB)
+    ROLE_KITS.forEach(function(kit){
+      if(!GEAR.some(function(g){return g.name===kit.name;}))GEAR.push(kit);
+    });
+    VEHICLES  = applyDB(BUILTIN_VEHICLES, DB_VEHICLES);
+    BUILDINGS = applyDB(BUILTIN_BUILDINGS,DB_BUILDINGS);
+    // Rebuild ITEM_WEIGHT
+    var _all=[].concat(GEAR||[]);
+    _all.forEach(function(g){if(g.name&&g.wt!==undefined)ITEM_WEIGHT[g.name]=g.wt;});
+  }
+}
+
 function loadItemsFromDB(){
   // Fetch all published items joined with their effects
   return fetch(SB_URL+'/rest/v1/items?published=eq.true&order=sort_order.asc',{
@@ -14667,21 +14709,12 @@ function loadItemsFromDB(){
 
       // Merge into existing arrays — DB items override built-ins by name,
       // and add new items not in the built-in list
-      // DB is source of truth — use DB rows directly, only fall back to
-      // built-ins for item types that have zero DB rows (graceful degradation)
-      if(newGear.length||newVehicles.length||newBuildings.length){
-        // For each array: use DB rows entirely if any exist, else keep built-ins
-        GEAR = newGear.length ? newGear : BUILTIN_GEAR.slice();
-        // Re-inject ROLE_KITS (runtime-generated, not in DB)
-        ROLE_KITS.forEach(function(kit){
-          if(!GEAR.some(function(g){return g.name===kit.name;}))GEAR.push(kit);
-        });
-        VEHICLES  = newVehicles.length  ? newVehicles  : BUILTIN_VEHICLES.slice();
-        BUILDINGS = newBuildings.length ? newBuildings : BUILTIN_BUILDINGS.slice();
-        // Rebuild ITEM_WEIGHT from updated GEAR
-        var _allItems=[].concat(GEAR||[]);
-        _allItems.forEach(function(g){if(g.name&&g.wt!==undefined)ITEM_WEIGHT[g.name]=g.wt;});
-      }
+      // Store DB items in persistent caches so mergeCustomContent can re-apply them
+      if(newGear.length)     DB_GEAR      = newGear.slice();
+      if(newVehicles.length) DB_VEHICLES  = newVehicles.slice();
+      if(newBuildings.length)DB_BUILDINGS = newBuildings.slice();
+      // Apply to live arrays
+      applyDBItemsToArrays();
       return true;
     });
   })
@@ -14929,6 +14962,8 @@ function mergeCustomContent(){
   });
 
   // Pets now loaded directly from DB via loadPetsFromDB()
+  // Re-apply DB items — mergeCustomContent resets GEAR/VEHICLES/BUILDINGS to built-ins
+  applyDBItemsToArrays();
 }
 
 
