@@ -2127,7 +2127,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.633
+      Version 1.634
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2152,6 +2152,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.634</strong> &mdash; Quest Map Collect All now sweeps both completed regular quests and completed grind missions. Grind collection uses the full gcollect flow: 90/10 split, char coin purses, item purchases, quest log entry, and immediate sbPush.</div>
         <div style="margin-bottom:9px"><strong>Version 1.633</strong> &mdash; Root &amp; Branch capstone reward set to "Longinus Carpetbag of Holding" (bagOfHolding:true so it counts for the 50 gp squad enrollment route).</div>
         <div style="margin-bottom:9px"><strong>Version 1.632</strong> &mdash; Squad swap: characters currently on an active quest, grind, or downtime job are now excluded from all swap candidate pools (symmetric squad↔squad, asymmetric unassigned↔squad, and the unassigned virtual squad). Added _buildBusySet() helper.</div>
         <div style="margin-bottom:9px"><strong>Version 1.631</strong> &mdash; New QP features: (a) Quest Map Collect All fast-forwards all naturally-completed quests silently with a summary. (b) QP-to-GP icon above store search with 10/25/50/75/100%% pill options; also on unmet gold prereq peg-slots in quest assignment. (c) Short Rest and Early Completion on in-progress quest cards: auto-offered based on elapsed fraction (1/3, 1/2, 3/4+), temporary payout continues quest, early completion ends it. (d) startedAt timestamp on quest pending entries. All costs/rates configurable in QP Manager.</div>
@@ -10326,23 +10327,70 @@ document.getElementById('ov-cycle-map-close').addEventListener('click',function(
 document.getElementById('btn-qmap-fast-forward').addEventListener('click',function(){
   var cost=qpCfg().costFastForward||50;
   var now=Date.now();
-  var readyPending=(S.questState&&S.questState.pending||[]).filter(function(pq){return pq.doneAt<=now;});
-  if(!readyPending.length){alert('No completed quests to collect right now.');return;}
+  var qs=S.questState||{};
+  var readyPending=(qs.pending||[]).filter(function(pq){return pq.doneAt<=now;});
+  var readyGrind=(qs.grindPending||[]).filter(function(gp){return gp.doneAt<=now;});
+  var totalReady=readyPending.length+readyGrind.length;
+  if(!totalReady){alert('No completed quests or grind missions to collect right now.');return;}
+  var label=[];
+  if(readyPending.length)label.push(readyPending.length+' quest(s)');
+  if(readyGrind.length)label.push(readyGrind.length+' grind mission(s)');
   if(!isDevModeActive()&&qpEnabled()){
-    if(!confirm('Collect '+readyPending.length+' completed quest(s)? Costs '+cost+' QP.'))return;
-    if(!qpSpend(cost,'fast_forward_collect','Collect all: '+readyPending.length+' quest(s)'))return;
+    if(!confirm('Collect '+label.join(' and ')+'? Costs '+cost+' QP.'))return;
+    if(!qpSpend(cost,'fast_forward_collect','Collect all: '+label.join(', ')))return;
   } else {
-    if(!confirm('Collect '+readyPending.length+' completed quest(s)?'))return;
+    if(!confirm('Collect '+label.join(' and ')+'?'))return;
   }
   var set=activeQuestSet();
   var summary=[];
+  // ── Regular quests ──────────────────────────────────────
   readyPending.slice().forEach(function(pq){
     var q=questByIdx(set,pq.idx);if(!q)return;
     var prevGold=S.gold||0;
     collectQuest(pq.idx,pq,q,set);
     summary.push('\u2022 "'+q.title+'" \u2192 '+(S.gold-prevGold)+' gp');
   });
-  if(summary.length){saveActiveSetProgress();save();setGold();renderAdv();renderCycleMap();}
+  // ── Grind missions ───────────────────────────────────────
+  readyGrind.slice().forEach(function(gpEntry){
+    var gpIdx=(qs.grindPending||[]).indexOf(gpEntry);
+    if(gpIdx===-1)return;
+    var gReward=parseInt(gpEntry.reward)||0;
+    var chars=gpEntry.chars||[];
+    var cn=chars.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', ')||'unassigned';
+    var charPool=Math.floor(gReward*0.10);
+    var franchiseCut=gReward-charPool;
+    var dist=distributeCharPay(chars,charPool);
+    franchiseCut-=dist.franchiseDebit;
+    chars.forEach(function(ci){
+      var c=S.party[ci];if(!c)return;
+      var share=dist.shares[ci]||0;
+      if(c.coinPurse==null)c.coinPurse=0;
+      if(share>0){
+        c.coinPurse+=share;
+        var item=pickItemForChar(c,c.coinPurse);
+        if(item){
+          if(!c.inv)c.inv=[];
+          c.inv.push(item.name);
+          c.coinPurse-=item.price;
+          if(c.coinPurse<0)c.coinPurse=0;
+          logAdd(c.name+' spent '+item.price+' gp on '+item.name,'buy');
+          if(!c.ownedItems)c.ownedItems=[];
+          if(c.ownedItems.indexOf(item.name)===-1)c.ownedItems.push(item.name);
+        }
+      }
+    });
+    franchiseCut+=dist.unspent;
+    var prevGold=S.gold||0;
+    goldAdd(franchiseCut,'Grind: "'+gpEntry.title+'" ('+cn+') \u2014 franchise cut','adv');
+    if(!S.questLog)S.questLog=[];
+    S.questLog.unshift({cycleId:qs.cycleId,questTitle:gpEntry.title+' [Grind]',type:'grind',
+      reward:gReward,franchiseCut:franchiseCut,completedAt:new Date().toLocaleString()});
+    logAdd('Grind complete (fast-forward): "'+gpEntry.title+'" \u2014 '+gReward+' gp','adv');
+    summary.push('\u2022 [Grind] "'+gpEntry.title+'" \u2192 '+(S.gold-prevGold)+' gp');
+    qs.grindPending.splice(gpIdx,1);
+  });
+  if(summary.length){saveActiveSetProgress();save();setGold();renderAdv();renderCycleMap();
+    if(uid())sbPush(false);}
   alert(summary.length?'Collected:\n'+summary.join('\n'):'Nothing to collect.');
 });
 document.getElementById('ov-cycle-squad-no').addEventListener('click',function(){
