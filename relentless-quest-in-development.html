@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.601
+      Version 1.602
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.602</strong> &mdash; Fix squad member count showing 0: loadContentLibrary was running in parallel with sbPull and calling renderAdv() before sbPull finished populating S.party. Now sbPull runs first, then content and pets load sequentially after, so S.party is always populated before any render.</div>
         <div style="margin-bottom:9px"><strong>Version 1.601</strong> &mdash; Fix: SQUAD_ROLES and ROLE_KITS were accidentally deleted during pet migration (they lived between PETS and QUEST SETS). Restored.</div>
         <div style="margin-bottom:9px"><strong>Version 1.600</strong> &mdash; Fix crash: BUILTIN_VEHICLES and BUILTIN_BUILDINGS were accidentally removed when BUILTIN_PETS was deleted during pet migration. Restored both snapshot variables so mergeCustomContent can reset vehicles and buildings to built-in state on each call.</div>
         <div style="margin-bottom:9px"><strong>Version 1.599</strong> &mdash; Fix pets not showing in store: loadPetsFromDB was bailing early when uid() was null (session not yet restored, or guest). Now uses plain fetch with anon key — RLS already restricts to published=true for unauthenticated requests. Also called on guest boot.</div>
@@ -13891,7 +13892,10 @@ function initSession(pullFromCloud){
   if(pullFromCloud && uid()){
     var localPending=(S.questState&&S.questState.pending&&S.questState.pending.length)?S.questState.pending.slice():[];
     var localGrind=(S.questState&&S.questState.grindPending&&S.questState.grindPending.length)?S.questState.grindPending.slice():[];
-    return Promise.all([sbPull(false),loadContentLibrary(false),loadPetsFromDB()]).then(function(){
+    return sbPull(false).then(function(){
+      // Load content and pets AFTER sbPull so S.party is populated before renderAdv fires
+      return Promise.all([loadContentLibrary(false),loadPetsFromDB()]);
+    }).then(function(){
       if(S.questState){
         if((!S.questState.pending||!S.questState.pending.length)&&localPending.length){
           // Filter out any quests already collected during the first autoCollectExpired pass
