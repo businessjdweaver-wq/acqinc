@@ -2107,7 +2107,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.623
+      Version 1.624
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2132,6 +2132,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.624</strong> &mdash; Fix: qddCharCoversSlot now checks actual c.inv for item slots instead of returning true for any char. Hirelings and chars without the required item in inventory will no longer show a match tag or be accepted into an item peg slot. Removed redundant itemTags block in qddRenderPeg — matchedSlots now drives all tags consistently.</div>
         <div style="margin-bottom:9px"><strong>Version 1.623</strong> &mdash; Fix: Personal items (🔒) section now self-heals — if an item is in c.ownedItems but missing from c.inv (e.g. after a migration or DB round-trip), it is re-added to inv so it appears in the card. migrateMisroutedAssets now also preserves ownedItems tagging when moving character-personal assets from partyAssets to c.inv.</div>
         <div style="margin-bottom:9px"><strong>Version 1.622</strong> &mdash; (1) Peg slot viewport expanded to 360px showing 5 slots per page. (2) Collapsible header panel: replaced animated card carousel with a flat 1x3 column of panels (Description, Details, Best Fit) that stretch to full content height when expanded.</div>
         <div style="margin-bottom:9px"><strong>Version 1.621</strong> &mdash; (1) Gear item peg slots now accept character placement — qddCharCoversSlot returns true for item type, and only pet/asset items remain nonChar status tiles. (2) Party carousel hugs the button row via margin-top:auto in a flex-column scroll container.</div>
@@ -16760,7 +16761,11 @@ function qddCharCoversSlot(c,slot){
   if(slot.type==='lang') return(c.lang  ||[]).indexOf(slot.value)!==-1;
   if(slot.type==='rel')  return c.rel===slot.value;
   if(slot.type==='level')return !c.hireling&&(c.level||0)>=slot.value;
-  if(slot.type==='item')return true; // any char can occupy an item slot
+  if(slot.type==='item'){
+    // Only chars who actually carry the item in their inv satisfy this slot
+    var _inv=(c.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;});
+    return inventoryHasPrereqItem(_inv,slot.value);
+  }
   return false;
 }
 
@@ -17173,26 +17178,15 @@ function qddRenderPeg(entry,slots,busy){
   var c=entry.c,ci=entry.ci;
   var isBusy=!!busy[ci];var isSel=(qcarSelected===ci);
   var matchedSlots=slots.filter(function(s){return!s.support&&qddCharCoversSlot(c,s);});
-  // Also check item prereqs — items aren't hole slots but char may carry matching weapons/gear
-  var itemTags=[];
-  // Only show item match tag if char is NOT busy on another quest
-  var _carNow=Date.now();
-  var _carBusy={};
-  (S.questState&&S.questState.pending||[]).forEach(function(pq){
-    if(pq.doneAt>_carNow)(pq.chars||[]).forEach(function(bci){_carBusy[bci]=true;});
+  // Match tags: one per slot the char covers (skill, tool, lang, level, item with inv check)
+  var allMatchTags=matchedSlots.map(function(s){
+    var label=s.type==='item'?('\uD83C\uDF92 '+esc(s.value)):esc(s.value);
+    return '<span class="qpeg-tag match">'+label+'</span>';
   });
-  if(!_carBusy[ci]&&qddQuestLike&&qddQuestLike.pre&&(qddQuestLike.pre.items||[]).length){
-    (qddQuestLike.pre.items||[]).forEach(function(reqItem){
-      if(inventoryHasPrereqItem(c.inv||[],reqItem)){
-        itemTags.push('<span class="qpeg-tag match" style="background:rgba(31,111,31,.18)">\uD83C\uDF92 '+esc(reqItem)+'</span>');
-      }
-    });
-  }
-  var allMatchTags=matchedSlots.map(function(s){return'<span class="qpeg-tag match">'+esc(s.value)+'</span>';}).concat(itemTags);
   var tagHtml=allMatchTags.length
     ?allMatchTags.join('')
     :'<span class="qpeg-tag" style="font-size:.7em">\uD83E\uDD1D support</span>';
-  var hasAnyMatch=matchedSlots.length>0||itemTags.length>0;
+  var hasAnyMatch=matchedSlots.length>0;
   var inSlot=Object.keys(qddSlotAssignments).some(function(k){return qddSlotAssignments[k]===ci;});
   var cls='qpeg'+(isBusy?' busy':'')+(hasAnyMatch&&!isBusy?' can-fill':'')+(isSel?' selected':'');
   // Level-up button if quest has a level req and char doesn't meet it
