@@ -227,6 +227,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
     <h1>⚔ Quest Editor</h1>
     <div id="login-area">
       <span id="user-email"></span>
+      <button class="hbtn" id="btn-push" style="display:none" title="Push all local changes to Supabase">☁ Push</button>
       <button class="hbtn" id="btn-logout" style="display:none" onclick="doLogout()">Log Out</button>
     </div>
   </div>
@@ -393,6 +394,7 @@ function setLoginStatus(msg, isErr) {
 function showApp() {
   document.getElementById('login-overlay').style.display = 'none';
   document.getElementById('user-email').textContent = userEmail();
+  document.getElementById('btn-push').style.display = '';
   document.getElementById('btn-logout').style.display = '';
   setStatus('Logged in as ' + userEmail());
   pullData();
@@ -400,6 +402,7 @@ function showApp() {
 function showLogin() {
   document.getElementById('login-overlay').style.display = 'flex';
   document.getElementById('user-email').textContent = '';
+  document.getElementById('btn-push').style.display = 'none';
   document.getElementById('btn-logout').style.display = 'none';
   setStatus('Not logged in.');
   renderList();
@@ -1101,7 +1104,9 @@ function showPetForm(name) {
     (isBuiltin ? '<span class="builtin-badge">built-in</span>' : '') +
     '</div>' +
 
-    pubRow(p && !isBuiltin && !p._tombstone ? !!p.published : false) +
+    // Built-ins with no override are published by default (they're in the store).
+    // Tombstones and custom pets use their stored published flag.
+    pubRow(isBuiltin ? true : (p._tombstone ? false : !!p.published)) +
 
     '<div class="fsec">' +
     '<div class="fsec-title">Identity</div>' +
@@ -1573,6 +1578,35 @@ document.querySelectorAll('.tab-btn').forEach(function(btn) {
   };
 });
 document.getElementById('btn-dupe-cycle').onclick = showDupeForm;
+document.getElementById('btn-push').onclick = function() {
+  if (!uid()) return;
+  var btn = document.getElementById('btn-push');
+  btn.textContent = '↑ Pushing…';
+  btn.disabled = true;
+  // Re-upsert every loaded item to ensure Supabase is current
+  var rows = [];
+  cycles.forEach(function(c, i)  { rows.push(cycleToRow(c, i)); });
+  quests.forEach(function(q, i)  { rows.push(questToRow(q, i)); });
+  pets.forEach(function(p, i)    { rows.push(petToRow(p, i)); });
+  if (!rows.length) {
+    setStatus('Nothing to push.');
+    btn.textContent = '☁ Push'; btn.disabled = false;
+    return;
+  }
+  // Batch upsert in chunks of 50
+  var chunks = [];
+  for (var i = 0; i < rows.length; i += 50) chunks.push(rows.slice(i, i + 50));
+  chunks.reduce(function(p, chunk) {
+    return p.then(function() { return sbUpsert(chunk); });
+  }, Promise.resolve()).then(function() {
+    setStatus('✓ Pushed ' + rows.length + ' item' + (rows.length !== 1 ? 's' : '') + ' to Supabase.', 'var(--forest)');
+    btn.textContent = '✓ Pushed';
+    setTimeout(function() { btn.textContent = '☁ Push'; btn.disabled = false; }, 2000);
+  }).catch(function(err) {
+    setStatus('Push failed: ' + (err.message || err), '#e55');
+    btn.textContent = '☁ Push'; btn.disabled = false;
+  });
+};
 document.getElementById('btn-pull').onclick = function() {
   if (!uid()) return;
   setStatus('Pulling…');
