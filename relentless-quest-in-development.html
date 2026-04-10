@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.598
+      Version 1.599
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.599</strong> &mdash; Fix pets not showing in store: loadPetsFromDB was bailing early when uid() was null (session not yet restored, or guest). Now uses plain fetch with anon key — RLS already restricts to published=true for unauthenticated requests. Also called on guest boot.</div>
         <div style="margin-bottom:9px"><strong>Version 1.598</strong> &mdash; Fix: pets not showing in store. loadPetsFromDB was never called on startup — only on manual Pull. Now called in initSession alongside sbPull and loadContentLibrary so pets load immediately on login.</div>
         <div style="margin-bottom:9px"><strong>Version 1.597</strong> &mdash; Pet system migrated from JS array + content_items JSON to dedicated Supabase pets table. PETS is now loaded via loadPetsFromDB() from the pets table directly. No more BUILTIN_PETS, tombstones, or three-way merge logic. published column is a single boolean — true = in store, false = hidden.</div>
         <div style="margin-bottom:9px"><strong>Version 1.596</strong> &mdash; Fix pet tombstone suppression: mergeCustomContent was filtering _deleted pets out of allPets before the suppression check could run, so tombstones never removed built-in pets from PETS. Fixed by running the suppression check first, then filtering. Also fixed editor: built-in pets now show as Published by default (they are in the store);</div>
@@ -14082,6 +14083,7 @@ async function bootApp(){
     closeOv('loginBox');
     return initSession(true);
   } else {
+    loadPetsFromDB();
     initSession(false);
     setTimeout(function(){var emailEl=document.getElementById('email');if(emailEl){emailEl.focus();emailEl.select();}},50);
     return Promise.resolve();
@@ -14478,8 +14480,12 @@ function migrateLegacyContentIntoPrivateScope(){
 }
 
 function loadPetsFromDB(){
-  if(!uid())return Promise.resolve([]);
-  return sbFetch(SB_URL+'/rest/v1/pets?order=sort_order.asc',{method:'GET'})
+  // No uid() guard — RLS allows reading published rows without auth
+  // Use plain fetch so it works even before session is restored
+  return fetch(SB_URL+'/rest/v1/pets?order=sort_order.asc',{
+    method:'GET',
+    headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+  })
     .then(function(r){return r.json();})
     .then(function(rows){
       PETS=(rows||[]).map(function(row){
