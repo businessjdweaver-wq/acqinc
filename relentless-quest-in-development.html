@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.606
+      Version 1.607
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.607</strong> &mdash; Fix duplicate party/squad rows: sbPush runs all operations in Promise.all (parallel), so concurrent pushes race — both delete, then both insert, creating duplicates. Added _pushInProgress lock so only one push runs at a time. Concurrent push attempts are silently dropped. Also cleans up stale duplicate rows already in the DB.</div>
         <div style="margin-bottom:9px"><strong>Version 1.606</strong> &mdash; Fix: squads, characters, and icons showing stale localStorage data. Root cause: initSession was monkey-patched to call loadContentLibrary(false) immediately after starting, without waiting for sbPull to finish. This caused loadContentLibrary's internal renderAdv() to fire with stale S.squads from localStorage before sbPull had rebuilt S from the database. Monkey-patch removed — loadContentLibrary is already called inside initSession's sbPull chain.</div>
         <div style="margin-bottom:9px"><strong>Version 1.605</strong> &mdash; Fix: renamed items not updating in store. loadItemsFromDB was merging DB rows over built-ins by name — so renaming an item created a duplicate instead of replacing the original. DB is now the sole source of truth: when DB rows exist for a category, they replace the built-in array entirely. Built-ins only serve as fallback when DB has zero rows.</div>
         <div style="margin-bottom:9px"><strong>Version 1.604</strong> &mdash; Fix: franchise push was doing INSERT instead of UPSERT, causing a 409 duplicate key error on subsequent saves. Now uses UPSERT on user_id so the existing row is updated rather than re-inserted.</div>
@@ -12375,6 +12376,12 @@ function sbPush(manual){
     if(manual)syncStatus('Log in to sync with Supabase.','var(--crimson)');
     return Promise.resolve(false);
   }
+  // Prevent concurrent pushes — they cause duplicate rows
+  if(_pushInProgress){
+    if(manual)syncStatus('Push already in progress…','var(--gold-dark)');
+    return Promise.resolve(false);
+  }
+  _pushInProgress=true;
   syncStatus('Syncing…','var(--gold-dark)');
   var userId = uid();
   var ops = [];
@@ -12528,6 +12535,7 @@ function sbPush(manual){
 
   return Promise.all(ops)
     .then(function(){
+      _pushInProgress=false;
       if(manual){
         syncStatus('✅ Pushed '+new Date().toLocaleTimeString(),'var(--forest)');
         logAdd('Supabase: push complete.','gold');
@@ -12538,6 +12546,7 @@ function sbPush(manual){
       return true;
     })
     .catch(function(err){
+      _pushInProgress=false;
       syncStatus('⚠ Sync error: '+err.message,'var(--crimson)');
       notifySupabaseOffline('push',err);
       console.error('Supabase push:',err);
@@ -12818,6 +12827,7 @@ function sbPull(manual){
 /* ── Debounced auto-push ── */
 var autoPushTimer=null;
 var suppressAutoPush=false;
+var _pushInProgress=false; // lock to prevent concurrent pushes
 function schedulePush(){
   console.log('[Push] schedulePush called');
   if(!uid())return;
