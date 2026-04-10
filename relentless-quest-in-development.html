@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.604
+      Version 1.605
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.605</strong> &mdash; Fix: renamed items not updating in store. loadItemsFromDB was merging DB rows over built-ins by name — so renaming an item created a duplicate instead of replacing the original. DB is now the sole source of truth: when DB rows exist for a category, they replace the built-in array entirely. Built-ins only serve as fallback when DB has zero rows.</div>
         <div style="margin-bottom:9px"><strong>Version 1.604</strong> &mdash; Fix: franchise push was doing INSERT instead of UPSERT, causing a 409 duplicate key error on subsequent saves. Now uses UPSERT on user_id so the existing row is updated rather than re-inserted.</div>
         <div style="margin-bottom:9px"><strong>Version 1.603</strong> &mdash; Items system: loadItemsFromDB() added. Fetches all published items from the items table (joined with effects via item_effects), merges into GEAR/VEHICLES/BUILDINGS arrays. Effects mapped to legacy item.effect format for full backward compatibility. Called on startup, login, and Pull.</div>
         <div style="margin-bottom:9px"><strong>Version 1.602</strong> &mdash; Fix squad member count showing 0: loadContentLibrary was running in parallel with sbPull and calling renderAdv() before sbPull finished populating S.party. Now sbPull runs first, then content and pets load sequentially after, so S.party is always populated before any render.</div>
@@ -14647,25 +14648,17 @@ function loadItemsFromDB(){
 
       // Merge into existing arrays — DB items override built-ins by name,
       // and add new items not in the built-in list
-      function mergeInto(builtins, dbItems){
-        var result=builtins.slice();
-        dbItems.forEach(function(dbItem){
-          var idx=result.findIndex(function(b){return b.name===dbItem.name;});
-          if(idx>=0) result[idx]=Object.assign({},result[idx],dbItem);
-          else result.push(dbItem);
-        });
-        return result;
-      }
-
-      // Only replace if we actually got rows — don't wipe built-ins on failure
+      // DB is source of truth — use DB rows directly, only fall back to
+      // built-ins for item types that have zero DB rows (graceful degradation)
       if(newGear.length||newVehicles.length||newBuildings.length){
-        GEAR=mergeInto(BUILTIN_GEAR,newGear);
-        // Re-inject ROLE_KITS (they're generated at runtime, not in DB)
+        // For each array: use DB rows entirely if any exist, else keep built-ins
+        GEAR = newGear.length ? newGear : BUILTIN_GEAR.slice();
+        // Re-inject ROLE_KITS (runtime-generated, not in DB)
         ROLE_KITS.forEach(function(kit){
           if(!GEAR.some(function(g){return g.name===kit.name;}))GEAR.push(kit);
         });
-        VEHICLES=mergeInto(BUILTIN_VEHICLES,newVehicles);
-        BUILDINGS=mergeInto(BUILTIN_BUILDINGS,newBuildings);
+        VEHICLES  = newVehicles.length  ? newVehicles  : BUILTIN_VEHICLES.slice();
+        BUILDINGS = newBuildings.length ? newBuildings : BUILTIN_BUILDINGS.slice();
         // Rebuild ITEM_WEIGHT from updated GEAR
         var _allItems=[].concat(GEAR||[]);
         _allItems.forEach(function(g){if(g.name&&g.wt!==undefined)ITEM_WEIGHT[g.name]=g.wt;});
