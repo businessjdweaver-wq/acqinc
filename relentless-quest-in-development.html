@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.592
+      Version 1.593
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.593</strong> &mdash; Content editor full rebuild of save/load pipeline: (1) persistContentScope now uses upsert-by-content_key instead of delete-all + insert-all, eliminating the race condition that produced duplicate rows. (2) saveCustom simplified to a single call with no double quest-set save. (3) Quest scope resolution reads _visibility from Supabase row as ground truth. (4) After-save no longer does a full Supabase pull &mdash; in-memory state is already correct from upsert, so we just re-merge and re-render immediately. (5) Debug console.log noise removed from save handlers.</div>
         <div style="margin-bottom:9px"><strong>Version 1.592</strong> &mdash; Content editor: cycle collapse toggle now works. Row click handler was firing even when the toggle button was clicked (stopPropagation was not preventing sibling listener on the same ancestor). Fixed by checking ev.target.closest() in the row handler and returning early for toggle/reorder button clicks.</div>
         <div style="margin-bottom:9px"><strong>Version 1.591</strong> &mdash; Content scope system simplified for single-developer use. Replaced private/shared/official with Published/Unpublished. Published = shared (visible to all players); Unpublished = private (dev only). Scope dropdown removed from editor header. Each item now has a Published checkbox in its save row. All existing data preserved: private rows = unpublished, shared/official rows = published.</div>
         <div style="margin-bottom:9px"><strong>Version 1.590</strong> &mdash; Content editor two-part fix: (1) openEditor now pulls from Supabase before rendering the list, so custom cycles appear immediately without needing a manual Pull. (2) Quest save scope now trusts _visibility stamped from the Supabase row as ground truth. Editor scope dropdown defaults to private for all users (admins can promote). Per-form scope selector pre-selects the quest's own scope. These together prevent custom quests from being saved to the wrong (official) bucket.</div>
@@ -14404,47 +14405,79 @@ function persistContentScope(scope,key,arr){
   scope=normalizeContentScope(scope);
   var type=CONTENT_TYPE_MAP[key];
   var listKey=CONTENT_LIST_MAP[key];
+  if(!type||!listKey)return Promise.resolve(false);
 
-  // Always update CONTENT_LIB immediately (works for guest and logged-in)
+  // Update in-memory immediately
   contentBucket(scope)[listKey]=clone(arr||[]);
   mergeCustomContent();
   saveLocalState();
+
   var fl=document.getElementById('ed-save-flash');
   if(fl){fl.style.opacity='1';setTimeout(function(){fl.style.opacity='0';},1200);}
 
-  // Guest: no Supabase account, stop here
   if(!uid()){
     syncStatus('Saved locally (guest mode).','var(--gold-dark)');
     return Promise.resolve(false);
   }
 
-  var rows=(arr||[]).map(function(item,idx){
+  // Build upsert rows — one row per item with stable content_key
+  var upsertRows=(arr||[]).map(function(item,idx){
     var stableKey=
       key==='_customQuestSets' ? (item.id||('set-'+idx)) :
-      key==='_customQuests' ? ((item.setId||'set')+'::'+(item.id||item.title||idx)) :
-      key==='_customGrind' ? (item.id||('grind-'+idx)) :
+      key==='_customQuests'    ? ((item.setId||'set')+'::'+idx) :
+      key==='_customGrind'     ? (item.id||('grind-'+idx)) :
       (item.name||('item-'+idx));
-    return contentRow(type,stableKey,item.title||item.name||stableKey,item,scope,idx);
+    return {
+      content_type:type,
+      content_key:stableKey,
+      title:item.title||item.name||stableKey,
+      data:clone(item),
+      visibility:scope,
+      status:'published',
+      owner_user_id:uid(),
+      sort_order:idx
+    };
   });
 
-  var filter='content_type=eq.'+encodeURIComponent(type)+
+  // Delete items that no longer exist (by key), then upsert current set
+  // Strategy: fetch existing keys, delete orphans, upsert survivors
+  var currentKeys=upsertRows.map(function(r){return r.content_key;});
+  var fetchFilter='content_type=eq.'+encodeURIComponent(type)+
     '&visibility=eq.'+encodeURIComponent(scope)+
-    '&owner_user_id=eq.'+encodeURIComponent(uid());
+    '&owner_user_id=eq.'+encodeURIComponent(uid())+
+    '&select=content_key';
 
-  return sbDel('content_items',filter).then(function(){
-    if(!rows.length)return true;
-    return sbInsert('content_items',rows);
+  return sbGet('content_items',fetchFilter).then(function(existing){
+    var orphanKeys=(existing||[])
+      .map(function(r){return r.content_key;})
+      .filter(function(k){return currentKeys.indexOf(k)===-1;});
+
+    var deletePromise=Promise.resolve(true);
+    if(orphanKeys.length){
+      var delFilter='content_type=eq.'+encodeURIComponent(type)+
+        '&visibility=eq.'+encodeURIComponent(scope)+
+        '&owner_user_id=eq.'+encodeURIComponent(uid())+
+        '&content_key=in.('+orphanKeys.map(encodeURIComponent).join(',')+')';
+      deletePromise=sbDel('content_items',delFilter);
+    }
+    return deletePromise;
   }).then(function(){
-    syncStatus('Content saved ('+scope+').','var(--gold-dark)');
+    if(!upsertRows.length){
+      syncStatus('Content saved.','var(--gold-dark)');
+      return true;
+    }
+    return sbUpsert('content_items',upsertRows,'content_key,owner_user_id,content_type');
+  }).then(function(){
+    syncStatus('Content saved.','var(--gold-dark)');
     return true;
   }).catch(function(err){
     var msg=err&&err.message?err.message:String(err);
-    syncStatus('⚠ Content save failed: '+msg,'var(--crimson)');
-    console.error('[persistContentScope] Supabase error:',msg);
-    // Content is still saved locally — user will see it this session
+    syncStatus('\u26a0 Content save failed: '+msg,'var(--crimson)');
+    console.error('[persistContentScope]',msg);
     return false;
   });
 }
+
 
 function migrateLegacyContentIntoPrivateScope(){
   var hasAny =
@@ -14556,18 +14589,8 @@ function loadContentLibrary(manual){
 }
 
 function saveCustom(key,arr,scope){
-  scope=scope?normalizeContentScope(scope):currentContentScope();
-  var fl=document.getElementById('ed-save-flash');
-  if(fl){fl.style.opacity='1';setTimeout(function(){fl.style.opacity='0';},1200);}
-  if(key==='_customQuests'){
-    // Pre-update quests bucket so mergeCustomContent in the set-save step
-    // already sees the new quest data — prevents the form re-rendering with stale values
-    var setMeta=clone(contentBucket(scope).questSets||[]);
-    contentBucket(scope).quests=clone(arr||[]);
-    return persistContentScope(scope,'_customQuestSets',setMeta).then(function(){
-      return persistContentScope(scope,key,arr||[]);
-    });
-  }
+  // scope can be passed explicitly (from _resolvedScope) or defaults to private
+  scope=scope?normalizeContentScope(scope):'private';
   return persistContentScope(scope,key,arr||[]);
 }
 
@@ -15551,18 +15574,17 @@ function edShowQuestForm(){
   updateCapRewardPanel();
 
   document.getElementById('ef-save').addEventListener('click',function(){
-    console.log('[SaveClick] ef-save clicked, isNew='+isNew+' isBuiltin='+isBuiltin+' edSelected='+JSON.stringify(edSelected));
     var title=document.getElementById('ef-title').value.trim();
     var desc=document.getElementById('ef-desc').value.trim();
     if(!title||!desc){alert('Title and description are required.');return;}
     // Resolve the correct scope early so it's available for targetScope below
     // For existing custom quests, use their stored visibility — not the dropdown.
     // The dropdown is only authoritative for new quests.
+    // Scope: for existing items trust _visibility from Supabase.
+    // For new items use the Published checkbox (edFormScope).
     var _resolvedScope=(function(){
-      var _liveQ=edQuestObj();
-      // Trust _visibility from Supabase row — it is the ground truth
-      if(!isNew&&_liveQ&&_liveQ._visibility)return normalizeContentScope(_liveQ._visibility);
-      // New quest or no visibility: use the per-form scope selector
+      var _lq=edQuestObj();
+      if(!isNew&&_lq&&_lq._visibility)return normalizeContentScope(_lq._visibility);
       return edFormScope();
     }());
     var selSkills=Array.from(document.getElementById('ef-skills').selectedOptions).map(function(o){return o.value;});
@@ -15652,7 +15674,6 @@ function edShowQuestForm(){
       var _qk=(_qe2.setId||'')+'__'+(_qe2.idx!=null?_qe2.idx:'');
       if(!_seenQ[_qk]){_seenQ[_qk]=true;arr.unshift(_qe2);}
     }
-    console.log('[QuestSave] scope='+targetScope+' setId='+edSelected.setId+' idx='+newQ.idx+' arr.length='+arr.length+' bucketPriv='+CONTENT_LIB.private.quests.length+' bucketShared='+CONTENT_LIB.shared.quests.length);
     if(!isNew){
       // Update existing by matching setId + idx (stable), fallback to title match.
       var oldQ=edQuestObj();
@@ -15664,20 +15685,15 @@ function edShowQuestForm(){
         return item;
       });
       if(!replaced){console.warn('[QuestSave] no match found, pushing as new');arr.push(newQ);}
-      console.log('[QuestSave] replaced='+replaced+' finalArr.length='+arr.length);
     } else {
       arr.push(newQ);
     }
     saveCustom('_customQuests',arr,targetScope).then(function(){
-      // Pull fresh from Supabase so CONTENT_LIB has the latest saved data
-      return loadContentLibrary(false);
-    }).then(function(){
-      mergeCustomContent();
+      // In-memory already updated by persistContentScope; just re-merge and re-render
       edScopeFlash();
       edSelected={type:'quest',setId:newQ.setId,idx:newQ.idx};
       edRenderList();
       edShowQuestForm();
-      // Auto-create dashboard card from capstone reward if set
       if(newQ.capstoneReward&&newQ.capstoneReward.type&&newQ.capstoneReward.type!=='random'){
         try{_autoCreateDashCard(newQ,targetScope);}catch(e){console.warn('dashCard auto-create:',e);}
       }
@@ -15775,6 +15791,7 @@ function edShowGrindForm(){
     var selSkills=Array.from(document.getElementById('ef-gskills').selectedOptions).map(function(o){return o.value;});
     var selTools=Array.from(document.getElementById('ef-gtools').selectedOptions).map(function(o){return o.value;});
     var selLang=Array.from(document.getElementById('ef-glang').selectedOptions).map(function(o){return o.value;});
+    // Scope: trust _visibility from Supabase for existing items
     var targetScope=(!isNew&&g&&g._visibility)?normalizeContentScope(g._visibility):edFormScope();
     var newId=g?g.id:('gc_'+Date.now());
     var newG={_custom:true,id:newId,title:title,desc:desc,
@@ -15790,7 +15807,7 @@ function edShowGrindForm(){
     if(!isNew){arr=arr.map(function(x){return x.id===gid?newG:x;});}
     else{arr.push(newG);}
     var gResult=saveCustom('_customGrind',arr,targetScope);
-    var afterGrind=function(){loadContentLibrary(false).then(function(){mergeCustomContent();edScopeFlash();edSelected={type:'grind',id:newId};edRenderList();edShowGrindForm();});};
+    var afterGrind=function(){edScopeFlash();edSelected={type:'grind',id:newId};edRenderList();edShowGrindForm();};
     if(gResult&&typeof gResult.then==='function'){gResult.then(afterGrind);}else{afterGrind();}
   });
 
@@ -16073,7 +16090,7 @@ function edShowGearForm(){
     if(!isNew){arr=arr.map(function(x){return x.name===gname?newItem:x;});}
     else{arr.push(newItem);}
     var iResult=saveCustom('_customGear',arr,targetScope);
-    var afterGear=function(){loadContentLibrary(false).then(function(){mergeCustomContent();ITEM_WEIGHT[name]=wt;edScopeFlash();edSelected={type:'gear',name:name};edRenderList();edShowGearForm();});};
+    var afterGear=function(){ITEM_WEIGHT[name]=wt;edScopeFlash();edSelected={type:'gear',name:name};edRenderList();edShowGearForm();};
     if(iResult&&typeof iResult.then==='function'){iResult.then(afterGear);}else{afterGear();}
   });
 
