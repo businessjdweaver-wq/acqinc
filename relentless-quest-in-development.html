@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.614
+      Version 1.616
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,8 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.616</strong> &mdash; Comprehensive prereq check rewrite. questPrereqCheck and questPrereqHtml now use consistent logic: skills/tools/lang/faith from all peg-slot chars; item gear/weapon from non-busy peg-slot c.inv only; vehicle/building items from partyAssets+storage; pet items from pet assets owned by non-busy squad members. Level prereq now excludes busy chars. Added isAssetItemName() and isPetItemName() helpers for routing.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.615</strong> &mdash; Fix: 🎒 Longsword contribution showing for chars outside the active squad. buildQuestContributionHtml now checks whether the char is a member of the active cycle squad before showing item contributions. If no squad is assigned to the cycle, all chars are eligible as before.</div>
         <div style="margin-bottom:9px"><strong>Version 1.614</strong> &mdash; (1) Level-up in quest modal now calls updateQuestModal() after re-rendering so the prereq check and Begin button refresh immediately. (2) buildQuestContributionHtml [indicator a] now respects isBusy for item contributions — busy chars no longer show 🎒 item match. (3) Carousel item tags [indicator c] now filters busy chars so item match tags only show for available chars. All three prereq indicators now agree.</div>
         <div style="margin-bottom:9px"><strong>Version 1.613</strong> &mdash; Auto-migrate misrouted gear assets: weapons/armor/gear that ended up in partyAssets (due to old party:true bug on all DB items) are automatically moved to the correct character's c.inv on pull. Unowned gear assets move to franchise storage. Runs once after sbPull completes.</div>
         <div style="margin-bottom:9px"><strong>Version 1.612</strong> &mdash; Fix prereq: busy chars (on another quest) can no longer satisfy item prerequisites. questPrereqCheck now builds a busy set from questState.pending and excludes busy char inventories from the item inv pool. Also fixed qddSyncCheckboxes to never check busy chars in peg slots. Skills/tools/lang prereqs still count all assigned chars since proficiencies exist regardless of current quest assignment.</div>
@@ -8705,16 +8707,21 @@ function getAssignmentLevelState(c, questLike, isGrind){
     canMeetAfterOneLevel:characterCanMeetAssignmentLevelAfterOneLevel(c, reqLv, !!isGrind)
   };
 }
-function buildQuestContributionHtml(c,pr,isBusy){
+function buildQuestContributionHtml(c,pr,isBusy,ci){
   if(isBusy||!c)return '';
   var contrib=[];
   (pr.skills||[]).forEach(function(s){if((c.skills||[]).indexOf(s)!==-1)contrib.push('⭐ '+s);});
   (pr.tools||[]).forEach(function(t){if((c.tools||[]).indexOf(t)!==-1)contrib.push('🔧 '+t);});
   (pr.lang||[]).forEach(function(l){if((c.lang||[]).indexOf(l)!==-1)contrib.push('🗣 '+l);});
   if(pr.rel&&c.rel===pr.rel)contrib.push('✝ '+pr.rel);
-  // Only show item contribution if char is NOT busy on another quest
-  if(!isBusy){
-    (pr.items||[]).forEach(function(it){if(inventoryHasPrereqItem(c.inv||[],it))contrib.push('🎒 '+it);});
+  // Item prereqs: only count if char is in the active cycle squad (or no squad is assigned)
+  if(!isBusy&&ci!==undefined){
+    var _sqName=activeCycleSquadName?activeCycleSquadName():null;
+    var _sq=_sqName?(S.squads||[]).filter(function(s){return s.name===_sqName;})[0]:null;
+    var _inSquad=!_sq||(_sq.memberIdxs||[]).indexOf(ci)!==-1;
+    if(_inSquad){
+      (pr.items||[]).forEach(function(it){if(inventoryHasPrereqItem(c.inv||[],it))contrib.push('🎒 '+it);});
+    }
   }
   return contrib.length?'<span style="font-size:.88em;color:var(--gold-dark);margin-left:6px">'+esc(contrib.join(' · '))+'</span>':'';
 }
@@ -8731,7 +8738,7 @@ function buildQuestLevelActionHtml(c,ci,questLike,isGrind,isBusy){
 function renderQuestAssignmentRow(opts){
   var c=opts.c,ci=opts.ci,isBusy=!!opts.isBusy,chk=opts.chk||'',hl=opts.hl||'',cl=opts.cl||'';
   var pr=opts.pr||{},questLike=opts.questLike||null,isGrind=!!opts.isGrind;
-  var contribHtml=buildQuestContributionHtml(c,pr,isBusy);
+  var contribHtml=buildQuestContributionHtml(c,pr,isBusy,ci);
   var levelHtml=buildQuestLevelActionHtml(c,ci,questLike,isGrind,isBusy);
   return '<div data-adv-ci="'+ci+'" style="border-bottom:1px dotted rgba(139,96,16,.12)">'+
     '<label style="'+(isBusy?'opacity:.45;cursor:not-allowed;':'')+'display:flex;align-items:center;gap:10px;padding:10px 4px;min-height:44px;cursor:'+(isBusy?'not-allowed':'pointer')+'">'+
@@ -9304,49 +9311,78 @@ function questCalcReward(q,charIdxs){
 
 function questPrereqCheck(q,charIdxs){
   var pr=q.pre,missing=[];
-  var sk=[],to=[],la=[],re=[],inv=[];
-  // Build busy set — chars currently on another quest
+  // Build busy set — chars currently on another active quest
   var _now=Date.now();
   var _busy={};
   (S.questState&&S.questState.pending||[]).forEach(function(pq){
     if(pq.doneAt>_now)(pq.chars||[]).forEach(function(ci){_busy[ci]=true;});
   });
+
+  // Pool: skills/tools/lang/faith from ALL peg-slot chars (busy chars still have proficiencies)
+  var sk=[],to=[],la=[],re=[];
+  // Pool: inv items only from NON-BUSY peg-slot chars
+  var charInv=[];
   (charIdxs||[]).forEach(function(ci){
     var c=S.party[ci];if(!c)return;
-    // Skills/tools/lang/faith: check all assigned chars (busy chars still have proficiencies)
     (c.skills||[]).forEach(function(s){if(DND.skills.indexOf(s)!==-1)sk.push(s);});
     (c.tools||[]).forEach(function(t){if(DND.tools.indexOf(t)!==-1)to.push(t);});
     (c.lang||[]).forEach(function(l){if(DND.lang.indexOf(l)!==-1)la.push(l);});
     if(c.rel)re.push(c.rel);
-    // Item prereqs: only count chars who are NOT currently busy on another quest
     if(!_busy[ci]){
-      (c.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;}).forEach(function(x){inv.push(x);});
+      (c.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;}).forEach(function(x){charInv.push(x);});
     }
   });
+
+  // Asset pool: squad-owned assets, then all partyAssets, then franchise storage
+  var assetNames=(S.partyAssets||[]).map(function(a){return a.name||''});
+  var storageNames=(S.franchiseStorage||[]).map(function(x){return typeof x==='string'?x:(x&&x.name)||''});
+  // Pet pool: pets assigned to any non-busy peg-slot char
+  var petNames=[];
+  var nonBusyCharNames=(charIdxs||[]).filter(function(ci){return !_busy[ci]&&S.party[ci];}).map(function(ci){return S.party[ci].name;});
+  (S.partyAssets||[]).forEach(function(a){
+    if((a.type||'').indexOf('pet')===0){
+      var m=assetMeta(a);
+      if(m.ownerType==='char'&&nonBusyCharNames.indexOf(m.ownerRef)!==-1)petNames.push(a.name);
+      else if(!m.ownerType||m.ownerType==='squad'||m.ownerType==='')petNames.push(a.name);
+    }
+  });
+
   (pr.skills||[]).forEach(function(s){if(sk.indexOf(s)===-1)missing.push('Skill: '+s);});
   (pr.tools||[]).forEach(function(t){if(to.indexOf(t)===-1)missing.push('Tool: '+t);});
   (pr.lang||[]).forEach(function(l){if(la.indexOf(l)===-1)missing.push('Language: '+l);});
   if(pr.rel&&re.indexOf(pr.rel)===-1)missing.push('Faith: '+pr.rel);
-  // Item prereqs: must be carried by an assigned character (in a peg slot), not just in storage
-  // inv[] is already built from charIdxs above
-  (pr.items||[]).forEach(function(x){if(!inventoryHasPrereqItem(inv,x))missing.push('Item: '+x);});
+
+  (pr.items||[]).forEach(function(x){
+    var met=false;
+    if(isPetItemName(x)){
+      // Pet prereq: check pet assets assigned to non-busy peg-slot chars
+      met=petNames.some(function(n){return canonicalItemName(n)===canonicalItemName(x);});
+    } else if(isAssetItemName(x)){
+      // Vehicle/building prereq: check partyAssets then storage
+      met=inventoryHasPrereqItem(assetNames.concat(storageNames),x);
+    } else {
+      // Gear/weapon/armor/magic: must be in a non-busy peg-slot char's inv
+      met=inventoryHasPrereqItem(charInv,x);
+    }
+    if(!met)missing.push('Item: '+x);
+  });
+
   if(pr.gold&&S.gold<pr.gold)missing.push('Gold: '+pr.gold+' gp');
+
+  // Level: highest non-busy, non-hireling peg-slot char
   var topLevel=0;
   (charIdxs||[]).forEach(function(ci){
+    if(_busy[ci])return;
     var c=S.party[ci];
     var lv=(c&&!c.hireling)?Number(c.level):0;
     if(!isFinite(lv))lv=0;
     if(lv>topLevel)topLevel=lv;
   });
-  // Only hard-gate on level if the quest has an EXPLICIT minLevel/minLv field.
-  // Tier-derived minLv is a readiness colour hint only — not a hard blocker.
   var explicitReqLv=(q&&typeof q.minLevel==='number')?q.minLevel:(q&&typeof q.minLv==='number'?q.minLv:0);
   if(explicitReqLv>0&&topLevel<explicitReqLv){
-    // Check if a busy char would satisfy the level req — give a clearer message
-    var now_lc=Date.now();
     var busyHighLevel=0;
     (S.questState&&S.questState.pending||[]).forEach(function(pq){
-      if(pq.doneAt>now_lc)(pq.chars||[]).forEach(function(ci){
+      if(pq.doneAt>_now)(pq.chars||[]).forEach(function(ci){
         var c=S.party[ci];
         var lv=(c&&!c.hireling)?Number(c.level):0;
         if(lv>busyHighLevel)busyHighLevel=lv;
@@ -9441,9 +9477,43 @@ function questPrereqHtml(q,charIdxs){
   (pr.tools||[]).forEach(function(t){var met=to.indexOf(t)!==-1;var warn=_noSquadWarn('tool',t,met);rows+='<div class="prerow"><span class="'+(met?'pmet':'punmet')+(warn?' punmet':'')+'">'+(met?'✓':'✗')+'</span> Tool: <strong>'+esc(t)+'</strong>'+warn+(!met&&!warn?hireBtn('tool',t):'')+'</div>';});
   (pr.lang||[]).forEach(function(l){var met=la.indexOf(l)!==-1;var warn=_noSquadWarn('lang',l,met);rows+='<div class="prerow"><span class="'+(met?'pmet':'punmet')+(warn?' punmet':'')+'">'+(met?'✓':'✗')+'</span> Language: <strong>'+esc(l)+'</strong>'+warn+(!met&&!warn?hireBtn('lang',l):'')+'</div>';});
   if(pr.rel){var met=re.indexOf(pr.rel)!==-1;var warn=_noSquadWarn('rel',pr.rel,met);rows+='<div class="prerow"><span class="'+(met?'pmet':'punmet')+(warn?' punmet':'')+'">'+(met?'✓':'✗')+'</span> Faith: <strong>'+esc(pr.rel)+'</strong>'+warn+(!met&&!warn?hireBtn('rel',pr.rel):'')+'</div>';}
-  var assetNamesH2=(S.partyAssets||[]).map(function(a){return a.name||'';}); var storageNamesH2=(S.franchiseStorage||[]).map(function(x){return typeof x==='string'?x:(x&&x.name)||'';}); (pr.items||[]).forEach(function(x){var met=inventoryHasPrereqItem(inv.concat(assetNamesH2,storageNamesH2),x);rows+='<div class="prerow"><span class="'+(met?'pmet':'punmet')+'">'+(met?'✓':'✗')+'</span> Item: '+esc(x)+'</div>';})
+  // Build pools for item prereq display
+  var _now_h2=Date.now();
+  var _busyH2={};
+  (S.questState&&S.questState.pending||[]).forEach(function(pq){
+    if(pq.doneAt>_now_h2)(pq.chars||[]).forEach(function(ci){_busyH2[ci]=true;});
+  });
+  var charInvH2=[];
+  (charIdxs||[]).forEach(function(ci){
+    if(_busyH2[ci])return;
+    var c=S.party[ci];if(!c)return;
+    (c.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;}).forEach(function(x){charInvH2.push(x);});
+  });
+  var assetNamesH2=(S.partyAssets||[]).map(function(a){return a.name||''});
+  var storageNamesH2=(S.franchiseStorage||[]).map(function(x){return typeof x==='string'?x:(x&&x.name)||''});
+  var nonBusyNamesH2=(charIdxs||[]).filter(function(ci){return !_busyH2[ci]&&S.party[ci];}).map(function(ci){return S.party[ci].name;});
+  var petNamesH2=[];
+  (S.partyAssets||[]).forEach(function(a){
+    if((a.type||'').indexOf('pet')===0){
+      var m=assetMeta(a);
+      if(m.ownerType==='char'&&nonBusyNamesH2.indexOf(m.ownerRef)!==-1)petNamesH2.push(a.name);
+      else if(!m.ownerType||m.ownerType==='')petNamesH2.push(a.name);
+    }
+  });
+  (pr.items||[]).forEach(function(x){
+    var met=false;
+    if(isPetItemName(x)){
+      met=petNamesH2.some(function(n){return canonicalItemName(n)===canonicalItemName(x);});
+    } else if(isAssetItemName(x)){
+      met=inventoryHasPrereqItem(assetNamesH2.concat(storageNamesH2),x);
+    } else {
+      met=inventoryHasPrereqItem(charInvH2,x);
+    }
+    rows+='<div class="prerow"><span class="'+(met?'pmet':'punmet')+'">'+(met?'✓':'✗')+'</span> Item: '+esc(x)+'</div>';
+  })
   if(pr.gold){var met=S.gold>=pr.gold;rows+='<div class="prerow"><span class="'+(met?'pmet':'punmet')+'">'+(met?'✓':'✗')+'</span> Gold: '+pr.gold+' gp</div>';}
   var topLv=0;(charIdxs||[]).forEach(function(ci){
+    if(_busyH2[ci])return; // exclude busy chars from level check
     var c=S.party[ci];
     var lv=(c&&!c.hireling)?Number(c.level):0;
     if(!isFinite(lv))lv=0;
@@ -14652,6 +14722,18 @@ function loadPetsFromDB(){
       console.error('loadPetsFromDB failed:',err);
       return PETS;
     });
+}
+
+// Returns true if an item name refers to a vehicle/building asset type
+// (stored in partyAssets) rather than a character inv item
+function isAssetItemName(name){
+  var allAssets=[].concat(VEHICLES||[],BUILDINGS||[]);
+  return allAssets.some(function(a){return a.name===name;});
+}
+
+// Returns true if an item name refers to a pet asset
+function isPetItemName(name){
+  return (PETS||[]).some(function(p){return p.name===name;});
 }
 
 function applyDBItemsToArrays(){
