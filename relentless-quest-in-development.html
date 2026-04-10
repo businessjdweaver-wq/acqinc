@@ -1847,6 +1847,9 @@ body.dev-active #app{margin-top:36px;}
         <label>Homebrew campaign access</label><input id="qpm-cost-homebrew" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Auto-assign (quest modal)</label><input id="qpm-cost-auto-assign" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Territory squad swap</label><input id="qpm-cost-squad-swap" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
+        <label>Cancel / recall quest</label><input id="qpm-cost-recall" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
+        <label>Advance downtime (per job)</label><input id="qpm-cost-downtime" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
+        <label>Grind auto-assign</label><input id="qpm-cost-grind-auto" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
       </div>
     </div>
 
@@ -2107,7 +2110,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.625
+      Version 1.626
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2132,6 +2135,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.626</strong> &mdash; QP manager: added configurable costs for (a) cancel/recall quest (costRecall, default 25), (b) advance downtime per job (costDowntime, default 5), (c) grind auto-assign (costGrindAuto, default 50). All three were previously hardcoded.</div>
         <div style="margin-bottom:9px"><strong>Version 1.625</strong> &mdash; (1) Peg slots: 1x4 per page, second page has 4 optional slots. (2) Party carousel lifted up by half a slot height.</div>
         <div style="margin-bottom:9px"><strong>Version 1.624</strong> &mdash; Fix: qddCharCoversSlot now checks actual c.inv for item slots instead of returning true for any char. Hirelings and chars without the required item in inventory will no longer show a match tag or be accepted into an item peg slot. Removed redundant itemTags block in qddRenderPeg — matchedSlots now drives all tags consistently.</div>
         <div style="margin-bottom:9px"><strong>Version 1.623</strong> &mdash; Fix: Personal items (🔒) section now self-heals — if an item is in c.ownedItems but missing from c.inv (e.g. after a migration or DB round-trip), it is re-added to inv so it appears in the card. migrateMisroutedAssets now also preserves ownedItems tagging when moving character-personal assets from partyAssets to c.inv.</div>
@@ -6754,7 +6758,7 @@ function renderParty(){
       return hasProgress&&!isBusy;
     });
     if(!resumable.length||!qpEnabled()){bar.style.display='none';return;}
-    var qpCost=resumable.length*5;
+    var qpCost=resumable.length*(qpCfg().costDowntime||5);
     bar.style.display='';
     bar.innerHTML='<div style="background:rgba(26,107,138,.08);border:1px solid rgba(26,107,138,.3);border-radius:7px;padding:8px 12px;display:flex;align-items:center;gap:10px">'+
       '<div style="flex:1;min-width:0">'+
@@ -9887,6 +9891,9 @@ function openQpManager(){
   document.getElementById('qpm-cost-homebrew').value=cfg.costHomebrew||50;
   document.getElementById('qpm-cost-auto-assign').value=cfg.costAutoAssign||1;
   document.getElementById('qpm-cost-squad-swap').value=cfg.costSquadSwap||10;
+  document.getElementById('qpm-cost-recall').value=cfg.costRecall||25;
+  document.getElementById('qpm-cost-downtime').value=cfg.costDowntime||5;
+  document.getElementById('qpm-cost-grind-auto').value=cfg.costGrindAuto||50;
   qpmRefreshTestPanel();
   document.getElementById('ov-qp-manager').style.display='flex';
 }
@@ -9928,6 +9935,9 @@ document.getElementById('qpm-save').addEventListener('click',function(){
   S.settings.qp.costHomebrew=parseInt(document.getElementById('qpm-cost-homebrew').value)||50;
   S.settings.qp.costAutoAssign=parseInt(document.getElementById('qpm-cost-auto-assign').value)||5;
   S.settings.qp.costSquadSwap=parseInt(document.getElementById('qpm-cost-squad-swap').value)||10;
+  S.settings.qp.costRecall=parseInt(document.getElementById('qpm-cost-recall').value)||25;
+  S.settings.qp.costDowntime=parseInt(document.getElementById('qpm-cost-downtime').value)||5;
+  S.settings.qp.costGrindAuto=parseInt(document.getElementById('qpm-cost-grind-auto').value)||50;
   save();
   updateQpDisplay();
   var fl=document.getElementById('qpm-flash');
@@ -10677,7 +10687,7 @@ document.getElementById('avcontent').addEventListener('click',function(e){
     var rpq=(S.questState&&S.questState.pending||[]).filter(function(p){return p.idx===rqi;})[0];
     if(!rpq){alert('Quest not found in progress.');return;}
     if(!confirm('Recall adventurers from "'+rq.title+'"? Costs 25 QP. No gold reward — quest progress lost.'))return;
-    if(!qpSpend(25,'recall_quest','Recalled from: '+rq.title))return;
+    if(!qpSpend(qpCfg().costRecall||25,'recall_quest','Recalled from: '+rq.title))return;
     // Remove from pending, do not add to done
     S.questState.pending=S.questState.pending.filter(function(p){return p.idx!==rqi;});
     logAdd('⚡ Recalled from "'+rq.title+'" (25 QP spent).','adv');
@@ -10701,7 +10711,7 @@ document.getElementById('avcontent').addEventListener('click',function(e){
 
   var gauto=e.target.closest('[data-a="grind-auto"]');
   if(gauto){
-    if(!qpSpend(50,'grind_auto_assign','Auto-assigned squad to grind missions'))return;
+    if(!qpSpend(qpCfg().costGrindAuto||50,'grind_auto_assign','Auto-assigned squad to grind missions'))return;
     // Get available squad members
     var _qs2=S.questState;
     var _sqNm=activeCycleSquadName();
