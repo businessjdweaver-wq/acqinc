@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.597
+      Version 1.598
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.598</strong> &mdash; Fix: pets not showing in store. loadPetsFromDB was never called on startup — only on manual Pull. Now called in initSession alongside sbPull and loadContentLibrary so pets load immediately on login.</div>
         <div style="margin-bottom:9px"><strong>Version 1.597</strong> &mdash; Pet system migrated from JS array + content_items JSON to dedicated Supabase pets table. PETS is now loaded via loadPetsFromDB() from the pets table directly. No more BUILTIN_PETS, tombstones, or three-way merge logic. published column is a single boolean — true = in store, false = hidden.</div>
         <div style="margin-bottom:9px"><strong>Version 1.596</strong> &mdash; Fix pet tombstone suppression: mergeCustomContent was filtering _deleted pets out of allPets before the suppression check could run, so tombstones never removed built-in pets from PETS. Fixed by running the suppression check first, then filtering. Also fixed editor: built-in pets now show as Published by default (they are in the store);</div>
         <div style="margin-bottom:9px"><strong>Version 1.595</strong> &mdash; Fix: content_items visibility enforcement. loadContentLibrary was fetching ALL rows with no filter, so private content (e.g. unpublished pets) was visible to every user on every device. Now only fetches shared/official rows for everyone, plus private rows owned by the current user. Unpublishing an item now correctly hides it from other users' stores and sessions.</div>
@@ -13858,7 +13859,7 @@ function initSession(pullFromCloud){
   if(pullFromCloud && uid()){
     var localPending=(S.questState&&S.questState.pending&&S.questState.pending.length)?S.questState.pending.slice():[];
     var localGrind=(S.questState&&S.questState.grindPending&&S.questState.grindPending.length)?S.questState.grindPending.slice():[];
-    return sbPull(false).then(function(){
+    return Promise.all([sbPull(false),loadContentLibrary(false),loadPetsFromDB()]).then(function(){
       if(S.questState){
         if((!S.questState.pending||!S.questState.pending.length)&&localPending.length){
           // Filter out any quests already collected during the first autoCollectExpired pass
@@ -13886,6 +13887,8 @@ function initSession(pullFromCloud){
     });
   }
   suppressAutoPush=false;
+  // Load pets even for guest/offline (RLS allows reading published rows without auth)
+  loadPetsFromDB().catch(function(){});
   return Promise.resolve();
 }
 
