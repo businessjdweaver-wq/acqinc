@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.590
+      Version 1.591
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.591</strong> &mdash; Content scope system simplified for single-developer use. Replaced private/shared/official with Published/Unpublished. Published = shared (visible to all players); Unpublished = private (dev only). Scope dropdown removed from editor header. Each item now has a Published checkbox in its save row. All existing data preserved: private rows = unpublished, shared/official rows = published.</div>
         <div style="margin-bottom:9px"><strong>Version 1.590</strong> &mdash; Content editor two-part fix: (1) openEditor now pulls from Supabase before rendering the list, so custom cycles appear immediately without needing a manual Pull. (2) Quest save scope now trusts _visibility stamped from the Supabase row as ground truth. Editor scope dropdown defaults to private for all users (admins can promote). Per-form scope selector pre-selects the quest's own scope. These together prevent custom quests from being saved to the wrong (official) bucket.</div>
         <div style="margin-bottom:9px"><strong>Version 1.589</strong> &mdash; Quest save scope: _resolvedScope now re-reads the live quest object at click time (isBuiltin was a stale closure value from form-render time). Checks _visibility first (stamped from Supabase row visibility column), then only falls back to official for truly built-in content without a custom- setId prefix.</div>
         <div style="margin-bottom:9px"><strong>Version 1.588</strong> &mdash; Quest save scope fix: quests were being saved to the wrong scope (official) because (1) _visibility was not stamped on quest payloads during mergeCustomContent, so _resolvedScope could not find it; (2) isBuiltin was true for custom quests lacking the _editable flag. Fix: payload now includes _visibility=scope; quests loaded from Supabase get _visibility stamped immediately; _resolvedScope checks _visibility first and skips official for custom- setIds even when user is admin.</div>
@@ -2414,12 +2415,7 @@ body.dev-active #app{margin-top:36px;}
         <button class="ed-tab"           data-et="dashboard" style="font-family:\'Cinzel\',serif;font-size:.75em;padding:5px 13px;border:1px solid rgba(201,146,42,.3);border-radius:4px;background:none;color:var(--parchment-deep);cursor:pointer;letter-spacing:.03em;white-space:nowrap">🃏 Cards</button>
       </div>
       <div style="margin-left:auto;display:flex;align-items:center;gap:6px;flex-shrink:0">
-        <label for="ed-content-scope" style="font-family:\'Cinzel\',serif;font-size:.65em;color:var(--parchment-deep);text-transform:uppercase;letter-spacing:.05em;white-space:nowrap">Save as</label>
-        <select id="ed-content-scope" style="padding:4px 8px;font-size:.78em;border:1px solid rgba(201,146,42,.4);border-radius:4px;background:rgba(255,255,255,.12);color:var(--parchment)">
-          <option value="private">🔒 Private</option>
-          <option value="shared" selected>👥 Shared</option>
-          <option value="official">⭐ Official</option>
-        </select>
+        <input type="hidden" id="ed-content-scope" value="private">
         <span id="ed-scope-note" style="font-size:.68em;color:var(--parchment-deep);font-style:italic"></span>
       </div>
     </div>
@@ -14337,13 +14333,15 @@ var CONTENT_LIST_MAP={
 
 function normalizeContentScope(v){
   v=(v||'').toLowerCase();
-  if(v==='official'&&isAppAdmin())return 'official';
+  if(v==='published')return 'shared';   // published = visible to all players
+  if(v==='unpublished')return 'private'; // unpublished = dev only
+  if(v==='official')return 'shared';     // legacy: treat official as published
   if(v==='shared')return 'shared';
   return 'private';
 }
 function currentContentScope(){
   var sel=document.getElementById('ed-content-scope');
-  return normalizeContentScope(sel?sel.value:(isAppAdmin()?'official':'private'));
+  return normalizeContentScope(sel?sel.value:'private');
 }
 function contentBucket(scope){
   scope=normalizeContentScope(scope);
@@ -14352,9 +14350,9 @@ function contentBucket(scope){
 function clone(obj){return JSON.parse(JSON.stringify(obj));}
 function editableContentItem(item){
   if(!item)return false;
-  if(item.visibility==='official')return isAppAdmin();
-  if(item.visibility==='private')return item.owner_user_id===uid();
-  if(item.visibility==='shared')return item.owner_user_id===uid();
+  // Single-developer: you own all content you created
+  if(item.owner_user_id&&item.owner_user_id===uid())return true;
+  if(isAppAdmin())return true;
   return false;
 }
 var APP_ADMIN_EMAILS=['supwolli@gmail.com','supwolli@warsawschools.org'];
@@ -14388,15 +14386,7 @@ function editorScopeNote(){
   else if(val==='shared')note.textContent='Visible to all signed-in players';
   else note.textContent='Visible only to this account';
 }
-function refreshEditorScopeOptions(){
-  var sel=document.getElementById('ed-content-scope');
-  if(!sel)return;
-  Array.from(sel.options).forEach(function(opt){
-    if(opt.value==='official')opt.style.display=isAppAdmin()?'':'none';
-  });
-  if(!isAppAdmin()&&sel.value==='official')sel.value='shared';
-  editorScopeNote();
-}
+function refreshEditorScopeOptions(){ /* scope is now published/unpublished per-item */ }
 function contentRow(type, key, title, data, scope, order){
   return {
     content_type:type,
@@ -14912,7 +14902,7 @@ function openEditor(){
   document.getElementById('ov-editor').style.display='flex';
   // Default scope: official for admins, shared for everyone else
   var scopeSel=document.getElementById('ed-content-scope');
-  if(scopeSel)scopeSel.value='private'; // always default to private; admins can promote
+  // scope is per-item (published/unpublished toggle), no global default needed
   refreshEditorScopeOptions();
   edTab='quests';
   edSelected=null;
@@ -14941,21 +14931,16 @@ function closeEditor(){
 
 // Returns an HTML snippet for the per-form scope selector + save status
 function edScopeRow(formSaveId){
-  // Use quest/item's own visibility if available, else current scope
+  // Determine current published state from live item
   var _lq=edQuestObj&&edQuestObj();
-  var cur=(_lq&&_lq._visibility)?normalizeContentScope(_lq._visibility):currentContentScope();
-  var isAdmin=isAppAdmin();
+  var _vis=(_lq&&_lq._visibility)||'private';
+  var _pub=(_vis==='shared'||_vis==='official');
   return '<div style="display:flex;align-items:center;gap:10px;margin-top:20px;padding:10px 14px;'+
     'background:rgba(201,146,42,.07);border:1px solid rgba(201,146,42,.25);border-radius:6px;flex-wrap:wrap">'+
-    '<label style="font-family:\'Cinzel\',serif;font-size:.7em;color:var(--gold-dark);text-transform:uppercase;'+
-    'letter-spacing:.05em;white-space:nowrap">Save as</label>'+
-    '<select id="ef-scope-sel" style="padding:5px 8px;font-size:.88em;border:1px solid rgba(201,146,42,.4);'+
-    'border-radius:4px;background:var(--parchment);color:var(--ink)"'+
-    ' onchange="document.getElementById(\'ed-content-scope\')&&(document.getElementById(\'ed-content-scope\').value=this.value)">'+
-    '<option value="private"'+(cur==='private'?' selected':'')+'>🔒 Private (this account only)</option>'+
-    '<option value="shared"'+(cur==='shared'?' selected':'')+'>👥 Shared (all signed-in players)</option>'+
-    (isAdmin?'<option value="official"'+(cur==='official'?' selected':'')+'>⭐ Official (everyone)</option>':'')+
-    '</select>'+
+    '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-family:\'Cinzel\',serif;font-size:.78em;color:var(--ink);user-select:none">'+
+    '<input type="checkbox" id="ef-scope-sel" value="pub"'+(_pub?' checked':'')+' style="width:1.2em;height:1.2em;cursor:pointer;accent-color:var(--forest)">'+
+    '<span id="ef-scope-label" style="color:'+(_pub?'var(--forest)':'var(--ink-light)')+'">'+(_pub?'✅ Published (visible to players)':'⬜ Unpublished (dev only)')+'</span>'+
+    '</label>'+
     '<button id="'+formSaveId+'" style="padding:8px 22px;background:var(--forest);color:#fff;border:none;'+
     'border-radius:5px;font-size:.9em;cursor:pointer;font-family:\'Cinzel\',serif;letter-spacing:.04em">'+
     '💾 Save</button>'+
@@ -14967,8 +14952,9 @@ function edScopeFlash(){
   if(el){el.style.opacity='1';setTimeout(function(){el.style.opacity='0';},1400);}
 }
 function edFormScope(){
-  var sel=document.getElementById('ef-scope-sel');
-  return sel?normalizeContentScope(sel.value):currentContentScope();
+  var cb=document.getElementById('ef-scope-sel');
+  // Checkbox checked = published (shared), unchecked = unpublished (private)
+  return (cb&&cb.checked)?'shared':'private';
 }
 
 function edRenderTabs(){
@@ -15786,7 +15772,7 @@ function edShowGrindForm(){
     var selSkills=Array.from(document.getElementById('ef-gskills').selectedOptions).map(function(o){return o.value;});
     var selTools=Array.from(document.getElementById('ef-gtools').selectedOptions).map(function(o){return o.value;});
     var selLang=Array.from(document.getElementById('ef-glang').selectedOptions).map(function(o){return o.value;});
-    var targetScope=(!isNew&&g&&g._visibility)?normalizeContentScope(g._visibility):(isBuiltin&&isAppAdmin()?'official':edFormScope());
+    var targetScope=(!isNew&&g&&g._visibility)?normalizeContentScope(g._visibility):edFormScope();
     var newId=g?g.id:('gc_'+Date.now());
     var newG={_custom:true,id:newId,title:title,desc:desc,
       type:document.getElementById('ef-gtype').value,
