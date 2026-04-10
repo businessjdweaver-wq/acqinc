@@ -567,10 +567,13 @@ body.ov-lock{overflow:hidden;}
 }
 .quest-modal-scroll{
   flex:1 1 auto;
-  overflow-y:auto;
+  overflow-y:hidden;
   overflow-x:hidden;
   padding-right:2px;
   min-height:0;
+}
+.quest-modal-scroll.allow-scroll{
+  overflow-y:auto;
 }
 .quest-reward-box{
   margin:8px 0 10px;
@@ -1661,10 +1664,10 @@ body.dev-active #app{margin-top:36px;}
 #dev-bar-version{font-size:.68em;color:rgba(255,255,255,.45);font-family:\'Cinzel\',serif;margin-left:auto;letter-spacing:.04em;}
 .qhole-car-wrap{margin-top:10px;position:relative;}
 .qhole-car-label{font-family:\'Cinzel\',serif;font-size:.78em;text-transform:uppercase;letter-spacing:.05em;color:var(--gold-dark);margin-bottom:6px;display:flex;align-items:center;gap:8px;}
-.qhole-car-viewport{overflow:hidden;border-radius:10px;margin:0 32px;height:420px;}
+.qhole-car-viewport{overflow:hidden;border-radius:10px;margin:0 32px;height:280px;}
 .qhole-car-track{display:flex;transition:transform .28s cubic-bezier(.4,0,.2,1);will-change:transform;}
 /* Each page = full viewport width, 2×2 grid inside */
-.qhole-car-page{display:grid;grid-template-columns:1fr;grid-template-rows:repeat(6,1fr);gap:6px;padding:4px;box-sizing:border-box;flex-shrink:0;}
+.qhole-car-page{display:grid;grid-template-columns:1fr;grid-template-rows:repeat(4,1fr);gap:6px;padding:4px;box-sizing:border-box;flex-shrink:0;}
 .qhole-car-nav{display:flex;justify-content:center;align-items:center;margin-top:4px;}
 .qhole-car-arrow{position:absolute;top:50%;transform:translateY(-50%) translateY(-12px);width:28px;height:28px;border-radius:50%;border:1px solid var(--parchment-deep);background:var(--parchment);display:flex;align-items:center;justify-content:center;font-size:.8em;cursor:pointer;color:var(--gold-dark);z-index:2;}
 #qhole-car-prev{left:0;}
@@ -2102,7 +2105,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.619
+      Version 1.620
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2127,6 +2130,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.620</strong> &mdash; (1) Item prereq slot now only shows met when a char carrying the item is placed in a peg slot — not just any squad/party member. (2) Peg slots reduced to 1x4 with second page right. (3) Quest modal scroll locked vertically unless accessibility font is set above Normal (18px).</div>
         <div style="margin-bottom:9px"><strong>Version 1.619</strong> &mdash; Quest modal: (1) Fixed collapsible title panel — removed overflow:hidden which was clipping the absolute overlay. (2) Restored 1x6 peg slot grid. (3) Modal expanded to 96vh to use nearly full screen height.</div>
         <div style="margin-bottom:9px"><strong>Version 1.618</strong> &mdash; Quest modal fine-tuning: (1) Expanded title panel overlaps lower content instead of pushing it down. (2) Level prereq is now a real drop-target peg slot accepting chars of sufficient level. (3) Unmet item prereq slots show a Purchase button linking to the store. (4) Peg slot grid changed to 1x5.</div>
         <div style="margin-bottom:9px"><strong>Version 1.617</strong> &mdash; Quest modal redesign: (1) Title/cards collapsed into a closed details bar by default. (2) Level, gold, item, pet, mount prereqs now appear as nonchar status tiles in peg slot area with live checkmarks. (3) Peg slots: 1 column x 6 rows, extra slots page right. (4) Body font sizes increased. (5) Button row hugs bottom.</div>
@@ -11870,6 +11874,10 @@ function applySettings(){
   document.title=n;
   var fs=cfg.accessFontSize||cfg.fontSize||18;
   document.getElementById('app').style.setProperty('--fs',fs+'px');
+  // Unlock quest modal scroll when font is larger than normal
+  document.querySelectorAll('.quest-modal-scroll').forEach(function(el){
+    el.classList.toggle('allow-scroll',fs>18);
+  });
   bindAccessibilityControls();
   applyAccessibilitySettings();
 }
@@ -16669,7 +16677,7 @@ function qddBuildCharSlots(questLike,isGrind){
   });
   // Pad to minimum 6
   var _sk=0;
-  while(slots.length<6){
+  while(slots.length<4){
     slots.push({type:'support',value:'',label:'+ Support',key:'sup'+(_sk++),support:true});
   }
   return slots;
@@ -17047,7 +17055,7 @@ function qddAssignToSlot(slotKey,ci){
 // qholeCarOffset = which 2×2 page we're on (0-indexed).
 // Arrows move one PAGE at a time.
 var qholeCarOffset=0;
-var HOLES_PER_PAGE=6; // 1 col x 6 rows
+var HOLES_PER_PAGE=4; // 1 col x 4 rows, 2 pages
 
 function qholeCarApply(slots){
   var track=document.getElementById('qhole-car-track');if(!track)return;
@@ -17079,14 +17087,13 @@ function qddRenderHole(slot,partyEntries,busy){
     } else if(slot.type==='gold'){
       met=S.gold>=(slot.value||0);
     } else if(slot.type==='item'){
-      var _sqN2=activeCycleSquadName?activeCycleSquadName():null;
-      var _sqO2=_sqN2?(S.squads||[]).filter(function(s){return s.name===_sqN2;})[0]:null;
-      var _sqI2=_sqO2?(_sqO2.memberIdxs||[]):null;
-      var _nbN=(_sqI2||Object.keys(S.party).map(Number)).filter(function(ci){return !_bH[ci]&&S.party[ci];}).map(function(ci){return S.party[ci].name;});
+      // Check only chars PLACED in peg slots (qddSlotAssignments)
+      var _pegCis=Object.keys(qddSlotAssignments||{}).map(function(k){return qddSlotAssignments[k];}).filter(function(ci){return ci!==null&&ci!==undefined&&!_bH[ci]&&S.party[ci];});
+      var _pegNames=_pegCis.map(function(ci){return S.party[ci].name;});
       if(slot.isPet){
         met=(S.partyAssets||[]).some(function(a){
           if((a.type||'').indexOf('pet')!==0)return false;
-          var m=assetMeta(a);if(m.ownerType==='char'&&_nbN.indexOf(m.ownerRef)===-1)return false;
+          var m=assetMeta(a);if(m.ownerType==='char'&&_pegNames.indexOf(m.ownerRef)===-1)return false;
           return canonicalItemName(a.name)===canonicalItemName(slot.value);
         });
       } else if(slot.isAsset){
@@ -17094,7 +17101,9 @@ function qddRenderHole(slot,partyEntries,busy){
         var _stN=(S.franchiseStorage||[]).map(function(x){return typeof x==='string'?x:(x&&x.name)||''});
         met=inventoryHasPrereqItem(_asN.concat(_stN),slot.value);
       } else {
-        var _cI=[];(_sqI2||[]).forEach(function(ci){if(!_bH[ci]&&S.party[ci])(S.party[ci].inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;}).forEach(function(x){_cI.push(x);});});
+        // Gear: must be in a placed peg-slot char's inv
+        var _cI=[];
+        _pegCis.forEach(function(ci){(S.party[ci].inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;}).forEach(function(x){_cI.push(x);});});
         met=inventoryHasPrereqItem(_cI,slot.value);
       }
     }
