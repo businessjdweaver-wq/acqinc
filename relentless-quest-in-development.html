@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.608
+      Version 1.609
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.609</strong> &mdash; Fix: weapons, armor, and gear purchased from store were routing to party assets panel instead of character inventory. loadItemsFromDB was setting party:true on ALL items. Now only vehicles and buildings get party:true — gear/weapons/armor/magic go to c.inv as intended.</div>
         <div style="margin-bottom:9px"><strong>Version 1.608</strong> &mdash; Remove party debug logs. DB duplicates confirmed to be from a different user account (12080719…) — existing rows cleaned via SQL, push lock prevents future duplicates.</div>
         <div style="margin-bottom:9px"><strong>Version 1.607</strong> &mdash; Fix duplicate party/squad rows: sbPush runs all operations in Promise.all (parallel), so concurrent pushes race — both delete, then both insert, creating duplicates. Added _pushInProgress lock so only one push runs at a time. Concurrent push attempts are silently dropped. Also cleans up stale duplicate rows already in the DB.</div>
         <div style="margin-bottom:9px"><strong>Version 1.606</strong> &mdash; Fix: squads, characters, and icons showing stale localStorage data. Root cause: initSession was monkey-patched to call loadContentLibrary(false) immediately after starting, without waiting for sbPull to finish. This caused loadContentLibrary's internal renderAdv() to fire with stale S.squads from localStorage before sbPull had rebuilt S from the database. Monkey-patch removed — loadContentLibrary is already called inside initSession's sbPull chain.</div>
@@ -14608,6 +14609,9 @@ function loadItemsFromDB(){
       var newGear=[]; var newVehicles=[]; var newBuildings=[];
 
       (rows||[]).forEach(function(row){
+        // party:true means the item goes to partyAssets (asset panel)
+        // Only vehicles, buildings need this — gear/weapons go to c.inv
+        var _isAssetType=VEHICLE_TYPES.indexOf(row.type)!==-1||BUILDING_TYPES.indexOf(row.type)!==-1;
         var item={
           name:       row.name,
           ic:         row.ic||'📦',
@@ -14616,7 +14620,7 @@ function loadItemsFromDB(){
           rar:        row.rar||'common',
           price:      row.price||0,
           wt:         row.weight||0,
-          party:      true,
+          party:      _isAssetType,
           _dbId:      row.id,
           published:  row.published
         };
