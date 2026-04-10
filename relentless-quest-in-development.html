@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.589
+      Version 1.590
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.590</strong> &mdash; Content editor two-part fix: (1) openEditor now pulls from Supabase before rendering the list, so custom cycles appear immediately without needing a manual Pull. (2) Quest save scope now trusts _visibility stamped from the Supabase row as ground truth. Editor scope dropdown defaults to private for all users (admins can promote). Per-form scope selector pre-selects the quest's own scope. These together prevent custom quests from being saved to the wrong (official) bucket.</div>
         <div style="margin-bottom:9px"><strong>Version 1.589</strong> &mdash; Quest save scope: _resolvedScope now re-reads the live quest object at click time (isBuiltin was a stale closure value from form-render time). Checks _visibility first (stamped from Supabase row visibility column), then only falls back to official for truly built-in content without a custom- setId prefix.</div>
         <div style="margin-bottom:9px"><strong>Version 1.588</strong> &mdash; Quest save scope fix: quests were being saved to the wrong scope (official) because (1) _visibility was not stamped on quest payloads during mergeCustomContent, so _resolvedScope could not find it; (2) isBuiltin was true for custom quests lacking the _editable flag. Fix: payload now includes _visibility=scope; quests loaded from Supabase get _visibility stamped immediately; _resolvedScope checks _visibility first and skips official for custom- setIds even when user is admin.</div>
         <div style="margin-bottom:9px"><strong>Version 1.587</strong> &mdash; Reconnected squad picker in quest and grind assignment modals: squad dropdown now populates, auto-selects the active cycle squad, and locks selection when a squad is already assigned to the cycle. Squad change listener restored. The old hard-validation blocks (squad-or-abort) removed &mdash; the peg-slot carousel already prevents assigning busy characters.</div>
@@ -14911,7 +14912,7 @@ function openEditor(){
   document.getElementById('ov-editor').style.display='flex';
   // Default scope: official for admins, shared for everyone else
   var scopeSel=document.getElementById('ed-content-scope');
-  if(scopeSel)scopeSel.value=isAppAdmin()?'official':'shared';
+  if(scopeSel)scopeSel.value='private'; // always default to private; admins can promote
   refreshEditorScopeOptions();
   edTab='quests';
   edSelected=null;
@@ -14921,9 +14922,15 @@ function openEditor(){
   edCollapsedCycles={};
   QUESTSETS.forEach(function(s){edCollapsedCycles[s.id]=true;});
   edRenderTabs();
-  edRenderList();
   edShowPlaceholder();
   edTrackFocus();
+  // Pull fresh from Supabase so custom cycles appear without manual Pull
+  loadContentLibrary(false).then(function(){
+    mergeCustomContent();
+    edRenderList();
+  }).catch(function(){
+    edRenderList(); // show whatever we have on error
+  });
 }
 function closeEditor(){
   document.getElementById('ov-editor').style.display='none';
@@ -14934,7 +14941,9 @@ function closeEditor(){
 
 // Returns an HTML snippet for the per-form scope selector + save status
 function edScopeRow(formSaveId){
-  var cur=currentContentScope();
+  // Use quest/item's own visibility if available, else current scope
+  var _lq=edQuestObj&&edQuestObj();
+  var cur=(_lq&&_lq._visibility)?normalizeContentScope(_lq._visibility):currentContentScope();
   var isAdmin=isAppAdmin();
   return '<div style="display:flex;align-items:center;gap:10px;margin-top:20px;padding:10px 14px;'+
     'background:rgba(201,146,42,.07);border:1px solid rgba(201,146,42,.25);border-radius:6px;flex-wrap:wrap">'+
@@ -15562,10 +15571,9 @@ function edShowQuestForm(){
     // The dropdown is only authoritative for new quests.
     var _resolvedScope=(function(){
       var _liveQ=edQuestObj();
+      // Trust _visibility from Supabase row — it is the ground truth
       if(!isNew&&_liveQ&&_liveQ._visibility)return normalizeContentScope(_liveQ._visibility);
-      var _isCustomSet=edSelected.setId&&edSelected.setId.indexOf('custom-')===0;
-      var _liveBuiltin=_liveQ&&!(_liveQ._custom||_liveQ._editable||_isCustomSet);
-      if(_liveBuiltin&&isAppAdmin())return 'official';
+      // New quest or no visibility: use the per-form scope selector
       return edFormScope();
     }());
     var selSkills=Array.from(document.getElementById('ef-skills').selectedOptions).map(function(o){return o.value;});
