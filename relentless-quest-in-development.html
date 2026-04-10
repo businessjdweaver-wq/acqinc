@@ -2127,7 +2127,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.640
+      Version 1.641
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2152,6 +2152,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.641</strong> &mdash; Pet prereq fixes: (1) Purchase button suppressed for pet slots (pets aren't in the store). (2) qddCharCoversSlot now lights up the pet's owner char as a placement candidate. (3) Unowned/squad pets still allow any char to satisfy the slot.</div>
         <div style="margin-bottom:9px"><strong>Version 1.640</strong> &mdash; Prereq slot classification fix: Bag of Holding now classified as an asset at slot-build time (nonChar=true, isAsset=true) so it renders as a prereq tile rather than a char slot. Any pet name (including char-owned party pets) classified as isPet=true at slot-build time. Pet prereq tile turns green when the owning char is placed in a peg slot.</div>
         <div style="margin-bottom:9px"><strong>Version 1.639</strong> &mdash; Prereq precision fixes: (1) Bag/squad assets satisfy the nonChar prereq SLOT only — no longer marks individual char peg-cards. (2) Char-owned pets require that char to be placed in a peg slot; unowned/squad pets count freely. Gear prereqs restored to char-inv only.</div>
         <div style="margin-bottom:9px"><strong>Version 1.638</strong> &mdash; Prereq fixes: (1) Bag of Holding now recognized as an asset prereq (routes to partyAssets+storage, not char inv). (2) Pet prereqs check all party pets, not just peg-slot char's pet. (3) Gear prereqs also check squad partyAssets so shared party items count. (4) isPetItemName checks partyAssets entries for char-owned pets. (5) qddCharCoversSlot checks squad assets so dragging any char satisfies asset/bag prereq slots.</div>
@@ -17094,8 +17095,19 @@ function qddCharCoversSlot(c,slot){
   if(slot.type==='rel')  return c.rel===slot.value;
   if(slot.type==='level')return !c.hireling&&(c.level||0)>=slot.value;
   if(slot.type==='item'){
-    // Char peg-cards: only items the character personally carries
-    // Squad/franchise assets satisfy the nonChar prereq SLOT, not individual cards
+    // Pet slots: the char whose pet matches the prereq lights up as a candidate
+    if(slot.isPet){
+      return (S.partyAssets||[]).some(function(a){
+        if((a.type||'').indexOf('pet')!==0)return false;
+        if(canonicalItemName(a.name)!==canonicalItemName(slot.value))return false;
+        var m=assetMeta(a);
+        // Char-owned: only the owner char matches
+        if(m.ownerType==='char')return m.ownerRef===c.name;
+        // Unowned/squad pet: any char can place it
+        return true;
+      });
+    }
+    // Gear: char must personally carry it in inv
     var _inv=(c.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;});
     return inventoryHasPrereqItem(_inv,slot.value);
   }
@@ -17449,13 +17461,14 @@ function qddRenderHole(slot,partyEntries,busy){
       if(slot.isPet){
         // Char-owned pets: owner must be in peg slots
         // Unowned / squad pets: count freely
+        var _petOwner='';
         met=(S.partyAssets||[]).some(function(a){
           if((a.type||'').indexOf('pet')!==0)return false;
           if(canonicalItemName(a.name)!==canonicalItemName(slot.value))return false;
           var ot=(a.meta&&a.meta.ownerType)||'';
           if(ot==='char'){
-            // Owner must be placed in a peg slot
-            return _pegNames.indexOf((a.meta&&a.meta.ownerRef)||'')!==-1;
+            _petOwner=(a.meta&&a.meta.ownerRef)||'';
+            return _pegNames.indexOf(_petOwner)!==-1;
           }
           return true; // unowned or squad pet always counts
         });
@@ -17470,8 +17483,9 @@ function qddRenderHole(slot,partyEntries,busy){
       }
     }
     var _storeBtn='';
-    if(!met&&slot.type==='item'){
-      var _storeTab=slot.isAsset?'expedition':slot.isPet?'pets':'adventuring';
+    if(!met&&slot.type==='item'&&!slot.isPet){
+      // No purchase button for pet prereqs — pets aren't in the store
+      var _storeTab=slot.isAsset?'expedition':'adventuring';
       _storeBtn='<button class="qcs-store-link" data-item="'+esc(slot.value)+'" data-tab="'+_storeTab+'"'
         +' style="font-size:.6em;padding:1px 5px;border:1px solid var(--gold-dark);border-radius:3px;'
         +'background:rgba(201,146,42,.1);color:var(--gold-dark);cursor:pointer;margin-left:4px;vertical-align:middle">'
