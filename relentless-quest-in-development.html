@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.584
+      Version 1.585
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.585</strong> &mdash; Quest/grind/gear save deduplication: same fix as cycle rules (v1.582). contentItemsForScope returns duplicates from Supabase; last stale entry was overriding the saved value after mergeCustomContent. Now deduplicates by key (quests: setId+idx, grind: id, gear: name) in each save handler and in mergeCustomContent and loadContentLibrary.</div>
         <div style="margin-bottom:9px"><strong>Version 1.584</strong> &mdash; Gear content editor: item Type dropdown now has 7 store-aligned types: Weapon, Armor, Consumable, Tool, Magic (Common/Uncommon), Scroll/Book, Potion, Gear (misc), Kit. Store sub-tab filters updated to match: Gear tab routes by new type names; Magic tab includes scroll_book and potion types in Common/Uncommon pools.</div>
         <div style="margin-bottom:9px"><strong>Version 1.583</strong> &mdash; Store magic tab: rare and very rare items removed from sale. Sub-drawers now show Common and Uncommon only. buildStock pools split into magicCommon (all common) and magicUncommon (5 random uncommon). Rare/legendary items excluded from all store logic.</div>
         <div style="margin-bottom:9px"><strong>Version 1.582</strong> &mdash; Three fixes: (1) Cycle rules (minAvgSquadLevel, minSquadSize) save correctly &mdash; deduplicate questSets by id in ec-save, mergeCustomContent, and loadContentLibrary to prevent stale Supabase duplicates overriding saved values. (2) Store footer redesigned: 2&times;2 category grid (Gear/Magic top, Assets/Pets bottom); blue sub-drawers appear above grid per category. (3) Test account pill labels use &#64; HTML entity so Cloudflare CDN cannot obfuscate them when served via GitHub Pages.</div>
@@ -14552,7 +14553,15 @@ function loadContentLibrary(manual){
       }
       CONTENT_LIB[scope].questSets=_d2;
       CONTENT_LIB[scope].questSets.sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
-      CONTENT_LIB[scope].quests.sort(function(a,b){return (a.idx||0)-(b.idx||0);});
+      var _lq=CONTENT_LIB[scope].quests;
+      var _slq={};var _dlq=[];
+      for(var _lqi=_lq.length-1;_lqi>=0;_lqi--){
+        var _lqe=_lq[_lqi];
+        var _lqk=(_lqe.setId||'')+'__'+(_lqe.idx!=null?_lqe.idx:'');
+        if(!_slq[_lqk]){_slq[_lqk]=true;_dlq.unshift(_lqe);}
+      }
+      CONTENT_LIB[scope].quests=_dlq;
+      CONTENT_LIB[scope].quests.sort(function(a,b){return (a.idx||0)-(b.idx||0)});
       CONTENT_LIB[scope].grind.sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
       CONTENT_LIB[scope].gear.sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
       (CONTENT_LIB[scope].vehicles||[]).sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
@@ -15658,7 +15667,14 @@ function edShowQuestForm(){
         return null;
       }())||undefined
     };
-    var arr=contentItemsForScope(targetScope,'_customQuests');
+    var _rawQ=contentItemsForScope(targetScope,'_customQuests');
+    // Deduplicate: keep last entry per setId+idx pair
+    var _seenQ={};var arr=[];
+    for(var _qi2=_rawQ.length-1;_qi2>=0;_qi2--){
+      var _qe2=_rawQ[_qi2];
+      var _qk=(_qe2.setId||'')+'__'+(_qe2.idx!=null?_qe2.idx:'');
+      if(!_seenQ[_qk]){_seenQ[_qk]=true;arr.unshift(_qe2);}
+    }
     console.log('[QuestSave] scope='+targetScope+' setId='+edSelected.setId+' idx='+newQ.idx+' arr.length='+arr.length+' bucketPriv='+CONTENT_LIB.private.quests.length+' bucketShared='+CONTENT_LIB.shared.quests.length);
     if(!isNew){
       // Update existing by matching setId + idx (stable), fallback to title match.
@@ -15789,7 +15805,12 @@ function edShowGrindForm(){
       type:document.getElementById('ef-gtype').value,
       baseGp:parseInt(document.getElementById('ef-ggp').value)||30,
       pre:{skills:selSkills,tools:selTools,lang:selLang,rel:'',items:[],gold:0}};
-    var arr=contentItemsForScope(targetScope,'_customGrind');
+    var _rawG=contentItemsForScope(targetScope,'_customGrind');
+    var _seenG={};var arr=[];
+    for(var _gi2=_rawG.length-1;_gi2>=0;_gi2--){
+      var _ge2=_rawG[_gi2];
+      if(_ge2&&_ge2.id&&!_seenG[_ge2.id]){_seenG[_ge2.id]=true;arr.unshift(_ge2);}
+    }
     if(!isNew){arr=arr.map(function(x){return x.id===gid?newG:x;});}
     else{arr.push(newG);}
     var gResult=saveCustom('_customGrind',arr,targetScope);
@@ -16067,7 +16088,12 @@ function edShowGearForm(){
     if(!newItem.effect)delete newItem.effect;
 
     var targetScope=(!isNew&&g&&g._visibility)?normalizeContentScope(g._visibility):(isBuiltin&&isAppAdmin()?'official':edFormScope());
-    var arr=contentItemsForScope(targetScope,'_customGear');
+    var _rawI=contentItemsForScope(targetScope,'_customGear');
+    var _seenI={};var arr=[];
+    for(var _ii2=_rawI.length-1;_ii2>=0;_ii2--){
+      var _ie2=_rawI[_ii2];
+      if(_ie2&&_ie2.name&&!_seenI[_ie2.name]){_seenI[_ie2.name]=true;arr.unshift(_ie2);}
+    }
     if(!isNew){arr=arr.map(function(x){return x.name===gname?newItem:x;});}
     else{arr.push(newItem);}
     var iResult=saveCustom('_customGear',arr,targetScope);
