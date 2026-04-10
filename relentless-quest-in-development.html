@@ -2110,7 +2110,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.627
+      Version 1.628
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2135,6 +2135,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.628</strong> &mdash; quest_prereqs DB table support: loadContentLibrary now fetches structured prereqs and attaches as q._prereqs[]. questPrereqCheck and qddBuildInfoPrereqs use _prereqs when present, falling back to q.pre blob for older quests. Editor saves/loads prereqs to quest_prereqs table.</div>
         <div style="margin-bottom:9px"><strong>Version 1.627</strong> &mdash; Fix peg slot viewport: qhole-car-track and qhole-car-page now have height:100% so repeat(4,1fr) rows divide the viewport correctly. Removed min-height:64px floor that was causing overflow. Removed translateY carousel offset that caused mobile overlap.</div>
         <div style="margin-bottom:9px"><strong>Version 1.626</strong> &mdash; QP manager: added configurable costs for (a) cancel/recall quest (costRecall, default 25), (b) advance downtime per job (costDowntime, default 5), (c) grind auto-assign (costGrindAuto, default 50). All three were previously hardcoded.</div>
         <div style="margin-bottom:9px"><strong>Version 1.625</strong> &mdash; (1) Peg slots: 1x4 per page, second page has 4 optional slots. (2) Party carousel lifted up by half a slot height.</div>
@@ -9346,8 +9347,23 @@ function questCalcReward(q,charIdxs){
   return b;
 }
 
+function prereqRowsToPreObj(rows){
+  // Convert quest_prereqs DB rows to the same shape as q.pre for existing check logic
+  var pr={skills:[],tools:[],lang:[],rel:'',items:[],gold:0};
+  (rows||[]).filter(function(r){return !r.bonus_only;}).forEach(function(r){
+    if(r.prereq_type==='skill'&&r.value)pr.skills.push(r.value);
+    else if(r.prereq_type==='tool'&&r.value)pr.tools.push(r.value);
+    else if(r.prereq_type==='lang'&&r.value)pr.lang.push(r.value);
+    else if(r.prereq_type==='rel'&&r.value)pr.rel=r.value;
+    else if(r.prereq_type==='gold')pr.gold=r.quantity||0;
+    else if(r.prereq_type==='item'&&r.value)pr.items.push(r.value);
+  });
+  return pr;
+}
+
 function questPrereqCheck(q,charIdxs){
-  var pr=q.pre,missing=[];
+  // Use structured DB prereqs if available, fall back to blob pre
+  var pr=q._prereqs?prereqRowsToPreObj(q._prereqs):(q.pre||{}),missing=[];
   // Build busy set — chars currently on another active quest
   var _now=Date.now();
   var _busy={};
@@ -14971,6 +14987,31 @@ function loadContentLibrary(manual){
       (CONTENT_LIB[scope].buildings||[]).sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
       (CONTENT_LIB[scope].pets||[]).sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
     });
+    // Fetch structured prereqs from quest_prereqs table for all loaded quests
+    var _allQuestKeys=[];
+    ['official','shared','private'].forEach(function(scope){
+      (CONTENT_LIB[scope].quests||[]).forEach(function(q){
+        if(q.setId&&q.idx!==undefined)_allQuestKeys.push(q.setId+'::'+q.idx);
+      });
+    });
+    var _prereqPromise=_allQuestKeys.length
+      ?sbGet('quest_prereqs','quest_key=in.('+_allQuestKeys.map(function(k){return encodeURIComponent(k);}).join(',')+')&order=sort_order.asc')
+        .then(function(prereqRows){
+          var _byKey={};
+          (prereqRows||[]).forEach(function(r){
+            if(!_byKey[r.quest_key])_byKey[r.quest_key]=[];
+            _byKey[r.quest_key].push(r);
+          });
+          // Attach _prereqs array to each quest object
+          ['official','shared','private'].forEach(function(scope){
+            (CONTENT_LIB[scope].quests||[]).forEach(function(q){
+              var key=q.setId+'::'+q.idx;
+              if(_byKey[key])q._prereqs=_byKey[key];
+            });
+          });
+        }).catch(function(e){console.warn('[quest_prereqs load]',e);})
+      :Promise.resolve();
+    _prereqPromise.then(function(){
     mergeCustomContent();
     // Persist the freshly-loaded content to localStorage for offline/guest access
     try{
@@ -14984,6 +15025,7 @@ function loadContentLibrary(manual){
     if(typeof renderAdv==='function')renderAdv();
     if(manual)syncStatus('☁ Content pulled.','var(--ink-light)');
     return migrateLegacyContentIntoPrivateScope();
+  }); // close _prereqPromise.then
   }).catch(function(err){
     console.error('Content load failed:',err);
     mergeCustomContent();
@@ -16718,7 +16760,9 @@ function qddBuild6Slots(questLike,isGrind){return qddBuildCharSlots(questLike,is
 function qddBuildInfoPrereqs(questLike){
   // Skills/tools/lang/faith are shown as peg-slots below — not repeated here.
   // This card shows: level req, gold, item prereqs, vehicle/building bonuses, squad size.
-  var pr=questLike.pre||{};
+  var pr=questLike._prereqs?prereqRowsToPreObj(questLike._prereqs):(questLike.pre||{});
+  // Vehicle/building bonus rows from _prereqs
+  var _bonusRows=questLike._prereqs?(questLike._prereqs.filter(function(r){return r.bonus_only;})):[];
   var rows=[];
   // Level requirement — check only currently-assigned peg slots, not the whole squad/party
   var reqLv=resolveQuestLikeRequiredLevel(questLike,false);

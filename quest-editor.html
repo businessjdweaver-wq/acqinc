@@ -385,6 +385,96 @@ function sbDelete(filter) {
 // ══════════════════════════════════════════════════
 // AUTH UI
 // ══════════════════════════════════════════════════
+function sbPrereqFetch(questKey) {
+  var url = SB_URL + '/rest/v1/quest_prereqs?quest_key=eq.' + encodeURIComponent(questKey) +
+    '&order=sort_order.asc';
+  return sbFetch(url, { method: 'GET' }).then(function(r) {
+    if (!r.ok) return [];
+    return r.json();
+  }).catch(function() { return []; });
+}
+
+function sbPrereqSave(questKey, prereqRows) {
+  // Delete existing rows for this quest_key, then bulk insert fresh ones
+  var delUrl = SB_URL + '/rest/v1/quest_prereqs?quest_key=eq.' + encodeURIComponent(questKey) +
+    '&owner_user_id=eq.' + encodeURIComponent(uid());
+  return sbFetch(delUrl, { method: 'DELETE' }).then(function() {
+    if (!prereqRows.length) return;
+    return sbFetch(SB_URL + '/rest/v1/quest_prereqs', {
+      method: 'POST',
+      headers: { 'Prefer': 'return=minimal' },
+      body: JSON.stringify(prereqRows)
+    });
+  });
+}
+
+function prereqRowsFromForm(questKey) {
+  var rows = [];
+  var order = 0;
+  var userId = uid();
+  function row(type, value, qty, minLv, bonusOnly, bonusNote, ic) {
+    return { quest_key: questKey, owner_user_id: userId,
+      prereq_type: type, value: value || null,
+      quantity: qty || 1, min_level: minLv || null,
+      bonus_only: !!bonusOnly, bonus_note: bonusNote || null,
+      ic: ic || null, sort_order: order++ };
+  }
+  selValues('qf-skills').forEach(function(s) { rows.push(row('skill', s)); });
+  selValues('qf-tools').forEach(function(t) { rows.push(row('tool', t)); });
+  selValues('qf-lang').forEach(function(l) { rows.push(row('lang', l)); });
+  var rel = document.getElementById('qf-rel').value;
+  if (rel) rows.push(row('rel', rel));
+  var gold = parseInt(document.getElementById('qf-gold').value) || 0;
+  if (gold > 0) rows.push(row('gold', null, gold));
+  var minLv = parseInt(document.getElementById('qf-min-level').value) || 0;
+  if (minLv > 0) rows.push(row('level', null, 1, minLv));
+  (document.getElementById('qf-items').value || '').split('\n')
+    .map(function(s) { return s.trim(); }).filter(Boolean)
+    .forEach(function(item) { rows.push(row('item', item)); });
+  var vrName = (document.getElementById('qf-vrq-name').value || '').trim();
+  var vrDesc = (document.getElementById('qf-vrq-desc').value || '').trim();
+  if (vrName) rows.push(row('vehicle', vrName, 1, null, true, vrDesc, '\uD83D\uDE97'));
+  var brName = (document.getElementById('qf-brq-name').value || '').trim();
+  var brDesc = (document.getElementById('qf-brq-desc').value || '').trim();
+  if (brName) rows.push(row('building', brName, 1, null, true, brDesc, '\uD83C\uDFDB'));
+  return rows;
+}
+
+function prereqRowsToFormValues(rows, q) {
+  // Populate form from DB rows, falling back to q.pre blob if no rows
+  if (!rows || !rows.length) {
+    // Blob fallback — already handled by the form defaults
+    return;
+  }
+  var skills = [], tools = [], langs = [], items = [], rel = '',
+      gold = 0, minLv = 0, vrName = '', vrDesc = '', brName = '', brDesc = '';
+  rows.forEach(function(r) {
+    if (r.prereq_type === 'skill')    skills.push(r.value);
+    else if (r.prereq_type === 'tool')    tools.push(r.value);
+    else if (r.prereq_type === 'lang')    langs.push(r.value);
+    else if (r.prereq_type === 'rel')     rel = r.value || '';
+    else if (r.prereq_type === 'gold')    gold = r.quantity || 0;
+    else if (r.prereq_type === 'level')   minLv = r.min_level || 0;
+    else if (r.prereq_type === 'item')    items.push(r.value);
+    else if (r.prereq_type === 'vehicle' && r.bonus_only) { vrName = r.value || ''; vrDesc = r.bonus_note || ''; }
+    else if (r.prereq_type === 'building' && r.bonus_only) { brName = r.value || ''; brDesc = r.bonus_note || ''; }
+  });
+  // Apply to form elements (they already exist in DOM at this point)
+  function setMulti(id, vals) {
+    var el = document.getElementById(id); if (!el) return;
+    Array.from(el.options).forEach(function(o) { o.selected = vals.indexOf(o.value) !== -1; });
+  }
+  setMulti('qf-skills', skills); setMulti('qf-tools', tools); setMulti('qf-lang', langs);
+  var relEl = document.getElementById('qf-rel'); if (relEl) relEl.value = rel;
+  var goldEl = document.getElementById('qf-gold'); if (goldEl) goldEl.value = gold;
+  var lvEl = document.getElementById('qf-min-level'); if (lvEl) lvEl.value = minLv;
+  var itemsEl = document.getElementById('qf-items'); if (itemsEl) itemsEl.value = items.join('\n');
+  var vrEl = document.getElementById('qf-vrq-name'); if (vrEl) vrEl.value = vrName;
+  var vrDEl = document.getElementById('qf-vrq-desc'); if (vrDEl) vrDEl.value = vrDesc;
+  var brEl = document.getElementById('qf-brq-name'); if (brEl) brEl.value = brName;
+  var brDEl = document.getElementById('qf-brq-desc'); if (brDEl) brDEl.value = brDesc;
+}
+
 function setStatus(msg, color) {
   var el = document.getElementById('status-msg');
   if (el) { el.textContent = msg; el.style.color = color || 'rgba(240,180,41,.6)'; }
@@ -779,6 +869,11 @@ var DND_TOOLS = ["Alchemist's Supplies","Brewer's Supplies","Calligrapher's Supp
 var DND_LANG = ['Common','Dwarvish','Elvish','Giant','Gnomish','Goblin','Halfling',
   'Orcish','Abyssal','Celestial','Draconic','Deep Speech','Infernal','Primordial',
   "Sylvan","Undercommon","Thieves' Cant"];
+
+var DND_REL = ['Mendax, the Pretender','Somnian, the Dreamer','Dicentis, the Persuader',
+  'Interitus, the Inventor','Beatudo, the Joker','Amantis, the Lover','Perterre, the Wary',
+  'Castigare, the Avenger','Gloriosus, the Bold','Protean Way','Medio','Texere Dragons',
+  'Deity Unknown','Atheist'];
 
 // ══════════════════════════════════════════════════
 // SUPABASE LOAD
@@ -1945,7 +2040,23 @@ function showQuestForm(setId, idx) {
     '<div class="fgrid c2" style="margin-top:10px">' +
     frow('Languages <span class="select-hint">(Ctrl/⌘ for multi)</span>',
       multiSelect('qf-lang', DND_LANG, q.pre && q.pre.lang)) +
+    frow('Faith / Deity <span class="select-hint">(one, optional)</span>', '<select id="qf-rel"><option value="">— None —</option>' + DND_REL.map(function(r){ return '<option value="' + esc(r) + '"' + ((q.pre && q.pre.rel === r) ? ' selected' : '') + '>' + esc(r) + '</option>'; }).join('') + '</select>') +
+    '</div>' +
+    '<div class="fgrid c2" style="margin-top:10px">' +
     frow('Gold Requirement (gp)', '<input type="number" id="qf-gold" min="0" value="' + ((q.pre && q.pre.gold) || 0) + '">') +
+    frow('Min Character Level <span class="select-hint">(0 = none)</span>', '<input type="number" id="qf-min-level" min="0" max="20" value="' + (q.minLevel || 0) + '">') +
+    '</div>' +
+    '<div class="fgrid" style="margin-top:10px">' +
+    frow('Item Prerequisites <span class="select-hint">(one per line: gear, pet, or mount name)</span>', '<textarea id="qf-items" rows="3" placeholder="e.g.\nLongsword\nMule\nHawk">' + esc((q.pre && q.pre.items || []).join('\n')) + '</textarea>') +
+    '</div>' +
+    '<div class="fsec-title" style="margin-top:14px;font-size:.78em">Bonus Rewards <span class="select-hint">— optional, award +% gp when party owns these</span></div>' +
+    '<div class="fgrid c2">' +
+    frow('Vehicle / Mount Name', '<input type="text" id="qf-vrq-name" value="' + esc((q.vehicleReq && q.vehicleReq.name) || '') + '" placeholder="e.g. Mule">') +
+    frow('Vehicle Reward Note', '<input type="text" id="qf-vrq-desc" value="' + esc((q.vehicleReq && q.vehicleReq.desc) || '') + '" placeholder="e.g. Hauls salvage. +20% reward.">') +
+    '</div>' +
+    '<div class="fgrid c2" style="margin-top:10px">' +
+    frow('Building Name', '<input type="text" id="qf-brq-name" value="' + esc((q.buildingReq && q.buildingReq.name) || '') + '" placeholder="e.g. Storage Shed">') +
+    frow('Building Reward Note', '<input type="text" id="qf-brq-desc" value="' + esc((q.buildingReq && q.buildingReq.desc) || '') + '" placeholder="e.g. Secure storage. +15% reward.">') +
     '</div>' +
     '</div>' +
 
@@ -1980,11 +2091,33 @@ function showQuestForm(setId, idx) {
       skills: selValues('qf-skills'),
       tools:  selValues('qf-tools'),
       lang:   selValues('qf-lang'),
-      gold:   parseInt(document.getElementById('qf-gold').value) || 0
+      rel:    document.getElementById('qf-rel').value || '',
+      gold:   parseInt(document.getElementById('qf-gold').value) || 0,
+      items:  (document.getElementById('qf-items').value || '').split('\n')
+                .map(function(s){ return s.trim(); }).filter(Boolean)
     };
+    var _minLv = parseInt(document.getElementById('qf-min-level').value) || 0;
+    if (_minLv > 0) q.minLevel = _minLv; else delete q.minLevel;
+    var _vrName = (document.getElementById('qf-vrq-name').value || '').trim();
+    var _vrDesc = (document.getElementById('qf-vrq-desc').value || '').trim();
+    if (_vrName) q.vehicleReq = { name: _vrName, desc: _vrDesc, ic: '\uD83D\uDE97' };
+    else delete q.vehicleReq;
+    var _brName = (document.getElementById('qf-brq-name').value || '').trim();
+    var _brDesc = (document.getElementById('qf-brq-desc').value || '').trim();
+    if (_brName) q.buildingReq = { name: _brName, desc: _brDesc, ic: '\uD83C\uDFDB' };
+    else delete q.buildingReq;
     q._custom   = true;
     q._editable = true;
-    saveQuest(q).then(function() { renderList(); showQuestForm(setId, idx); });
+    var _questKey = q.setId + '::' + q.idx;
+    var _prereqRows = prereqRowsFromForm(_questKey);
+    saveQuest(q).then(function() {
+      return sbPrereqSave(_questKey, _prereqRows);
+    }).then(function() {
+      renderList(); showQuestForm(setId, idx);
+    }).catch(function(e) {
+      console.warn('[prereq save]', e);
+      renderList(); showQuestForm(setId, idx);
+    });
   };
 
   document.getElementById('qf-del').onclick = function() {
@@ -1994,6 +2127,10 @@ function showQuestForm(setId, idx) {
     }
     deleteQuest(q);
   };
+  // Load structured prereqs from DB and populate form (overrides blob defaults)
+  sbPrereqFetch(q.setId + '::' + q.idx).then(function(rows) {
+    prereqRowsToFormValues(rows, q);
+  });
 }
 
 // ══════════════════════════════════════════════════
@@ -2021,7 +2158,7 @@ function createNewQuest(setId) {
     baseGp: 40, terrain: 'none', squadReqMin: 0,
     capstone: false, published: false,
     _custom: true, _editable: true,
-    pre: { skills: [], tools: [], lang: [], gold: 0 }
+    pre: { skills: [], tools: [], lang: [], rel: '', items: [], gold: 0 }
   };
   quests.push(q);
   collapsed[setId] = false;
