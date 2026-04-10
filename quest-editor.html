@@ -804,8 +804,8 @@ function cycleToRow(cycle, idx) {
     sort_order:    idx || 0
   };
 }
-function petToRow(p, idx) {
-  var pub = p.published ? 'shared' : 'private';
+function petToRow(p, idx, visOverride) {
+  var vis = visOverride || (p.published ? 'shared' : 'private');
   var data = Object.assign({}, p);
   delete data._dbId; delete data.published; delete data._visibility;
   return {
@@ -813,7 +813,7 @@ function petToRow(p, idx) {
     content_key:   'pet::' + (p.name || ('pet-' + idx)),
     title:         p.name || ('Pet ' + idx),
     data:          data,
-    visibility:    pub,
+    visibility:    vis,
     status:        'published',
     owner_user_id: uid(),
     sort_order:    idx || 0
@@ -1131,18 +1131,51 @@ function showPetForm(name) {
     var desc = (document.getElementById('pf-desc').value || '').trim();
     if (!nm || !desc) { alert('Name and description are required.'); return; }
     var isPublished = document.getElementById('pub-chk').checked;
-    var newPet = {
-      name:      nm,
-      ic:        (document.getElementById('pf-ic').value || '').trim() || '🐾',
-      desc:      desc,
-      rar:       document.getElementById('pf-rar').value || 'common',
-      price:     Math.max(0, parseInt(document.getElementById('pf-price').value) || 0),
-      type:      'pet',
-      party:     true,
-      _custom:   true,
-      published: isPublished
-    };
-    // Update or add to pets array
+    var builtIn = BUILTIN_PETS.filter(function(b) { return b.name === nm; })[0];
+
+    var newPet;
+    var visOverride;
+
+    if (builtIn && !isPublished) {
+      // Unpublishing a built-in: save a SHARED tombstone so all devices
+      // suppress it. Private rows are invisible to other devices, so
+      // a private 'unpublished' flag would never reach them.
+      newPet = {
+        name: nm, ic: builtIn.ic, desc: builtIn.desc,
+        rar: builtIn.rar, price: builtIn.price,
+        type: 'pet', party: true,
+        _custom: true, _deleted: true, published: false
+      };
+      visOverride = 'shared'; // must be shared so other devices can read it
+    } else if (builtIn && isPublished) {
+      // Publishing a built-in override: save shared so all devices see it
+      newPet = {
+        name: nm,
+        ic:   (document.getElementById('pf-ic').value || '').trim() || builtIn.ic,
+        desc: (document.getElementById('pf-desc').value || '').trim() || builtIn.desc,
+        rar:  document.getElementById('pf-rar').value || builtIn.rar,
+        price: Math.max(0, parseInt(document.getElementById('pf-price').value) || 0),
+        type: 'pet', party: true,
+        _custom: true, published: true
+      };
+      visOverride = 'shared';
+    } else {
+      // Pure custom pet: private = draft, shared = visible
+      newPet = {
+        name:      nm,
+        ic:        (document.getElementById('pf-ic').value || '').trim() || '🐾',
+        desc:      desc,
+        rar:       document.getElementById('pf-rar').value || 'common',
+        price:     Math.max(0, parseInt(document.getElementById('pf-price').value) || 0),
+        type:      'pet',
+        party:     true,
+        _custom:   true,
+        published: isPublished
+      };
+      visOverride = null; // petToRow decides based on published flag
+    }
+
+    // Update or add to local pets array
     var existing = pets.filter(function(x) { return x.name === (p ? p.name : nm); })[0];
     if (existing) {
       Object.assign(existing, newPet);
@@ -1150,14 +1183,20 @@ function showPetForm(name) {
       pets.push(newPet);
       existing = newPet;
     }
-    savePet(existing).then(function() {
-      // Pull fresh so published state is authoritative from Supabase
+
+    // Save with correct visibility
+    var pidx = pets.indexOf(existing);
+    sbUpsert(petToRow(existing, pidx, visOverride)).then(function() {
+      flash(builtIn && !isPublished ? '✓ Pet hidden from store' : '✓ Pet saved');
+      setStatus('Pet "' + nm + '" ' + (builtIn && !isPublished ? 'hidden from store (tombstone saved).' : 'saved.'));
       return pullData();
     }).then(function() {
       sel = { kind: 'pet', name: nm };
       activeTab = 'pets';
       renderList();
       showPetForm(nm);
+    }).catch(function(err) {
+      alert('Save failed: ' + (err.message || err));
     });
   };
 
