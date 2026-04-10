@@ -422,15 +422,13 @@ function prereqRowsFromForm(questKey) {
   selValues('qf-skills').forEach(function(s) { rows.push(row('skill', s)); });
   selValues('qf-tools').forEach(function(t) { rows.push(row('tool', t)); });
   selValues('qf-lang').forEach(function(l) { rows.push(row('lang', l)); });
-  var rel = document.getElementById('qf-rel').value;
-  if (rel) rows.push(row('rel', rel));
+  selValues('qf-rel').forEach(function(r) { rows.push(row('rel', r)); });
+  selValues('qf-pets').forEach(function(p) { rows.push(row('pet', p)); });
   var gold = parseInt(document.getElementById('qf-gold').value) || 0;
   if (gold > 0) rows.push(row('gold', null, gold));
   var minLv = parseInt(document.getElementById('qf-min-level').value) || 0;
   if (minLv > 0) rows.push(row('level', null, 1, minLv));
-  (document.getElementById('qf-items').value || '').split('\n')
-    .map(function(s) { return s.trim(); }).filter(Boolean)
-    .forEach(function(item) { rows.push(row('item', item)); });
+  selValues('qf-items').forEach(function(item) { rows.push(row('item', item)); });
   var vrName = (document.getElementById('qf-vrq-name').value || '').trim();
   var vrDesc = (document.getElementById('qf-vrq-desc').value || '').trim();
   if (vrName) rows.push(row('vehicle', vrName, 1, null, true, vrDesc, '\uD83D\uDE97'));
@@ -446,13 +444,13 @@ function prereqRowsToFormValues(rows, q) {
     // Blob fallback — already handled by the form defaults
     return;
   }
-  var skills = [], tools = [], langs = [], items = [], rel = '',
+  var skills = [], tools = [], langs = [], items = [], rel = [],
       gold = 0, minLv = 0, vrName = '', vrDesc = '', brName = '', brDesc = '';
   rows.forEach(function(r) {
     if (r.prereq_type === 'skill')    skills.push(r.value);
     else if (r.prereq_type === 'tool')    tools.push(r.value);
     else if (r.prereq_type === 'lang')    langs.push(r.value);
-    else if (r.prereq_type === 'rel')     rel = r.value || '';
+    else if (r.prereq_type === 'rel')     { if (!Array.isArray(rel)) rel = []; if (r.value) rel.push(r.value); }
     else if (r.prereq_type === 'gold')    gold = r.quantity || 0;
     else if (r.prereq_type === 'level')   minLv = r.min_level || 0;
     else if (r.prereq_type === 'item')    items.push(r.value);
@@ -465,7 +463,9 @@ function prereqRowsToFormValues(rows, q) {
     Array.from(el.options).forEach(function(o) { o.selected = vals.indexOf(o.value) !== -1; });
   }
   setMulti('qf-skills', skills); setMulti('qf-tools', tools); setMulti('qf-lang', langs);
-  var relEl = document.getElementById('qf-rel'); if (relEl) relEl.value = rel;
+  setMulti('qf-rel', Array.isArray(rel) ? rel : (rel ? [rel] : []));
+  setMulti('qf-pets', items.filter(function(x){ return PET_NAMES.indexOf(x) !== -1; }));
+  items = items.filter(function(x){ return PET_NAMES.indexOf(x) === -1; }); // gear only
   var goldEl = document.getElementById('qf-gold'); if (goldEl) goldEl.value = gold;
   var lvEl = document.getElementById('qf-min-level'); if (lvEl) lvEl.value = minLv;
   var itemsEl = document.getElementById('qf-items'); if (itemsEl) itemsEl.value = items.join('\n');
@@ -874,6 +874,38 @@ var DND_REL = ['Mendax, the Pretender','Somnian, the Dreamer','Dicentis, the Per
   'Interitus, the Inventor','Beatudo, the Joker','Amantis, the Lover','Perterre, the Wary',
   'Castigare, the Avenger','Gloriosus, the Bold','Protean Way','Medio','Texere Dragons',
   'Deity Unknown','Atheist'];
+
+var VEHICLE_NAMES = [
+  'Riding Horse','Warhorse','Mule','Draft Horse','Hippogriff (Trained)',
+  'Rowboat','Keelboat','Sailing Ship','Diving Bell',
+  'Carriage','Wagon',
+  'Simple Weapons','Martial Weapons'
+];
+
+var BUILDING_NAMES = [
+  'Storage Shed','Stables','Guard Post','Tavern (Common Room)',
+  'Smithy','Library & Scriptorium','Barracks','Market Stall',
+  'Safe House','Temple Shrine','Greenhouse','Fortress Keep'
+];
+
+var PET_NAMES = [
+  'Raven (Trained)','Hawk','Hound','Ferret',
+  'Wolf (Trained)','Dire Wolf Alpha','Pseudo-Dragon',
+  'Owlbear Chick','Shadowcat','Storm Eagle',
+  'Phase Spider (Tamed)','Displacer Beast Cub','Dragon Wyrmling (Brass)'
+];
+
+var GEAR_PREREQ_NAMES = [
+  'Longsword','Shortsword','Dagger','Rapier','Quarterstaff',
+  'Handaxe','Greataxe','Shortbow & Quiver','Light Crossbow','Hand Crossbow',
+  'Club','Spear','Mace','Javelin',
+  'Leather Armor','Chain Mail','Scale Mail','Chain Shirt','Studded Leather',
+  'Padded Armor','Shield',
+  'Potion of Healing','Bag of Holding','Cloak of Protection',
+  'Goggles of Night','Rope of Climbing','Immovable Rod',
+  'Sending Stones','Wand of Magic Missiles','+1 Weapon',
+  'Diving Bell'
+];
 
 // ══════════════════════════════════════════════════
 // SUPABASE LOAD
@@ -2040,23 +2072,35 @@ function showQuestForm(setId, idx) {
     '<div class="fgrid c2" style="margin-top:10px">' +
     frow('Languages <span class="select-hint">(Ctrl/⌘ for multi)</span>',
       multiSelect('qf-lang', DND_LANG, q.pre && q.pre.lang)) +
-    frow('Faith / Deity <span class="select-hint">(one, optional)</span>', '<select id="qf-rel"><option value="">— None —</option>' + DND_REL.map(function(r){ return '<option value="' + esc(r) + '"' + ((q.pre && q.pre.rel === r) ? ' selected' : '') + '>' + esc(r) + '</option>'; }).join('') + '</select>') +
+    frow('Faith / Deity <span class="select-hint">(Ctrl/⌘ for multi)</span>',
+      multiSelect('qf-rel', DND_REL, (q.pre && q.pre.rel) ? (Array.isArray(q.pre.rel) ? q.pre.rel : [q.pre.rel]) : [])) +
     '</div>' +
     '<div class="fgrid c2" style="margin-top:10px">' +
     frow('Gold Requirement (gp)', '<input type="number" id="qf-gold" min="0" value="' + ((q.pre && q.pre.gold) || 0) + '">') +
     frow('Min Character Level <span class="select-hint">(0 = none)</span>', '<input type="number" id="qf-min-level" min="0" max="20" value="' + (q.minLevel || 0) + '">') +
     '</div>' +
     '<div class="fgrid" style="margin-top:10px">' +
-    frow('Item Prerequisites <span class="select-hint">(one per line: gear, pet, or mount name)</span>', '<textarea id="qf-items" rows="3" placeholder="e.g.\nLongsword\nMule\nHawk">' + esc((q.pre && q.pre.items || []).join('\n')) + '</textarea>') +
+    frow('Item Prerequisites <span class="select-hint">(Ctrl/⌘ for multi — gear, magic, tools)</span>',
+      multiSelect('qf-items', GEAR_PREREQ_NAMES, q.pre && q.pre.items)) +
+    '</div>' +
+    '<div class="fgrid" style="margin-top:10px">' +
+    frow('Pet Prerequisites <span class="select-hint">(Ctrl/⌘ for multi)</span>',
+      multiSelect('qf-pets', PET_NAMES, (q.pre && q.pre.items || []).filter(function(x){ return PET_NAMES.indexOf(x) !== -1; }))) +
     '</div>' +
     '<div class="fsec-title" style="margin-top:14px;font-size:.78em">Bonus Rewards <span class="select-hint">— optional, award +% gp when party owns these</span></div>' +
     '<div class="fgrid c2">' +
-    frow('Vehicle / Mount Name', '<input type="text" id="qf-vrq-name" value="' + esc((q.vehicleReq && q.vehicleReq.name) || '') + '" placeholder="e.g. Mule">') +
-    frow('Vehicle Reward Note', '<input type="text" id="qf-vrq-desc" value="' + esc((q.vehicleReq && q.vehicleReq.desc) || '') + '" placeholder="e.g. Hauls salvage. +20% reward.">') +
+    frow('Vehicle / Mount <span class="select-hint">(bonus reward)</span>',
+      '<select id="qf-vrq-name"><option value="">— None —</option>' +
+      VEHICLE_NAMES.map(function(v){ return '<option value="' + esc(v) + '"' + ((q.vehicleReq && q.vehicleReq.name === v) ? ' selected' : '') + '>' + esc(v) + '</option>'; }).join('') +
+      '</select>') +
+    frow('Vehicle Reward Note', '<input type="text" id="qf-vrq-desc" value="' + esc((q.vehicleReq && q.vehicleReq.desc) || '') + '" placeholder="e.g. +20% reward.">') +
     '</div>' +
     '<div class="fgrid c2" style="margin-top:10px">' +
-    frow('Building Name', '<input type="text" id="qf-brq-name" value="' + esc((q.buildingReq && q.buildingReq.name) || '') + '" placeholder="e.g. Storage Shed">') +
-    frow('Building Reward Note', '<input type="text" id="qf-brq-desc" value="' + esc((q.buildingReq && q.buildingReq.desc) || '') + '" placeholder="e.g. Secure storage. +15% reward.">') +
+    frow('Building <span class="select-hint">(bonus reward)</span>',
+      '<select id="qf-brq-name"><option value="">— None —</option>' +
+      BUILDING_NAMES.map(function(b){ return '<option value="' + esc(b) + '"' + ((q.buildingReq && q.buildingReq.name === b) ? ' selected' : '') + '>' + esc(b) + '</option>'; }).join('') +
+      '</select>') +
+    frow('Building Reward Note', '<input type="text" id="qf-brq-desc" value="' + esc((q.buildingReq && q.buildingReq.desc) || '') + '" placeholder="e.g. +15% reward.">') +
     '</div>' +
     '</div>' +
 
@@ -2087,14 +2131,16 @@ function showQuestForm(setId, idx) {
     q.squadReqMin = Math.max(0, parseInt(document.getElementById('qf-squad').value) || 0);
     q.capstone    = document.getElementById('qf-capstone').checked;
     q.published   = document.getElementById('pub-chk').checked;
+    var _relVals = selValues('qf-rel');
+    var _gearItems = selValues('qf-items');
+    var _petItems = selValues('qf-pets');
     q.pre = {
       skills: selValues('qf-skills'),
       tools:  selValues('qf-tools'),
       lang:   selValues('qf-lang'),
-      rel:    document.getElementById('qf-rel').value || '',
+      rel:    _relVals.length === 1 ? _relVals[0] : (_relVals.length > 1 ? _relVals : ''),
       gold:   parseInt(document.getElementById('qf-gold').value) || 0,
-      items:  (document.getElementById('qf-items').value || '').split('\n')
-                .map(function(s){ return s.trim(); }).filter(Boolean)
+      items:  _gearItems.concat(_petItems.filter(function(p){ return _gearItems.indexOf(p) === -1; }))
     };
     var _minLv = parseInt(document.getElementById('qf-min-level').value) || 0;
     if (_minLv > 0) q.minLevel = _minLv; else delete q.minLevel;
