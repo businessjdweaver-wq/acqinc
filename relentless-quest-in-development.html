@@ -2107,7 +2107,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.622
+      Version 1.623
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2132,6 +2132,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.623</strong> &mdash; Fix: Personal items (🔒) section now self-heals — if an item is in c.ownedItems but missing from c.inv (e.g. after a migration or DB round-trip), it is re-added to inv so it appears in the card. migrateMisroutedAssets now also preserves ownedItems tagging when moving character-personal assets from partyAssets to c.inv.</div>
         <div style="margin-bottom:9px"><strong>Version 1.622</strong> &mdash; (1) Peg slot viewport expanded to 360px showing 5 slots per page. (2) Collapsible header panel: replaced animated card carousel with a flat 1x3 column of panels (Description, Details, Best Fit) that stretch to full content height when expanded.</div>
         <div style="margin-bottom:9px"><strong>Version 1.621</strong> &mdash; (1) Gear item peg slots now accept character placement — qddCharCoversSlot returns true for item type, and only pet/asset items remain nonChar status tiles. (2) Party carousel hugs the button row via margin-top:auto in a flex-column scroll container.</div>
         <div style="margin-bottom:9px"><strong>Version 1.620</strong> &mdash; (1) Item prereq slot now only shows met when a char carrying the item is placed in a peg slot — not just any squad/party member. (2) Peg slots reduced to 1x4 with second page right. (3) Quest modal scroll locked vertically unless accessibility font is set above Normal (18px).</div>
@@ -6568,8 +6569,17 @@ function charCardHtml(c,ci,opts){
             '<span>'+ptag('· '+esc(x),x,af)+wtStr+'</span>'+actionBtn+'</div>';
         }
         // Separate personal (owned) items into a collapsible section
-        var personalItems=realInv.filter(function(x){return (c.ownedItems||[]).indexOf(x)!==-1;});
-        var sharedItems=realInv.filter(function(x){return (c.ownedItems||[]).indexOf(x)===-1;});
+        // Also surface any ownedItems that are somehow missing from realInv (add them back)
+        var _ownedSet=c.ownedItems||[];
+        _ownedSet.forEach(function(name){
+          if(typeof name==='string'&&name&&realInv.indexOf(name)===-1){
+            if(!c.inv)c.inv=[];
+            c.inv.push(name);
+            realInv.push(name);
+          }
+        });
+        var personalItems=realInv.filter(function(x){return _ownedSet.indexOf(x)!==-1;});
+        var sharedItems=realInv.filter(function(x){return _ownedSet.indexOf(x)===-1;});
         // Re-cluster using only non-personal items for the visible clusters
         var clusters2={weapons:[],armor:[],packs:[],magic:[],other:[]};
         sharedItems.forEach(function(x){
@@ -12705,6 +12715,12 @@ function migrateMisroutedAssets(){
         if(c){
           if(!c.inv)c.inv=[];
           if(c.inv.indexOf(asset.name)===-1)c.inv.push(asset.name);
+          // Preserve personal ownership if the asset was marked as such
+          var _am=assetMeta(asset);
+          if(_am.personal||_am.ownedItem){
+            if(!c.ownedItems)c.ownedItems=[];
+            if(c.ownedItems.indexOf(asset.name)===-1)c.ownedItems.push(asset.name);
+          }
           toRemove.push(ai);
           console.log('[MigrateAsset] moved '+asset.name+' from partyAssets to '+c.name+' inv');
         }
