@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.602
+      Version 1.603
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.603</strong> &mdash; Items system: loadItemsFromDB() added. Fetches all published items from the items table (joined with effects via item_effects), merges into GEAR/VEHICLES/BUILDINGS arrays. Effects mapped to legacy item.effect format for full backward compatibility. Called on startup, login, and Pull.</div>
         <div style="margin-bottom:9px"><strong>Version 1.602</strong> &mdash; Fix squad member count showing 0: loadContentLibrary was running in parallel with sbPull and calling renderAdv() before sbPull finished populating S.party. Now sbPull runs first, then content and pets load sequentially after, so S.party is always populated before any render.</div>
         <div style="margin-bottom:9px"><strong>Version 1.601</strong> &mdash; Fix: SQUAD_ROLES and ROLE_KITS were accidentally deleted during pet migration (they lived between PETS and QUEST SETS). Restored.</div>
         <div style="margin-bottom:9px"><strong>Version 1.600</strong> &mdash; Fix crash: BUILTIN_VEHICLES and BUILTIN_BUILDINGS were accidentally removed when BUILTIN_PETS was deleted during pet migration. Restored both snapshot variables so mergeCustomContent can reset vehicles and buildings to built-in state on each call.</div>
@@ -9606,6 +9607,7 @@ function collectQuest(qi,pq,q,set){
   if(pqIdx!==-1)S.questState.pending.splice(pqIdx,1);
   if(q.capstone&&!_alreadyDone){
     awardCapstonReward(set);
+  payPassiveGold();
   }
   saveActiveSetProgress();
 }
@@ -9625,6 +9627,24 @@ function autoCollectExpired(){
     }
   });
   if(collected.length){saveActiveSetProgress();save();setGold();renderAdv();}
+}
+
+function payPassiveGold(){
+  // Sum passive_gold effects from all items owned by the franchise (partyAssets)
+  if(!S.partyAssets||!S.partyAssets.length)return;
+  var total=0;
+  var sources=[];
+  var allItems=[].concat(GEAR||[],VEHICLES||[],BUILDINGS||[]);
+  S.partyAssets.forEach(function(asset){
+    var item=allItems.filter(function(it){return it.name===asset.name;})[0];
+    if(!item||!item.effect||!item.effect.passiveGold)return;
+    var gp=Number(item.effect.passiveGold)||0;
+    if(gp>0){total+=gp;sources.push(asset.name+' (+'+gp+' gp)');}
+  });
+  if(total>0){
+    goldAdd(total,'Cycle income: '+sources.join(', '),'gold');
+    logAdd('💰 Cycle passive income: '+total+' gp ('+sources.join(', ')+')','gold');
+  }
 }
 
 function awardCapstonReward(set){
@@ -13893,8 +13913,8 @@ function initSession(pullFromCloud){
     var localPending=(S.questState&&S.questState.pending&&S.questState.pending.length)?S.questState.pending.slice():[];
     var localGrind=(S.questState&&S.questState.grindPending&&S.questState.grindPending.length)?S.questState.grindPending.slice():[];
     return sbPull(false).then(function(){
-      // Load content and pets AFTER sbPull so S.party is populated before renderAdv fires
-      return Promise.all([loadContentLibrary(false),loadPetsFromDB()]);
+      // Load content, pets, and items AFTER sbPull so S.party is populated before renderAdv fires
+      return Promise.all([loadContentLibrary(false),loadPetsFromDB(),loadItemsFromDB()]);
     }).then(function(){
       if(S.questState){
         if((!S.questState.pending||!S.questState.pending.length)&&localPending.length){
@@ -13923,8 +13943,9 @@ function initSession(pullFromCloud){
     });
   }
   suppressAutoPush=false;
-  // Load pets even for guest/offline (RLS allows reading published rows without auth)
+  // Load pets and items even for guest/offline (RLS allows reading published rows without auth)
   loadPetsFromDB().catch(function(){});
+  loadItemsFromDB().catch(function(){});
   return Promise.resolve();
 }
 
@@ -14542,6 +14563,119 @@ function loadPetsFromDB(){
       console.error('loadPetsFromDB failed:',err);
       return PETS;
     });
+}
+
+function loadItemsFromDB(){
+  // Fetch all published items joined with their effects
+  return fetch(SB_URL+'/rest/v1/items?published=eq.true&order=sort_order.asc',{
+    method:'GET',
+    headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+  })
+  .then(function(r){return r.json();})
+  .then(function(rows){
+    if(!rows||!rows.length)return [];
+    // Also fetch item_effects joined with effects
+    return fetch(SB_URL+'/rest/v1/item_effects?select=item_id,effect:effects(id,name,effect_type,target,bonus_value)',{
+      method:'GET',
+      headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
+    })
+    .then(function(r2){return r2.json();})
+    .then(function(fxRows){
+      // Build effect lookup: item_id → [effect, ...]
+      var fxMap={};
+      (fxRows||[]).forEach(function(r){
+        if(!fxMap[r.item_id])fxMap[r.item_id]=[];
+        if(r.effect)fxMap[r.item_id].push(r.effect);
+      });
+
+      // Separate into GEAR, VEHICLES, BUILDINGS arrays
+      var VEHICLE_TYPES=['mount','watercraft','land','airship','expedition'];
+      var BUILDING_TYPES=['structure','income','workshop','utility','stronghold'];
+      var newGear=[]; var newVehicles=[]; var newBuildings=[];
+
+      (rows||[]).forEach(function(row){
+        var item={
+          name:       row.name,
+          ic:         row.ic||'📦',
+          desc:       row.description||'',
+          type:       row.type,
+          rar:        row.rar||'common',
+          price:      row.price||0,
+          wt:         row.weight||0,
+          party:      true,
+          _dbId:      row.id,
+          published:  row.published
+        };
+        // Attach effects
+        var fxList=fxMap[row.id]||[];
+        if(fxList.length){
+          item.effects=fxList;
+          // Build legacy effect object for backward compat
+          item.effect={};
+          fxList.forEach(function(fx){
+            if(fx.effect_type==='skill_bonus')item.effect.skillBonus={skill:fx.target,bonus:fx.bonus_value};
+            else if(fx.effect_type==='stat_bonus')item.effect.statBonus={stat:fx.target,bonus:fx.bonus_value};
+            else if(fx.effect_type==='skill_advantage')item.effect.advantage=fx.target;
+            else if(fx.effect_type==='skill_grant')item.effect.grantSkill=fx.target;
+            else if(fx.effect_type==='tool_grant')item.effect.grantTool=fx.target;
+            else if(fx.effect_type==='language_grant')item.effect.grantLang=fx.target;
+            else if(fx.effect_type==='weapon_grant')item.effect.grantWeapon=fx.target;
+            else if(fx.effect_type==='level_cap_bonus')item.effect.levelCapBonus=fx.bonus_value;
+            else if(fx.effect_type==='encumbrance_bonus')item.effect.encumbranceBonus=fx.bonus_value;
+            else if(fx.effect_type==='passive_gold')item.effect.passiveGold=fx.bonus_value;
+            else if(fx.effect_type==='gold_pct')item.effect.goldPct=fx.bonus_value;
+            else if(fx.effect_type==='hire_discount')item.effect.hireDiscount=fx.bonus_value;
+            else if(fx.effect_type==='squad_size_bonus')item.effect.squadSizeBonus=fx.bonus_value;
+            else if(fx.effect_type==='quest_bonus')item.effect.questBonus={type:fx.target,bonus:fx.bonus_value};
+            else if(fx.effect_type==='terrain_overcome')item.effect.overcomeTerrain=fx.target;
+            else if(fx.effect_type==='prereq_skill')item.effect.prereqSkill=fx.target;
+            else if(fx.effect_type==='prereq_tool')item.effect.prereqTool=fx.target;
+            else if(fx.effect_type==='prereq_lang')item.effect.prereqLang=fx.target;
+            else if(fx.effect_type==='prereq_rel')item.effect.prereqRel=fx.target;
+            else if(fx.effect_type==='prereq_item')item.effect.prereqItem=fx.target;
+          });
+        }
+        if(VEHICLE_TYPES.indexOf(row.type)!==-1){
+          newVehicles.push(item);
+        } else if(BUILDING_TYPES.indexOf(row.type)!==-1){
+          newBuildings.push(item);
+        } else {
+          newGear.push(item);
+        }
+      });
+
+      // Merge into existing arrays — DB items override built-ins by name,
+      // and add new items not in the built-in list
+      function mergeInto(builtins, dbItems){
+        var result=builtins.slice();
+        dbItems.forEach(function(dbItem){
+          var idx=result.findIndex(function(b){return b.name===dbItem.name;});
+          if(idx>=0) result[idx]=Object.assign({},result[idx],dbItem);
+          else result.push(dbItem);
+        });
+        return result;
+      }
+
+      // Only replace if we actually got rows — don't wipe built-ins on failure
+      if(newGear.length||newVehicles.length||newBuildings.length){
+        GEAR=mergeInto(BUILTIN_GEAR,newGear);
+        // Re-inject ROLE_KITS (they're generated at runtime, not in DB)
+        ROLE_KITS.forEach(function(kit){
+          if(!GEAR.some(function(g){return g.name===kit.name;}))GEAR.push(kit);
+        });
+        VEHICLES=mergeInto(BUILTIN_VEHICLES,newVehicles);
+        BUILDINGS=mergeInto(BUILTIN_BUILDINGS,newBuildings);
+        // Rebuild ITEM_WEIGHT from updated GEAR
+        var _allItems=[].concat(GEAR||[]);
+        _allItems.forEach(function(g){if(g.name&&g.wt!==undefined)ITEM_WEIGHT[g.name]=g.wt;});
+      }
+      return true;
+    });
+  })
+  .catch(function(err){
+    console.error('loadItemsFromDB failed:',err);
+    return false;
+  });
 }
 
 function loadContentLibrary(manual){
@@ -17217,7 +17351,7 @@ document.getElementById('btn-ed-push').addEventListener('click',function(){
 document.getElementById('btn-ed-pull').addEventListener('click',function(){
   if(!uid()){alert('Sign in to pull content from Supabase.');return;}
   var btn=this; btn.disabled=true; btn.textContent='⬇ Pulling…';
-  Promise.all([loadContentLibrary(true),loadPetsFromDB()]).then(function(){
+  Promise.all([loadContentLibrary(true),loadPetsFromDB(),loadItemsFromDB()]).then(function(){
     btn.disabled=false; btn.textContent='⬇ Pull';
     edRenderList();
   }).catch(function(err){
