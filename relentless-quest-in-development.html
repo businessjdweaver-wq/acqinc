@@ -2127,7 +2127,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.636
+      Version 1.637
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2152,6 +2152,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.637</strong> &mdash; Three bag-of-holding fixes: (1) sqSave now searches all bags not just unowned ones. (2) Squad deletion uses _isBagOfHolding() instead of exact name "Bag of Holding" so Longinus variants are returned to storage. (3) On load, bag ownerRefs pointing to renamed/deleted squads are cleared so franchiseHasBagOfHolding can find them.</div>
         <div style="margin-bottom:9px"><strong>Version 1.636</strong> &mdash; Bug fix: franchiseHasBagOfHolding() was excluding squad-assigned bags (ownerType==='squad'). Both franchise bags are assigned to squads so the 50 gp enrollment route was never unlocking. Squad-owned bags now count.</div>
         <div style="margin-bottom:9px"><strong>Version 1.635</strong> &mdash; Bag of Holding recovery: after sbPull, if franchiseStorage contains a bag-of-holding name but partyAssets is missing it (lost in a failed push), the bag is automatically restored to partyAssets. sbPush party_assets insert failures now log a visible warning instead of silently losing data.</div>
         <div style="margin-bottom:9px"><strong>Version 1.634</strong> &mdash; Quest Map Collect All now sweeps both completed regular quests and completed grind missions. Grind collection uses the full gcollect flow: 90/10 split, char coin purses, item purchases, quest log entry, and immediate sbPush.</div>
@@ -7602,10 +7603,13 @@ function sqSave(){
     if(!S.partyAssets)S.partyAssets=[];
     var bagAssigned=false;
     // 1) Already in partyAssets unassigned or assigned to non-squad?
+    // Find any bag-of-holding not already assigned to THIS squad
     var bagAsset=(S.partyAssets||[]).filter(function(a){
       if(!_isBagOfHolding(a))return false;
       var ot=(a.meta&&a.meta.ownerType)||'';
-      return ot!=='squad';
+      var or_=(a.meta&&a.meta.ownerRef)||'';
+      // OK to reassign if unowned, or already owned by this squad
+      return ot!=='squad'||(or_===n);
     })[0];
     if(bagAsset){
       // Directly set meta on the asset object to ensure serialization picks it up
@@ -7717,10 +7721,10 @@ document.getElementById('ov-sq-del').addEventListener('click',function(){
       if(!a)return;
       var m=assetMeta(a);
       if(m.ownerType==='squad'&&m.ownerRef===sq.name){
-        if(a.name==='Bag of Holding'){
-          // Return to franchise storage
+        if(_isBagOfHolding(a)){
+          // Return bag-of-holding (any variant) to franchise storage
           if(!S.franchiseStorage)S.franchiseStorage=[];
-          S.franchiseStorage.push('Bag of Holding');
+          S.franchiseStorage.push(a.name);
           // Mark asset for removal
           m._disbandRemove=true;
         } else {
@@ -13137,6 +13141,19 @@ function sbPull(manual){
         S.partyAssets.push({name:bagName,ic:'🧳',type:'artifact',
           bagOfHolding:true,meta:{uid:'recovered-bag-'+Date.now(),ownerType:'',ownerRef:''}});
         logAdd('🛡 Bag of Holding ('+bagName+') recovered from franchiseStorage into partyAssets.','buy');
+      }
+    });
+    // Reconcile bag ownerRefs: if a bag's ownerRef doesn't match any current squad name,
+    // clear its ownerType so franchiseHasBagOfHolding recognizes it
+    var _sqNames=(S.squads||[]).map(function(sq){return sq.name;});
+    (S.partyAssets||[]).forEach(function(a){
+      if(!_isBagOfHolding(a))return;
+      var m=assetMeta(a);
+      if(m.ownerType==='squad'&&m.ownerRef&&_sqNames.indexOf(m.ownerRef)===-1){
+        // ownerRef points to a renamed/deleted squad — clear so bag is visible
+        m.ownerType='';
+        m.ownerRef='';
+        logAdd('\uD83D\uDCBC Bag ('+a.name+') ownerRef "'+m.ownerRef+'" no longer matches a squad \u2014 unassigned.','buy');
       }
     });
     if(squads&&squads.length){
