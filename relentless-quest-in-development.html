@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.582
+      Version 1.583
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.583</strong> &mdash; Store magic tab: rare and very rare items removed from sale. Sub-drawers now show Common and Uncommon only. buildStock pools split into magicCommon (all common) and magicUncommon (5 random uncommon). Rare/legendary items excluded from all store logic.</div>
         <div style="margin-bottom:9px"><strong>Version 1.582</strong> &mdash; Three fixes: (1) Cycle rules (minAvgSquadLevel, minSquadSize) save correctly &mdash; deduplicate questSets by id in ec-save, mergeCustomContent, and loadContentLibrary to prevent stale Supabase duplicates overriding saved values. (2) Store footer redesigned: 2&times;2 category grid (Gear/Magic top, Assets/Pets bottom); blue sub-drawers appear above grid per category. (3) Test account pill labels use &#64; HTML entity so Cloudflare CDN cannot obfuscate them when served via GitHub Pages.</div>
         <div style="margin-bottom:9px"><strong>Version 1.581</strong> &mdash; Three changes: (1) App title h1 ⚔ emoji removed — now plain "Relentless Quest". (2) Seven emoji substitutions in item/quest catalog: Torch 🔦→🕯️, Sending Stones 📡→🪨, Ornithopter 🛥️→🌬️, Sailing Ship 🚢→⛵, Carriage 🪄→🐎, Scout role 🔭→👁️, Slippers of Spider Climbing 👞→🕸️. (3) Content Editor mobile responsive: below 600px the list and form panels become full-screen overlapping layers. Tapping an item adds .ed-form-active class to #ov-editor which slides the list off-screen and brings the form forward. A "‹ Back to list" button (hidden on desktop) returns to the list. Tab bar becomes horizontally scrollable with nowrap. edShowPlaceholder() removes ed-form-active to return to list view. Desktop (>600px) layout unchanged.</div>
         <div style="margin-bottom:9px"><strong>Version 1.580</strong> &mdash; Downtime badge glitch fix (three-part): (1) Auto-resume bestKey selector now filters dtProgress to only keys with progress > 0 before sorting — previously keys with 0 progress (e.g. faith:Pelor:0 from a long-ago completed track) would win the sort via JS object key ordering, causing a spurious different-type job to queue and add a wrong in-progress badge. (2) _healDowntimeBadges() now checks each badge against _DT_TYPE_BADGE map and removes it only if that type has zero dtProgress AND no active job — multi-track is valid (Celestial + Intel simultaneously = Polyglot Ember + Rune Sleuth both showing). (3) Completion badges (_DT_COMPLETION_BADGES: Skill Savant, Tongue Scholar, Devoted, etc.) are never removed by the healer — they are permanent achievements. The initial over-aggressive fix (strip all in-progress badges except one globally) was reverted as it would have wrongly removed valid multi-track badges.</div>
@@ -11339,8 +11340,6 @@ var STORE_SUBS={
     {id:'adv-tools',      label:'&#128295; Tools'}
   ],
   magic:[
-    {id:'magic-scrolls',  label:'&#128220; Scrolls &amp; Books'},
-    {id:'magic-potions',  label:'&#9879; Potions'},
     {id:'magic-common',   label:'&#10022; Common'},
     {id:'magic-uncommon', label:'&#10070; Uncommon'}
   ],
@@ -11464,16 +11463,15 @@ function getStoreItems(){
   // Magic tab: sub-tab pools
   if(storeTab==='magic'){
     var _magSub=storeSubTab.magic||'magic-common';
-    var magicOnly=GEAR.filter(function(g){return g.type==='magic'&&g.rar!=='veryrare'&&g.rar!=='legendary';});
+    var magicOnly=GEAR.filter(function(g){return g.type==='magic'&&g.rar!=='rare'&&g.rar!=='veryrare'&&g.rar!=='legendary';});
     var byR=function(r){return magicOnly.filter(function(g){return g.rar===r;});};
     if(isDevModeActive()){
-      // Dev mode: show all items in each sub-tab
-      if(_magSub==='magic-common')return byR('common').concat(byR('uncommon'));
-      return byR('rare');
+      if(_magSub==='magic-uncommon')return byR('uncommon');
+      return byR('common');
     }
     if(!S.stock||!S.stock.magicCommon||S.stockDate!==todayStr())buildStock();
-    if(_magSub==='magic-common')return S.stock.magicCommon||[];
-    return S.stock.magicRare||[];
+    if(_magSub==='magic-uncommon')return S.stock.magicUncommon||[];
+    return S.stock.magicCommon||[];
   } else if(storeTab==='adventuring'){
     var _advSub=storeSubTab.adventuring||'adv-weapons';
     var _gearItems=GEAR.filter(function(g){return ['gear','weapon','armor','kit'].indexOf(g.type)!==-1;});
@@ -11500,16 +11498,12 @@ function getStoreItems(){
 }
 
 function buildStock(){
-  // Magic tab stock:
-  // Common sub-tab: ALL common magic items + 5 randomly selected uncommon
-  // Rare sub-tab: 10 randomly selected rare items
-  var magicOnly=GEAR.filter(function(g){return g.type==='magic'&&g.rar!=='veryrare'&&g.rar!=='legendary';});
+  // Magic tab: common and uncommon only — rare/very-rare not sold in store
+  var magicOnly=GEAR.filter(function(g){return g.type==='magic'&&g.rar!=='rare'&&g.rar!=='veryrare'&&g.rar!=='legendary';});
   var byR=function(r){return magicOnly.filter(function(g){return g.rar===r;});};
-  var allCommon=byR('common').slice(); // show every common
-  var fiveUncommon=pick(byR('uncommon'),5);
   S.stock={
-    magicCommon: allCommon.concat(fiveUncommon),
-    magicRare: pick(byR('rare'),10)
+    magicCommon:   byR('common').slice(),
+    magicUncommon: pick(byR('uncommon'),5)
   };
   S.stockDate=todayStr();save();
 }
