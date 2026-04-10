@@ -2094,7 +2094,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.605
+      Version 1.606
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2119,6 +2119,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.606</strong> &mdash; Fix: squads, characters, and icons showing stale localStorage data. Root cause: initSession was monkey-patched to call loadContentLibrary(false) immediately after starting, without waiting for sbPull to finish. This caused loadContentLibrary's internal renderAdv() to fire with stale S.squads from localStorage before sbPull had rebuilt S from the database. Monkey-patch removed — loadContentLibrary is already called inside initSession's sbPull chain.</div>
         <div style="margin-bottom:9px"><strong>Version 1.605</strong> &mdash; Fix: renamed items not updating in store. loadItemsFromDB was merging DB rows over built-ins by name — so renaming an item created a duplicate instead of replacing the original. DB is now the sole source of truth: when DB rows exist for a category, they replace the built-in array entirely. Built-ins only serve as fallback when DB has zero rows.</div>
         <div style="margin-bottom:9px"><strong>Version 1.604</strong> &mdash; Fix: franchise push was doing INSERT instead of UPSERT, causing a 409 duplicate key error on subsequent saves. Now uses UPSERT on user_id so the existing row is updated rather than re-inserted.</div>
         <div style="margin-bottom:9px"><strong>Version 1.603</strong> &mdash; Items system: loadItemsFromDB() added. Fetches all published items from the items table (joined with effects via item_effects), merges into GEAR/VEHICLES/BUILDINGS arrays. Effects mapped to legacy item.effect format for full backward compatibility. Called on startup, login, and Pull.</div>
@@ -12546,7 +12547,6 @@ function sbPush(manual){
 
 /* ── PULL ── */
 function sbPull(manual){
-  console.log('[SquadDebug] sbPull firing, uid='+uid());
   if(!uid()){
     if(manual)syncStatus('Log in to pull from Supabase.','var(--crimson)');
     return Promise.resolve(false);
@@ -12708,7 +12708,6 @@ function sbPull(manual){
         });
         return {_sbId:sq.id,name:sqName,emoji:sqEmoji,color:sqColor,memberIdxs:memberIdxs,collapsed:false};
       });
-      console.log('[SquadDebug] After sbPull squads:', JSON.stringify(S.squads.map(function(sq){return {name:sq.name,emoji:sq.emoji,memberIdxs:sq.memberIdxs};})));
     }
     if(questCycles&&questCycles[0]){
       console.log('[QuestPull] raw row:',JSON.stringify(questCycles[0]));
@@ -13936,7 +13935,6 @@ function initSession(pullFromCloud){
       renderParty();window.scrollTo({top:0,behavior:'smooth'});
       renderArchive();
       renderSettings();
-      console.log('[SquadDebug] S.squads before renderAdv:', JSON.stringify(S.squads.map(function(sq){return {name:sq.name,emoji:sq.emoji,color:sq.color,memberIdxs:sq.memberIdxs};})));
       renderAdv();
       renderLog();
       updateQpDisplay();
@@ -14740,7 +14738,6 @@ function loadContentLibrary(manual){
     // Also clear gear stock cache so new custom items can appear in today's stock
     if(S&&S.stockDate)S.stockDate='';
     if(typeof renderStore==='function')renderStore();
-    console.log('[SquadDebug] loadContentLibrary calling renderAdv, S.squads:', JSON.stringify((S.squads||[]).map(function(sq){return {name:sq.name,emoji:sq.emoji};})));
     if(typeof renderAdv==='function')renderAdv();
     if(manual)syncStatus('☁ Content pulled.','var(--ink-light)');
     return migrateLegacyContentIntoPrivateScope();
@@ -17600,12 +17597,7 @@ sbPull=function(manual){
   });
 };
 
-var _origInitSession=initSession;
-initSession=function(showStatus){
-  var res=_origInitSession(showStatus);
-  Promise.resolve(res).then(function(){ loadContentLibrary(false); });
-  return res;
-};
+// loadContentLibrary now called inside initSession's sbPull chain — monkey-patch removed
 
 
 // ── Squad Coverage & Territory Swap ─────────────────────────────
