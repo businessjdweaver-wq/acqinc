@@ -2147,7 +2147,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.648
+      Version 1.649
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2172,6 +2172,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.649</strong> &mdash; (19) Hireling reroll count tracked in hir-box reroll button too. (20) First quest duration reduced to 3 minutes. (21) Quest nav button scrolls to top of screen instead of next card.</div>
         <div style="margin-bottom:9px"><strong>Version 1.648</strong> &mdash; (16) h1 title: leading ⚔ removed, trailing kept. (17) btn-randall hidden during first recruit session. (18) After 3 hireling rerolls: modal tips player about in-quest hire and waives the 75 gp surcharge on their next use.</div>
         <div style="margin-bottom:9px"><strong>Version 1.647</strong> &mdash; (10) Reroll button hidden on free first recruit. (11) Inactive recruit buttons minimize when one is selected. (12) Party nav icon reverted to ⚔. (13) No-squad modal suppressed until first grind complete. (14) Quest button scrolls to top of screen, not next card. (15) h1 title emoji cleaned.</div>
         <div style="margin-bottom:9px"><strong>Version 1.646</strong> &mdash; (6) Recruit chooser buttons: title stacked above description. (7) Squad intro suppressed until first quest cycle complete. (8) Adventurer panel open now injects starter guide candidate. (9) Wishlist hidden during first recruit action.</div>
@@ -8763,8 +8764,33 @@ document.getElementById('hir-box').addEventListener('click',function(e){
     hirelCandidates=[];
     for(var i=0;i<5;i++)hirelCandidates.push(makeHireling());
     S.settings.hirelRollDate=todayStr();
+    if(!S.settings.hirelRollCountDate||S.settings.hirelRollCountDate!==todayStr()){
+      S.settings.hirelRollCountDate=todayStr();
+      S.settings.hirelRollCount=0;
+    }
+    S.settings.hirelRollCount=(S.settings.hirelRollCount||0)+1;
     save();
     renderHirelings();
+    if(S.settings.hirelRollCount===3&&!S.settings.hirelTipShown){
+      S.settings.hirelTipShown=true;
+      S.settings.hirelInQuestWaived=true;
+      save();
+      setTimeout(function(){
+        var _ov2=document.createElement('div');
+        _ov2.className='hire-modal-overlay';
+        _ov2.style.zIndex='99998';
+        var _bx2=document.createElement('div');
+        _bx2.className='hire-modal-box';
+        _bx2.innerHTML='<div style="font-size:1.6em;margin-bottom:8px">🪓</div>'+
+          '<div style="font-family:\'Cinzel\',serif;font-weight:700;font-size:1em;margin-bottom:10px">Pro Tip!</div>'+
+          '<p style="font-size:.9em;margin-bottom:12px">You can also hire hirelings directly from the <strong>quest assignment screen</strong>.</p>'+
+          '<p style="font-size:.9em;margin-bottom:16px">There\'s normally a field surcharge, but <strong>your next one is on us</strong>. 🎉</p>'+
+          '<button class="btn bg full" id="btn-hir-tip-ok2">Got it!</button>';
+        _ov2.appendChild(_bx2);
+        document.body.appendChild(_ov2);
+        document.getElementById('btn-hir-tip-ok2').onclick=function(){document.body.removeChild(_ov2);};
+      },400);
+    }
   }
 });
 
@@ -9363,6 +9389,8 @@ function questDuration(q){
   if(String(qTitle).indexOf('The Welcome Banquet')!==-1)return 5*60000;
   var t=(S.settings&&S.settings.testQuestMins)||0;
   if(t>0)return t*60000;
+  // First quest ever: 3 minutes to get the player into the collect flow quickly
+  if(!(S.settings&&S.settings.firstQuestStarted))return 3*60000;
   return 8*3600000;
 }
 function questDurationLabel(q){
@@ -11755,6 +11783,7 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit){
   if(!qs.pending)qs.pending=[];
   var doneAt=Date.now()+questDuration(q);
   qs.pending.push({idx:P4.quest,chars:chars,squadName:squadName,reward:reward,startedAt:Date.now(),doneAt:doneAt});
+  if(!(S.settings&&S.settings.firstQuestStarted)){S.settings.firstQuestStarted=true;}
   var cn=chars.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', ')||'unassigned';
   logAdd('Quest started: "'+q.title+'" ('+cn+') — '+reward+' gp in '+questDurationLabel(q),'adv');
   saveActiveSetProgress();
@@ -13611,12 +13640,13 @@ document.getElementById('nav').addEventListener('click',function(e){
   var b=e.target.closest('.nb');if(!b)return;
   var s=b.getAttribute('data-s');
   navTo(s);
-  // When clicking Quest nav, scroll to first available (assignable) quest
+  // Quest nav: scroll to top of screen (no hunt for next card)
   if(s==='adventure'){
     setTimeout(function(){
-      var assignBtn=document.querySelector('[data-a="qassign"]');
-      if(assignBtn)assignBtn.scrollIntoView({behavior:'smooth',block:'center'});
-    },120);
+      var scr=document.getElementById('s-adventure');
+      if(scr)scr.scrollTop=0;
+      window.scrollTo({top:0,behavior:'instant'});
+    },60);
   }
 });
 
