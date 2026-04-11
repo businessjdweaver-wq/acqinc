@@ -862,6 +862,33 @@ var activeTab = 'quests'; // 'quests' | 'pets'
 var collapsed = {}; // setId → bool
 var sel = null;     // {kind:'cycle'|'quest', setId, idx?}
 
+var CLASS_STATS = {
+  'Barbarian':{str:15,dex:13,con:14,int:8, wis:12,cha:10},
+  'Bard':     {str:8, dex:14,con:12,int:13,wis:10,cha:15},
+  'Cleric':   {str:13,dex:10,con:14,int:12,wis:15,cha:8 },
+  'Druid':    {str:10,dex:12,con:13,int:14,wis:15,cha:8 },
+  'Fighter':  {str:15,dex:13,con:14,int:10,wis:12,cha:8 },
+  'Monk':     {str:12,dex:15,con:14,int:13,wis:10,cha:8 },
+  'Paladin':  {str:15,dex:8, con:14,int:10,wis:12,cha:13},
+  'Ranger':   {str:12,dex:15,con:13,int:10,wis:14,cha:8 },
+  'Rogue':    {str:8, dex:15,con:12,int:14,wis:13,cha:10},
+  'Sorcerer': {str:8, dex:14,con:13,int:10,wis:12,cha:15},
+  'Warlock':  {str:10,dex:14,con:13,int:12,wis:8, cha:15},
+  'Wizard':   {str:8, dex:14,con:12,int:15,wis:13,cha:10},
+  'Artificer':{str:10,dex:14,con:13,int:15,wis:12,cha:8 },
+  'default':  {str:12,dex:12,con:12,int:12,wis:12,cha:12}
+};
+var DND_CLS = ['Barbarian','Bard','Cleric','Druid','Fighter','Monk','Paladin',
+  'Ranger','Rogue','Sorcerer','Warlock','Wizard','Artificer'];
+function rollStatsQE(cls) {
+  var base = CLASS_STATS[cls] || CLASS_STATS['default'];
+  var s = {};
+  ['str','dex','con','int','wis','cha'].forEach(function(k) {
+    s[k] = Math.max(3, Math.min(20, base[k] + (Math.random() < 0.5 ? 1 : -1)));
+  });
+  return s;
+}
+
 var DND_SKILLS = ['Acrobatics','Animal Handling','Arcana','Athletics','Deception',
   'History','Insight','Intimidation','Investigation','Medicine','Nature','Perception',
   'Performance','Persuasion','Religion','Sleight of Hand','Stealth','Survival'];
@@ -2282,8 +2309,13 @@ function showQuestForm(setId, idx) {
               '<input id="qf-cr-npc-name" type="text" value="'+esc(crType==='npc'?cr.name||'':'')+'" placeholder="e.g. Vael Morna" style="'+inp+'"></div>'+
             '<div><label style="'+lbl+'">Species</label>'+
               '<input id="qf-cr-npc-species" type="text" value="'+esc(crType==='npc'?cr.species||'':'')+'" placeholder="e.g. Half-Elf" style="'+inp+'"></div>'+
-            '<div><label style="'+lbl+'">Class / Role</label>'+
-              '<input id="qf-cr-npc-cls" type="text" value="'+esc(crType==='npc'?cr.cls||'Contact':'')+'" placeholder="Contact, Scholar, Spy…" style="'+inp+'"></div>'+
+            '<div><label style="'+lbl+'">Class ▸ auto-rolls stats</label>'+
+              '<select id="qf-cr-npc-cls" style="'+inp+'">'+
+              DND_CLS.map(function(c){var sel=(crType==='npc'&&cr.cls===c)?' selected':'';return '<option value="'+esc(c)+'"'+sel+'>'+esc(c)+'</option>';}).join('')+
+              '</select></div>'+
+            '<div><label style="'+lbl+'">Quest Limit (0 = unlimited)</label>'+
+              '<input id="qf-cr-npc-qlimit" type="number" min="0" max="99" value="'+(crType==='npc'&&typeof cr.questsRemaining==='number'?cr.questsRemaining:0)+'" style="'+inp+'">'+
+              '<div style="font-size:.7em;color:#888;margin-top:2px">Quests before the contact departs the franchise</div></div>'+
             '<div style="grid-column:1/-1"><label style="'+lbl+'">Background / Who are they?</label>'+
               '<input id="qf-cr-npc-bg" type="text" value="'+esc(crType==='npc'?cr.contactBg||'':'')+'" placeholder="Former guild treasurer, now freelance…" style="'+inp+'"></div>'+
             '<div><label style="'+lbl+'">Skills (multi)</label>'+
@@ -2305,6 +2337,16 @@ function showQuestForm(setId, idx) {
               '</select></div>'+
             '<div style="grid-column:1/-1"><label style="'+lbl+'">Starting Inventory (comma-separated)</label>'+
               '<input id="qf-cr-npc-inv" type="text" value="'+esc(crType==='npc'?(Array.isArray(cr.inv)?cr.inv.join(', '):(cr.inv||'')):'')+'" placeholder="Dagger, Thieves\' Tools, Traveler\'s Pack" style="'+inp+'"></div>'+
+            '<div style="grid-column:1/-1">'+
+              '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'+
+                '<label style="'+lbl+';margin:0">Attribute Stats</label>'+
+                '<button type="button" id="qf-cr-npc-reroll" style="font-size:.7em;padding:2px 8px;border:1px solid #d4b87a;border-radius:4px;background:rgba(201,146,42,.1);color:#8b6914;cursor:pointer;font-family:\'Cinzel\',serif">🎲 Re-roll</button>'+
+              '</div>'+
+              '<div id="qf-cr-npc-stats-display" style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px;font-size:.78em;text-align:center">'+
+              (function(){var st=crType==='npc'&&cr.stats?cr.stats:rollStatsQE(crType==='npc'&&cr.cls?cr.cls:'Fighter');return ['str','dex','con','int','wis','cha'].map(function(k){return '<div style="border:1px solid #d4b87a;border-radius:4px;padding:3px;background:rgba(255,255,255,.4)"><div style="font-family:\'Cinzel\',serif;font-size:.65em;color:#8b6914;text-transform:uppercase">'+k+'</div><div style="font-weight:700;font-size:1.1em" id="qf-cr-npc-stat-'+k+'">'+st[k]+'</div></div>';}).join('');})()+ 
+              '</div>'+
+              '<input type="hidden" id="qf-cr-npc-stats-json" value="'+esc(JSON.stringify(crType==='npc'&&cr.stats?cr.stats:rollStatsQE(crType==='npc'&&cr.cls?cr.cls:'Fighter')))+'">'+
+            '</div>'+
             '<div style="grid-column:1/-1"><label style="'+lbl+'">Exotic Trait / Note</label>'+
               '<input id="qf-cr-npc-trait" type="text" value="'+esc(crType==='npc'?cr.exoticTrait||'':'')+'" placeholder="e.g. Speaks Primordial; knows the temple layout" style="'+inp+'"></div>'+
           '</div>'+
@@ -2331,7 +2373,30 @@ function showQuestForm(setId, idx) {
     }
     if (crType) crType.addEventListener('change', updateCrPanel);
     updateCrPanel();
+    // Re-roll stats when class changes
+    function updateNpcStats(cls) {
+      var stats = rollStatsQE(cls || 'Fighter');
+      document.getElementById('qf-cr-npc-stats-json').value = JSON.stringify(stats);
+      ['str','dex','con','int','wis','cha'].forEach(function(k) {
+        var el = document.getElementById('qf-cr-npc-stat-' + k);
+        if (el) { el.textContent = stats[k]; el.style.animation='none'; void el.offsetHeight; el.style.animation='npcStatPop .3s ease-out'; }
+      });
+    }
+    var clsSel = document.getElementById('qf-cr-npc-cls');
+    if (clsSel) clsSel.addEventListener('change', function() { updateNpcStats(this.value); });
+    var rerollBtn = document.getElementById('qf-cr-npc-reroll');
+    if (rerollBtn) rerollBtn.addEventListener('click', function() {
+      var cls = (document.getElementById('qf-cr-npc-cls') || {}).value || 'Fighter';
+      updateNpcStats(cls);
+    });
   }());
+  // Inject stat pop animation
+  if (!document.getElementById('npc-stat-style')) {
+    var _ss = document.createElement('style');
+    _ss.id = 'npc-stat-style';
+    _ss.textContent = '@keyframes npcStatPop{0%{transform:scale(1.4);color:#c9920a;}100%{transform:scale(1);color:inherit;}}';
+    document.head.appendChild(_ss);
+  }
 
   document.getElementById('qf-save').onclick = function() {
     var title = (document.getElementById('qf-title').value || '').trim();
@@ -2381,12 +2446,19 @@ function showQuestForm(setId, idx) {
           type: 'npc',
           name: n,
           species: (document.getElementById('qf-cr-npc-species').value || '').trim(),
-          cls: (document.getElementById('qf-cr-npc-cls').value || 'Contact').trim(),
+          cls: (document.getElementById('qf-cr-npc-cls').value || 'Fighter'),
           contactBg: (document.getElementById('qf-cr-npc-bg').value || '').trim(),
           skills: selSkills, tools: selTools, lang: selLang,
           rel: document.getElementById('qf-cr-npc-rel').value || '',
           inv: inv,
           exoticTrait: (document.getElementById('qf-cr-npc-trait').value || '').trim(),
+          stats: (function(){
+            try{return JSON.parse(document.getElementById('qf-cr-npc-stats-json').value||'{}');}catch(e){return rollStatsQE(document.getElementById('qf-cr-npc-cls').value||'Fighter');}
+          }()),
+          questsRemaining: (function(){
+            var ql=parseInt(document.getElementById('qf-cr-npc-qlimit').value,10);
+            return isNaN(ql)||ql<=0?null:ql;
+          }()),
           level: 0, hireling: true, contact: true
         };
       } else {
