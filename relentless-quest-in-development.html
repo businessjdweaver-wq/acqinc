@@ -2147,7 +2147,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.646
+      Version 1.647
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2172,6 +2172,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.647</strong> &mdash; (10) Reroll button hidden on free first recruit. (11) Inactive recruit buttons minimize when one is selected. (12) Party nav icon reverted to ⚔. (13) No-squad modal suppressed until first grind complete. (14) Quest button scrolls to top of screen, not next card. (15) h1 title emoji cleaned.</div>
         <div style="margin-bottom:9px"><strong>Version 1.646</strong> &mdash; (6) Recruit chooser buttons: title stacked above description. (7) Squad intro suppressed until first quest cycle complete. (8) Adventurer panel open now injects starter guide candidate. (9) Wishlist hidden during first recruit action.</div>
         <div style="margin-bottom:9px"><strong>Version 1.645</strong> &mdash; Hireling hire fix: _recruitInProgress now set to true when adventurer or hireling panel opens, keeping the recruit screen live during the hire flow.</div>
         <div style="margin-bottom:9px"><strong>Version 1.644</strong> &mdash; (1) Party nav icon changed from ⚔ to 👥. (2) Hireling panel auto-roll fixed: no longer calls .click() which triggered navTo(party) and navigated away before hiring was possible.</div>
@@ -3155,7 +3156,7 @@ body.dev-active #app{margin-top:36px;}
 
 <nav id="nav">
   <button class="nb on" data-s="tasks">    <span class="ni">📜</span>Contracts</button>
-  <button class="nb" data-s="party">       <span class="ni">👥</span>Party</button>
+  <button class="nb" data-s="party">       <span class="ni">⚔</span>Party</button>
   <button class="nb" data-s="adventure">   <span class="ni">🗺</span>Quest</button>
   <button class="nb" data-s="store">       <span class="ni">🛒</span>Store</button>
 </nav>
@@ -4996,17 +4997,15 @@ function availableSquadsForCycleActivation(setId){
   return (S.squads||[]).filter(function(sq){return sq&&sq.name&&!used[sq.name];});
 }
 function navigateToNextQuest(setId){
-  // Switch the active quest set to this cycle first
   if(setId)activateQuestCycleSet(setId);
   closeOv('ov-cycle-map');
   navTo('adventure');
-  // Scroll to first unfinished quest card after render
+  // Scroll to top of adventure screen instead of hunting for next quest card
   setTimeout(function(){
-    var assignBtn=document.querySelector('[data-a="qassign"]');
-    var collectBtn=document.querySelector('[data-a="qcollect"]');
-    var target=assignBtn||collectBtn;
-    if(target)target.scrollIntoView({behavior:'smooth',block:'center'});
-  },150);
+    var scr=document.getElementById('s-adventure');
+    if(scr)scr.scrollTop=0;
+    window.scrollTo(0,0);
+  },80);
 }
 
 function openCycleSquadPicker(setId){
@@ -8358,9 +8357,9 @@ function renderCandidates(){
   if(shouldOfferStarterGuide()){
     el.innerHTML=starterNote+
       recruitCandidates.map(function(c,i){return candidateCardHtml(c,i,'std');}).join('')+
-      '<div style="margin-top:10px;text-align:right">'+
-      '<button class="btn bink sm" id="btn-reroll-std">🎲 Reroll'+(rerollCost?' ('+rerollCost+' gp)':' (free)')+'</button>'+
-      '</div>';
+      (rerollCost>0 ? '<div style="margin-top:10px;text-align:right">'+
+      '<button class="btn bink sm" id="btn-reroll-std">🎲 Reroll ('+rerollCost+' gp)</button>'+
+      '</div>' : '');
     return;
   }
   var _wishHtml='<div style="margin-bottom:10px;background:rgba(31,111,31,.06);border:1px solid rgba(31,111,31,.2);border-radius:7px;overflow:hidden">'+
@@ -11291,9 +11290,9 @@ function populateQuestSquadPicker(){
   });
   sel.innerHTML=opts.join('');
   if(cur&&av.some(function(sq){return sq.name===cur;}))sel.value=cur;
-  // Suppress squad modal until at least one quest cycle is complete
-  var _cyclesDone=(S.questLog||[]).some(function(e){return e.type!=='grind';});
-  if(!av.length&&_cyclesDone)openNoSquadModal('quest');
+  // Suppress no-squad modal until first grind is complete
+  var _grindDone=(S.questLog||[]).some(function(e){return e.type==='grind';});
+  if(!av.length&&_grindDone)openNoSquadModal('quest');
 }
 
 
@@ -13590,11 +13589,33 @@ document.getElementById('nav').addEventListener('click',function(e){
 document.getElementById('btn-nav-archive').addEventListener('click',function(){navTo('archive');});
 // Recruit panel chooser buttons
 (function(){
+  var _recruitBtnCfg={
+    adventurer:{id:'btn-recruit-adventurer',label:'⚔ Recruit Adventurer'},
+    hireling:  {id:'btn-recruit-hireling',  label:'🪓 Hire a Hireling'},
+    mercenary: {id:'btn-recruit-mercenary',  label:'⭐ Custom Mercenary'}
+  };
   function showRecruitPanel(name){
     ['adventurer','hireling','mercenary'].forEach(function(p){
-      var el=document.getElementById('recruit-panel-'+p);
-      if(el)el.style.display=(p===name)?'':'none';
+      var panel=document.getElementById('recruit-panel-'+p);
+      var btn=document.getElementById(_recruitBtnCfg[p].id);
+      if(p===name){
+        if(panel)panel.style.display='';
+        if(btn){btn.style.padding='8px 14px';btn.style.opacity='1';}
+      } else {
+        if(panel)panel.style.display='none';
+        // Minimize: compact pill-style, muted
+        if(btn){
+          btn.style.padding='6px 14px';
+          btn.style.opacity='0.55';
+          // Hide the subtitle span
+          var sub=btn.querySelector('span');
+          if(sub)sub.style.display='none';
+        }
+      }
     });
+    // Show subtitle of selected button
+    var selBtn=document.getElementById(_recruitBtnCfg[name].id);
+    if(selBtn){var sub=selBtn.querySelector('span');if(sub)sub.style.display='';}
   }
   document.getElementById('btn-recruit-adventurer').addEventListener('click',function(){
     showRecruitPanel('adventurer');
