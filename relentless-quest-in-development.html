@@ -3897,7 +3897,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.680
+      Version 1.681
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -3922,6 +3922,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.681</strong> &mdash; (1) Task cards show ℹ button when desc is set; opens info modal. (2) Tutorial task with 8 subtasks seeded on first welcome dismiss. (3) Task desc stored/restored via __meta in Supabase.</div>
         <div style="margin-bottom:9px"><strong>Version 1.680</strong> &mdash; Dev mode cycle completion: (1) Jump to Cycle 2 now marks all quests of the outgoing cycle complete in both questCycles archive and setProgress, so isSetCompleted() correctly unlocks dependent cycles. (2) +1 Day also pushes quest idx into done[] and repeatCounts so jump picks them up correctly.</div>
         <div style="margin-bottom:9px"><strong>Version 1.679</strong> &mdash; Capstone reward dashboard cards: (1) awardCapstonReward now calls _autoCreateDashCard when an override reward is granted. (2) getDashboardCards auto-generates missing dc_cap_ cards for any already-completed capstone quests that lack a card.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6781</strong> &mdash; Fix: grind enc-card data-qi injection used q.idx/q.setId but the grind loop variable is g — causing ReferenceError on renderAdv.</div>
@@ -4925,6 +4926,12 @@ body.dev-active #app{margin-top:36px;}
   </div>
 </div></div>
 
+
+<div class="ov" id="ov-tinfo"><div class="modal" style="max-width:380px">
+  <h3 id="ov-tinfo-title" style="margin-bottom:8px"></h3>
+  <div id="ov-tinfo-desc" style="font-size:.92em;color:var(--ink);line-height:1.6;white-space:pre-wrap"></div>
+  <div style="margin-top:16px;text-align:right"><button class="btn bg sm" id="ov-tinfo-close">Close</button></div>
+</div></div>
 
 <div class="ov" id="ov-welcome"><div class="modal" style="max-width:420px">
   <h3>👋 Welcome to Your Franchise</h3>
@@ -6958,6 +6965,27 @@ document.getElementById('ov-welcome-ok').addEventListener('click',function(){
   S.settings=normalizeSettings(S.settings);
   S.settings.welcomeSeen=true;
   S.settings.showWelcome=false;
+  // Seed tutorial task for new users
+  if(!(S.active||[]).some(function(t){return t._tid==='t-tutorial-main';})){
+    if(!S.active)S.active=[];
+    S.active.unshift({
+      _tid:'t-tutorial-main',
+      name:'Relentless Tutorial',
+      gp:75,count:0,pct:0,collapsed:false,fav:false,
+      desc:'Complete these steps to get started with your franchise. Each sub-task earns gold toward your first 400 gp goal.',
+      subtasks:[
+        {name:'Send The Founder on his first Quest',done:false},
+        {name:'Recruit an Adventurer with Survival & Navigation Skills [Party Tab]',done:false},
+        {name:'Send that Ranger on the second Quest',done:false},
+        {name:'Recruit a Hireling with Athletics skill [Party Tab]',done:false},
+        {name:'Buy The Founder a pet cat [Store]',done:false},
+        {name:'Send the Hireling and The Founder on Quest 3',done:false},
+        {name:'Check out the next Quest\'s requirements and play!',done:false},
+        {name:'Make some more tasks — you have 325 more gold to earn!',done:false}
+      ]
+    });
+    save();
+  }
   try{localStorage.setItem(welcomeStorageKey(),'1');}catch(e){}
   closeOv('ov-welcome');
   save();
@@ -7190,6 +7218,7 @@ function taskCardHtml(t,showArrows,nbIdxs){
     '<div class="tname" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">'+
     '<button type="button" class="pct-tog" data-a="tpct" data-i="'+i+'" data-step="'+(t.pct||0)+'" title="'+Math.round((t.pct||0)/6*100)+'% complete — click to advance (3 clicks = full)">'+pctTogSvg(t.pct||0)+'</button>'+
     '<button class="tname-main" data-a="edit" data-i="'+i+'" type="button" style="background:none;border:none;padding:0;margin:0;color:inherit;font:inherit;text-align:left;cursor:pointer;text-decoration:underline;text-decoration-color:rgba(44,26,14,.25);text-underline-offset:2px" title="Edit contract">'+esc(t.name)+'</button>'+
+    (t.desc?'<button type="button" data-a="tinfo" data-i="'+i+'" style="background:none;border:none;padding:0 2px;cursor:pointer;font-size:.82em;color:var(--gold-dark);opacity:.7;line-height:1" title="Contract details">ℹ</button>':'')+
     colBtn+
     '</div>'+
     noteHtml+
@@ -7218,6 +7247,9 @@ function renderTasks(){
   var nbIdxs=sorted.filter(function(t){return !(t.burnerUntil&&t.burnerUntil>now);}).map(function(t){return t._i;});
   el.innerHTML=sorted.map(function(t){return taskCardHtml(t,isManual,nbIdxs);}).join('');
 }
+
+// Task info modal
+document.getElementById('ov-tinfo-close').addEventListener('click',function(){closeOv('ov-tinfo');});
 
 // Pending state for modals
 var P={done:null,brn:null,grpDefer:null,mvGrp:null,edit:null};
@@ -7341,6 +7373,14 @@ document.getElementById('tlist').addEventListener('click',function(e){
   var gi=parseInt(b.getAttribute('data-gi'));
 
   if(a==='gcol' || a==='gdef' || a==='gdel' || a==='mvgrp'){
+    return;
+  } else if(a==='tinfo'){
+    var _ti=S.active[i];
+    if(_ti&&_ti.desc){
+      document.getElementById('ov-tinfo-title').textContent=_ti.name;
+      document.getElementById('ov-tinfo-desc').textContent=_ti.desc;
+      openOv('ov-tinfo');
+    }
     return;
   } else if(a==='edit'){
     openTaskEditModal(i);
@@ -14872,7 +14912,7 @@ function sbPush(manual){
     ensureTaskIds();
     return sbInsert('active_tasks',S.active.map(function(t,i){
       var packedSubtasks=(t.subtasks||[]).map(function(st){return st;});
-      packedSubtasks.push({__meta:true,_tid:t._tid||('t'+Date.now().toString(36)+Math.random().toString(36).slice(2,8)+i),note:t.note||''});
+      packedSubtasks.push({__meta:true,_tid:t._tid||('t'+Date.now().toString(36)+Math.random().toString(36).slice(2,8)+i),note:t.note||'',desc:t.desc||''});
       return {user_id:userId,sort_order:i,name:t.name,gp:t.gp||5,count:t.count||0,
         pct:t.pct||0,
         subtasks:packedSubtasks,collapsed:!!t.collapsed,fav:!!t.fav,
@@ -15134,7 +15174,7 @@ function sbPull(manual){
         return {_sbId:t.id,_tid:meta._tid||('t'+Date.now().toString(36)+Math.random().toString(36).slice(2,8)+ti),name:t.name,gp:t.gp,count:t.count,
           pct:t.pct||0,
           subtasks:cleanSubtasks,
-          collapsed:t.collapsed,fav:t.fav,freq:t.freq,cat:t.cat,burnerUntil:t.burner_until||null,note:meta.note||''};
+          collapsed:t.collapsed,fav:t.fav,freq:t.freq,cat:t.cat,burnerUntil:t.burner_until||null,note:meta.note,desc:meta.desc||''||''};
       });
     }
     if(archived&&archived.length){
