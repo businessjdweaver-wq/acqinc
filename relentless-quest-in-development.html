@@ -3893,7 +3893,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.674
+      Version 1.675
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -3918,6 +3918,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.675</strong> &mdash; Store bugs fixed: (1) Search wrong item — Buy button now uses data-name instead of data-i; purchase confirmation resolves by name across all arrays, safe against filtered results. (2) qcs-store-link button style cleaned up (removed row-layout artifacts).</div>
         <div style="margin-bottom:9px"><strong>Version 1.674</strong> &mdash; Dev mode: ?dev=1 activates without email restriction. devStampUids() hooked into renderParty and renderAdv. Store cards show loop index + _dbId. Both asset paths show uid + _dbId.</div>
         <div style="margin-bottom:9px"><strong>Version 1.673</strong> &mdash; Dev mode UID overlay: character cards show ci+_dbId, asset rows show uid+_dbId, squad tiles show sq.id, quest cards show idx+setId, cycle headings show set.id. All badges hidden outside dev mode.</div>
         <div style="margin-bottom:9px"><strong>Version 1.672</strong> &mdash; Squad formation fixes: (1) Capstone item reward now copies effect+bagOfHolding onto partyAsset so hasSquadFormationEffect can detect it. (2) Random-pool bag rewards go to partyAssets (not franchiseStorage) with effect flag. (3) sqSave migrates any legacy franchiseStorage squad-formation items to partyAssets before searching. (4) franchiseHasBagOfHolding checks both partyAssets and legacy franchiseStorage.</div>
@@ -13817,7 +13818,7 @@ function renderStore(){
       (item.rar?'<span class="rarity r-'+item.rar+'">'+item.rar+'</span>':'')+
       '</div>'+
       '<div class="spcol"><div class="sprice">🪙 '+item.price.toLocaleString()+' gp</div>'+
-      '<button class="btn bg sm" data-a="buy" data-i="'+i+'"'+(ok?'':' disabled')+'>Buy</button>'+
+      '<button class="btn bg sm" data-a="buy" data-name="'+esc(item.name)+'"'+(ok?'':' disabled')+'>Buy</button>'+
       '</div></div></div>';
   }).join('');
 }
@@ -13862,9 +13863,10 @@ document.getElementById('btn-reroll').addEventListener('click',function(){
 
 document.getElementById('slist').addEventListener('click',function(e){
   var b=e.target.closest('[data-a="buy"]');if(!b)return;
-  var i=parseInt(b.getAttribute('data-i'));
+  var _buyName=b.getAttribute('data-name');
   var items=getStoreItems();
-  var item=items[i];if(!item)return;
+  // Look up by name — safe across filtered/unfiltered arrays
+  var item=items.filter(function(x){return x&&x.name===_buyName;})[0];if(!item)return;
   // Adventuring gear items are not in GEAR — route as customItem
   if(item.type==='adventuring'){
     P5.item='__questitem__';
@@ -13884,7 +13886,7 @@ document.getElementById('slist').addEventListener('click',function(e){
   }
   if((storeTab==='magic'||storeTab==='adventuring') && (storeIsPlusWeapon(item) || storeIsPlusArmor(item))){
     var isArmor=storeIsPlusArmor(item);
-    PLUS_WEAPON_PENDING={index:i,item:item,kind:(isArmor?'armor':'weapon')};
+    PLUS_WEAPON_PENDING={index:item.name,item:item,kind:(isArmor?'armor':'weapon')};
     var sel=document.getElementById('ov-pw-type');
     var opts=isArmor?plusArmorBaseOptions():plusWeaponBaseOptions();
     if(sel){
@@ -13898,7 +13900,7 @@ document.getElementById('slist').addEventListener('click',function(e){
     openOv('ov-plusweapon');
     return;
   }
-  P5.item=i;
+  P5.item=item.name; // name-based — search-safe
   P5.assetMode=false;
   document.getElementById('ov-bi-qty').value='1';
   if(item.party){
@@ -13961,7 +13963,19 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
     items=expSub==='exp-vehicles'?VEHICLES:BUILDINGS;
   } else if(storeTab==='pets')items=PETS;
   else return;
-  var item=(P5.item==='__plusweapon__'||P5.item==='__questitem__')&&P5.customItem?P5.customItem:items[P5.item];
+  // Resolve item: if P5.item is a string name (search-safe), look up by name;
+  // if it's a numeric index (legacy paths like qcs prereq buy), use index lookup;
+  // if it's a special key, use customItem.
+  var item;
+  if((P5.item==='__plusweapon__'||P5.item==='__questitem__')&&P5.customItem){
+    item=P5.customItem;
+  } else if(typeof P5.item==='string'&&P5.item.indexOf('__')===-1){
+    // Name-based lookup (search-safe)
+    var _allItems=[].concat(GEAR||[],VEHICLES||[],BUILDINGS||[],PETS||[]);
+    item=_allItems.filter(function(x){return x&&x.name===P5.item;})[0]||items.filter(function(x){return x&&x.name===P5.item;})[0];
+  } else {
+    item=items[P5.item];
+  }
   if(!item)return;
   var qty=Math.max(1,parseInt(document.getElementById('ov-bi-qty').value,10)||1);
   var ownerVal=document.getElementById('ov-bi-sel').value||'';
@@ -19531,8 +19545,8 @@ function qddRenderHole(slot,partyEntries,busy){
       // No purchase button for pet prereqs — pets aren't in the store
       var _storeTab=slot.isAsset?'expedition':'adventuring';
       _storeBtn='<button class="qcs-store-link" data-item="'+esc(slot.value)+'" data-tab="'+_storeTab+'"'
-        +' style="font-size:.6em;padding:1px 5px;border:1px solid var(--gold-dark);border-radius:3px;'
-        +'background:rgba(201,146,42,.1);color:var(--gold-dark);cursor:pointer;margin-left:4px;vertical-align:middle">'
+        +' style="font-size:.62em;padding:2px 7px;border:1px solid var(--gold-dark);border-radius:3px;'
+        +'background:rgba(201,146,42,.1);color:var(--gold-dark);cursor:pointer;display:inline-block">'
         +'\uD83D\uDED2 Purchase</button>';
     }
     var _qpGoldBtn='';
@@ -19550,7 +19564,7 @@ function qddRenderHole(slot,partyEntries,busy){
     return '<div class="nonchar-hole'+(met?' filled':'')+'">'+
       '<div class="qhole-label">'+slot.label+'</div>'+
       '<div class="qhole-req">'+esc(String(slot.value))+(slot.type==='gold'?' gp':'')+_qpGoldBtn+'</div>'+
-      (_storeBtn?'<div style="margin-top:3px">'+_storeBtn+'</div>':'')+
+      (_storeBtn?'<div style="margin-top:4px;line-height:1">'+_storeBtn+'</div>':'')+
       '<span class="qhole-check" style="'+(met?'':'opacity:0')+'">\u2713</span>'+
       '</div>';
   }
