@@ -1949,14 +1949,14 @@ body.dev-active #app{margin-top:36px;}
 
     <!-- Recruit chooser: three buttons open dedicated panels -->
     <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:10px">
-      <button class="btn bg lg full" id="btn-recruit-adventurer" style="padding:14px;font-size:1em">⚔ Recruit Adventurer
-        <div style="font-size:.72em;font-weight:400;margin-top:3px;opacity:.8">5 candidates · first roll free · rerolls 10 gp</div>
+      <button class="btn bg lg full" id="btn-recruit-adventurer" style="padding:14px;font-size:1em;text-align:left;display:flex;flex-direction:column;align-items:flex-start">⚔ Recruit Adventurer
+        <span style="font-size:.72em;font-weight:400;margin-top:3px;opacity:.8">5 candidates · first roll free · rerolls 10 gp</span>
       </button>
-      <button class="btn bink lg full" id="btn-recruit-hireling" style="padding:14px;font-size:1em">🪓 Hire a Hireling
-        <div style="font-size:.72em;font-weight:400;margin-top:3px;opacity:.8">Low-cost labour · first roll free · rerolls 5 gp</div>
+      <button class="btn bink lg full" id="btn-recruit-hireling" style="padding:14px;font-size:1em;text-align:left;display:flex;flex-direction:column;align-items:flex-start">🪓 Hire a Hireling
+        <span style="font-size:.72em;font-weight:400;margin-top:3px;opacity:.8">Low-cost labour · first roll free · rerolls 5 gp</span>
       </button>
-      <button class="btn lg full" id="btn-recruit-mercenary" style="padding:14px;font-size:1em;border-color:var(--gold-dark);color:var(--gold-dark)">⭐ Custom Mercenary
-        <div style="font-size:.72em;font-weight:400;margin-top:3px;opacity:.8">Hand-pick attributes · 500 gp base (bag of holding: 50 gp)</div>
+      <button class="btn lg full" id="btn-recruit-mercenary" style="padding:14px;font-size:1em;border-color:var(--gold-dark);color:var(--gold-dark);text-align:left;display:flex;flex-direction:column;align-items:flex-start">⭐ Custom Mercenary
+        <span style="font-size:.72em;font-weight:400;margin-top:3px;opacity:.8">Hand-pick attributes · 500 gp base</span>
       </button>
     </div>
 
@@ -2147,7 +2147,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.645
+      Version 1.646
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2172,6 +2172,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.646</strong> &mdash; (6) Recruit chooser buttons: title stacked above description. (7) Squad intro suppressed until first quest cycle complete. (8) Adventurer panel open now injects starter guide candidate. (9) Wishlist hidden during first recruit action.</div>
         <div style="margin-bottom:9px"><strong>Version 1.645</strong> &mdash; Hireling hire fix: _recruitInProgress now set to true when adventurer or hireling panel opens, keeping the recruit screen live during the hire flow.</div>
         <div style="margin-bottom:9px"><strong>Version 1.644</strong> &mdash; (1) Party nav icon changed from ⚔ to 👥. (2) Hireling panel auto-roll fixed: no longer calls .click() which triggered navTo(party) and navigated away before hiring was possible.</div>
         <div style="margin-bottom:9px"><strong>Version 1.643</strong> &mdash; (1) First cycle launch no longer triggers squad intro when no squads exist. (2) Recruit screen consolidated: 3 chooser buttons reveal panels inline. (3) Login pills reset to 38-48.</div>
@@ -8353,6 +8354,15 @@ function renderCandidates(){
       '<div class="sqmgr-ribbon-strip">'+pills+'</div>'+
       '</div>';
   }
+  // Suppress wishlist during first recruit (starter guide active) — show cards directly
+  if(shouldOfferStarterGuide()){
+    el.innerHTML=starterNote+
+      recruitCandidates.map(function(c,i){return candidateCardHtml(c,i,'std');}).join('')+
+      '<div style="margin-top:10px;text-align:right">'+
+      '<button class="btn bink sm" id="btn-reroll-std">🎲 Reroll'+(rerollCost?' ('+rerollCost+' gp)':' (free)')+'</button>'+
+      '</div>';
+    return;
+  }
   var _wishHtml='<div style="margin-bottom:10px;background:rgba(31,111,31,.06);border:1px solid rgba(31,111,31,.2);border-radius:7px;overflow:hidden">'+
     '<div style="display:flex;align-items:center;padding:6px 10px 2px">'+
     '<span style="font-family:\'Cinzel\',serif;font-size:.72em;color:var(--forest);text-transform:uppercase;letter-spacing:.05em;flex:1">✅ Wish List <span style="font-size:.8em;color:var(--ink-light);font-weight:normal">— 🎯 = not in party yet</span></span>'+
@@ -11281,7 +11291,9 @@ function populateQuestSquadPicker(){
   });
   sel.innerHTML=opts.join('');
   if(cur&&av.some(function(sq){return sq.name===cur;}))sel.value=cur;
-  if(!av.length)openNoSquadModal('quest');
+  // Suppress squad modal until at least one quest cycle is complete
+  var _cyclesDone=(S.questLog||[]).some(function(e){return e.type!=='grind';});
+  if(!av.length&&_cyclesDone)openNoSquadModal('quest');
 }
 
 
@@ -13588,8 +13600,15 @@ document.getElementById('btn-nav-archive').addEventListener('click',function(){n
     showRecruitPanel('adventurer');
     _recruitInProgress=true;
     if(!recruitCandidates.length){
-      var _rb=document.getElementById('btn-randall');
-      if(_rb)_rb.click();
+      // Roll fresh candidates; inject starter guide if eligible
+      recruitCandidates=[];
+      for(var _j=0;_j<5;_j++)recruitCandidates.push(makeCandidate());
+      if(shouldOfferStarterGuide())recruitCandidates[0]=makeStarterNavigatorCandidate();
+      S.settings.recruitRollDate=todayStr();
+      var _rb2=document.getElementById('btn-randall');
+      if(_rb2)_rb2.textContent='🎲 New Candidates (10 gp)';
+      save();
+      renderCandidates();
     }
   });
   document.getElementById('btn-recruit-hireling').addEventListener('click',function(){
