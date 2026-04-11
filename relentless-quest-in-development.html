@@ -3890,7 +3890,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.668
+      Version 1.670
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -3915,6 +3915,8 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.670</strong> &mdash; All fuzzy bag-name matching removed. _isBagOfHolding and franchiseHasBagOfHolding now delegate entirely to hasSquadFormationEffect. Squad formation is determined by effect flag only.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.669</strong> &mdash; Squad formation redesigned: new squad_formation effect type added. hasSquadFormationEffect() replaces fuzzy _isBagOfHolding() matching in sqSave. Built-in Bag of Holding and Longinus Carpetbag get effect:{squadFormation:true}. sqSave only searches unassigned partyAssets — no storage/inventory fallbacks.</div>
         <div style="margin-bottom:9px"><strong>Version 1.668</strong> &mdash; Quest order now persists: loadContentLibrary copies row.sort_order onto item objects; mergeCustomContent sorts by sort_order then idx.</div>
         <div style="margin-bottom:9px"><strong>Version 1.667</strong> &mdash; Quest editor: Max Party Size field added (squadReqMax). Enforced in questHardGateIssues (blocks Begin if over cap). Shown in prereq info card. Saved in both quest editors.</div>
         <div style="margin-bottom:9px"><strong>Version 1.666</strong> &mdash; Quest editor: position dropdown replaces ▲/▼ arrows for reordering; NPC contact editor adds level field; main app uses override.level on NPC join.</div>
@@ -5179,7 +5181,7 @@ var GEAR=[
   {name:'Potion of Healing',      ic:'🧪', desc:'Regain 2d4+2 hit points.',                                  rar:'common',   price:50,    type:'magic',  wt:0.5},
   {name:'Antitoxin',              ic:'🧴', desc:'Adv on saving throws vs poison for 1 hour.',                 rar:'common',   price:50,    type:'kit',    wt:0},
   // ── Uncommon magic items ──
-  {name:'Bag of Holding',         ic:'👜', desc:'Extradimensional space. Holds 500 lbs / 64 cu ft.',         rar:'uncommon', price:400,   type:'magic',  wt:15, bagOfHolding:true, party:true},
+  {name:'Bag of Holding',         ic:'👜', desc:'Extradimensional space. Holds 500 lbs / 64 cu ft.',         rar:'uncommon', price:400,   type:'magic',  wt:15, bagOfHolding:true, party:true, effect:{squadFormation:true}},
   {name:'+1 Weapon',              ic:'✨', desc:'+1 to attack and damage rolls.',                             rar:'uncommon', price:300,   type:'magic',  wt:3},
   {name:'Cloak of Protection',    ic:'🧥', desc:'+1 to AC and saving throws. Attune.',                       rar:'uncommon', price:350,   type:'magic',  wt:1},
   {name:'Goggles of Night',       ic:'🕶️', desc:'Darkvision 60ft. No penalty in dim light.',                 rar:'uncommon', price:250,   type:'magic',  wt:0},
@@ -5574,7 +5576,7 @@ var QUESTSETS=[
        baseGp:80,reward:'Official franchise seal + capstone reward',
        capstoneReward:{type:'item',name:'Longinus Carpetbag of Holding',ic:'🧳',
          desc:'This carpetbag is heavier than it should be.',
-         bagOfHolding:true},
+         bagOfHolding:true, effect:{squadFormation:true}},
        pre:{skills:['History'],tools:["Navigator's Tools"],lang:[],rel:'',items:[],gold:0}}
     ]
   },
@@ -9406,53 +9408,24 @@ function sqSave(){
   var newId=Date.now();
   if(isNew){
     S.squads.push({id:newId,name:n,emoji:selEmoji,color:selColor,memberIdxs:ms});
-    // Assign a Bag of Holding to this squad — search everywhere, reassign if needed
+    // Find a squad-formation item not already assigned to any squad
     if(!S.partyAssets)S.partyAssets=[];
     var bagAssigned=false;
-    // 1) Already in partyAssets unassigned or assigned to non-squad?
-    // Find any bag-of-holding not already assigned to THIS squad
     var bagAsset=(S.partyAssets||[]).filter(function(a){
-      if(!_isBagOfHolding(a))return false;
+      if(!hasSquadFormationEffect(a))return false;
       var ot=(a.meta&&a.meta.ownerType)||'';
-      var or_=(a.meta&&a.meta.ownerRef)||'';
-      // OK to reassign if unowned, or already owned by this squad
-      return ot!=='squad'||(or_===n);
+      // Only use items not already assigned to a different squad
+      return ot!=='squad';
     })[0];
     if(bagAsset){
-      // Directly set meta on the asset object to ensure serialization picks it up
       if(!bagAsset.meta)bagAsset.meta={};
       bagAsset.meta.ownerType='squad';
       bagAsset.meta.ownerRef=n;
       if(!bagAsset.meta.uid)bagAsset.meta.uid=newAssetUid();
       bagAssigned=true;
-      logAdd('Squad: "'+n+'" + Bag of Holding reassigned','hire');
+      logAdd('🎒 '+bagAsset.name+' assigned to squad "'+n+'"','hire');
     }
-    // 2) In franchiseStorage?
-    if(!bagAssigned){
-      var bagInStorage=(S.franchiseStorage||[]).indexOf('Bag of Holding');
-      if(bagInStorage!==-1){
-        S.franchiseStorage.splice(bagInStorage,1);
-        S.partyAssets.push({name:'Bag of Holding',ic:'👜',type:'supply',
-          meta:{uid:newAssetUid(),ownerType:'squad',ownerRef:n}});
-        bagAssigned=true;
-        logAdd('Squad: "'+n+'" + Bag of Holding moved from franchise storage','hire');
-      }
-    }
-    // 3) In a character's inventory?
-    if(!bagAssigned){
-      (S.party||[]).forEach(function(c){
-        if(bagAssigned||!c)return;
-        var idx=(c.inv||[]).indexOf('Bag of Holding');
-        if(idx!==-1){
-          c.inv.splice(idx,1);
-          S.partyAssets.push({name:'Bag of Holding',ic:'👜',type:'supply',
-            meta:{uid:newAssetUid(),ownerType:'squad',ownerRef:n}});
-          bagAssigned=true;
-          logAdd('Squad: "'+n+'" + Bag of Holding taken from '+c.name,'hire');
-        }
-      });
-    }
-    logAdd('Squad: "'+n+'"'+(bagAssigned?'':' (no Bag of Holding found)'),'hire');
+    logAdd('⚔ Squad "'+n+'" created'+(bagAssigned?'':' — no squad-formation item available'),'hire');
   } else{
     var oldName=S.squads[P3.sq].name;
     // If cycle-locked, only allow name/emoji/color changes — preserve existing memberIdxs
@@ -11827,7 +11800,7 @@ function awardCapstonReward(set){
       // Also add to franchiseStorage as a named string so all bag checks find it
       if(!S.franchiseStorage)S.franchiseStorage=[];
       // Add bag-of-holding type items to franchiseStorage by their actual name
-      var _isBag=reward.bagOfHolding||(reward.name.toLowerCase().indexOf('bag')!==-1&&reward.name.toLowerCase().indexOf('holding')!==-1);
+      var _isBag=!!(reward.bagOfHolding||(reward.effect&&reward.effect.squadFormation));
       if(_isBag&&S.franchiseStorage.indexOf(reward.name)===-1){
         S.franchiseStorage.push(reward.name);
       }
@@ -15035,10 +15008,11 @@ function sbPull(manual){
     (S.franchiseStorage||[]).forEach(function(entry){
       var bagName=typeof entry==='string'?entry:(entry&&entry.name)||'';
       if(!bagName)return;
-      var bn=bagName.toLowerCase();
-      if(bn.indexOf('bag')===-1||bn.indexOf('holding')===-1)return;
+      // Only recover items that have the squad_formation effect (by name lookup in GEAR)
+      var _gearMatch=(GEAR||[]).filter(function(g){return g.name===bagName;})[0];
+      if(!_gearMatch||!hasSquadFormationEffect(_gearMatch))return;
       // Check if already in partyAssets
-      var alreadyPresent=(S.partyAssets||[]).some(function(a){return _isBagOfHolding(a);});
+      var alreadyPresent=(S.partyAssets||[]).some(function(a){return hasSquadFormationEffect(a);});
       if(!alreadyPresent){
         if(!S.partyAssets)S.partyAssets=[];
         S.partyAssets.push({name:bagName,ic:'🧳',type:'artifact',
@@ -15563,34 +15537,29 @@ document.querySelectorAll('.ov').forEach(function(ov){
 // ══════════════════════════════════
 
 // Check if the franchise has any Bag of Holding not already assigned to a squad
-function _isBagOfHolding(a){
+// Returns true if an asset has the squad_formation effect
+// (either via .effect.squadFormation, .bagOfHolding flag, or DB item lookup)
+function hasSquadFormationEffect(a){
   if(!a)return false;
-  var n=(a.name||'').toLowerCase();
-  // Match by name containing 'bag' and 'holding', OR by bagOfHolding flag, OR by supply type
-  return !!(a.bagOfHolding||(n.indexOf('bag')!==-1&&n.indexOf('holding')!==-1));
+  // Direct flag on partyAsset (from built-in GEAR or capstone reward)
+  if(a.effect&&a.effect.squadFormation)return true;
+  if(a.bagOfHolding)return true;
+  // Check DB-loaded GEAR items by name
+  var gearItem=(GEAR||[]).filter(function(g){return g.name===a.name;})[0];
+  if(gearItem&&gearItem.effect&&gearItem.effect.squadFormation)return true;
+  if(gearItem&&gearItem.bagOfHolding)return true;
+  return false;
+}
+
+function _isBagOfHolding(a){
+  // Now delegates to hasSquadFormationEffect — effect flag only, no fuzzy name matching
+  return hasSquadFormationEffect(a);
 }
 function franchiseHasBagOfHolding(){
-  // 1. Franchise storage (string entries containing bag-of-holding keywords)
-  var inStorage=(S.franchiseStorage||[]).some(function(x){
-    var name=(typeof x==='string'?x:(x&&x.name)||'').toLowerCase();
-    return name.indexOf('bag')!==-1&&name.indexOf('holding')!==-1;
+  // Checks partyAssets only — effect flag, no fuzzy name matching
+  return (S.partyAssets||[]).some(function(a){
+    return hasSquadFormationEffect(a);
   });
-  if(inStorage)return true;
-  // 2. Character inventories (string items)
-  var inInv=(S.party||[]).some(function(c){
-    return c&&(c.inv||[]).some(function(item){
-      var n=(typeof item==='string'?item:'').toLowerCase();
-      return n.indexOf('bag')!==-1&&n.indexOf('holding')!==-1;
-    });
-  });
-  if(inInv)return true;
-  // 3. Party assets — bag by name match OR bagOfHolding flag
-  //    Squad-assigned bags count — the squad IS the franchise
-  var inAssets=(S.partyAssets||[]).some(function(a){
-    return _isBagOfHolding(a);
-  });
-  if(inAssets)return true;
-  return false;
 }
 
 var SQUAD_COLORS=['#6b3a3a','#3a4a6b','#3a5a45','#6b5a3a','#524868','#3a5462','#525252','#5c3a4e','#3a5432','#545440'];
@@ -17133,6 +17102,7 @@ function loadItemsFromDB(){
             else if(fx.effect_type==='prereq_lang')item.effect.prereqLang=fx.target;
             else if(fx.effect_type==='prereq_rel')item.effect.prereqRel=fx.target;
             else if(fx.effect_type==='prereq_item')item.effect.prereqItem=fx.target;
+            else if(fx.effect_type==='squad_formation')item.effect.squadFormation=true;
           });
         }
         if(VEHICLE_TYPES.indexOf(row.type)!==-1){
