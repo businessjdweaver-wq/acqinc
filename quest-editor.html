@@ -1071,6 +1071,7 @@ function cycleToRow(cycle, idx) {
   };
   if (cycle.territory) data.territory = cycle.territory;
   if (cycle.cycleGate) data.cycleGate = cycle.cycleGate;
+  if (Array.isArray(cycle.questOrder) && cycle.questOrder.length) data.questOrder = cycle.questOrder;
   return {
     content_type:  'quest_set',
     content_key:   cycle.id,
@@ -2064,11 +2065,17 @@ function showCycleForm(setId) {
     (function() {
       var cqs = quests
         .filter(function(q) { return q.setId === setId; })
-        .sort(function(a, b) {
-          var sa = typeof a.sort_order === 'number' ? a.sort_order : (a.idx || 0);
-          var sb = typeof b.sort_order === 'number' ? b.sort_order : (b.idx || 0);
-          return sa !== sb ? sa - sb : (a.idx || 0) - (b.idx || 0);
+        .sort(function(a, b) { return (a.idx || 0) - (b.idx || 0); });
+      // Apply saved questOrder if present on the cycle
+      if (cycle && Array.isArray(cycle.questOrder) && cycle.questOrder.length) {
+        var _qom = {};
+        cycle.questOrder.forEach(function(qi, pos) { _qom[qi] = pos; });
+        cqs.sort(function(a, b) {
+          var pa = _qom[a.idx] !== undefined ? _qom[a.idx] : (a.idx || 0) + 1000;
+          var pb = _qom[b.idx] !== undefined ? _qom[b.idx] : (b.idx || 0) + 1000;
+          return pa - pb;
         });
+      }
       if (!cqs.length) return '';
       // Store for save handler
       window._cfCycleQuests = cqs;
@@ -2142,16 +2149,10 @@ function showCycleForm(setId) {
     if (avgLevel) gate.minAvgSquadLevel = avgLevel;
 
     cycle.cycleGate = gate;
-    // Read position dropdowns and update sort_order on each quest
+    // Build questOrder from position dropdowns
     var _cqs = window._cfCycleQuests || [];
-    var _reordered = false;
     if (_cqs.length) {
-      // Normalise sort_order
-      _cqs.forEach(function(q, i) { if (typeof q.sort_order !== 'number') q.sort_order = i; });
-      // Read each dropdown's selected value = desired position
       var _dds = document.querySelectorAll('[data-cf-pos]');
-      // Build new order: for each quest at current index i, its desired position is dd.value
-      // We resolve this by sorting quests by their selected position value
       var _pairs = [];
       _dds.forEach(function(dd) {
         var qi = parseInt(dd.getAttribute('data-qi'), 10);
@@ -2159,14 +2160,11 @@ function showCycleForm(setId) {
         _pairs.push({ q: _cqs[qi], newPos: newPos });
       });
       _pairs.sort(function(a, b) { return a.newPos - b.newPos; });
-      _pairs.forEach(function(p, i) { p.q.sort_order = i; });
-      _reordered = true;
+      // Store questOrder as array of idx values in display order
+      cycle.questOrder = _pairs.map(function(p) { return p.q.idx; });
     }
-    var _cycleSave = saveCycle(cycle);
-    var _questSaves = _reordered
-      ? _cqs.map(function(q) { return saveQuest(q); })
-      : [];
-    Promise.all([_cycleSave].concat(_questSaves)).then(function() {
+    // Save only the cycle — questOrder is in its data blob, no quest rows needed
+    saveCycle(cycle).then(function() {
       renderList();
       showCycleForm(cycle.id);
     });
@@ -2208,31 +2206,14 @@ function showQuestForm(setId, idx) {
     '<div class="fgrid" style="margin-top:10px">' +
     frow('Description *', '<textarea id="qf-desc" rows="3" placeholder="Quest description…">' + esc(q.desc || '') + '</textarea>') +
     '</div>' +
-    (function() {
-      // Build position dropdown for this quest within its cycle
-      var _cqs = quests
-        .filter(function(x) { return x.setId === setId; })
-        .sort(function(a, b) {
-          var sa = typeof a.sort_order === 'number' ? a.sort_order : (a.idx || 0);
-          var sb = typeof b.sort_order === 'number' ? b.sort_order : (b.idx || 0);
-          return sa !== sb ? sa - sb : (a.idx || 0) - (b.idx || 0);
-        });
-      var _curPos = _cqs.findIndex(function(x) { return x.idx === idx; });
-      var _posOpts = _cqs.map(function(_, pi) {
-        return '<option value="' + pi + '"' + (pi === _curPos ? ' selected' : '') + '>' + (pi + 1) + '</option>';
-      }).join('');
-      window._qfCycleQuests = _cqs; // store for save handler
-      return '<div class="fgrid c3" style="margin-top:10px">' +
-        frow('Type', typeSelect('qf-type', q.type)) +
-        frow('Difficulty', diffSelect('qf-diff', q.difficulty)) +
-        frow('Base GP', '<input type="number" id="qf-gp" min="0" value="' + (q.baseGp || 40) + '">') +
-        '</div>' +
-        '<div class="fgrid c2" style="margin-top:10px">' +
-        frow('Position in Cycle', '<select id="qf-position">' + _posOpts + '</select>' +
-          '<div style="font-size:.72em;color:var(--ink2);margin-top:2px">Sequence order within this quest cycle</div>') +
-        frow('Reward Text', '<input type="text" id="qf-reward" value="' + esc(q.reward || '') + '" placeholder="e.g. Guild favour token">') +
-        '</div>';
-    }()) +
+    '<div class="fgrid c3" style="margin-top:10px">' +
+    frow('Type', typeSelect('qf-type', q.type)) +
+    frow('Difficulty', diffSelect('qf-diff', q.difficulty)) +
+    frow('Base GP', '<input type="number" id="qf-gp" min="0" value="' + (q.baseGp || 40) + '">') +
+    '</div>' +
+    '<div class="fgrid c1" style="margin-top:10px">' +
+    frow('Reward Text', '<input type="text" id="qf-reward" value="' + esc(q.reward || '') + '" placeholder="e.g. Guild favour token">') +
+    '</div>' +
     '<div class="fgrid c2" style="margin-top:10px">' +
     frow('Terrain', terrainSelect('qf-terrain', q.terrain)) +
     frow('Min Party Size', '<input type="number" id="qf-squad" min="0" max="20" value="' + (q.squadReqMin || 0) + '">' +
@@ -2448,19 +2429,6 @@ function showQuestForm(setId, idx) {
     q.squadReqMin = Math.max(0, parseInt(document.getElementById('qf-squad').value) || 0);
     q.squadReqMax = Math.max(0, parseInt(document.getElementById('qf-squadmax').value) || 0) || null;
     q.capstone    = document.getElementById('qf-capstone').checked;
-    // Reorder if position changed
-    var _posEl = document.getElementById('qf-position');
-    if (_posEl && window._qfCycleQuests) {
-      var _newPos = parseInt(_posEl.value, 10);
-      var _cqs2 = window._qfCycleQuests;
-      var _oldPos = _cqs2.findIndex(function(x) { return x.idx === q.idx; });
-      if (_oldPos >= 0 && _newPos !== _oldPos) {
-        _cqs2.forEach(function(x, i) { if (typeof x.sort_order !== 'number') x.sort_order = i; });
-        var _moved = _cqs2.splice(_oldPos, 1)[0];
-        _cqs2.splice(_newPos, 0, _moved);
-        _cqs2.forEach(function(x, i) { x.sort_order = i; });
-      }
-    }
     // Capstone reward
     (function() {
       var crT = document.getElementById('qf-cr-type');
@@ -2543,13 +2511,9 @@ function showQuestForm(setId, idx) {
     q._editable = true;
     var _questKey = q.setId + '::' + q.idx;
     var _prereqRows = prereqRowsFromForm(_questKey);
-    var _saveMain = saveQuest(q).then(function() {
+    saveQuest(q).then(function() {
       return sbPrereqSave(_questKey, _prereqRows);
-    });
-    // If reordered, save sort_order for all siblings too
-    var _siblings = (window._qfCycleQuests || []).filter(function(x) { return x.idx !== q.idx; });
-    var _sibSaves = _siblings.map(function(x) { return saveQuest(x); });
-    Promise.all([_saveMain].concat(_sibSaves)).then(function() {
+    }).then(function() {
       renderList(); showQuestForm(setId, idx);
     }).catch(function(e) {
       console.warn('[prereq save]', e);
