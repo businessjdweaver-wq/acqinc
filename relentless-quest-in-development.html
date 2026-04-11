@@ -3890,7 +3890,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.661
+      Version 1.662
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -3915,6 +3915,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.662</strong> &mdash; Dev-only: ⬡ Flow tab in quest editor renders ASCII flowchart of quest cycle chains, tier groupings, capstone labels, and cycle-back arrows. Copy button included.</div>
         <div style="margin-bottom:9px"><strong>Version 1.661</strong> &mdash; Continue Downtime bar now excludes characters who are currently on an active quest (questState.pending with doneAt in the future).</div>
         <div style="margin-bottom:9px"><strong>Version 1.660</strong> &mdash; Fix: qholeCarApply dynamic height used allSlots (out of scope); corrected to slots.length.</div>
         <div style="margin-bottom:9px"><strong>Version 1.659</strong> &mdash; buildingReq now generates a nonChar peg slot in the quest assignment carousel (met automatically when the franchise owns the building in partyAssets). Previously it only appeared in the info card as a bonus-reward row.</div>
@@ -4279,6 +4280,7 @@ body.dev-active #app{margin-top:36px;}
         <button class="ed-tab"           data-et="gear"      style="font-family:\'Cinzel\',serif;font-size:.75em;padding:5px 13px;border:1px solid rgba(201,146,42,.3);border-radius:4px;background:none;color:var(--parchment-deep);cursor:pointer;letter-spacing:.03em;white-space:nowrap">🎒 Gear</button>
         <button class="ed-tab"           data-et="assets"    style="font-family:\'Cinzel\',serif;font-size:.75em;padding:5px 13px;border:1px solid rgba(201,146,42,.3);border-radius:4px;background:none;color:var(--parchment-deep);cursor:pointer;letter-spacing:.03em;white-space:nowrap">🏰 Assets</button>
         <button class="ed-tab"           data-et="dashboard" style="font-family:\'Cinzel\',serif;font-size:.75em;padding:5px 13px;border:1px solid rgba(201,146,42,.3);border-radius:4px;background:none;color:var(--parchment-deep);cursor:pointer;letter-spacing:.03em;white-space:nowrap">🃏 Cards</button>
+        <button class="ed-tab" data-et="flow" style="font-family:'Cinzel',serif;font-size:.75em;padding:5px 13px;border:1px solid rgba(201,146,42,.3);border-radius:4px;background:none;color:var(--parchment-deep);cursor:pointer;letter-spacing:.03em;white-space:nowrap">⬡ Flow</button>
       </div>
       <div style="margin-left:auto;display:flex;align-items:center;gap:6px;flex-shrink:0">
         <input type="hidden" id="ed-content-scope" value="private">
@@ -17630,7 +17632,7 @@ function edRenderTabs(){
     t.style.color=on?'var(--gold-bright)':'var(--parchment-deep)';
     t.style.borderColor=on?'var(--gold-dark)':'rgba(201,146,42,.3)';
   });
-  var labels={quests:'Quest Sets & Quests',grind:'Grind Missions',gear:'Gear & Magic Items',assets:'Franchise Assets',dashboard:'Dashboard Cards'};
+  var labels={quests:'Quest Sets & Quests',grind:'Grind Missions',flow:'Cycle Flow Chart',gear:'Gear & Magic Items',assets:'Franchise Assets',dashboard:'Dashboard Cards'};
   document.getElementById('ed-list-label').textContent=labels[edTab];
   var dupeBtn=document.getElementById('ed-btn-dupe-cycle');
   if(dupeBtn)dupeBtn.style.display=edTab==='quests'?'block':'none';
@@ -17640,6 +17642,8 @@ function edRenderTabs(){
 function edRenderList(){
   // Dashboard tab has its own renderer
   if(edTab==='dashboard'){renderDashboardEditor();return;}
+  // Flow tab has its own renderer
+  if(edTab==='flow'){renderCycleFlowChart();return;}
   var el=document.getElementById('ed-list');
   var html='';
   if(edTab==='quests'){
@@ -21134,6 +21138,138 @@ function _autoCreateDashCard(quest,scope){
    ══════════════════════════════════════════════════════════════ */
 
 
+
+
+/* ══════════════════════════════════════════════════════════════
+   CYCLE FLOW CHART — dev-only ASCII tree in quest editor
+   ══════════════════════════════════════════════════════════════ */
+function renderCycleFlowChart(){
+  var edFormInner=document.getElementById('ed-form-inner');
+  var edList=document.getElementById('ed-list');
+  if(edList)edList.innerHTML='';
+  if(!edFormInner)return;
+
+  var tiers={};
+  (QUESTSETS||[]).forEach(function(s){
+    var t=s.dndTier||1;
+    if(!tiers[t])tiers[t]=[];
+    tiers[t].push(s);
+  });
+  var tierNums=Object.keys(tiers).map(Number).sort(function(a,b){return a-b;});
+
+  function rep(ch,n){var s='';for(var i=0;i<n;i++)s+=ch;return s;}
+  function pad(s,w){s=String(s);while(s.length<w)s=s+' ';return s.slice(0,w);}
+  var W=32;
+
+  function capLabel(set){
+    var capQ=(set.quests||[]).filter(function(q){return q.capstone;})[0];
+    if(!capQ)return '';
+    if(capQ.capstoneReward&&capQ.capstoneReward.name)return capQ.capstoneReward.name;
+    if(capQ.reward)return capQ.reward;
+    return 'capstone reward';
+  }
+
+  var lines=[];
+  lines.push('');
+  lines.push('  QUEST CYCLE FLOW CHART   ('+QUESTSETS.length+' cycles, tiers: '+tierNums.join(', ')+')');
+  lines.push('  '+rep('═',W+4));
+
+  tierNums.forEach(function(tier,ti){
+    var sets=tiers[tier];
+    lines.push('');
+    lines.push('  ── Tier '+tier+' '+(tier===1?'(Founding)':tier===2?'(Established)':'(Advanced)')+' '+rep('─',20));
+    lines.push('');
+
+    sets.forEach(function(set,si){
+      var capQ=(set.quests||[]).filter(function(q){return q.capstone;})[0];
+      var nonCap=(set.quests||[]).filter(function(q){return !q.capstone;});
+      var capLbl=capLabel(set);
+
+      // Box
+      lines.push('  ┌'+rep('─',W+2)+'┐');
+      lines.push('  │ '+pad(set.name+' (T'+tier+')',W)+' │');
+      lines.push('  │ '+pad('  '+nonCap.length+' quests + capstone',W)+' │');
+      if(capQ)lines.push('  │ '+pad('  ⚑ '+capQ.title.slice(0,W-4),W)+' │');
+      lines.push('  └'+rep('─',W+2)+'┘');
+
+      // Indent quest titles (first 4)
+      var shown=nonCap.slice(0,4).map(function(q){return q.title;});
+      if(nonCap.length>4)shown.push('… '+(nonCap.length-4)+' more');
+      shown.forEach(function(t){lines.push('    · '+t);});
+      if(capQ)lines.push('    ★ [Capstone] '+capQ.title);
+      lines.push('');
+
+      var hasNext=si<sets.length-1;
+      var hasNextTier=ti<tierNums.length-1;
+
+      if(hasNext){
+        // Arrow to next set in same tier
+        if(capLbl)lines.push('  │  after: '+capLbl.slice(0,40));
+        lines.push('  ▼');
+        lines.push('');
+      } else if(sets.length>1&&si===sets.length-1){
+        // Cycle-back for multi-set tiers
+        lines.push('  ↺  Tier '+tier+' cycles through '+sets.length+' sets (round-robin by month)');
+        if(hasNextTier){
+          lines.push('  │');
+          lines.push('  │  ── tier up ──▶ Tier '+(tier+1));
+          lines.push('  ▼');
+        }
+        lines.push('');
+      } else if(hasNextTier){
+        // Single set tier: arrow to next tier
+        if(capLbl)lines.push('  │  unlocks: '+capLbl.slice(0,40));
+        lines.push('  │');
+        lines.push('  └──▶ Tier '+(tier+1));
+        lines.push('  ▼');
+        lines.push('');
+      }
+    });
+  });
+
+  lines.push('  '+rep('═',W+4));
+  lines.push('');
+
+  var pre=lines.join('\n');
+  var ps='font-family:"Courier New",Courier,monospace;font-size:.76em;line-height:1.5;'
+    +'color:var(--ink);background:rgba(255,255,255,.5);border:1px solid var(--parchment-deep);'
+    +'border-radius:8px;padding:16px 20px;overflow:auto;white-space:pre;margin:0;max-height:70vh;';
+
+  edFormInner.innerHTML=
+    '<div style="max-width:860px;padding-bottom:40px">'+
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">'+
+    '<h2 style="font-family:\'Cinzel\',serif;color:var(--gold-dark);font-size:1em;margin:0">⬡ Cycle Flow Chart</h2>'+
+    '<span style="font-size:.72em;color:var(--ink-light)">(dev only)</span>'+
+    '<button id="btn-flow-copy" style="margin-left:auto;font-size:.72em;padding:3px 10px;border:1px solid var(--gold-dark);border-radius:4px;background:rgba(201,146,42,.1);color:var(--gold-dark);cursor:pointer;font-family:\'Cinzel\',serif">⎘ Copy ASCII</button>'+
+    '</div>'+
+    '<pre id="flow-chart-pre" style="'+ps+'">'
+    +pre.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')+
+    '</pre>'+
+    '<p style="font-size:.7em;color:var(--ink-light);margin-top:8px;font-style:italic">'+
+    'Chain order = QUESTSETS array order within each dndTier. '+
+    'Capstone labels from capstone quest\'s reward/capstoneReward field.</p>'+
+    '</div>';
+
+  var cb=document.getElementById('btn-flow-copy');
+  if(cb)cb.addEventListener('click',function(){
+    var el=document.getElementById('flow-chart-pre');
+    if(!el)return;
+    if(navigator.clipboard){
+      navigator.clipboard.writeText(el.textContent).then(function(){
+        cb.textContent='✓ Copied!';
+        setTimeout(function(){cb.textContent='⎘ Copy ASCII';},2000);
+      });
+    } else {
+      var r=document.createRange();r.selectNode(el);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(r);
+      document.execCommand('copy');
+      window.getSelection().removeAllRanges();
+      cb.textContent='✓ Copied!';
+      setTimeout(function(){cb.textContent='⎘ Copy ASCII';},2000);
+    }
+  });
+}
 </script>
 
 >
