@@ -2147,7 +2147,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.647
+      Version 1.648
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -2172,6 +2172,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.648</strong> &mdash; (16) h1 title: leading ⚔ removed, trailing kept. (17) btn-randall hidden during first recruit session. (18) After 3 hireling rerolls: modal tips player about in-quest hire and waives the 75 gp surcharge on their next use.</div>
         <div style="margin-bottom:9px"><strong>Version 1.647</strong> &mdash; (10) Reroll button hidden on free first recruit. (11) Inactive recruit buttons minimize when one is selected. (12) Party nav icon reverted to ⚔. (13) No-squad modal suppressed until first grind complete. (14) Quest button scrolls to top of screen, not next card. (15) h1 title emoji cleaned.</div>
         <div style="margin-bottom:9px"><strong>Version 1.646</strong> &mdash; (6) Recruit chooser buttons: title stacked above description. (7) Squad intro suppressed until first quest cycle complete. (8) Adventurer panel open now injects starter guide candidate. (9) Wishlist hidden during first recruit action.</div>
         <div style="margin-bottom:9px"><strong>Version 1.645</strong> &mdash; Hireling hire fix: _recruitInProgress now set to true when adventurer or hireling panel opens, keeping the recruit screen live during the hire flow.</div>
@@ -8495,7 +8496,7 @@ document.getElementById('rbox').addEventListener('click',function(e){
 var hirelCandidates=[];
 
 // State for inline hireling panel inside quest modal prereq tab
-var questHirePanel={open:false,reqType:null,reqValue:null,candidates:[],rolled:false};
+var questHirePanel={open:false,reqType:null,reqValue:null,candidates:[],rolled:false,rollCount:0};
 
 function renderQuestHirePanel(){
   var el=document.getElementById('quest-hire-panel');
@@ -8566,7 +8567,10 @@ function renderQuestHirePanel(){
     btn.addEventListener('click',function(){
       var i=parseInt(this.getAttribute('data-qhi'));
       var c=questHirePanel.candidates[i];if(!c)return;
-      if(!goldSpend(75,'Hired '+c.name+' (field surcharge — 1.5× rate)','hire'))return;
+      var _inQuestCost=S.settings.hirelInQuestWaived?0:75;
+      if(_inQuestCost>0&&!goldSpend(_inQuestCost,'Hired '+c.name+' (field surcharge — 1.5× rate)','hire'))return;
+      if(S.settings.hirelInQuestWaived){logAdd('🎉 Field surcharge waived — welcome bonus applied!','hire');}
+      S.settings.hirelInQuestWaived=false;
       if(!c.xp)c.xp={};
       var newHireIndex=S.party.length;
       S.party.push(Object.assign({},c));
@@ -8690,9 +8694,39 @@ document.getElementById('btn-hir-roll').addEventListener('click',function(){
   hirelCandidates=[];
   for(var i=0;i<5;i++)hirelCandidates.push(makeHireling());
   S.settings.hirelRollDate=todayStr();
+  // Track reroll count for first-session tip (reset each day)
+  if(!S.settings.hirelRollCountDate||S.settings.hirelRollCountDate!==todayStr()){
+    S.settings.hirelRollCountDate=todayStr();
+    S.settings.hirelRollCount=0;
+  }
+  S.settings.hirelRollCount=(S.settings.hirelRollCount||0)+1;
   save();
   this.textContent='🎲 New Hirelings (5 gp)';
   renderHirelings();
+  // After 3 rerolls on first session: show convenience tip modal
+  if(S.settings.hirelRollCount===3&&!S.settings.hirelTipShown){
+    S.settings.hirelTipShown=true;
+    S.settings.hirelInQuestWaived=true; // waive next in-quest hire surcharge
+    save();
+    setTimeout(function(){
+      var overlay=document.createElement('div');
+      overlay.className='hire-modal-overlay';
+      overlay.style.zIndex='99998';
+      var box=document.createElement('div');
+      box.className='hire-modal-box';
+      box.innerHTML=
+        '<div style="font-size:1.6em;margin-bottom:8px">🪓</div>'+
+        '<div style="font-family:\'Cinzel\',serif;font-weight:700;font-size:1em;margin-bottom:10px">Pro Tip!</div>'+
+        '<p style="font-size:.9em;margin-bottom:12px">You can also hire hirelings directly from the <strong>quest assignment screen</strong> — handy when you need a specific skill on the spot.</p>'+
+        '<p style="font-size:.9em;margin-bottom:16px">There\'s normally a modest field surcharge, but <strong>your next one is on us</strong>. 🎉</p>'+
+        '<button class="btn bg full" id="btn-hir-tip-ok" style="margin-top:4px">Got it!</button>';
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      document.getElementById('btn-hir-tip-ok').onclick=function(){
+        document.body.removeChild(overlay);
+      };
+    },400);
+  }
 });
 
 document.getElementById('hir-box').addEventListener('click',function(e){
@@ -12180,7 +12214,7 @@ function applySettings(){
   var cfg=S.settings||{};
   var n=cfg.appName||'Relentless Quest';
   var sub=cfg.subtitle||'Relentless Quest';
-  document.getElementById('hdr-title').textContent='⚔ '+n+' ⚔';
+  document.getElementById('hdr-title').textContent=n+' ⚔';
   document.getElementById('hdr-sub').textContent=sub;
   document.title=n;
   var fs=cfg.accessFontSize||cfg.fontSize||18;
@@ -13620,14 +13654,15 @@ document.getElementById('btn-nav-archive').addEventListener('click',function(){n
   document.getElementById('btn-recruit-adventurer').addEventListener('click',function(){
     showRecruitPanel('adventurer');
     _recruitInProgress=true;
+    var _isStarter=shouldOfferStarterGuide();
+    var _rb2=document.getElementById('btn-randall');
+    // Suppress reroll button during first recruit
+    if(_rb2)_rb2.style.display=_isStarter?'none':'';
     if(!recruitCandidates.length){
-      // Roll fresh candidates; inject starter guide if eligible
       recruitCandidates=[];
       for(var _j=0;_j<5;_j++)recruitCandidates.push(makeCandidate());
-      if(shouldOfferStarterGuide())recruitCandidates[0]=makeStarterNavigatorCandidate();
+      if(_isStarter)recruitCandidates[0]=makeStarterNavigatorCandidate();
       S.settings.recruitRollDate=todayStr();
-      var _rb2=document.getElementById('btn-randall');
-      if(_rb2)_rb2.textContent='🎲 New Candidates (10 gp)';
       save();
       renderCandidates();
     }
