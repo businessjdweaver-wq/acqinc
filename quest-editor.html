@@ -1324,18 +1324,20 @@ function renderList() {
       var badges = '';
       if (q._custom || q._editable) badges += '<span class="qbadge custom">custom</span>';
       if (q.capstone) badges += '<span class="qbadge cap">capstone</span>';
-      var isFirst = (qi === 0);
+      var isFirst = (qi === 0); // kept for future use
       var isLast  = (qi === cycleQuests.length - 1);
-      var btnBase = 'border:1px solid rgba(0,0,0,.12);background:rgba(255,255,255,.3);'
-        + 'border-radius:3px;padding:0 4px;font-size:.65em;cursor:pointer;line-height:1.4;';
+      // Position dropdown: options 1..N where N = cycleQuests.length
+      var posOpts = cycleQuests.map(function(_, pi) {
+        return '<option value="' + pi + '"' + (pi === qi ? ' selected' : '') + '>' + (pi + 1) + '</option>';
+      }).join('');
+      var ddStyle = 'border:1px solid rgba(0,0,0,.15);background:rgba(255,255,255,.35);'
+        + 'border-radius:3px;font-size:.7em;padding:0 2px;cursor:pointer;width:38px;text-align:center;';
       html += '<div class="quest-row ' + (isQSel ? 'sel' : '') +
         '" data-sel-quest="' + esc(cycle.id) + '" data-idx="' + q.idx + '">' +
-        '<span class="quest-row-title" style="flex:1">' + esc(q.title || '(untitled)') + '</span>' +
+        '<select data-reorder-quest data-setid="' + esc(cycle.id) + '" data-idx="' + q.idx + '"'
+          + ' title="Position in sequence" style="' + ddStyle + '">' + posOpts + '</select>' +
+        '<span class="quest-row-title" style="flex:1;padding-left:4px">' + esc(q.title || '(untitled)') + '</span>' +
         badges +
-        '<button data-move-quest="up" data-setid="' + esc(cycle.id) + '" data-idx="' + q.idx + '"'
-          + ' title="Move up" style="' + btnBase + 'opacity:' + (isFirst ? '.25' : '1') + ';pointer-events:' + (isFirst ? 'none' : 'auto') + '">▲</button>' +
-        '<button data-move-quest="down" data-setid="' + esc(cycle.id) + '" data-idx="' + q.idx + '"'
-          + ' title="Move down" style="' + btnBase + 'opacity:' + (isLast ? '.25' : '1') + ';pointer-events:' + (isLast ? 'none' : 'auto') + '">▼</button>' +
         '</div>';
     });
 
@@ -1353,6 +1355,42 @@ function renderList() {
   document.getElementById('btn-new-quest').style.display = hasSelCycle ? '' : 'none';
 
   // Event delegation on the scroll container
+  // Position dropdown: reorder quest to selected position
+  el.addEventListener('change', function(e) {
+    var dd = e.target.closest('[data-reorder-quest]');
+    if (!dd) return;
+    var sid    = dd.getAttribute('data-setid');
+    var qIdx   = parseInt(dd.getAttribute('data-idx'), 10);
+    var newPos = parseInt(dd.value, 10);
+    // Sort by sort_order (display order)
+    var cycleQs = quests
+      .filter(function(q) { return q.setId === sid; })
+      .sort(function(a, b) {
+        var sa = typeof a.sort_order === 'number' ? a.sort_order : (a.idx || 0);
+        var sb = typeof b.sort_order === 'number' ? b.sort_order : (b.idx || 0);
+        return sa !== sb ? sa - sb : (a.idx || 0) - (b.idx || 0);
+      });
+    var oldPos = cycleQs.findIndex(function(q) { return q.idx === qIdx; });
+    if (oldPos < 0 || newPos === oldPos) return;
+    // Normalise sort_order
+    cycleQs.forEach(function(q, i) {
+      if (typeof q.sort_order !== 'number') q.sort_order = i;
+    });
+    // Splice quest out and re-insert at newPos, then reassign sort_order 0..N
+    var moved = cycleQs.splice(oldPos, 1)[0];
+    cycleQs.splice(newPos, 0, moved);
+    cycleQs.forEach(function(q, i) { q.sort_order = i; });
+    // Optimistic re-render
+    renderList();
+    flash('↕ Reordering…');
+    // Persist all affected quests
+    Promise.all(cycleQs.map(function(q) { return saveQuest(q); }))
+      .then(function() { flash('↕ Saved'); })
+      .catch(function(err) {
+        alert('Reorder failed: ' + (err.message || err));
+      });
+  });
+
   el.onclick = function(e) {
     // Toggle collapse
     var toggleEl = e.target.closest('[data-toggle]');
@@ -1362,50 +1400,7 @@ function renderList() {
       renderList();
       return;
     }
-    // ── Quest reorder ▲/▼ ──────────────────────────────────────
-    var moveBtn = e.target.closest('[data-move-quest]');
-    if (moveBtn) {
-      e.stopPropagation();
-      var dir = moveBtn.getAttribute('data-move-quest');
-      var sid = moveBtn.getAttribute('data-setid');
-      var qIdx = parseInt(moveBtn.getAttribute('data-idx'), 10);
-      // Sort by sort_order (same order as display) so neighbor is the visual neighbor
-      var cycleQs = quests
-        .filter(function(q) { return q.setId === sid; })
-        .sort(function(a, b) {
-          var so_a = typeof a.sort_order === 'number' ? a.sort_order : (a.idx || 0);
-          var so_b = typeof b.sort_order === 'number' ? b.sort_order : (b.idx || 0);
-          return so_a !== so_b ? so_a - so_b : (a.idx || 0) - (b.idx || 0);
-        });
-      var pos = cycleQs.findIndex(function(q) { return q.idx === qIdx; });
-      var swapPos = dir === 'up' ? pos - 1 : pos + 1;
-      if (pos < 0 || swapPos < 0 || swapPos >= cycleQs.length) return;
-      var qA = cycleQs[pos];
-      var qB = cycleQs[swapPos];
-      // Normalise sort_order before swapping (in case it was never set)
-      cycleQs.forEach(function(q, i) {
-        if (typeof q.sort_order !== 'number') q.sort_order = i;
-      });
-      // Swap sort_order values in memory
-      var tmpSO = qA.sort_order;
-      qA.sort_order = qB.sort_order;
-      qB.sort_order = tmpSO;
-      // Re-render immediately (optimistic UI)
-      renderList();
-      flash('↕ Reordering…');
-      // Persist both to Supabase
-      Promise.all([saveQuest(qA), saveQuest(qB)])
-        .then(function() { flash('↕ Saved'); })
-        .catch(function(err) {
-          // Revert on failure
-          var rev = qA.sort_order;
-          qA.sort_order = qB.sort_order;
-          qB.sort_order = rev;
-          renderList();
-          alert('Reorder failed: ' + (err.message || err));
-        });
-      return;
-    }
+    // ── Quest reorder: position dropdown change (handled on 'change', not click) ──
 
     // Select cycle settings
     var cycleRow = e.target.closest('[data-sel-cycle]');
@@ -2313,9 +2308,12 @@ function showQuestForm(setId, idx) {
               '<select id="qf-cr-npc-cls" style="'+inp+'">'+
               DND_CLS.map(function(c){var sel=(crType==='npc'&&cr.cls===c)?' selected':'';return '<option value="'+esc(c)+'"'+sel+'>'+esc(c)+'</option>';}).join('')+
               '</select></div>'+
+            '<div><label style="'+lbl+'">Level</label>'+
+              '<input id="qf-cr-npc-level" type="number" min="0" max="20" value="'+(crType==='npc'&&typeof cr.level==='number'?cr.level:1)+'" style="'+inp+'">'+
+              '<div style="font-size:.7em;color:#888;margin-top:2px">Starting level (0 = common)</div></div>'+
             '<div><label style="'+lbl+'">Quest Limit (0 = unlimited)</label>'+
               '<input id="qf-cr-npc-qlimit" type="number" min="0" max="99" value="'+(crType==='npc'&&typeof cr.questsRemaining==='number'?cr.questsRemaining:0)+'" style="'+inp+'">'+
-              '<div style="font-size:.7em;color:#888;margin-top:2px">Quests before the contact departs the franchise</div></div>'+
+              '<div style="font-size:.7em;color:#888;margin-top:2px">Quests before the contact departs</div></div>'+
             '<div style="grid-column:1/-1"><label style="'+lbl+'">Background / Who are they?</label>'+
               '<input id="qf-cr-npc-bg" type="text" value="'+esc(crType==='npc'?cr.contactBg||'':'')+'" placeholder="Former guild treasurer, now freelance…" style="'+inp+'"></div>'+
             '<div><label style="'+lbl+'">Skills (multi)</label>'+
@@ -2459,7 +2457,8 @@ function showQuestForm(setId, idx) {
             var ql=parseInt(document.getElementById('qf-cr-npc-qlimit').value,10);
             return isNaN(ql)||ql<=0?null:ql;
           }()),
-          level: 0, hireling: true, contact: true
+          level: Math.max(0, parseInt(document.getElementById('qf-cr-npc-level').value, 10) || 0),
+          hireling: true, contact: true
         };
       } else {
         q.capstoneReward = null;
