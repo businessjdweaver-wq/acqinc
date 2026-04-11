@@ -3678,6 +3678,10 @@ body.dev-active #app{margin-top:36px;}
   </div>
   <div id="party-stats-panel" style="display:none"></div>
   <div id="continue-downtime-bar" style="display:none;margin-bottom:8px"></div>
+  <div style="position:sticky;top:calc(var(--hdr-h,56px) + 46px);z-index:9;background:var(--parchment);padding:4px 0 2px">
+    <input id="party-search" type="search" placeholder="🔍 Search name, skill, item…" autocomplete="off"
+      style="width:100%;box-sizing:border-box;padding:7px 10px;font-size:.88em;border:1px solid var(--parchment-deep);border-radius:6px;background:var(--parchment);color:var(--ink)">
+  </div>
   <div id="party-tagbar"></div>
   <div id="plist"></div>
 </div>
@@ -3893,7 +3897,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.677
+      Version 1.678
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -3918,6 +3922,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.678</strong> &mdash; (1) Party screen: sticky search box filters by name/skill/tool/lang/inv/weapon. (2) Level-up in quest modal refreshes peg slot cards immediately. (3) Post-purchase: already-placed characters auto-assigned to newly-satisfied prereq slots.</div>
         <div style="margin-bottom:9px"><strong>Version 1.677</strong> &mdash; Purchase button fixes: (1) Char peg slots (item prereqs like Longsword) now show a 🛒 Purchase button when unmet. (2) Purchase button in qcs-info-prereqs moved outside the overflow:hidden span so it is no longer clipped/unclickable.</div>
         <div style="margin-bottom:9px"><strong>Version 1.676</strong> &mdash; Building purchase fix: ownerVal was "__storage__" but handler checked "storage" (no underscores) — buildings fell through all delivery conditions and were silently dropped. Added __storage__ to isStructuredOwner check and delivery path. Buildings now correctly land in partyAssets.</div>
         <div style="margin-bottom:9px"><strong>Version 1.675</strong> &mdash; Store bugs fixed: (1) Search wrong item — Buy button now uses data-name instead of data-i; purchase confirmation resolves by name across all arrays, safe against filtered results. (2) qcs-store-link button style cleaned up (removed row-layout artifacts).</div>
@@ -8612,6 +8617,7 @@ function renderParty(){
   _healDowntimeBadges();
   if(typeof partyStatsOpen!=='undefined'&&partyStatsOpen)renderPartyStats();
   var el=document.getElementById('plist');
+  var _partySearchQ=((document.getElementById('party-search')||{}).value||'').trim().toLowerCase();
   if(!S.party.length){el.innerHTML='<div class="empty">No adventurers. Visit the Recruitment Office!</div>';return;}
   // Build Continue Downtime bar — chars with progress but no active job
   (function(){
@@ -8809,6 +8815,12 @@ function renderParty(){
   var tagBarEl=document.getElementById('party-tagbar');
   if(tagBarEl)tagBarEl.innerHTML=tagBar;
   var html=squadInventoryHtml+(ordered.length?ordered.map(function(x){
+    if(_partySearchQ){
+      var _h=[x.c.name,x.c.cls,x.c.species,x.c.bg,x.c.rel]
+        .concat(x.c.skills||[]).concat(x.c.tools||[]).concat(x.c.lang||[])
+        .concat(x.c.inv||[]).concat(x.c.weapons||[]).join(' ').toLowerCase();
+      if(_h.indexOf(_partySearchQ)===-1)return '';
+    }
     var questing=questingChars[x.ci]||false;
     var onDowntime=downtimeChars[x.ci]||false;
     return charCardHtml(x.c,x.ci,{questing:questing,onDowntime:onDowntime});
@@ -8962,6 +8974,12 @@ function renderParty(){
   }
 
   setTimeout(devStampUids,50);}
+
+// Party search box
+(function(){
+  var _ps=document.getElementById('party-search');
+  if(_ps)_ps.addEventListener('input',function(){renderParty();});
+}());
 
 // Delegate tagbar clicks (sqmgr, sqnew, sqedit, ptag) — same logic as plist
 document.getElementById('party-tagbar').addEventListener('click',function(e){
@@ -9369,7 +9387,8 @@ document.getElementById('ov-lv-yes').addEventListener('click',function(){
           return renderQuestAssignmentRow({ci:ci,c:c,isBusy:isBusy,chk:' '+chk,hl:hl,cl:'',pr:_pr,questLike:_q,isGrind:false});
         }).join('');
         questModalShowTab('adventurers');
-        // Refresh prereq check and Begin button state after level-up
+        // Refresh peg slots and prereq check after level-up
+        if(qddQuestLike)qddRender(qddQuestLike,qddIsGrind);
         updateQuestModal();
       }
     }
@@ -14045,6 +14064,25 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
   if(_reopen&&qddQuestLike){
     // Refresh the quest modal info card to reflect the new purchase
     qddRender(qddQuestLike,qddIsGrind);
+    // Auto-assign already-placed characters to newly-satisfied prereq slots
+    (function(){
+      var _slots=qddBuildCharSlots(qddQuestLike,qddIsGrind);
+      var _assigned=Object.keys(qddSlotAssignments)
+        .map(function(k){return qddSlotAssignments[k];})
+        .filter(function(ci){return ci!==null&&ci!==undefined;});
+      _slots.forEach(function(slot){
+        if(slot.nonChar)return; // nonChar slots are auto-satisfied
+        if(qddSlotAssignments[slot.key]!==null&&qddSlotAssignments[slot.key]!==undefined)return; // already filled
+        // Find an already-assigned character who covers this slot
+        var _match=_assigned.filter(function(ci){
+          return qddCharCoversSlot(S.party[ci],slot,Object.values(qddSlotAssignments).filter(function(k){return k!==ci;}));
+        })[0];
+        if(_match!==undefined){
+          qddSlotAssignments[slot.key]=_match;
+        }
+      });
+      qddRender(qddQuestLike,qddIsGrind);
+    }());
     updateQuestModal();
     openOv('ov-quest');
   }
