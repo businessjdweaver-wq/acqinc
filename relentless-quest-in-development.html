@@ -3897,7 +3897,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.679
+      Version 1.680
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -3922,6 +3922,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.680</strong> &mdash; Dev mode cycle completion: (1) Jump to Cycle 2 now marks all quests of the outgoing cycle complete in both questCycles archive and setProgress, so isSetCompleted() correctly unlocks dependent cycles. (2) +1 Day also pushes quest idx into done[] and repeatCounts so jump picks them up correctly.</div>
         <div style="margin-bottom:9px"><strong>Version 1.679</strong> &mdash; Capstone reward dashboard cards: (1) awardCapstonReward now calls _autoCreateDashCard when an override reward is granted. (2) getDashboardCards auto-generates missing dc_cap_ cards for any already-completed capstone quests that lack a card.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6781</strong> &mdash; Fix: grind enc-card data-qi injection used q.idx/q.setId but the grind loop variable is g — causing ReferenceError on renderAdv.</div>
         <div style="margin-bottom:9px"><strong>Version 1.678</strong> &mdash; (1) Party screen: sticky search box filters by name/skill/tool/lang/inv/weapon. (2) Level-up in quest modal refreshes peg slot cards immediately. (3) Post-purchase: already-placed characters auto-assigned to newly-satisfied prereq slots.</div>
@@ -12003,9 +12004,15 @@ document.getElementById('dev-bar-qp').addEventListener('click',function(){
 });
 document.getElementById('dev-bar-advance-day').addEventListener('click',function(){
   var now=Date.now();
-  // Complete quests in the active cycle
+  // Complete quests in the active cycle — mark done too so jump-cycle2 sees them
   if(S.questState&&S.questState.pending){
-    S.questState.pending.forEach(function(pq){pq.doneAt=now-1;});
+    S.questState.pending.forEach(function(pq){
+      pq.doneAt=now-1;
+      if(!S.questState.done)S.questState.done=[];
+      if(S.questState.done.indexOf(pq.idx)===-1)S.questState.done.push(pq.idx);
+      if(!S.questState.repeatCounts)S.questState.repeatCounts={};
+      S.questState.repeatCounts[pq.idx]=(S.questState.repeatCounts[pq.idx]||0)+1;
+    });
   }
   if(S.questState&&S.questState.grindPending){
     S.questState.grindPending.forEach(function(gp){gp.doneAt=now-1;});
@@ -14284,11 +14291,25 @@ document.getElementById('btn-ff-quests').addEventListener('click',function(){
 document.getElementById('btn-jump-cycle2').addEventListener('click',function(){
   if(!isDevModeActive()){alert('Developer mode only. Enable it in Settings.');return;}
   if(!confirm('Jump to Quest Cycle 2 (Rising Reputation)?\n\nCurrent quest progress will be archived and reset.'))return;
-  // Archive current cycle
+  // Archive current cycle — mark ALL quests complete so isSetCompleted() works
   var old=S.questState;
   if(old){
+    var _oldSet=(QUESTSETS||[]).filter(function(s){return s.id===old.setId;})[0];
+    var _allIdx=_oldSet?((_oldSet.quests||[]).map(function(q){return q.idx;})):old.done;
+    // Ensure all quests counted as done in the archive
+    var _mergedDone=_allIdx.slice();
+    (old.done||[]).forEach(function(i){if(_mergedDone.indexOf(i)===-1)_mergedDone.push(i);});
     if(!S.questCycles)S.questCycles=[];
-    S.questCycles.push({cycleId:old.cycleId,setId:old.setId,completed:old.done,missed:[]});
+    S.questCycles.push({cycleId:old.cycleId,setId:old.setId,completed:_mergedDone,missed:[]});
+    // Also write a setProgress entry so isSetCompleted() finds it via that path
+    if(!S.questState.setProgress)S.questState.setProgress={};
+    var _rc={};
+    _mergedDone.forEach(function(i){_rc[i]=1;});
+    S.questState.setProgress[old.setId]={
+      done:_mergedDone,
+      repeatCounts:_rc,
+      pending:[],revealed:_mergedDone
+    };
   }
   // Force cycle 2
   var set2=QUESTSETS.filter(function(s){return s.id==='rising-reputation';})[0]||QUESTSETS[1];
