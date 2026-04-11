@@ -3897,7 +3897,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6781
+      Version 1.679
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -3922,6 +3922,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.679</strong> &mdash; Capstone reward dashboard cards: (1) awardCapstonReward now calls _autoCreateDashCard when an override reward is granted. (2) getDashboardCards auto-generates missing dc_cap_ cards for any already-completed capstone quests that lack a card.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6781</strong> &mdash; Fix: grind enc-card data-qi injection used q.idx/q.setId but the grind loop variable is g — causing ReferenceError on renderAdv.</div>
         <div style="margin-bottom:9px"><strong>Version 1.678</strong> &mdash; (1) Party screen: sticky search box filters by name/skill/tool/lang/inv/weapon. (2) Level-up in quest modal refreshes peg slot cards immediately. (3) Post-purchase: already-placed characters auto-assigned to newly-satisfied prereq slots.</div>
         <div style="margin-bottom:9px"><strong>Version 1.677</strong> &mdash; Purchase button fixes: (1) Char peg slots (item prereqs like Longsword) now show a 🛒 Purchase button when unmet. (2) Purchase button in qcs-info-prereqs moved outside the overflow:hidden span so it is no longer clipped/unclickable.</div>
@@ -11822,6 +11823,13 @@ function awardCapstonReward(set){
       msg='🤝 New Contact: '+npc.name+'\n'+(npc.contactBg||'')+(npc.exoticTrait?'\nNote: '+npc.exoticTrait:'');
     } else {
       override=null; // unknown type — fall through to random
+    }
+    // Auto-create dashboard card for this capstone reward
+    if(override&&capQ){
+      try{
+        var _scope=currentContentScope?currentContentScope():'private';
+        _autoCreateDashCard(capQ,_scope);
+      }catch(e){console.warn('dashCard auto-create (award):',e);}
     }
   }
 
@@ -20944,6 +20952,21 @@ function _capstoneCardEarned(card){
 }
 
 function getDashboardCards(){
+  // Auto-generate missing capstone cards for completed quests
+  (QUESTSETS||[]).forEach(function(set){
+    (set.quests||[]).forEach(function(q){
+      if(!q.capstone||!q.capstoneReward||q.capstoneReward.type==='random')return;
+      var cardId='dc_cap_'+q.setId+'_'+q.idx;
+      // Only if earned and not already in any bucket
+      var alreadyExists=['official','shared','private'].some(function(sc){
+        var bk=contentBucket(sc);
+        return (bk.dashCards||[]).some(function(c){return c&&c.id===cardId;});
+      });
+      if(!alreadyExists&&_capstoneCardEarned({id:cardId,_fromCapstone:true})){
+        try{_autoCreateDashCard(q,currentContentScope?currentContentScope():'private');}catch(e){}
+      }
+    });
+  });
   var seen={};var cards=[];
   ['official','shared','private'].forEach(function(scope){
     var bucket=contentBucket(scope);
