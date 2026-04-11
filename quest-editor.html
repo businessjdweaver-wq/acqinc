@@ -2078,28 +2078,33 @@ function showCycleForm(setId) {
       }
       if (!cqs.length) return '';
       // Store for save handler
-      window._cfCycleQuests = cqs;
-      var rows = cqs.map(function(q, i) {
-        var posOpts = cqs.map(function(_, pi) {
-          return '<option value="' + pi + '"' + (pi === i ? ' selected' : '') + '>' + (pi + 1) + '</option>';
+      window._cfCycleQuests = cqs.slice(); // live order state
+      function _cfRenderOrderList() {
+        var _list = document.getElementById('cf-order-list');
+        if (!_list) return;
+        var _cqs = window._cfCycleQuests;
+        var btnBase = 'border:1px solid #d4b87a;border-radius:4px;background:#fffde8;'
+          + 'color:#8b6914;font-size:.75em;padding:1px 7px;cursor:pointer;line-height:1.6;';
+        _list.innerHTML = _cqs.map(function(q, i) {
+          var isFirst = i === 0, isLast = i === _cqs.length - 1;
+          var badge = q.capstone
+            ? '<span style="font-size:.62em;background:rgba(201,146,42,.2);color:#8b6914;padding:0 4px;border-radius:3px;border:1px solid rgba(201,146,42,.4)">capstone</span>' : '';
+          var custom = (q._custom || q._editable)
+            ? '<span style="font-size:.62em;background:rgba(139,26,26,.1);color:#8b1a1a;padding:0 4px;border-radius:3px;border:1px solid rgba(139,26,26,.3)">custom</span>' : '';
+          return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid rgba(201,146,42,.12)">' +
+            '<span style="font-family:\'Cinzel\',serif;font-size:.68em;color:#a08030;min-width:20px;text-align:right">' + (i + 1) + '.</span>' +
+            '<span style="flex:1;font-size:.84em;display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+              esc(q.title || '(untitled)') + badge + custom +
+            '</span>' +
+            '<button type="button" data-cf-move="up" data-cf-qi="' + i + '" style="' + btnBase + 'opacity:' + (isFirst ? '.25' : '1') + ';pointer-events:' + (isFirst ? 'none' : 'auto') + '">▲</button>' +
+            '<button type="button" data-cf-move="down" data-cf-qi="' + i + '" style="' + btnBase + 'opacity:' + (isLast ? '.25' : '1') + ';pointer-events:' + (isLast ? 'none' : 'auto') + '">▼</button>' +
+          '</div>';
         }).join('');
-        var badge = q.capstone ? ' <span style="font-size:.62em;background:rgba(201,146,42,.2);color:#8b6914;padding:0 4px;border-radius:3px;border:1px solid rgba(201,146,42,.4)">capstone</span>' : '';
-        var custom = (q._custom || q._editable) ? ' <span style="font-size:.62em;background:rgba(139,26,26,.1);color:#8b1a1a;padding:0 4px;border-radius:3px;border:1px solid rgba(139,26,26,.3)">custom</span>' : '';
-        return '<div style="display:contents">' +
-          '<div style="display:flex;align-items:center">'+
-            '<select data-cf-pos data-qi="' + i + '" style="width:52px;padding:3px 4px;font-size:.82em;border:1px solid #d4b87a;border-radius:4px;background:#fffde8;margin-right:6px">' + posOpts + '</select>' +
-          '</div>' +
-          '<div style="font-size:.84em;padding:4px 0;display:flex;align-items:center;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
-            esc(q.title || '(untitled)') + badge + custom +
-          '</div>' +
-        '</div>';
-      }).join('');
+      }
       return '<div class="fsec">' +
         '<div class="fsec-title">Quest Sequence Order</div>' +
-        '<div style="font-size:.74em;color:var(--ink2);margin-bottom:8px">Set the position of each quest. Changes save with the cycle.</div>' +
-        '<div style="display:grid;grid-template-columns:60px 1fr;gap:4px 8px;align-items:center">' +
-        rows +
-        '</div>' +
+        '<div style="font-size:.74em;color:var(--ink2);margin-bottom:8px">Reorder with ▲/▼ — changes apply when you press Save Cycle.</div>' +
+        '<div id="cf-order-list"></div>' +
       '</div>';
     }()) +
 
@@ -2108,6 +2113,25 @@ function showCycleForm(setId) {
     '<button class="btn btn-del" id="cf-del">🗑 Delete Cycle</button>' +
     '<span id="save-flash"></span>' +
     '</div>';
+
+  // Render order list (must happen after innerHTML is set)
+  if (typeof _cfRenderOrderList === 'function') _cfRenderOrderList();
+
+  // ▲/▼ move buttons — reorder in memory, re-render list immediately
+  document.getElementById('form-inner').addEventListener('click', function _cfMoveHandler(e) {
+    var btn = e.target.closest('[data-cf-move]');
+    if (!btn) return;
+    e.stopPropagation();
+    var dir = btn.getAttribute('data-cf-move');
+    var qi = parseInt(btn.getAttribute('data-cf-qi'), 10);
+    var _cqs = window._cfCycleQuests;
+    var swapIdx = dir === 'up' ? qi - 1 : qi + 1;
+    if (swapIdx < 0 || swapIdx >= _cqs.length) return;
+    var tmp = _cqs[qi];
+    _cqs[qi] = _cqs[swapIdx];
+    _cqs[swapIdx] = tmp;
+    _cfRenderOrderList();
+  });
 
   document.getElementById('cf-save').onclick = function() {
     var name = (document.getElementById('cf-name').value || '').trim();
@@ -2149,19 +2173,10 @@ function showCycleForm(setId) {
     if (avgLevel) gate.minAvgSquadLevel = avgLevel;
 
     cycle.cycleGate = gate;
-    // Build questOrder from position dropdowns
+    // Read current order from _cfCycleQuests (updated in memory by ▲/▼)
     var _cqs = window._cfCycleQuests || [];
     if (_cqs.length) {
-      var _dds = document.querySelectorAll('[data-cf-pos]');
-      var _pairs = [];
-      _dds.forEach(function(dd) {
-        var qi = parseInt(dd.getAttribute('data-qi'), 10);
-        var newPos = parseInt(dd.value, 10);
-        _pairs.push({ q: _cqs[qi], newPos: newPos });
-      });
-      _pairs.sort(function(a, b) { return a.newPos - b.newPos; });
-      // Store questOrder as array of idx values in display order
-      cycle.questOrder = _pairs.map(function(p) { return p.q.idx; });
+      cycle.questOrder = _cqs.map(function(q) { return q.idx; });
     }
     // Save only the cycle — questOrder is in its data blob, no quest rows needed
     saveCycle(cycle).then(function() {
