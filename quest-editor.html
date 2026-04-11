@@ -2233,11 +2233,70 @@ function showQuestForm(setId, idx) {
     '<span class="chk-label">This is the cycle\'s capstone (final) quest</span></label>' +
     '</div></div>' +
 
+    // ── Capstone Reward Override ──
+    (function() {
+      var cr = q.capstoneReward || {};
+      var crType = cr.type || 'random';
+      var lbl = 'font-family:\'Cinzel\',serif;font-size:.68em;color:#8b6914;text-transform:uppercase;letter-spacing:.03em;display:block;margin-bottom:3px';
+      var inp = 'width:100%;padding:6px 9px;font-size:.88em;border:1px solid #d4b87a;border-radius:4px;background:#fffde8;box-sizing:border-box';
+      var sel = inp;
+      var itemD = crType === 'item' ? '' : 'display:none';
+      var petD  = crType === 'pet'  ? '' : 'display:none';
+      return '<div style="margin-top:14px;border:1px solid rgba(201,146,42,.35);border-radius:8px;padding:14px;background:rgba(201,146,42,.04)">'+
+        '<div style="font-family:\'Cinzel\',serif;font-size:.72em;color:#8b6914;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px">⭐ Capstone Reward</div>'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+'">Reward Type</label>'+
+        '<select id="qf-cr-type" style="'+inp+'">'+
+          '<option value="random"'+(crType==='random'?' selected':'')+'>🎲 Random (default pool)</option>'+
+          '<option value="item"'+(crType==='item'?' selected':'')+'>✨ Specific Item / Artifact</option>'+
+          '<option value="pet"'+(crType==='pet'?' selected':'')+'>🐾 Specific Pet</option>'+
+        '</select></div>'+
+        // Item panel
+        '<div id="qf-cr-item-panel" style="'+itemD+'">'+
+          '<div style="display:grid;grid-template-columns:70px 1fr;gap:8px;margin-bottom:8px">'+
+            '<div><label style="'+lbl+'">Icon</label>'+
+              '<input id="qf-cr-item-ic" type="text" value="'+esc(crType==='item'?cr.ic||'✨':'')+'" style="width:100%;padding:6px;font-size:1.2em;border:1px solid #d4b87a;border-radius:4px;background:#fffde8;text-align:center;box-sizing:border-box"></div>'+
+            '<div><label style="'+lbl+'">Item Name</label>'+
+              '<input id="qf-cr-item-name" type="text" value="'+esc(crType==='item'?cr.name||'':'')+'" placeholder="e.g. Amulet of the Drowned Temple" style="'+inp+'"></div>'+
+          '</div>'+
+          '<div><label style="'+lbl+'">Description</label>'+
+            '<textarea id="qf-cr-item-desc" rows="2" placeholder="What is this item?" style="'+inp+';resize:vertical">'+esc(crType==='item'?cr.desc||'':'')+'</textarea></div>'+
+          '<div style="margin-top:6px"><label class="chk-row"><input type="checkbox" id="qf-cr-item-bag"'+(crType==='item'&&cr.bagOfHolding?' checked':'')+'>'+
+            '<span class="chk-label">Is a Bag of Holding (counts for squad enrollment)</span></label></div>'+
+        '</div>'+
+        // Pet panel
+        '<div id="qf-cr-pet-panel" style="'+petD+'">'+
+          '<div style="display:grid;grid-template-columns:70px 1fr;gap:8px;margin-bottom:8px">'+
+            '<div><label style="'+lbl+'">Icon</label>'+
+              '<input id="qf-cr-pet-ic" type="text" value="'+esc(crType==='pet'?cr.ic||'🐾':'')+'" style="width:100%;padding:6px;font-size:1.2em;border:1px solid #d4b87a;border-radius:4px;background:#fffde8;text-align:center;box-sizing:border-box"></div>'+
+            '<div><label style="'+lbl+'">Pet Name</label>'+
+              '<input id="qf-cr-pet-name" type="text" value="'+esc(crType==='pet'?cr.name||'':'')+'" placeholder="e.g. Saltclaw the Crab" style="'+inp+'"></div>'+
+          '</div>'+
+          '<div><label style="'+lbl+'">Description</label>'+
+            '<textarea id="qf-cr-pet-desc" rows="2" placeholder="Describe the pet…" style="'+inp+';resize:vertical">'+esc(crType==='pet'?cr.desc||'':'')+'</textarea></div>'+
+        '</div>'+
+      '</div>';
+    }()) +
+
     '<div id="action-row">' +
     '<button class="btn btn-save" id="qf-save">💾 Save Quest</button>' +
     '<button class="btn btn-del" id="qf-del">🗑 Delete Quest</button>' +
     '<span id="save-flash"></span>' +
     '</div>';
+
+  // Capstone reward type panel switcher
+  (function() {
+    var crType = document.getElementById('qf-cr-type');
+    function updateCrPanel() {
+      if (!crType) return;
+      var v = crType.value;
+      ['item', 'pet'].forEach(function(k) {
+        var p = document.getElementById('qf-cr-' + k + '-panel');
+        if (p) p.style.display = (v === k ? '' : 'none');
+      });
+    }
+    if (crType) crType.addEventListener('change', updateCrPanel);
+    updateCrPanel();
+  }());
 
   document.getElementById('qf-save').onclick = function() {
     var title = (document.getElementById('qf-title').value || '').trim();
@@ -2251,6 +2310,34 @@ function showQuestForm(setId, idx) {
     q.terrain     = document.getElementById('qf-terrain').value || 'none';
     q.squadReqMin = Math.max(0, parseInt(document.getElementById('qf-squad').value) || 0);
     q.capstone    = document.getElementById('qf-capstone').checked;
+    // Capstone reward
+    (function() {
+      var crT = document.getElementById('qf-cr-type');
+      if (!crT || crT.value === 'random') { q.capstoneReward = null; return; }
+      var t = crT.value;
+      if (t === 'item') {
+        var n = (document.getElementById('qf-cr-item-name').value || '').trim();
+        if (!n) { q.capstoneReward = null; return; }
+        q.capstoneReward = {
+          type: 'item',
+          name: n,
+          ic: (document.getElementById('qf-cr-item-ic').value || '✨').trim(),
+          desc: (document.getElementById('qf-cr-item-desc').value || '').trim(),
+          bagOfHolding: document.getElementById('qf-cr-item-bag').checked || false
+        };
+      } else if (t === 'pet') {
+        var n = (document.getElementById('qf-cr-pet-name').value || '').trim();
+        if (!n) { q.capstoneReward = null; return; }
+        q.capstoneReward = {
+          type: 'pet',
+          name: n,
+          ic: (document.getElementById('qf-cr-pet-ic').value || '🐾').trim(),
+          desc: (document.getElementById('qf-cr-pet-desc').value || '').trim()
+        };
+      } else {
+        q.capstoneReward = null;
+      }
+    }());
     q.published   = document.getElementById('pub-chk').checked;
     var _relVals = selValues('qf-rel');
     var _gearItems = selValues('qf-items');
