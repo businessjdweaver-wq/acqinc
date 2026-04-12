@@ -898,8 +898,75 @@ body {
   .motivation-grid { grid-template-columns: repeat(2, 1fr); }
   .header-meta { grid-template-columns: repeat(2, auto); }
 }
+/* ── FLOATING MONSTER IMPORT BAR ── */
+.import-bar {
+  display: none;
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 500;
+  background: linear-gradient(135deg, #0e1a0e 0%, #1a3018 100%);
+  border: 1px solid #2d6a2d;
+  border-radius: 8px;
+  padding: 12px 18px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.5), 0 0 0 1px rgba(106,191,106,0.15);
+  align-items: center;
+  gap: 14px;
+  min-width: 400px;
+  animation: slideUpBar 0.2s ease;
+}
+.import-bar.visible { display: flex; }
+@keyframes slideUpBar {
+  from { opacity:0; transform: translateX(-50%) translateY(12px); }
+  to   { opacity:1; transform: translateX(-50%) translateY(0); }
+}
+.import-bar-text {
+  flex: 1;
+  font-family: 'Cinzel', serif;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: #6abf6a;
+  letter-spacing: 0.06em;
+}
+.import-bar-sub {
+  font-family: 'Crimson Pro', serif;
+  font-size: 0.7rem;
+  color: rgba(106,191,106,0.65);
+  font-weight: 400;
+  font-style: italic;
+  display: block;
+  margin-top: 2px;
+}
+.btn-import {
+  font-family: 'Cinzel', serif;
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 7px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid #2d6a2d;
+  background: linear-gradient(135deg, #1a4a1a 0%, #0e2e0e 100%);
+  color: #6abf6a;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.btn-import:hover { background: linear-gradient(135deg, #2d6a2d 0%, #1a4a1a 100%); border-color: #6abf6a; }
+.btn-import-dismiss {
+  background: none; border: none; cursor: pointer;
+  color: rgba(106,191,106,0.4); font-size: 1.1rem; padding: 0 2px;
+  line-height: 1; transition: color 0.12s;
+}
+.btn-import-dismiss:hover { color: #c94040; }
+/* Encounter blocks show a subtle target ring when import bar is visible */
+.import-bar.visible ~ #blockContainer .block.encounter {
+  outline: 1px dashed rgba(106,191,106,0.25);
+  outline-offset: 2px;
+}
+
 </style>
-</head>
 <body>
 
 <!-- TOP BAR -->
@@ -908,7 +975,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner</span>
   <span class="topbar-sep">›</span>
-  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.1.4</span>
+  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.1.5</span>
   <div class="topbar-actions">
     <div class="b20-status b20-inactive" id="b20Indicator" title="Beyond20 not detected">
       <div class="b20-dot"></div>
@@ -1245,10 +1312,10 @@ body {
         <div class="section-head-line"></div>
         <button class="btn btn-ghost btn-sm">🔍 Search</button>
         <button class="btn btn-ghost btn-sm" style="margin-left:4px">📖 Browse</button>
-        <button class="btn btn-ghost btn-sm" id="importQueuedBtn"
+        <button class="btn btn-ghost btn-sm import-here-btn"
           onclick="importQueuedMonsters('block-enc-1')"
-          style="margin-left:4px;border-color:rgba(106,191,106,0.5);color:#6abf6a;display:none">
-          ⬇ Import Queued (<span id="queuedCount">0</span>)
+          style="margin-left:4px;border-color:rgba(106,191,106,0.4);color:#6abf6a;display:none;">
+          ⬇ Add Here
         </button>
         <a href="monster-workshop.html" target="_blank" class="btn btn-ghost btn-sm"
            style="margin-left:4px;text-decoration:none;font-size:0.55rem;">🐉 Workshop</a>
@@ -1783,6 +1850,19 @@ body {
   </div><!-- /reward -->
 
 </div><!-- /main -->
+
+<!-- FLOATING MONSTER IMPORT BAR -->
+<div class="import-bar" id="monsterImportBar">
+  <span style="font-size:1.1rem;">⚔️</span>
+  <div class="import-bar-text">
+    <span id="importBarCount">0</span> monster<span id="importBarPlural">s</span> queued from Workshop
+    <span class="import-bar-sub">Click an Encounter block below, then click "Add Here"</span>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <button class="btn-import" onclick="importToFirstEncounter()">Add to First Encounter</button>
+    <button class="btn-import-dismiss" onclick="dismissImportBar()" title="Dismiss">✕</button>
+  </div>
+</div>
 
 <!-- NOTES PANEL -->
 <div class="notes-overlay" id="notesOverlay" onclick="closeNotesOnOverlay(event)">
@@ -2326,61 +2406,105 @@ function rollRandomEventTable(btn) {
 
 // ── MONSTER WORKSHOP QUEUE ──
 
-// Poll sessionStorage every 2s for pending monsters from the Workshop
 function checkMonsterQueue() {
   const raw = sessionStorage.getItem('rq_pending_monsters');
-  const btn = document.getElementById('importQueuedBtn');
-  const countEl = document.getElementById('queuedCount');
-  if (!btn) return;
+  const bar = document.getElementById('monsterImportBar');
+  if (!bar) return;
+
   if (raw) {
     try {
       const queue = JSON.parse(raw);
       if (queue.length > 0) {
-        btn.style.display = 'inline-block';
+        bar.classList.add('visible');
+        const countEl = document.getElementById('importBarCount');
+        const pluralEl = document.getElementById('importBarPlural');
         if (countEl) countEl.textContent = queue.length;
+        if (pluralEl) pluralEl.textContent = queue.length === 1 ? '' : 's';
+        // Show "Add Here" button on all encounter blocks
+        document.querySelectorAll('.import-here-btn').forEach(b => b.style.display = 'inline-block');
         return;
       }
     } catch(e) {}
   }
-  btn.style.display = 'none';
-  if (countEl) countEl.textContent = '0';
+  // Nothing queued
+  bar.classList.remove('visible');
+  document.querySelectorAll('.import-here-btn').forEach(b => b.style.display = 'none');
 }
+
+// Poll every 1.5s
 setInterval(checkMonsterQueue, 1500);
+// Also check immediately on load
+window.addEventListener('load', checkMonsterQueue);
+window.addEventListener('focus', checkMonsterQueue);
+
+function dismissImportBar() {
+  sessionStorage.removeItem('rq_pending_monsters');
+  checkMonsterQueue();
+}
+
+function importToFirstEncounter() {
+  // Find the first open encounter block
+  const first = document.querySelector('.block.encounter');
+  if (!first) {
+    showToastSP('No encounter block found — add one first', true);
+    return;
+  }
+  if (!first.classList.contains('open')) first.classList.add('open');
+  importQueuedMonsters(first.id);
+}
 
 function importQueuedMonsters(blockId) {
   const raw = sessionStorage.getItem('rq_pending_monsters');
-  if (!raw) { alert('No monsters queued — go to Monster Workshop and click "Send to Session Planner"'); return; }
+  if (!raw) {
+    showToastSP('No monsters queued — go to Monster Workshop, select monsters, and click "Send to Session Planner"');
+    return;
+  }
 
   let queue;
   try { queue = JSON.parse(raw); } catch(e) { return; }
   if (!queue.length) return;
 
-  // Find the monster-list container for this encounter block
+  // Find the monster-list container
   const block = document.getElementById(blockId);
-  const list = block ? block.querySelector('.monster-list') : null;
-  if (!list) return;
+  if (!block) { showToastSP('Encounter block not found', true); return; }
+
+  // Make sure block is open
+  if (!block.classList.contains('open')) block.classList.add('open');
+
+  let list = block.querySelector('.monster-list');
+  if (!list) {
+    // Create one if encounter block was dynamically added without one
+    const body = block.querySelector('.block-body');
+    if (body) {
+      list = document.createElement('div');
+      list.className = 'monster-list';
+      body.appendChild(list);
+    } else { return; }
+  }
 
   queue.forEach(m => {
-    // Build monster card HTML
     const name = m.name || 'Unknown';
     const cr   = m.cr   || '?';
-    const hp   = m.hp   || '?';
-    const ac   = m.ac   || '?';
+    const hp   = String(m.hp  || '?');
+    const ac   = String(m.ac  || '?');
 
-    // Build Beyond20 roll buttons for each action with a to-hit
+    // Build Beyond20 roll buttons from actions
     const rollBtns = (m.actions || [])
       .filter(a => a.toHit || a.to_hit)
       .map(a => {
-        const toHit    = parseFloat((a.toHit || a.to_hit || '0').toString().replace('+','')) || 0;
-        const damages  = a.damage ? [a.damage] : ['1d6'];
+        const toHitRaw = String(a.toHit || a.to_hit || '0');
+        const toHit    = parseFloat(toHitRaw.replace('+','')) || 0;
+        const damages  = a.damage  ? [a.damage]  : ['1d6'];
         const dmgTypes = a.dmgType ? [a.dmgType] : ['damage'];
-        const critDmg  = a.extra ? [a.extra] : damages;
+        const critDmg  = a.extra   ? [a.extra]   : damages;
         const critType = a.extraType ? [a.extraType] : dmgTypes;
         const atkType  = (a.reach || '').toLowerCase().includes('ranged') ? 'Ranged' : 'Melee';
         const reach    = a.reach || '5 ft.';
-        const safeN    = name.replace(/'/g,"\\'");
+        const safeN    = name.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+        const safeAn   = (a.name||'Attack').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+        const label    = a.name + (toHitRaw.startsWith('+') || toHitRaw.startsWith('-') ? ' ' + toHitRaw : '');
         return `<button class="btn btn-roll b20-btn"
-          onclick="rollMonsterAttack('${safeN}','Monster','${cr}','${ac}','${hp}',{name:'${a.name.replace(/'/g,"\\'")}',toHit:${toHit},damages:${JSON.stringify(damages)},damageTypes:${JSON.stringify(dmgTypes)},critDamages:${JSON.stringify(critDmg)},critDamageTypes:${JSON.stringify(critType)},attackType:'${atkType}',reach:'${reach}'})">🎲 ${a.name}${a.toHit ? ' '+a.toHit : ''}</button>`;
+          onclick="rollMonsterAttack('${safeN}','Monster','${cr}','${ac}','${hp}',{name:'${safeAn}',toHit:${toHit},damages:${JSON.stringify(damages)},damageTypes:${JSON.stringify(dmgTypes)},critDamages:${JSON.stringify(critDmg)},critDamageTypes:${JSON.stringify(critType)},attackType:'${atkType}',reach:'${reach}'})">🎲 ${label}</button>`;
       }).join('');
 
     const card = document.createElement('div');
@@ -2397,36 +2521,43 @@ function importQueuedMonsters(blockId) {
         <button class="icon-btn" onclick="this.closest('.monster-card').remove()" title="Remove">✕</button>
       </div>
       <div class="monster-actions">
-        ${rollBtns || '<span class="small-note">No attack actions</span>'}
-        <button class="btn btn-ghost btn-sm" title="Stat Block">📋 Stat Block</button>
+        ${rollBtns || '<span class="small-note">No attack actions — roll buttons auto-populate from actions</span>'}
+        <button class="btn btn-ghost btn-sm">📋 Stat Block</button>
       </div>`;
     list.appendChild(card);
 
-    // If B20 is active, show the roll buttons
+    // Apply b20 visibility if already active
     if (beyond20Loaded) {
       card.querySelectorAll('.b20-btn').forEach(b => b.style.display = 'inline-flex');
     }
   });
 
-  // Clear the queue
+  // Clear queue and update UI
   sessionStorage.removeItem('rq_pending_monsters');
   checkMonsterQueue();
+  showToastSP('✓ ' + queue.length + ' monster' + (queue.length !== 1 ? 's' : '') + ' added to encounter — scroll up to see them');
 
-  const btn = document.getElementById('importQueuedBtn');
-  if (btn) btn.style.display = 'none';
-
-  showToastSP('✓ ' + queue.length + ' monster' + (queue.length !== 1 ? 's' : '') + ' added to encounter');
+  // Scroll the new cards into view
+  requestAnimationFrame(() => {
+    list.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
 }
 
-function showToastSP(msg) {
-  // Reuse existing run-mode-hint briefly as a toast, or create a simple one
+function showToastSP(msg, isError) {
   const t = document.createElement('div');
   t.textContent = msg;
-  t.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#1a3018;border:1px solid #2d6a2d;' +
-    'color:#6abf6a;font-family:\'JetBrains Mono\',monospace;font-size:0.65rem;padding:10px 16px;' +
-    'border-radius:5px;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,0.4);';
+  t.style.cssText = [
+    'position:fixed', 'bottom:80px', 'right:20px',
+    'background:' + (isError ? '#2a1010' : '#1a3018'),
+    'border:1px solid ' + (isError ? '#6a2d2d' : '#2d6a2d'),
+    'color:' + (isError ? '#bf6a6a' : '#6abf6a'),
+    "font-family:'JetBrains Mono',monospace", 'font-size:0.65rem',
+    'padding:10px 16px', 'border-radius:5px', 'z-index:999',
+    'box-shadow:0 4px 12px rgba(0,0,0,0.4)', 'max-width:320px',
+    'line-height:1.4'
+  ].join(';');
   document.body.appendChild(t);
-  setTimeout(() => t.remove(), 3000);
+  setTimeout(() => t.remove(), 3500);
 }
 
 // ── INIT ──
