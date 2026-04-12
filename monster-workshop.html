@@ -1001,6 +1001,10 @@ body {
   transition: width 0.2s;
   width: 0%;
 }
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
 </style>
 </head>
 <body>
@@ -1011,7 +1015,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.2.1</span>
+  <span class="topbar-version">v0.2.3</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -1032,7 +1036,7 @@ body {
       <div class="browser-tabs">
         <button class="browser-tab active-srd" onclick="setTab('srd',this)">D&amp;D SRD</button>
         <button class="browser-tab" onclick="setTab('ds',this)">Draw Steel</button>
-        <button class="browser-tab" onclick="setTab('custom',this)">My Monsters</button>
+        <button class="browser-tab" onclick="setTab('custom',this); loadCustomMonsters();">My Monsters</button>
       </div>
       <div class="search-box">
         <input class="search-input" type="text" id="searchInput" placeholder="Search monsters…" oninput="filterMonsters()">
@@ -1040,11 +1044,18 @@ body {
       <div class="filter-row">
         <select class="filter-select" id="filterType" onchange="filterMonsters()">
           <option value="">All Types</option>
-          <option>aberration</option><option>beast</option><option>celestial</option>
-          <option>construct</option><option>dragon</option><option>elemental</option>
-          <option>fey</option><option>fiend</option><option>giant</option>
-          <option>humanoid</option><option>monstrosity</option><option>ooze</option>
-          <option>plant</option><option>undead</option>
+          <optgroup label="D&D 5e">
+            <option>aberration</option><option>beast</option><option>celestial</option>
+            <option>construct</option><option>dragon</option><option>elemental</option>
+            <option>fey</option><option>fiend</option><option>giant</option>
+            <option>humanoid</option><option>monstrosity</option><option>ooze</option>
+            <option>plant</option><option>undead</option>
+          </optgroup>
+          <optgroup label="Draw Steel">
+            <option>abyssal</option><option>accursed</option><option>animal</option>
+            <option>construct</option><option>infernal</option><option>soulless</option>
+            <option>swarm</option>
+          </optgroup>
         </select>
         <select class="filter-select" id="filterCR" onchange="filterMonsters()">
           <option value="">All CR</option>
@@ -1252,13 +1263,261 @@ const SRD_MONSTERS = [
   {slug:'zombie',name:'Zombie',cr:'1/4',type:'undead',ac:8,hp:22,speed:'20 ft.',size:'Medium',alignment:'neutral evil',abilities:{str:[13,'+1'],dex:[6,'-2'],con:[16,'+3'],int:[3,'-4'],wis:[6,'-2'],cha:[5,'-3']},saves:{wis:'+0'},skills:{},damage_immunities:['poison'],senses:'darkvision 60 ft., passive Perception 8',languages:'understands languages in life but can\'t speak',actions:[{name:'Slam',toHit:'+3',reach:'5 ft.',damage:'1d6+1',dmgType:'bludgeoning',desc:'Melee Weapon Attack'}],special:[{name:'Undead Fortitude',desc:'If reduced to 0 HP, can make CON save (DC 5 + damage taken) to drop to 1 HP instead.'}]},
 ];
 
-// Draw Steel monster data (illustrative subset)
-const DS_MONSTERS = [
-  {slug:'ds-goblin-warrior',name:'Goblin Warrior',cr:'1',type:'humanoid',source:'draw-steel',ac:14,hp:10,speed:'5 (25 ft.)',size:'1M',alignment:'—',abilities:{str:['-1','-1'],dex:['+2','+2'],con:['+0','+0'],int:['+0','+0'],wis:['-1','-1'],cha:['+0','+0']},saves:{},skills:{},senses:'Nightsight (30 ft.)',languages:'Caelian, Szetch',actions:[{name:'Sneak (Free Maneuver)',desc:'The goblin can hide if they have concealment.',type:'special'},{name:'Notched Blade',toHit:'+2',reach:'Reach 1',damage:'3',dmgType:'slashing',desc:'Melee Free Strike'},{name:'Thrown Knife',toHit:'+2',reach:'Ranged 3/5',damage:'3',dmgType:'piercing',desc:'Ranged Free Strike'}],special:[{name:'Squad Tactics',desc:'The goblin has an edge on attacks while an ally is adjacent to the target.'}]},
-  {slug:'ds-human-bandit',name:'Human Bandit',cr:'1',type:'humanoid',source:'draw-steel',ac:13,hp:12,speed:'5 (25 ft.)',size:'1M',alignment:'—',abilities:{str:['+1','+1'],dex:['+1','+1'],con:['+0','+0'],int:['+0','+0'],wis:['+0','+0'],cha:['+0','+0']},saves:{},skills:{},senses:'—',languages:'Caelian',actions:[{name:'Shortsword',toHit:'+2',reach:'Reach 1',damage:'4',dmgType:'slashing',desc:'Melee Free Strike'},{name:'Shortbow',toHit:'+2',reach:'Ranged 5/10',damage:'4',dmgType:'piercing',desc:'Ranged Free Strike'},{name:'Cheap Shot',desc:'The bandit makes a melee free strike. On a hit, the target is weakened until end of their next turn.',type:'special'}],special:[]},
-  {slug:'ds-ogre-boss',name:'Ogre Boss',cr:'5',type:'giant',source:'draw-steel',ac:16,hp:80,speed:'6 (30 ft.)',size:'2L',alignment:'—',abilities:{str:['+4','+4'],dex:['-1','-1'],con:['+3','+3'],int:['-1','-1'],wis:['+0','+0'],cha:['+1','+1']},saves:{},skills:{},senses:'—',languages:'Kalliak',actions:[{name:'Greatclub',toHit:'+6',reach:'Reach 2',damage:'9',dmgType:'bludgeoning',desc:'Melee Free Strike — push 1 on hit'},{name:'Hurl Boulder',toHit:'+4',reach:'Ranged 10/15',damage:'7',dmgType:'bludgeoning',desc:'Ranged Free Strike — target must succeed on Agility test or be prone'},{name:'Thunderous Smash (2 Malice)',desc:'Melee strike that deals 15 bludgeoning damage and knocks all creatures within 2 squares prone.',type:'special'}],special:[{name:'Intimidating Presence',desc:'Enemies within 3 squares that have less Stamina than the Ogre have bane on Presence tests.'}]},
-  {slug:'ds-dragon-elder',name:'Elder Ember Drake',cr:'12',type:'dragon',source:'draw-steel',ac:20,hp:220,speed:'8 (40 ft.), fly 12 (60 ft.)',size:'3H',alignment:'—',abilities:{str:['+6','+6'],dex:['+2','+2'],con:['+5','+5'],int:['+3','+3'],wis:['+2','+2'],cha:['+4','+4']},saves:{},skills:{},senses:'Nightsight 20, Firesense 10',languages:'Caelian, Draconic',actions:[{name:'Bite',toHit:'+8',reach:'Reach 2',damage:'14',dmgType:'fire/piercing',desc:'Melee Free Strike'},{name:'Claw',toHit:'+8',reach:'Reach 2',damage:'10',dmgType:'slashing',desc:'Melee Free Strike'},{name:'Inferno Breath (5 Malice)',desc:'8×2 line of fire. Agility test DC 15 or take 20 fire damage, half on success. Tiles become burning terrain.',type:'special'},{name:'Villain Action 1 — Wing Blast',desc:'All enemies within 3 squares are pushed 2 squares and knocked prone. The drake then flies up to its speed.',type:'villain'}],special:[{name:'Ember Aura',desc:'Enemies that start their turn within 2 squares take 3 fire damage.'},{name:'Elite Resistance',desc:'When reduced to 0 Stamina, the drake instead drops to 1 and gains 5 Malice.'}],legendary:true},
-];
+
+// ── DRAW STEEL: LIVE FROM STEEL COMPENDIUM GITHUB ──
+// Data sourced under the DRAW STEEL Creator License.
+// DRAW STEEL © 2025 MCDM Productions, LLC.
+// Steel Compendium is an independent product not affiliated with MCDM.
+const DS_GITHUB_API = 'https://api.github.com/repos/SteelCompendium/data-bestiary-json/contents/Monsters';
+const DS_RAW_BASE   = 'https://raw.githubusercontent.com/SteelCompendium/data-bestiary-json/main/Monsters';
+
+let DS_MONSTERS = [];        // populated on first DS tab click
+let dsLoaded    = false;
+let dsLoading   = false;
+
+async function loadDSMonsters() {
+  if (dsLoaded || dsLoading) return;
+  dsLoading = true;
+  const list = document.getElementById('browserList');
+  list.innerHTML = '<div class="browser-loading">⚔️ Loading Draw Steel bestiary from Steel Compendium…</div>';
+
+  try {
+    // Fetch top-level monster family folders
+    const res = await fetch(DS_GITHUB_API, {
+      headers: { 'Accept': 'application/vnd.github.v3+json' }
+    });
+    if (!res.ok) throw new Error('GitHub API ' + res.status);
+    const families = await res.json();
+    const folders  = families.filter(f => f.type === 'dir');
+
+    // For each family folder, fetch its contents and find JSON files
+    const allEntries = [];
+    await Promise.all(folders.map(async folder => {
+      try {
+        const r2 = await fetch(folder.url, {
+          headers: { 'Accept': 'application/vnd.github.v3+json' }
+        });
+        const files = await r2.json();
+        // Collect JSON files (statblocks are at root of family folder)
+        files.filter(f => f.type === 'file' && f.name.endsWith('.json'))
+             .forEach(f => allEntries.push({
+               name: f.name.replace('.json',''),
+               family: folder.name,
+               downloadUrl: f.download_url,
+               slug: 'ds-' + f.name.replace('.json','').toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'')
+             }));
+      } catch(e) { /* skip family on error */ }
+    }));
+
+    // Build lightweight index for browser list (full data loaded on demand)
+    DS_MONSTERS = allEntries.sort((a,b) => a.name.localeCompare(b.name)).map(e => ({
+      slug:   e.slug,
+      name:   e.name,
+      type:   e.family.toLowerCase(),
+      cr:     '?',          // loaded on demand
+      source: 'draw-steel',
+      _downloadUrl: e.downloadUrl,
+      _loaded: false
+    }));
+
+    dsLoaded  = true;
+    dsLoading = false;
+    renderBrowserList(DS_MONSTERS);
+  } catch(err) {
+    dsLoading = false;
+    list.innerHTML = `<div class="browser-empty">⚠️ Could not load Draw Steel bestiary.<br><small>${err.message}</small><br><br>
+      <a href="https://github.com/SteelCompendium/data-bestiary-json" target="_blank"
+         style="color:var(--ember-pale);font-size:0.7rem;">View on GitHub →</a></div>`;
+  }
+}
+
+async function loadDSMonsterDetail(entry) {
+  if (entry._loaded) return entry;
+  try {
+    const res  = await fetch(entry._downloadUrl);
+    const json = await res.json();
+    const converted = convertDSMonster(json, entry);
+    Object.assign(entry, converted, { _loaded: true });
+    return entry;
+  } catch(e) {
+    showToast('Could not load ' + entry.name + ': ' + e.message, true);
+    return entry;
+  }
+}
+
+// ── DRAW STEEL JSON → WORKSHOP FORMAT CONVERTER ──
+function convertDSMonster(ds, entry) {
+  // DS schema uses: name, level, role, keywords, stamina, stability, speed, size,
+  // free_strike, characteristics {might, agility, reason, intuition, presence},
+  // features [{name, type, description, tiers}]
+
+  const chars = ds.characteristics || {};
+
+  // Map DS characteristics to ability-score style display
+  // DS uses +modifier directly (no score), so we map to our abilities format
+  const mgt = chars.might      ?? 0;
+  const agi = chars.agility    ?? 0;
+  const rea = chars.reason     ?? 0;
+  const itu = chars.intuition  ?? 0;
+  const pre = chars.presence   ?? 0;
+
+  const abilities = {
+    str: [10 + mgt * 2, fmt(mgt)],
+    dex: [10 + agi * 2, fmt(agi)],
+    con: [10 + 0,       '+0'],
+    int: [10 + rea * 2, fmt(rea)],
+    wis: [10 + itu * 2, fmt(itu)],
+    cha: [10 + pre * 2, fmt(pre)]
+  };
+
+  // Stamina → HP (DS uses Stamina, we show it in the HP field)
+  const stamina = ds.stamina ?? 10;
+
+  // EV → approximate CR mapping
+  const ev = ds.encounter_value ?? ds.level ?? 1;
+  const cr = evToCR(ev, ds.role);
+
+  // Speed: DS uses squares (1 sq = 5 ft)
+  const speedVal  = ds.speed?.value ?? ds.speed ?? 5;
+  const speedMod  = ds.speed?.modifiers ? ' (' + ds.speed.modifiers.join(', ') + ')' : '';
+  const speedFt   = (speedVal * 5) + ' ft.' + speedMod;
+
+  // Size
+  const sizeRaw = ds.size ?? '1M';
+  const sizeMap = { '1T':'Tiny', '1S':'Small', '1M':'Medium', '1L':'Large',
+                    '2L':'Large', '3H':'Huge', '4H':'Huge', '5G':'Gargantuan' };
+  const size    = sizeMap[String(sizeRaw).trim()] || String(sizeRaw);
+
+  // Keywords / type
+  const keywords = ds.keywords ?? [];
+  const type     = keywords.filter(k => !['Humanoid','Monster','Beast','Undead','Construct',
+    'Elemental','Fey','Fiend','Giant','Dragon','Abyssal','Infernal'].includes(k)).join(', ')
+    || keywords[0] || (entry?.family ?? 'creature');
+
+  // Free strike → base attack
+  const freeStrike = ds.free_strike ?? 2;
+
+  // Features → actions + special
+  const features  = ds.features ?? [];
+  const actions   = [];
+  const special   = [];
+
+  features.forEach(f => {
+    const isAbility = f.type === 'ability' || (f.tiers && f.tiers.length);
+    const isTrait   = f.type === 'trait' || f.type === 'feature';
+    const desc      = buildDSDesc(f);
+
+    if (isAbility) {
+      // Pull to-hit from power roll notation if present
+      const toHitMatch = desc.match(/([+-]\d+)\s*(?:bonus|to hit)/i);
+      const dmgTier    = f.tiers ? f.tiers[1] : null; // tier 2 = standard success
+      const dmg        = dmgTier ? String(dmgTier.effect || freeStrike) : String(freeStrike);
+      actions.push({
+        name:    f.name,
+        toHit:   toHitMatch ? toHitMatch[1] : '',
+        reach:   f.distance ? String(f.distance) : '',
+        damage:  dmg,
+        dmgType: '',
+        desc:    desc.slice(0, 350),
+        type:    'attack'
+      });
+    } else if (isTrait || !isAbility) {
+      special.push({ name: f.name, desc: desc.slice(0, 300) });
+    }
+  });
+
+  // Villain actions
+  const villainActions = (ds.villain_actions ?? []).map(va => ({
+    name: 'Villain Action — ' + (va.name || 'Action'),
+    desc: va.description || ''
+  }));
+
+  // Immunity
+  const immunities = ds.immunities ?? [];
+
+  // Malice features → legendary actions
+  const malice = (ds.malice ?? []).map(m => ({
+    name: m.name + (m.cost ? ' (' + m.cost + ' Malice)' : ''),
+    desc: m.description || buildDSDesc(m)
+  }));
+
+  return {
+    source:         'draw-steel',
+    base_monster_slug: entry?.slug || ('ds-' + (ds.name||'').toLowerCase().replace(/\s+/g,'-')),
+    name:           ds.name || entry?.name || 'Unknown',
+    cr,
+    ac:             ds.defense ?? ds.stamina_modifier ?? 10,
+    hp:             stamina,
+    hp_formula:     'Stamina ' + stamina + (ds.stability ? ' / Stability ' + ds.stability : ''),
+    speed:          speedFt,
+    size,
+    monster_type:   keywords.join(', ') || type,
+    alignment:      '—',
+    abilities,
+    saves:          {},
+    skills:         {},
+    damage_immunities: immunities,
+    condition_immunities: [],
+    senses:         ds.special_senses ? ds.special_senses.join(', ') : '',
+    languages:      (ds.languages ?? []).join(', '),
+    actions,
+    special_abilities: special,
+    reactions:      [],
+    legendary:      villainActions.length > 0,
+    legendary_resistance: 0,
+    legendary_actions: villainActions.length > 0 ? villainActions : malice,
+    legendary_actions_per_round: 3,
+    lair_actions:   [],
+    notes:          ds.flavor_text || '',
+    tags:           keywords,
+    _dsLevel:       ds.level,
+    _dsRole:        ds.role,
+    _dsEV:          ev,
+    _dsFreeStrike:  freeStrike
+  };
+}
+
+function fmt(n) {
+  n = parseInt(n) || 0;
+  return (n >= 0 ? '+' : '') + n;
+}
+
+function buildDSDesc(f) {
+  if (f.description) return f.description;
+  const parts = [];
+  if (f.keywords)   parts.push('Keywords: ' + f.keywords.join(', '));
+  if (f.distance)   parts.push('Distance: ' + f.distance);
+  if (f.target)     parts.push('Target: ' + f.target);
+  if (f.tiers) {
+    f.tiers.forEach((t, i) => {
+      const label = i === 0 ? '11 or lower' : i === 1 ? '12–16' : '17+';
+      parts.push('◆ ' + label + ': ' + (t.effect || t.description || ''));
+    });
+  }
+  if (f.effect)     parts.push('Effect: ' + f.effect);
+  return parts.join(' | ');
+}
+
+function evToCR(ev, role) {
+  // Draw Steel EV to approximate 5e CR
+  // Solo/Boss EV is roughly 4-6× a standard creature's EV
+  const isLeader = role && (role.toLowerCase().includes('solo') || role.toLowerCase().includes('boss') || role.toLowerCase().includes('leader'));
+  const adjusted = isLeader ? Math.round(ev / 4) : ev;
+  if (adjusted <= 1)  return '1/4';
+  if (adjusted <= 2)  return '1/2';
+  if (adjusted <= 3)  return '1';
+  if (adjusted <= 5)  return '2';
+  if (adjusted <= 8)  return '3';
+  if (adjusted <= 12) return '4';
+  if (adjusted <= 16) return '5';
+  if (adjusted <= 22) return '6';
+  if (adjusted <= 30) return '8';
+  if (adjusted <= 40) return '10';
+  if (adjusted <= 55) return '12';
+  if (adjusted <= 70) return '15';
+  if (adjusted <= 90) return '18';
+  return '20+';
+}
 
 // ── STATE ──
 let currentTab = 'srd';
@@ -1279,20 +1538,25 @@ function setTab(tab, btn) {
   document.querySelectorAll('.browser-tab').forEach(b => b.classList.remove('active-srd','active-ds','active-custom'));
   const cls = tab === 'srd' ? 'active-srd' : tab === 'ds' ? 'active-ds' : 'active-custom';
   btn.classList.add(cls);
-  const data = tab === 'srd' ? SRD_MONSTERS : tab === 'ds' ? DS_MONSTERS : customMonsters;
-  renderBrowserList(data);
+  if (tab === 'ds' && !dsLoaded) {
+    loadDSMonsters(); // async, renders when done
+  } else {
+    const data = tab === 'srd' ? SRD_MONSTERS : tab === 'ds' ? DS_MONSTERS : customMonsters;
+    renderBrowserList(data);
+  }
 }
 
 // ── FILTER ──
 function filterMonsters() {
-  const q = document.getElementById('searchInput').value.toLowerCase();
+  const q    = document.getElementById('searchInput').value.toLowerCase();
   const type = document.getElementById('filterType').value;
-  const cr = document.getElementById('filterCR').value;
+  const cr   = document.getElementById('filterCR').value;
   const data = currentTab === 'srd' ? SRD_MONSTERS : currentTab === 'ds' ? DS_MONSTERS : customMonsters;
   const filtered = data.filter(m => {
-    const matchQ = !q || m.name.toLowerCase().includes(q) || m.type.toLowerCase().includes(q);
-    const matchType = !type || m.type === type;
-    const matchCR = !cr || m.cr === cr;
+    const matchQ    = !q    || m.name.toLowerCase().includes(q) || (m.type||'').toLowerCase().includes(q);
+    const matchType = !type || (m.type||'').toLowerCase().includes(type.toLowerCase());
+    // For DS monsters with cr='?', skip CR filter (loaded on demand)
+    const matchCR   = !cr   || m.cr === cr || m.cr === '?';
     return matchQ && matchType && matchCR;
   });
   renderBrowserList(filtered);
@@ -1304,24 +1568,45 @@ function renderBrowserList(monsters) {
     list.innerHTML = '<div class="browser-empty">No monsters found</div>';
     return;
   }
-  list.innerHTML = monsters.map(m => `
-    <div class="monster-entry ${currentMonster && currentMonster.slug === m.slug ? 'selected' : ''}"
+  list.innerHTML = monsters.map(m => {
+    const crLabel  = m.cr === '?' ? '<span class="entry-cr" style="opacity:0.4;">EV</span>' : `<span class="entry-cr">CR ${m.cr}</span>`;
+    const isDS     = m.source === 'draw-steel';
+    const typeDisp = isDS ? (m._dsRole || m.type) : m.type;
+    return `<div class="monster-entry ${currentMonster && currentMonster.slug === m.slug ? 'selected' : ''}"
          onclick="selectMonster('${m.slug}')">
-      <span class="entry-cr">CR ${m.cr}</span>
+      ${crLabel}
       <span class="entry-name">${m.name}</span>
-      <span class="entry-type">${m.type}</span>
-    </div>`).join('');
+      <span class="entry-type">${typeDisp}</span>
+    </div>`;
+  }).join('');
 }
 
-// ── SELECT MONSTER ──
-function selectMonster(slug) {
+// ── SELECT MONSTER (async for DS lazy-load) ──
+async function selectMonster(slug) {
   const all = [...SRD_MONSTERS, ...DS_MONSTERS, ...customMonsters];
   currentMonster = all.find(m => m.slug === slug);
   if (!currentMonster) return;
+
+  // Show loading state for unloaded DS monsters
+  if (currentMonster.source === 'draw-steel' && !currentMonster._loaded) {
+    document.getElementById('editorTitle').textContent = currentMonster.name;
+    document.getElementById('editorBody').innerHTML =
+      '<div class="editor-placeholder"><div class="editor-placeholder-icon" style="animation:spin 1s linear infinite">⚙️</div>' +
+      '<div class="editor-placeholder-text">Loading Draw Steel stat block…</div></div>';
+    document.getElementById('editorSourcePill').style.display = 'none';
+    document.getElementById('btnDuplicate').style.display = 'none';
+    document.getElementById('btnAddEncounter').style.display = 'none';
+
+    currentMonster = await loadDSMonsterDetail(currentMonster);
+  }
+
   isEditing = currentMonster.source === 'custom';
   renderEditor(currentMonster);
-  // refresh list to show selection
-  const data = currentTab === 'srd' ? SRD_MONSTERS : currentTab === 'ds' ? DS_MONSTERS : customMonsters;
+
+  // Refresh list to show selection highlight
+  const data = currentTab === 'srd' ? SRD_MONSTERS
+             : currentTab === 'ds'  ? DS_MONSTERS
+             : customMonsters;
   renderBrowserList(data);
 }
 
@@ -1832,8 +2117,14 @@ async function saveMonster() {
       }
     }
     if (res.ok) {
-      showToast('✓ ' + data.name + ' saved to Supabase');
       await loadCustomMonsters();
+      showToast('✓ ' + data.name + ' saved — switching to My Monsters');
+      // Switch to custom tab so user sees the saved monster
+      currentTab = 'custom';
+      const customBtn = document.querySelectorAll('.browser-tab')[2];
+      document.querySelectorAll('.browser-tab').forEach(b => b.classList.remove('active-srd','active-ds','active-custom'));
+      customBtn.classList.add('active-custom');
+      renderBrowserList(customMonsters);
     } else {
       const err = await res.text();
       showToast('Save failed: ' + err, true);
@@ -1845,20 +2136,29 @@ async function saveMonster() {
 
 async function loadCustomMonsters() {
   try {
-    const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?order=created_at.desc`, { headers: SB_HEADERS });
+    const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?order=created_at.desc&limit=500`, { headers: SB_HEADERS });
     if (res.ok) {
       const rows = await res.json();
       customMonsters = rows.map(r => ({
         ...r,
-        slug: 'custom-' + r.id,
-        type: r.monster_type || 'custom',
-        source: 'custom',
+        slug:    'custom-' + r.id,
+        type:    r.monster_type || r.tags?.[0] || 'custom',
+        source:  'custom',
         actions: r.actions || [],
         special: r.special_abilities || []
       }));
+      // Always re-render if we're already on the custom tab
       if (currentTab === 'custom') renderBrowserList(customMonsters);
+      return customMonsters.length;
+    } else {
+      const err = await res.text();
+      console.warn('loadCustomMonsters HTTP', res.status, err);
+      return 0;
     }
-  } catch(e) { /* offline or table not yet created */ }
+  } catch(e) {
+    console.warn('loadCustomMonsters error:', e);
+    return 0;
+  }
 }
 
 // ── EXPORT ──
@@ -2262,14 +2562,17 @@ async function importSelected() {
   showToast(msg, failed > 0);
 
   if (succeeded > 0) {
-    await loadCustomMonsters();
-    // Switch browser to custom tab after import
-    if (succeeded === selected.length) {
-      setTimeout(() => {
-        closeFoundryImport();
-        setTab('custom', document.querySelectorAll('.browser-tab')[2]);
-      }, 1200);
-    }
+    const count = await loadCustomMonsters();
+    showToast(`✓ ${succeeded} saved — ${count} total in My Monsters`, failed > 0);
+    // Switch to custom tab and force render
+    setTimeout(() => {
+      closeFoundryImport();
+      currentTab = 'custom';
+      const customBtn = document.querySelectorAll('.browser-tab')[2];
+      document.querySelectorAll('.browser-tab').forEach(b => b.classList.remove('active-srd','active-ds','active-custom'));
+      customBtn.classList.add('active-custom');
+      renderBrowserList(customMonsters);
+    }, 800);
   }
 }
 
