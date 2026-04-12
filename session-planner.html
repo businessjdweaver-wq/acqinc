@@ -975,7 +975,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner</span>
   <span class="topbar-sep">›</span>
-  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.1.5</span>
+  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.1.6</span>
   <div class="topbar-actions">
     <div class="b20-status b20-inactive" id="b20Indicator" title="Beyond20 not detected">
       <div class="b20-dot"></div>
@@ -983,7 +983,8 @@ body {
     </div>
     <button class="btn btn-ghost" onclick="toggleRunMode()">▶ Run Mode</button>
     <a href="monster-workshop.html" class="btn btn-ghost" style="text-decoration:none;">🐉 Monster Workshop</a>
-    <button class="btn btn-primary">Save Session</button>
+    <button class="btn btn-ghost" onclick="loadSessionFromStorage()">↺ Restore</button>
+    <button class="btn btn-primary" onclick="saveSessionToStorage()">💾 Save Session</button>
   </div>
 </div>
 
@@ -2488,42 +2489,76 @@ function importQueuedMonsters(blockId) {
     const hp   = String(m.hp  || '?');
     const ac   = String(m.ac  || '?');
 
-    // Build Beyond20 roll buttons from actions
-    const rollBtns = (m.actions || [])
-      .filter(a => a.toHit || a.to_hit)
-      .map(a => {
-        const toHitRaw = String(a.toHit || a.to_hit || '0');
-        const toHit    = parseFloat(toHitRaw.replace('+','')) || 0;
-        const damages  = a.damage  ? [a.damage]  : ['1d6'];
-        const dmgTypes = a.dmgType ? [a.dmgType] : ['damage'];
-        const critDmg  = a.extra   ? [a.extra]   : damages;
-        const critType = a.extraType ? [a.extraType] : dmgTypes;
-        const atkType  = (a.reach || '').toLowerCase().includes('ranged') ? 'Ranged' : 'Melee';
-        const reach    = a.reach || '5 ft.';
-        const safeN    = name.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-        const safeAn   = (a.name||'Attack').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-        const label    = a.name + (toHitRaw.startsWith('+') || toHitRaw.startsWith('-') ? ' ' + toHitRaw : '');
-        return `<button class="btn btn-roll b20-btn"
-          onclick="rollMonsterAttack('${safeN}','Monster','${cr}','${ac}','${hp}',{name:'${safeAn}',toHit:${toHit},damages:${JSON.stringify(damages)},damageTypes:${JSON.stringify(dmgTypes)},critDamages:${JSON.stringify(critDmg)},critDamageTypes:${JSON.stringify(critType)},attackType:'${atkType}',reach:'${reach}'})">🎲 ${label}</button>`;
-      }).join('');
+    // Build Beyond20 roll buttons using data attributes — no string escaping needed
+    const actionButtons = (m.actions || []).filter(a => a.toHit || a.to_hit);
 
     const card = document.createElement('div');
     card.className = 'monster-card';
-    card.innerHTML = `
-      <div class="monster-card-top">
-        <span class="monster-name">${name}</span>
-        <div class="monster-stats">
-          <span>CR <span>${cr}</span></span>
-          <span>HP <span>${hp}</span></span>
-          <span>AC <span>${ac}</span></span>
-          <span>×<span>1</span></span>
-        </div>
-        <button class="icon-btn" onclick="this.closest('.monster-card').remove()" title="Remove">✕</button>
-      </div>
-      <div class="monster-actions">
-        ${rollBtns || '<span class="small-note">No attack actions — roll buttons auto-populate from actions</span>'}
-        <button class="btn btn-ghost btn-sm">📋 Stat Block</button>
+
+    const cardTop = document.createElement('div');
+    cardTop.className = 'monster-card-top';
+    cardTop.innerHTML = `
+      <span class="monster-name">${name}</span>
+      <div class="monster-stats">
+        <span>CR <span>${cr}</span></span>
+        <span>HP <span>${hp}</span></span>
+        <span>AC <span>${ac}</span></span>
+        <span>×<span>1</span></span>
       </div>`;
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'icon-btn';
+    removeBtn.title = 'Remove';
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', () => card.remove());
+    cardTop.appendChild(removeBtn);
+    card.appendChild(cardTop);
+
+    const actionsDiv = document.createElement('div');
+    actionsDiv.className = 'monster-actions';
+
+    if (actionButtons.length === 0) {
+      const note = document.createElement('span');
+      note.className = 'small-note';
+      note.textContent = 'No attack actions';
+      actionsDiv.appendChild(note);
+    } else {
+      actionButtons.forEach(a => {
+        const toHitRaw = String(a.toHit || a.to_hit || '0');
+        const toHit    = parseFloat(toHitRaw.replace('+','')) || 0;
+        const damages  = a.damage    ? [a.damage]    : ['1d6'];
+        const dmgTypes = a.dmgType   ? [a.dmgType]   : ['damage'];
+        const critDmg  = a.extra     ? [a.extra]      : damages;
+        const critType = a.extraType ? [a.extraType]  : dmgTypes;
+        const atkType  = (a.reach || '').toLowerCase().includes('ranged') ? 'Ranged' : 'Melee';
+        const reach    = a.reach || '5 ft.';
+        const label    = '🎲 ' + (a.name || 'Attack') + (toHitRaw.match(/^[+-]/) ? ' ' + toHitRaw : '');
+
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-roll b20-btn';
+        btn.textContent = label;
+        // Store all data cleanly — zero string escaping
+        btn.dataset.monsterName = name;
+        btn.dataset.cr  = cr;
+        btn.dataset.ac  = ac;
+        btn.dataset.hp  = hp;
+        btn.dataset.atk = JSON.stringify({
+          name: a.name || 'Attack',
+          toHit, damages, damageTypes: dmgTypes,
+          critDamages: critDmg, critDamageTypes: critType,
+          attackType: atkType, reach
+        });
+        btn.addEventListener('click', handleRollBtnClick);
+        actionsDiv.appendChild(btn);
+      });
+    }
+
+    // Stat block button
+    const sbBtn = document.createElement('button');
+    sbBtn.className = 'btn btn-ghost btn-sm';
+    sbBtn.textContent = '📋 Stat Block';
+    actionsDiv.appendChild(sbBtn);
+
+    card.appendChild(actionsDiv);
     list.appendChild(card);
 
     // Apply b20 visibility if already active
@@ -2559,6 +2594,247 @@ function showToastSP(msg, isError) {
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 3500);
 }
+
+// ── ROLL BUTTON HANDLER (data-attribute based — no string escaping) ──
+function handleRollBtnClick(e) {
+  const btn = e.currentTarget;
+  const monsterName = btn.dataset.monsterName || 'Unknown';
+  const cr  = btn.dataset.cr  || '1';
+  const ac  = btn.dataset.ac  || '10';
+  const hp  = btn.dataset.hp  || '10';
+  let atk;
+  try { atk = JSON.parse(btn.dataset.atk); } catch(err) { return; }
+  rollMonsterAttack(monsterName, 'Monster', cr, ac, hp, atk);
+}
+
+// ── SESSION PERSISTENCE (localStorage) ──
+
+function saveSessionToStorage() {
+  const container = document.getElementById('blockContainer');
+  const blocks = [...container.querySelectorAll(':scope > .block')];
+
+  const sessionData = {
+    title:    document.querySelector('.session-title-input')?.value || '',
+    campaign: document.querySelector('.meta-input[type=text]')?.value || '',
+    level:    document.querySelector('input[type=number][value="7"]')?.value || '7',
+    system:   document.querySelector('.sys-btn.active-5e,  .sys-btn.active-ds, .sys-btn.active-both')?.textContent || '5e',
+    blocks:   blocks.map(block => serializeBlock(block)),
+    savedAt:  Date.now()
+  };
+
+  const key = 'rq_session_' + (sessionData.title || 'default').replace(/\s+/g,'-').toLowerCase();
+  try {
+    localStorage.setItem(key, JSON.stringify(sessionData));
+    localStorage.setItem('rq_last_session', key);
+    showToastSP('✓ Session saved — ' + sessionData.blocks.length + ' blocks');
+  } catch(e) {
+    showToastSP('Save failed: ' + e.message, true);
+  }
+}
+
+function serializeBlock(block) {
+  const type   = [...block.classList].find(c => ['scene','encounter','trap','npc','clue','reward','montage'].includes(c)) || 'scene';
+  const title  = block.querySelector('.block-title')?.textContent?.trim() || '';
+  const isOpen = block.classList.contains('open');
+  const isDone = block.classList.contains('complete');
+
+  // Capture all text inputs and textareas
+  const fields = {};
+  block.querySelectorAll('input[type=text], input[type=number], textarea, select').forEach((el, i) => {
+    const key = el.id || el.name || (el.className.split(' ')[0] + '_' + i);
+    fields[key] = el.value;
+  });
+
+  // Capture monster cards specifically
+  const monsters = [...block.querySelectorAll('.monster-card')].map(card => ({
+    name:     card.querySelector('.monster-name')?.textContent || '',
+    stats:    [...card.querySelectorAll('.monster-stats span')].map(s => s.textContent),
+    rollData: [...card.querySelectorAll('.b20-btn')].map(b => ({
+      label: b.textContent.trim(),
+      monsterName: b.dataset.monsterName || '',
+      cr:  b.dataset.cr  || '',
+      ac:  b.dataset.ac  || '',
+      hp:  b.dataset.hp  || '',
+      atk: b.dataset.atk || '{}'
+    }))
+  }));
+
+  return { id: block.id, type, title, isOpen, isDone, fields, monsters };
+}
+
+function loadSessionFromStorage() {
+  const key = localStorage.getItem('rq_last_session');
+  if (!key) { showToastSP('No saved session found', true); return; }
+  const raw = localStorage.getItem(key);
+  if (!raw) { showToastSP('No saved session found', true); return; }
+
+  try {
+    const data = JSON.parse(raw);
+    restoreSession(data);
+    showToastSP('✓ Session restored — ' + data.blocks.length + ' blocks');
+  } catch(e) {
+    showToastSP('Restore failed: ' + e.message, true);
+  }
+}
+
+function restoreSession(data) {
+  // Restore header fields
+  const titleInput = document.querySelector('.session-title-input');
+  if (titleInput && data.title) titleInput.value = data.title;
+
+  // Restore blocks — rebuild container order
+  const container = document.getElementById('blockContainer');
+  const addBar    = container.querySelector('.add-block-bar');
+
+  // Remove existing blocks (keep the add-bar)
+  [...container.querySelectorAll(':scope > .block')].forEach(b => b.remove());
+
+  data.blocks.forEach(bd => {
+    const el = buildRestoredBlock(bd);
+    if (el) container.appendChild(el);
+  });
+
+  // Re-init drag on restored blocks
+  document.querySelectorAll('#blockContainer > .block').forEach(initDragOnBlock);
+}
+
+function buildRestoredBlock(bd) {
+  const icons  = { scene:'🏔️', encounter:'⚔️', trap:'🪤', npc:'🧑', clue:'🔍', reward:'💰', montage:'🎬' };
+  const labels = { scene:'Scene', encounter:'Encounter', trap:'Trap / Hazard', npc:'NPC', clue:'Clue', reward:'Reward', montage:'Skill Challenge' };
+  const type   = bd.type || 'scene';
+  const id     = bd.id || ('block-' + type + '-' + Date.now() + Math.random());
+
+  // For the demo blocks that already have rich HTML, we need to rebuild them simply
+  // We create a clean skeleton and restore what we can from saved fields
+  const div = document.createElement('div');
+  div.className = 'block ' + type + (bd.isOpen ? ' open' : '') + (bd.isDone ? ' complete' : '');
+  div.id = id;
+
+  // Header
+  const header = document.createElement('div');
+  header.className = 'block-header';
+  header.onclick = () => toggleBlock(id);
+  header.innerHTML = `
+    <span class="drag-handle" title="Drag to reorder">⠿</span>
+    <span class="block-chevron">▶</span>
+    <span class="block-icon">${icons[type] || '📄'}</span>
+    <div class="block-title-area">
+      <div class="block-type-label">${labels[type] || type}</div>
+      <div class="block-title">${bd.title || labels[type]}</div>
+    </div>
+    <div class="block-header-actions">
+      <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); markComplete('${id}')">✓ Done</button>
+      <button class="icon-btn" onclick="event.stopPropagation(); removeBlock('${id}')">✕</button>
+    </div>`;
+  div.appendChild(header);
+
+  // Body
+  const body = document.createElement('div');
+  body.className = 'block-body';
+
+  // For encounters, restore monster cards
+  if (type === 'encounter' && bd.monsters && bd.monsters.length > 0) {
+    const sectionHead = document.createElement('div');
+    sectionHead.className = 'section-head';
+    sectionHead.innerHTML = `
+      <span class="section-head-label">Monsters</span>
+      <div class="section-head-line"></div>
+      <button class="btn btn-ghost btn-sm">🔍 Search</button>
+      <button class="btn btn-ghost btn-sm import-here-btn" style="margin-left:4px;border-color:rgba(106,191,106,0.4);color:#6abf6a;display:none;"
+        onclick="importQueuedMonsters('${id}')">⬇ Add Here</button>
+      <a href="monster-workshop.html" target="_blank" class="btn btn-ghost btn-sm" style="margin-left:4px;text-decoration:none;font-size:0.55rem;">🐉 Workshop</a>`;
+    body.appendChild(sectionHead);
+
+    const monsterList = document.createElement('div');
+    monsterList.className = 'monster-list';
+
+    bd.monsters.forEach(mData => {
+      const card = document.createElement('div');
+      card.className = 'monster-card';
+
+      const top = document.createElement('div');
+      top.className = 'monster-card-top';
+      top.innerHTML = `<span class="monster-name">${mData.name}</span>
+        <div class="monster-stats">${(mData.stats || []).map(s => `<span>${s}</span>`).join('')}</div>`;
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'icon-btn';
+      removeBtn.textContent = '✕';
+      removeBtn.addEventListener('click', () => card.remove());
+      top.appendChild(removeBtn);
+      card.appendChild(top);
+
+      const actionsDiv = document.createElement('div');
+      actionsDiv.className = 'monster-actions';
+
+      (mData.rollData || []).forEach(rd => {
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-roll b20-btn';
+        btn.textContent = rd.label;
+        btn.dataset.monsterName = rd.monsterName;
+        btn.dataset.cr  = rd.cr;
+        btn.dataset.ac  = rd.ac;
+        btn.dataset.hp  = rd.hp;
+        btn.dataset.atk = rd.atk;
+        btn.addEventListener('click', handleRollBtnClick);
+        if (beyond20Loaded) btn.style.display = 'inline-flex';
+        actionsDiv.appendChild(btn);
+      });
+
+      const sbBtn = document.createElement('button');
+      sbBtn.className = 'btn btn-ghost btn-sm';
+      sbBtn.textContent = '📋 Stat Block';
+      actionsDiv.appendChild(sbBtn);
+      card.appendChild(actionsDiv);
+      monsterList.appendChild(card);
+    });
+    body.appendChild(monsterList);
+  } else {
+    // Generic restored body — show a note
+    const note = document.createElement('p');
+    note.className = 'small-note';
+    note.style.padding = '8px 0';
+    note.textContent = (labels[type] || 'Block') + ' — restored from save.';
+    body.appendChild(note);
+  }
+
+  div.appendChild(body);
+  return div;
+}
+
+// Auto-save on page unload so navigation doesn't lose work
+window.addEventListener('beforeunload', () => {
+  const container = document.getElementById('blockContainer');
+  if (!container) return;
+  const blocks = [...container.querySelectorAll(':scope > .block')];
+  if (!blocks.length) return;
+  const title = document.querySelector('.session-title-input')?.value || 'autosave';
+  const key = 'rq_session_' + title.replace(/\s+/g,'-').toLowerCase();
+  try {
+    const data = {
+      title,
+      blocks: blocks.map(b => serializeBlock(b)),
+      savedAt: Date.now()
+    };
+    localStorage.setItem(key, JSON.stringify(data));
+    localStorage.setItem('rq_last_session', key);
+  } catch(e) {}
+});
+
+// Auto-restore on load if a session exists
+window.addEventListener('load', () => {
+  const key = localStorage.getItem('rq_last_session');
+  if (!key) return;
+  const raw = localStorage.getItem(key);
+  if (!raw) return;
+  try {
+    const data = JSON.parse(raw);
+    // Only restore if saved recently (within 7 days) and has blocks
+    const age = Date.now() - (data.savedAt || 0);
+    if (age < 7 * 24 * 60 * 60 * 1000 && data.blocks && data.blocks.length) {
+      restoreSession(data);
+    }
+  } catch(e) {}
+});
 
 // ── INIT ──
 renderTracker();
