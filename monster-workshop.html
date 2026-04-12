@@ -1001,9 +1001,66 @@ body {
   transition: width 0.2s;
   width: 0%;
 }
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+/* ── ENCOUNTER TRAY ── */
+.encounter-tray {
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #0e1a0e 0%, #0a1208 100%);
+  border-top: 1px solid rgba(45,106,45,0.4);
+  padding: 10px 16px;
+  display: none;
+}
+.encounter-tray.has-monsters { display: block; }
+.tray-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.tray-title {
+  font-family: 'Cinzel', serif;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #6abf6a;
+}
+.tray-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+.tray-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(45,106,45,0.2);
+  border: 1px solid rgba(45,106,45,0.4);
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 0.7rem;
+  color: #a8e8a8;
+}
+.tray-chip-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: rgba(168,232,168,0.5);
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 0;
+  transition: color 0.12s;
+}
+.tray-chip-remove:hover { color: var(--ember-pale); }
+.tray-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.tray-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  color: #6abf6a;
 }
 </style>
 </head>
@@ -1015,7 +1072,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.2.3</span>
+  <span class="topbar-version">v0.2.4</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -1081,7 +1138,7 @@ body {
       <span class="editor-source-pill pill-srd" id="editorSourcePill" style="display:none"></span>
       <div style="margin-left:auto;display:flex;gap:8px;">
         <button class="btn btn-ghost btn-sm" onclick="duplicateAsCustom()" id="btnDuplicate" style="display:none">⎘ Skin as Custom</button>
-        <button class="btn btn-ember btn-sm" onclick="addToEncounter()" id="btnAddEncounter" style="display:none">+ Add to Encounter</button>
+        <button class="btn btn-ember btn-sm" onclick="addToEncounterTray()" id="btnAddEncounter" style="display:none">+ Queue for Encounter</button>
       </div>
     </div>
 
@@ -1089,6 +1146,22 @@ body {
       <div class="editor-placeholder">
         <div class="editor-placeholder-icon">🐉</div>
         <div class="editor-placeholder-text">Select a monster from the library, or skin one as a custom creature</div>
+      </div>
+    </div>
+
+    <!-- ENCOUNTER TRAY -->
+    <div class="encounter-tray" id="encounterTray">
+      <div class="tray-header">
+        <span class="tray-title">⚔️ Encounter Queue</span>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-ghost btn-sm" onclick="clearEncounterTray()">Clear</button>
+          <button class="btn btn-gold btn-sm" onclick="sendToSessionPlanner()">→ Send to Session Planner</button>
+        </div>
+      </div>
+      <div class="tray-chips" id="trayChips"></div>
+      <div class="tray-actions">
+        <span class="tray-count" id="trayCount"></span>
+        <span style="font-size:0.6rem;color:var(--steel-pale);font-style:italic;">Open Session Planner → Encounter block → Import Queued Monsters</span>
       </div>
     </div>
   </div>
@@ -2173,18 +2246,94 @@ function exportJSON() {
 }
 
 // ── ADD TO ENCOUNTER (posts to sessionStorage for Session Planner pickup) ──
-function addToEncounter() {
+// ── ENCOUNTER TRAY (multi-monster queue) ──
+let encounterQueue = [];
+
+function addToEncounterTray() {
   if (!currentMonster) return;
   const data = isEditing ? collectFormData() : currentMonster;
+
+  // Check for duplicate in queue
+  if (encounterQueue.find(m => m.name === data.name)) {
+    // Allow duplicates — just add again (e.g. 2 trolls)
+  }
+
+  // Minimal snapshot for the tray
+  encounterQueue.push({
+    name:        data.name,
+    cr:          data.cr,
+    ac:          data.ac,
+    hp:          data.hp,
+    hp_formula:  data.hp_formula || '',
+    speed:       data.speed || '',
+    size:        data.size || '',
+    monster_type: data.monster_type || data.type || '',
+    alignment:   data.alignment || '',
+    abilities:   data.abilities || {},
+    saves:       data.saves || {},
+    skills:      data.skills || {},
+    damage_immunities:   data.damage_immunities || [],
+    condition_immunities: data.condition_immunities || [],
+    senses:      data.senses || '',
+    languages:   data.languages || '',
+    actions:     data.actions || [],
+    special_abilities: data.special_abilities || data.special || [],
+    legendary:   data.legendary || false,
+    legendary_resistance: data.legendary_resistance || 0,
+    legendary_actions: data.legendary_actions || [],
+    legendary_actions_per_round: data.legendary_actions_per_round || 3,
+    lair_actions: data.lair_actions || [],
+    notes:       data.notes || '',
+    source:      data.source || 'srd',
+    _queueId:    Date.now() + Math.random()
+  });
+
+  renderEncounterTray();
+  showToast('✓ ' + data.name + ' added to queue (' + encounterQueue.length + ' total)');
+}
+
+function removeFromTray(queueId) {
+  encounterQueue = encounterQueue.filter(m => m._queueId !== queueId);
+  renderEncounterTray();
+}
+
+function clearEncounterTray() {
+  encounterQueue = [];
+  renderEncounterTray();
+}
+
+function renderEncounterTray() {
+  const tray   = document.getElementById('encounterTray');
+  const chips  = document.getElementById('trayChips');
+  const count  = document.getElementById('trayCount');
+  if (!encounterQueue.length) {
+    tray.classList.remove('has-monsters');
+    return;
+  }
+  tray.classList.add('has-monsters');
+  chips.innerHTML = encounterQueue.map(m =>
+    `<div class="tray-chip">
+      <span>CR ${m.cr}</span>
+      <span>${m.name}</span>
+      <button class="tray-chip-remove" onclick="removeFromTray(${m._queueId})" title="Remove">✕</button>
+    </div>`
+  ).join('');
+  count.textContent = encounterQueue.length + ' monster' + (encounterQueue.length !== 1 ? 's' : '') + ' queued';
+}
+
+function sendToSessionPlanner() {
+  if (!encounterQueue.length) return;
   try {
-    const pending = JSON.parse(sessionStorage.getItem('rq_pending_monster') || '[]');
-    pending.push(data);
-    sessionStorage.setItem('rq_pending_monster', JSON.stringify(pending));
-    showToast('✓ ' + data.name + ' queued for Session Planner — open an Encounter block to import');
+    // Store queue in sessionStorage — Session Planner will read this
+    sessionStorage.setItem('rq_pending_monsters', JSON.stringify(encounterQueue));
+    showToast('✓ ' + encounterQueue.length + ' monsters queued — switch to Session Planner and click "Import Queued" in an Encounter block');
   } catch(e) {
-    showToast('Could not queue monster', true);
+    showToast('Could not queue monsters: ' + e.message, true);
   }
 }
+
+// Legacy single-monster function (kept for compatibility)
+function addToEncounter() { addToEncounterTray(); }
 
 // ── TOAST ──
 function showToast(msg, isError = false) {

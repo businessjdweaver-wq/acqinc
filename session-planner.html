@@ -908,7 +908,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner</span>
   <span class="topbar-sep">›</span>
-  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.1.3</span>
+  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.1.4</span>
   <div class="topbar-actions">
     <div class="b20-status b20-inactive" id="b20Indicator" title="Beyond20 not detected">
       <div class="b20-dot"></div>
@@ -1245,6 +1245,13 @@ body {
         <div class="section-head-line"></div>
         <button class="btn btn-ghost btn-sm">🔍 Search</button>
         <button class="btn btn-ghost btn-sm" style="margin-left:4px">📖 Browse</button>
+        <button class="btn btn-ghost btn-sm" id="importQueuedBtn"
+          onclick="importQueuedMonsters('block-enc-1')"
+          style="margin-left:4px;border-color:rgba(106,191,106,0.5);color:#6abf6a;display:none">
+          ⬇ Import Queued (<span id="queuedCount">0</span>)
+        </button>
+        <a href="monster-workshop.html" target="_blank" class="btn btn-ghost btn-sm"
+           style="margin-left:4px;text-decoration:none;font-size:0.55rem;">🐉 Workshop</a>
       </div>
 
       <div class="monster-list">
@@ -2315,6 +2322,111 @@ function rollRandomEventTable(btn) {
     name: 'Random Event — Rolled ' + result + ' on 1' + dieStr,
     message: outcomeText
   });
+}
+
+// ── MONSTER WORKSHOP QUEUE ──
+
+// Poll sessionStorage every 2s for pending monsters from the Workshop
+function checkMonsterQueue() {
+  const raw = sessionStorage.getItem('rq_pending_monsters');
+  const btn = document.getElementById('importQueuedBtn');
+  const countEl = document.getElementById('queuedCount');
+  if (!btn) return;
+  if (raw) {
+    try {
+      const queue = JSON.parse(raw);
+      if (queue.length > 0) {
+        btn.style.display = 'inline-block';
+        if (countEl) countEl.textContent = queue.length;
+        return;
+      }
+    } catch(e) {}
+  }
+  btn.style.display = 'none';
+  if (countEl) countEl.textContent = '0';
+}
+setInterval(checkMonsterQueue, 1500);
+
+function importQueuedMonsters(blockId) {
+  const raw = sessionStorage.getItem('rq_pending_monsters');
+  if (!raw) { alert('No monsters queued — go to Monster Workshop and click "Send to Session Planner"'); return; }
+
+  let queue;
+  try { queue = JSON.parse(raw); } catch(e) { return; }
+  if (!queue.length) return;
+
+  // Find the monster-list container for this encounter block
+  const block = document.getElementById(blockId);
+  const list = block ? block.querySelector('.monster-list') : null;
+  if (!list) return;
+
+  queue.forEach(m => {
+    // Build monster card HTML
+    const name = m.name || 'Unknown';
+    const cr   = m.cr   || '?';
+    const hp   = m.hp   || '?';
+    const ac   = m.ac   || '?';
+
+    // Build Beyond20 roll buttons for each action with a to-hit
+    const rollBtns = (m.actions || [])
+      .filter(a => a.toHit || a.to_hit)
+      .map(a => {
+        const toHit    = parseFloat((a.toHit || a.to_hit || '0').toString().replace('+','')) || 0;
+        const damages  = a.damage ? [a.damage] : ['1d6'];
+        const dmgTypes = a.dmgType ? [a.dmgType] : ['damage'];
+        const critDmg  = a.extra ? [a.extra] : damages;
+        const critType = a.extraType ? [a.extraType] : dmgTypes;
+        const atkType  = (a.reach || '').toLowerCase().includes('ranged') ? 'Ranged' : 'Melee';
+        const reach    = a.reach || '5 ft.';
+        const safeN    = name.replace(/'/g,"\\'");
+        return `<button class="btn btn-roll b20-btn"
+          onclick="rollMonsterAttack('${safeN}','Monster','${cr}','${ac}','${hp}',{name:'${a.name.replace(/'/g,"\\'")}',toHit:${toHit},damages:${JSON.stringify(damages)},damageTypes:${JSON.stringify(dmgTypes)},critDamages:${JSON.stringify(critDmg)},critDamageTypes:${JSON.stringify(critType)},attackType:'${atkType}',reach:'${reach}'})">🎲 ${a.name}${a.toHit ? ' '+a.toHit : ''}</button>`;
+      }).join('');
+
+    const card = document.createElement('div');
+    card.className = 'monster-card';
+    card.innerHTML = `
+      <div class="monster-card-top">
+        <span class="monster-name">${name}</span>
+        <div class="monster-stats">
+          <span>CR <span>${cr}</span></span>
+          <span>HP <span>${hp}</span></span>
+          <span>AC <span>${ac}</span></span>
+          <span>×<span>1</span></span>
+        </div>
+        <button class="icon-btn" onclick="this.closest('.monster-card').remove()" title="Remove">✕</button>
+      </div>
+      <div class="monster-actions">
+        ${rollBtns || '<span class="small-note">No attack actions</span>'}
+        <button class="btn btn-ghost btn-sm" title="Stat Block">📋 Stat Block</button>
+      </div>`;
+    list.appendChild(card);
+
+    // If B20 is active, show the roll buttons
+    if (beyond20Loaded) {
+      card.querySelectorAll('.b20-btn').forEach(b => b.style.display = 'inline-flex');
+    }
+  });
+
+  // Clear the queue
+  sessionStorage.removeItem('rq_pending_monsters');
+  checkMonsterQueue();
+
+  const btn = document.getElementById('importQueuedBtn');
+  if (btn) btn.style.display = 'none';
+
+  showToastSP('✓ ' + queue.length + ' monster' + (queue.length !== 1 ? 's' : '') + ' added to encounter');
+}
+
+function showToastSP(msg) {
+  // Reuse existing run-mode-hint briefly as a toast, or create a simple one
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#1a3018;border:1px solid #2d6a2d;' +
+    'color:#6abf6a;font-family:\'JetBrains Mono\',monospace;font-size:0.65rem;padding:10px 16px;' +
+    'border-radius:5px;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,0.4);';
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
 }
 
 // ── INIT ──
