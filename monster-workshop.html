@@ -1072,7 +1072,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.2.4</span>
+  <span class="topbar-version">v0.2.6</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -1355,52 +1355,98 @@ async function loadDSMonsters() {
   list.innerHTML = '<div class="browser-loading">⚔️ Loading Draw Steel bestiary from Steel Compendium…</div>';
 
   try {
-    // Fetch top-level monster family folders
+    // Step 1: Fetch top-level family folders
     const res = await fetch(DS_GITHUB_API, {
       headers: { 'Accept': 'application/vnd.github.v3+json' }
     });
-    if (!res.ok) throw new Error('GitHub API ' + res.status);
+    if (!res.ok) {
+      const remaining = res.headers.get('X-RateLimit-Remaining');
+      if (remaining === '0') throw new Error('GitHub rate limit hit (60/hour). Try again in ~1 hour.');
+      throw new Error('GitHub API returned ' + res.status);
+    }
     const families = await res.json();
-    const folders  = families.filter(f => f.type === 'dir');
+    const familyFolders = families.filter(f => f.type === 'dir');
 
-    // For each family folder, fetch its contents and find JSON files
     const allEntries = [];
-    await Promise.all(folders.map(async folder => {
+
+    // Step 2: For each family, look for a Statblocks subfolder
+    // Repo structure: Monsters/FamilyName/Statblocks/MonsterName.json
+    await Promise.all(familyFolders.map(async family => {
       try {
-        const r2 = await fetch(folder.url, {
+        const r2 = await fetch(family.url, {
           headers: { 'Accept': 'application/vnd.github.v3+json' }
         });
-        const files = await r2.json();
-        // Collect JSON files (statblocks are at root of family folder)
-        files.filter(f => f.type === 'file' && f.name.endsWith('.json'))
-             .forEach(f => allEntries.push({
-               name: f.name.replace('.json',''),
-               family: folder.name,
-               downloadUrl: f.download_url,
-               slug: 'ds-' + f.name.replace('.json','').toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'')
-             }));
-      } catch(e) { /* skip family on error */ }
+        if (!r2.ok) return;
+        const familyContents = await r2.json();
+
+        // Find the Statblocks subfolder
+        const statblocksFolder = familyContents.find(f => f.type === 'dir' && f.name === 'Statblocks');
+
+        if (statblocksFolder) {
+          // Fetch the Statblocks folder contents
+          const r3 = await fetch(statblocksFolder.url, {
+            headers: { 'Accept': 'application/vnd.github.v3+json' }
+          });
+          if (!r3.ok) return;
+          const statblocks = await r3.json();
+
+          statblocks
+            .filter(f => f.type === 'file' && f.name.endsWith('.json'))
+            .forEach(f => allEntries.push({
+              name:        f.name.replace('.json', ''),
+              family:      family.name,
+              downloadUrl: f.download_url,
+              slug:        'ds-' + f.name.replace('.json','').toLowerCase()
+                             .replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'')
+            }));
+        } else {
+          // Fallback: JSON files directly in the family folder
+          familyContents
+            .filter(f => f.type === 'file' && f.name.endsWith('.json'))
+            .forEach(f => allEntries.push({
+              name:        f.name.replace('.json', ''),
+              family:      family.name,
+              downloadUrl: f.download_url,
+              slug:        'ds-' + f.name.replace('.json','').toLowerCase()
+                             .replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'')
+            }));
+        }
+      } catch(e) { /* skip this family on error */ }
     }));
 
-    // Build lightweight index for browser list (full data loaded on demand)
+    if (allEntries.length === 0) {
+      throw new Error('No monster JSON files found — repo structure may have changed');
+    }
+
+    // Build lightweight index
     DS_MONSTERS = allEntries.sort((a,b) => a.name.localeCompare(b.name)).map(e => ({
-      slug:   e.slug,
-      name:   e.name,
-      type:   e.family.toLowerCase(),
-      cr:     '?',          // loaded on demand
-      source: 'draw-steel',
+      slug:         e.slug,
+      name:         e.name,
+      type:         e.family.toLowerCase(),
+      cr:           '?',
+      source:       'draw-steel',
       _downloadUrl: e.downloadUrl,
-      _loaded: false
+      _loaded:      false
     }));
 
     dsLoaded  = true;
     dsLoading = false;
+    list.innerHTML = '';
     renderBrowserList(DS_MONSTERS);
+    showToast('✓ ' + DS_MONSTERS.length + ' Draw Steel monsters loaded');
+
   } catch(err) {
     dsLoading = false;
-    list.innerHTML = `<div class="browser-empty">⚠️ Could not load Draw Steel bestiary.<br><small>${err.message}</small><br><br>
-      <a href="https://github.com/SteelCompendium/data-bestiary-json" target="_blank"
-         style="color:var(--ember-pale);font-size:0.7rem;">View on GitHub →</a></div>`;
+    list.innerHTML = `
+      <div class="browser-empty">
+        ⚠️ Could not load Draw Steel bestiary<br>
+        <small style="color:var(--ember-pale);display:block;margin:6px 0;">${err.message}</small>
+        <button class="btn btn-ghost btn-sm" onclick="dsLoaded=false;dsLoading=false;loadDSMonsters()"
+          style="margin-top:8px;">↺ Retry</button>
+        <br><br>
+        <a href="https://github.com/SteelCompendium/data-bestiary-json" target="_blank"
+           style="color:var(--steel-pale);font-size:0.65rem;">View repo on GitHub →</a>
+      </div>`;
   }
 }
 
@@ -2096,6 +2142,18 @@ function duplicateAsCustom() {
 }
 
 // ── COLLECT FORM DATA ──
+// Converts "CON +6, WIS +4" string → { con: '+6', wis: '+4' } object for jsonb storage
+function parseSavesSkills(str) {
+  if (!str || !str.trim()) return {};
+  if (typeof str === 'object') return str;
+  const result = {};
+  str.split(',').forEach(part => {
+    const m = part.trim().match(/^([A-Za-z\s]+?)\s*([+-]\d+)$/);
+    if (m) result[m[1].trim().toLowerCase()] = m[2].trim();
+  });
+  return result;
+}
+
 function collectFormData() {
   const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
   const abilities = {};
@@ -2151,8 +2209,8 @@ function collectFormData() {
     monster_type: g('f_type'),
     alignment: g('f_alignment'),
     abilities: abilities,
-    saves: g('f_saves'),
-    skills: g('f_skills'),
+    saves:  parseSavesSkills(g('f_saves')),
+    skills: parseSavesSkills(g('f_skills')),
     damage_immunities: g('f_dmg_imm').split(',').map(s=>s.trim()).filter(Boolean),
     condition_immunities: g('f_cond_imm').split(',').map(s=>s.trim()).filter(Boolean),
     senses: g('f_senses'),
@@ -2563,24 +2621,22 @@ function convertFoundryActor(f) {
     monster_type: det.type?.value || det.type || 'humanoid',
     alignment: det.alignment || '',
     abilities,
-    saves,
-    skills,
-    damage_immunities: dmgImm,
+    saves:  typeof saves  === 'object' && !Array.isArray(saves)  ? saves  : {},
+    skills: typeof skills === 'object' && !Array.isArray(skills) ? skills : {},
+    damage_immunities:    dmgImm,
     condition_immunities: condImm,
     senses,
     languages: typeof languages === 'string' ? languages : (languages || []).join(', '),
     actions,
     special_abilities: special,
-    reactions,
     legendary: isLegendary,
     legendary_resistance: legRes,
     legendary_actions: legActions,
     legendary_actions_per_round: legActionsPerRound,
     lair_actions: [],
     notes: '',
-    tags: [det.type?.value || 'custom'],
-    _foundryId: f._id,
-    _foundryName: f.name
+    tags: [det.type?.value || 'custom'].filter(Boolean)
+    // Note: _foundryId, _foundryName, reactions omitted — not in schema
   };
 }
 
@@ -2689,16 +2745,21 @@ async function importSelected() {
       });
       if (res.ok || res.status === 201) {
         succeeded++;
-        // Mark row green
         const item = document.getElementById('importItem_' + foundryParsed.indexOf(m));
         if (item) item.style.borderColor = '#2d6a2d';
       } else {
         failed++;
+        const errText = await res.text();
+        console.error('Supabase 400 for', m.name, ':', errText);
         const item = document.getElementById('importItem_' + foundryParsed.indexOf(m));
-        if (item) item.style.borderColor = 'rgba(139,26,26,0.6)';
+        if (item) {
+          item.style.borderColor = 'rgba(139,26,26,0.6)';
+          item.title = errText; // hover to see error
+        }
       }
     } catch(e) {
       failed++;
+      console.error('Import network error for', m.name, ':', e);
     }
     // Small delay to avoid rate limiting
     await new Promise(r => setTimeout(r, 80));
