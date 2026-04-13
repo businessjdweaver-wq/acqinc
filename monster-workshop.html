@@ -1136,7 +1136,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.2.8</span>
+  <span class="topbar-version">v0.2.9</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -1600,20 +1600,25 @@ async function loadDSMonsterDetail(entry) {
 }
 
 // ── DRAW STEEL JSON → WORKSHOP FORMAT CONVERTER ──
+// Schema confirmed from actual Steel Compendium JSON files:
+// - Characteristics are flat fields: ds.might, ds.agility, ds.reason, ds.intuition, ds.presence
+// - Features array: feature_type === "ability" | "trait"
+// - Abilities have: ability_type, keywords, distance, target, effects[]
+// - effects[0] has: roll ("Power Roll + N"), tier1/tier2/tier3 (damage strings)
+// - effects[N] may have: name ("Effect"), effect (string description)
+// - Traits have: effects[].effect (string)
+// - Immunities: ds.immunities[] — strings like "Poison 2"
+// - Speed: ds.speed (number, squares), ds.movement (string, extra modes)
+// - Roles: ds.roles[] (array of strings like ["Minion Ambusher"])
+
 function convertDSMonster(ds, entry) {
-  // DS schema uses: name, level, role, keywords, stamina, stability, speed, size,
-  // free_strike, characteristics {might, agility, reason, intuition, presence},
-  // features [{name, type, description, tiers}]
 
-  const chars = ds.characteristics || {};
-
-  // Map DS characteristics to ability-score style display
-  // DS uses +modifier directly (no score), so we map to our abilities format
-  const mgt = chars.might      ?? 0;
-  const agi = chars.agility    ?? 0;
-  const rea = chars.reason     ?? 0;
-  const itu = chars.intuition  ?? 0;
-  const pre = chars.presence   ?? 0;
+  // ── Characteristics (flat fields, not nested) ──
+  const mgt = parseInt(ds.might)     || 0;
+  const agi = parseInt(ds.agility)   || 0;
+  const rea = parseInt(ds.reason)    || 0;
+  const itu = parseInt(ds.intuition) || 0;
+  const pre = parseInt(ds.presence)  || 0;
 
   const abilities = {
     str: [10 + mgt * 2, fmt(mgt)],
@@ -1624,110 +1629,158 @@ function convertDSMonster(ds, entry) {
     cha: [10 + pre * 2, fmt(pre)]
   };
 
-  // Stamina → HP (DS uses Stamina, we show it in the HP field)
-  const stamina = ds.stamina ?? 10;
+  // ── Stamina / HP ──
+  const stamina = parseInt(ds.stamina) || 10;
 
-  // EV → approximate CR mapping
-  const ev = ds.encounter_value ?? ds.level ?? 1;
-  const cr = evToCR(ev, ds.role);
+  // ── EV / CR ──
+  const evRaw   = ds.ev || '';
+  const evNum   = parseInt(String(evRaw)) || ds.level || 1;
+  const roles   = ds.roles || (ds.role ? [ds.role] : []);
+  const roleStr = roles.join(' ').toLowerCase();
+  const cr      = evToCR(evNum, roleStr);
 
-  // Speed: DS uses squares (1 sq = 5 ft)
-  const speedVal  = ds.speed?.value ?? ds.speed ?? 5;
-  const speedMod  = ds.speed?.modifiers ? ' (' + ds.speed.modifiers.join(', ') + ')' : '';
-  const speedFt   = (speedVal * 5) + ' ft.' + speedMod;
+  // ── Speed ──
+  const speedSq    = parseInt(ds.speed) || 5;
+  const movement   = ds.movement ? ' (' + ds.movement + ')' : '';
+  const speedFt    = (speedSq * 5) + ' ft.' + movement;
 
-  // Size
-  const sizeRaw = ds.size ?? '1M';
-  const sizeMap = { '1T':'Tiny', '1S':'Small', '1M':'Medium', '1L':'Large',
-                    '2L':'Large', '3H':'Huge', '4H':'Huge', '5G':'Gargantuan' };
-  const size    = sizeMap[String(sizeRaw).trim()] || String(sizeRaw);
+  // ── Size ──
+  const sizeMap = { '1T':'Tiny','1S':'Small','1M':'Medium','1L':'Large',
+                    '2L':'Large','3H':'Huge','4H':'Huge','5G':'Gargantuan' };
+  const size    = sizeMap[String(ds.size || '1M').trim()] || String(ds.size || 'Medium');
 
-  // Keywords / type
-  const keywords = ds.keywords ?? [];
-  const type     = keywords.filter(k => !['Humanoid','Monster','Beast','Undead','Construct',
-    'Elemental','Fey','Fiend','Giant','Dragon','Abyssal','Infernal'].includes(k)).join(', ')
-    || keywords[0] || (entry?.family ?? 'creature');
+  // ── Keywords / type ──
+  const keywords = ds.ancestry || ds.keywords || [];
+  const typeStr  = keywords.join(', ') || entry?.family || 'creature';
 
-  // Free strike → base attack
-  const freeStrike = ds.free_strike ?? 2;
+  // ── Free strike ──
+  const freeStrike = parseInt(ds.free_strike) || 2;
 
-  // Features → actions + special
-  const features  = ds.features ?? [];
+  // ── Parse features into actions + special abilities ──
+  const features  = ds.features || [];
   const actions   = [];
   const special   = [];
 
   features.forEach(f => {
-    const isAbility = f.type === 'ability' || (f.tiers && f.tiers.length);
-    const isTrait   = f.type === 'trait' || f.type === 'feature';
-    const desc      = buildDSDesc(f);
+    if (f.feature_type === 'ability') {
+      // Parse power roll bonus from effects[0].roll: "Power Roll + 2" → "+2"
+      const rollEffect = (f.effects || []).find(e => e.roll);
+      const rollStr    = rollEffect?.roll || '';
+      const rollMatch  = rollStr.match(/[+-]\s*\d+/);
+      const toHitNum   = rollMatch ? parseInt(rollMatch[0].replace(/\s/g,'')) : 0;
+      const toHit      = fmt(toHitNum);
 
-    if (isAbility) {
-      // Pull to-hit from power roll notation if present
-      const toHitMatch = desc.match(/([+-]\d+)\s*(?:bonus|to hit)/i);
-      const dmgTier    = f.tiers ? f.tiers[1] : null; // tier 2 = standard success
-      const dmg        = dmgTier ? String(dmgTier.effect || freeStrike) : String(freeStrike);
+      // Damage from tier2 (standard hit) — strip non-numeric suffixes for the damage field
+      const tier2Raw = rollEffect?.tier2 || '';
+      const dmgMatch = tier2Raw.match(/^[\d]+d[\d]+(?:\s*[+-]\s*\d+)?|\d+/);
+      const damage   = dmgMatch ? dmgMatch[0].replace(/\s/g,'') : String(freeStrike);
+
+      // Determine damage type from keywords or tier text
+      const kwds    = (f.keywords || []).map(k => k.toLowerCase());
+      const dmgType = kwds.includes('fire') ? 'fire'
+                    : kwds.includes('cold') ? 'cold'
+                    : kwds.includes('lightning') ? 'lightning'
+                    : kwds.includes('poison') ? 'poison'
+                    : kwds.includes('sonic') ? 'sonic'
+                    : kwds.includes('psychic') ? 'psychic'
+                    : 'damage';
+
+      // Range/reach from distance field
+      const dist  = f.distance || '';
+      const reach = dist.toLowerCase().includes('ranged') ? dist : (dist || 'Melee 1');
+
+      // Build full description
+      const descParts = [];
+      if (f.ability_type) descParts.push(f.ability_type);
+      if (f.keywords && f.keywords.length) descParts.push('Keywords: ' + f.keywords.join(', '));
+      if (f.distance) descParts.push('Distance: ' + f.distance);
+      if (f.target)   descParts.push('Target: ' + f.target);
+      if (f.usage)    descParts.push('Usage: ' + f.usage);
+
+      // Add all effect lines
+      (f.effects || []).forEach(e => {
+        if (e.roll)  descParts.push('Power Roll ' + (e.roll.replace('Power Roll','').trim()));
+        if (e.tier1) descParts.push('11−: ' + e.tier1);
+        if (e.tier2) descParts.push('12–16: ' + e.tier2);
+        if (e.tier3) descParts.push('17+: ' + e.tier3);
+        if (e.name && e.effect) descParts.push(e.name + ': ' + e.effect);
+        else if (e.effect && !e.roll) descParts.push('Effect: ' + e.effect);
+      });
+
       actions.push({
         name:    f.name,
-        toHit:   toHitMatch ? toHitMatch[1] : '',
-        reach:   f.distance ? String(f.distance) : '',
-        damage:  dmg,
-        dmgType: '',
-        desc:    desc.slice(0, 350),
+        toHit,
+        reach:   reach.replace(/Melee\s*/i, 'Reach ').replace(/Ranged\s*/i, 'Ranged '),
+        damage,
+        dmgType,
+        desc:    descParts.join(' | ').slice(0, 400),
         type:    'attack'
       });
-    } else if (isTrait || !isAbility) {
-      special.push({ name: f.name, desc: desc.slice(0, 300) });
+
+    } else {
+      // Trait / other feature → special ability
+      const descParts = [];
+      (f.effects || []).forEach(e => {
+        if (e.effect) descParts.push(e.effect);
+        if (e.tier1)  descParts.push('11−: ' + e.tier1);
+        if (e.tier2)  descParts.push('12–16: ' + e.tier2);
+        if (e.tier3)  descParts.push('17+: ' + e.tier3);
+      });
+      if (f.cost) descParts.unshift('(' + f.cost + ')');
+      special.push({
+        name: f.name,
+        desc: descParts.join(' ').slice(0, 400)
+      });
     }
   });
 
-  // Villain actions
-  const villainActions = (ds.villain_actions ?? []).map(va => ({
-    name: 'Villain Action — ' + (va.name || 'Action'),
-    desc: va.description || ''
+  // ── Immunities: strings like "Poison 2" → array ──
+  const immStrings = (ds.immunities || []).map(i => String(i));
+
+  // ── Villain actions (some monsters have these) ──
+  const villainActions = (ds.villain_actions || []).map(va => ({
+    name: va.name || 'Villain Action',
+    desc: buildDSDesc(va)
   }));
 
-  // Immunity
-  const immunities = ds.immunities ?? [];
-
-  // Malice features → legendary actions
-  const malice = (ds.malice ?? []).map(m => ({
-    name: m.name + (m.cost ? ' (' + m.cost + ' Malice)' : ''),
-    desc: m.description || buildDSDesc(m)
-  }));
+  // ── Notes: flavor + role + captain bonus ──
+  const noteParts = [];
+  if (roles.length)        noteParts.push('Role: ' + roles.join(', '));
+  if (ds.with_captain)     noteParts.push('With Captain: ' + ds.with_captain);
+  if (ds.flavor)           noteParts.push(ds.flavor);
 
   return {
-    source:         'draw-steel',
+    source:           'draw-steel',
     base_monster_slug: entry?.slug || ('ds-' + (ds.name||'').toLowerCase().replace(/\s+/g,'-')),
-    name:           ds.name || entry?.name || 'Unknown',
+    name:             ds.name || entry?.name || 'Unknown',
     cr,
-    ac:             ds.defense ?? ds.stamina_modifier ?? 10,
-    hp:             stamina,
-    hp_formula:     'Stamina ' + stamina + (ds.stability ? ' / Stability ' + ds.stability : ''),
-    speed:          speedFt,
+    ac:               ds.defense ?? 10,
+    hp:               stamina,
+    hp_formula:       'Stamina ' + ds.stamina + (ds.stability !== undefined ? ' | Stability ' + ds.stability : ''),
+    speed:            speedFt,
     size,
-    monster_type:   keywords.join(', ') || type,
-    alignment:      '—',
+    monster_type:     typeStr,
+    alignment:        '—',
     abilities,
-    saves:          {},
-    skills:         {},
-    damage_immunities: immunities,
+    saves:            {},
+    skills:           {},
+    damage_immunities:    immStrings,
     condition_immunities: [],
-    senses:         ds.special_senses ? ds.special_senses.join(', ') : '',
-    languages:      (ds.languages ?? []).join(', '),
+    senses:           '',
+    languages:        (ds.languages || []).join(', '),
     actions,
     special_abilities: special,
-    reactions:      [],
-    legendary:      villainActions.length > 0,
+    legendary:        villainActions.length > 0,
     legendary_resistance: 0,
-    legendary_actions: villainActions.length > 0 ? villainActions : malice,
+    legendary_actions: villainActions,
     legendary_actions_per_round: 3,
-    lair_actions:   [],
-    notes:          ds.flavor_text || '',
-    tags:           keywords,
-    _dsLevel:       ds.level,
-    _dsRole:        ds.role,
-    _dsEV:          ev,
-    _dsFreeStrike:  freeStrike
+    lair_actions:     [],
+    notes:            noteParts.join(' | '),
+    tags:             keywords,
+    _dsLevel:         ds.level,
+    _dsRoles:         roles,
+    _dsEV:            evRaw,
+    _dsFreeStrike:    freeStrike
   };
 }
 
@@ -1737,41 +1790,43 @@ function fmt(n) {
 }
 
 function buildDSDesc(f) {
-  if (f.description) return f.description;
+  if (!f) return '';
   const parts = [];
-  if (f.keywords)   parts.push('Keywords: ' + f.keywords.join(', '));
-  if (f.distance)   parts.push('Distance: ' + f.distance);
-  if (f.target)     parts.push('Target: ' + f.target);
-  if (f.tiers) {
-    f.tiers.forEach((t, i) => {
-      const label = i === 0 ? '11 or lower' : i === 1 ? '12–16' : '17+';
-      parts.push('◆ ' + label + ': ' + (t.effect || t.description || ''));
-    });
-  }
-  if (f.effect)     parts.push('Effect: ' + f.effect);
+  if (f.description) return f.description;
+  (f.effects || []).forEach(e => {
+    if (e.effect) parts.push(e.effect);
+    if (e.tier1)  parts.push('11−: ' + e.tier1);
+    if (e.tier2)  parts.push('12–16: ' + e.tier2);
+    if (e.tier3)  parts.push('17+: ' + e.tier3);
+  });
   return parts.join(' | ');
 }
 
-function evToCR(ev, role) {
-  // Draw Steel EV to approximate 5e CR
-  // Solo/Boss EV is roughly 4-6× a standard creature's EV
-  const isLeader = role && (role.toLowerCase().includes('solo') || role.toLowerCase().includes('boss') || role.toLowerCase().includes('leader'));
-  const adjusted = isLeader ? Math.round(ev / 4) : ev;
+function evToCR(ev, roleStr) {
+  // DS EV → approximate 5e CR
+  // Minions are much weaker per-creature (typically 3-4 EV for a squad)
+  const isMinion = roleStr.includes('minion');
+  const isBoss   = roleStr.includes('boss') || roleStr.includes('solo') || roleStr.includes('leader');
+  let adjusted   = isMinion ? Math.max(1, Math.round(ev * 4))
+                 : isBoss   ? Math.round(ev / 4)
+                 : ev;
   if (adjusted <= 1)  return '1/4';
   if (adjusted <= 2)  return '1/2';
-  if (adjusted <= 3)  return '1';
-  if (adjusted <= 5)  return '2';
-  if (adjusted <= 8)  return '3';
-  if (adjusted <= 12) return '4';
-  if (adjusted <= 16) return '5';
-  if (adjusted <= 22) return '6';
-  if (adjusted <= 30) return '8';
-  if (adjusted <= 40) return '10';
-  if (adjusted <= 55) return '12';
-  if (adjusted <= 70) return '15';
-  if (adjusted <= 90) return '18';
+  if (adjusted <= 4)  return '1';
+  if (adjusted <= 6)  return '2';
+  if (adjusted <= 9)  return '3';
+  if (adjusted <= 13) return '4';
+  if (adjusted <= 17) return '5';
+  if (adjusted <= 23) return '6';
+  if (adjusted <= 31) return '8';
+  if (adjusted <= 41) return '10';
+  if (adjusted <= 56) return '12';
+  if (adjusted <= 71) return '15';
+  if (adjusted <= 91) return '18';
   return '20+';
 }
+
+
 
 // ── STATE ──
 let currentTab = 'srd';
