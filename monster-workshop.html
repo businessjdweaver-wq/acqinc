@@ -1062,6 +1062,70 @@ body {
   font-size: 0.6rem;
   color: #6abf6a;
 }
+
+/* ── DS FOLDER IMPORT DROP ZONE ── */
+.ds-import-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px 16px;
+  margin: 8px;
+  border: 2px dashed rgba(192,84,252,0.3);
+  border-radius: 8px;
+  background: rgba(45,26,74,0.15);
+  text-align: center;
+  transition: all 0.15s;
+}
+.ds-import-zone.dragover {
+  border-color: rgba(192,84,252,0.7);
+  background: rgba(45,26,74,0.35);
+}
+.ds-import-icon { font-size: 2rem; opacity: 0.7; }
+.ds-import-title {
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #c084fc;
+}
+.ds-import-sub {
+  font-family: 'Crimson Pro', serif;
+  font-size: 0.75rem;
+  color: var(--steel-pale);
+  line-height: 1.5;
+}
+.ds-import-btn {
+  font-family: 'Cinzel', serif;
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  padding: 7px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid rgba(192,84,252,0.5);
+  background: rgba(45,26,74,0.4);
+  color: #c084fc;
+  transition: all 0.15s;
+}
+.ds-import-btn:hover { background: rgba(45,26,74,0.7); border-color: #c084fc; }
+.ds-loaded-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: rgba(45,26,74,0.2);
+  border-bottom: 1px solid rgba(192,84,252,0.15);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.55rem;
+  color: #c084fc;
+  flex-shrink: 0;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
 </style>
 </head>
 <body>
@@ -1072,7 +1136,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.2.7</span>
+  <span class="topbar-version">v0.2.8</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -1337,167 +1401,202 @@ const SRD_MONSTERS = [
 ];
 
 
-// ── DRAW STEEL: LIVE FROM STEEL COMPENDIUM GITHUB ──
+// ── DRAW STEEL: LOCAL FOLDER IMPORT ──
 // Data sourced under the DRAW STEEL Creator License.
 // DRAW STEEL © 2025 MCDM Productions, LLC.
 // Steel Compendium is an independent product not affiliated with MCDM.
-const DS_GITHUB_API = 'https://api.github.com/repos/SteelCompendium/data-bestiary-json/contents/Monsters';
-const DS_RAW_BASE   = 'https://raw.githubusercontent.com/SteelCompendium/data-bestiary-json/main/Monsters';
 
-let DS_MONSTERS = [];        // populated on first DS tab click
+const DS_CACHE_KEY = 'rq_ds_monster_index_v2';
+const DS_CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+let DS_MONSTERS = [];
 let dsLoaded    = false;
 let dsLoading   = false;
 
-async function loadDSMonsters() {
+// Called when DS tab is clicked
+function loadDSMonsters() {
   if (dsLoaded || dsLoading) return;
-  dsLoading = true;
-  const list = document.getElementById('browserList');
-  list.innerHTML = '<div class="browser-loading">⚔️ Loading Draw Steel bestiary…</div>';
 
-  // ── Check localStorage cache first (avoids GitHub rate limits) ──
-  const CACHE_KEY = 'rq_ds_monster_index';
-  const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+  // Try cache first
   try {
-    const cached = localStorage.getItem(CACHE_KEY);
+    const cached = localStorage.getItem(DS_CACHE_KEY);
     if (cached) {
       const { data, timestamp } = JSON.parse(cached);
-      if (Date.now() - timestamp < CACHE_TTL && data.length > 0) {
+      if (data && data.length > 0 && (Date.now() - timestamp < DS_CACHE_TTL)) {
         DS_MONSTERS = data;
-        dsLoaded  = true;
-        dsLoading = false;
+        dsLoaded = true;
         renderBrowserList(DS_MONSTERS);
-        showToast('✓ ' + DS_MONSTERS.length + ' Draw Steel monsters loaded (cached)');
+        showDSLoadedBar(DS_MONSTERS.length);
         return;
       }
     }
-  } catch(e) { /* ignore cache read errors */ }
+  } catch(e) {}
 
-  try {
-    // Step 1: Fetch top-level family folders
-    const res = await fetch(DS_GITHUB_API, {
-      headers: { 'Accept': 'application/vnd.github.v3+json' }
-    });
-    if (!res.ok) {
-      const remaining = res.headers.get('X-RateLimit-Remaining');
-      if (remaining === '0' || res.status === 429) {
-        // Try to use stale cache if available
-        const cached = localStorage.getItem(CACHE_KEY);
-        if (cached) {
-          const { data } = JSON.parse(cached);
-          if (data.length > 0) {
-            DS_MONSTERS = data;
-            dsLoaded  = true;
-            dsLoading = false;
-            renderBrowserList(DS_MONSTERS);
-            showToast('GitHub rate limit hit — using cached data (' + DS_MONSTERS.length + ' monsters)', true);
-            return;
-          }
-        }
-        throw new Error('GitHub rate limit hit (60/hour). Try again in ~1 hour.');
-      }
-      throw new Error('GitHub API returned ' + res.status);
-    }
-    const families = await res.json();
-    const familyFolders = families.filter(f => f.type === 'dir');
+  // No cache — show import zone
+  showDSImportZone();
+}
 
-    const allEntries = [];
+function showDSImportZone() {
+  const list = document.getElementById('browserList');
+  list.innerHTML = `
+    <div class="ds-import-zone" id="dsImportZone"
+         ondragover="event.preventDefault();this.classList.add('dragover')"
+         ondragleave="this.classList.remove('dragover')"
+         ondrop="handleDSFolderDrop(event)">
+      <div class="ds-import-icon">📂</div>
+      <div class="ds-import-title">Import Steel Compendium Bestiary</div>
+      <div class="ds-import-sub">
+        Unzip the Steel Compendium release ZIP,<br>
+        then drop the <strong style="color:#c084fc;">data-bestiary-json-main</strong> folder here<br>
+        <em>(or click to browse)</em>
+      </div>
+      <input type="file" id="dsFolderInput" webkitdirectory multiple accept=".json"
+             style="display:none" onchange="handleDSFolderInput(this.files)">
+      <button class="ds-import-btn" onclick="document.getElementById('dsFolderInput').click()">
+        📁 Choose Folder
+      </button>
+      <div class="ds-import-sub" style="font-size:0.65rem;opacity:0.7;">
+        Monsters load locally — no internet required after first import
+      </div>
+    </div>`;
+}
 
-    // Step 2: For each family, look for a Statblocks subfolder
-    await Promise.all(familyFolders.map(async family => {
-      try {
-        const r2 = await fetch(family.url, {
-          headers: { 'Accept': 'application/vnd.github.v3+json' }
-        });
-        if (!r2.ok) return;
-        const familyContents = await r2.json();
+function showDSLoadedBar(count) {
+  // Insert a small status bar above the browser list
+  const existing = document.getElementById('dsLoadedBar');
+  if (existing) existing.remove();
 
-        const statblocksFolder = familyContents.find(f => f.type === 'dir' && f.name === 'Statblocks');
+  const browserPanel = document.querySelector('.browser-panel');
+  const listEl = document.getElementById('browserList');
 
-        if (statblocksFolder) {
-          const r3 = await fetch(statblocksFolder.url, {
-            headers: { 'Accept': 'application/vnd.github.v3+json' }
-          });
-          if (!r3.ok) return;
-          const statblocks = await r3.json();
-          statblocks
-            .filter(f => f.type === 'file' && f.name.endsWith('.json'))
-            .forEach(f => allEntries.push({
-              name:        f.name.replace('.json', ''),
-              family:      family.name,
-              downloadUrl: f.download_url,
-              slug:        'ds-' + f.name.replace('.json','').toLowerCase()
-                             .replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'')
-            }));
-        } else {
-          familyContents
-            .filter(f => f.type === 'file' && f.name.endsWith('.json'))
-            .forEach(f => allEntries.push({
-              name:        f.name.replace('.json', ''),
-              family:      family.name,
-              downloadUrl: f.download_url,
-              slug:        'ds-' + f.name.replace('.json','').toLowerCase()
-                             .replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'')
-            }));
-        }
-      } catch(e) { /* skip this family */ }
-    }));
+  const bar = document.createElement('div');
+  bar.className = 'ds-loaded-bar';
+  bar.id = 'dsLoadedBar';
+  bar.innerHTML = `
+    <span>⚔️ ${count} Draw Steel monsters</span>
+    <button class="btn btn-ghost btn-sm" style="font-size:0.5rem;padding:2px 8px;"
+      onclick="clearDSCache()">↺ Re-import</button>`;
+  browserPanel.insertBefore(bar, listEl);
+}
 
-    if (allEntries.length === 0) {
-      throw new Error('No monster JSON files found — repo structure may have changed');
-    }
+function clearDSCache() {
+  localStorage.removeItem(DS_CACHE_KEY);
+  DS_MONSTERS = [];
+  dsLoaded  = false;
+  dsLoading = false;
+  const bar = document.getElementById('dsLoadedBar');
+  if (bar) bar.remove();
+  showDSImportZone();
+}
 
-    DS_MONSTERS = allEntries.sort((a,b) => a.name.localeCompare(b.name)).map(e => ({
-      slug:         e.slug,
-      name:         e.name,
-      type:         e.family.toLowerCase(),
-      cr:           '?',
-      source:       'draw-steel',
-      _downloadUrl: e.downloadUrl,
-      _loaded:      false
-    }));
+async function handleDSFolderDrop(event) {
+  event.preventDefault();
+  document.getElementById('dsImportZone')?.classList.remove('dragover');
+  const items = [...event.dataTransfer.items].filter(i => i.kind === 'file');
+  const files = [];
+  for (const item of items) {
+    const entry = item.webkitGetAsEntry?.();
+    if (entry) await collectJsonFiles(entry, files);
+  }
+  if (files.length) processDSFiles(files);
+  else showToast('No JSON files found in dropped folder', true);
+}
 
-    // ── Cache the index in localStorage ──
-    try {
-      localStorage.setItem(CACHE_KEY, JSON.stringify({ data: DS_MONSTERS, timestamp: Date.now() }));
-    } catch(e) { /* storage full — ignore */ }
-
-    dsLoaded  = true;
-    dsLoading = false;
-    list.innerHTML = '';
-    renderBrowserList(DS_MONSTERS);
-    showToast('✓ ' + DS_MONSTERS.length + ' Draw Steel monsters loaded');
-
-  } catch(err) {
-    dsLoading = false;
-    list.innerHTML = `
-      <div class="browser-empty">
-        ⚠️ Could not load Draw Steel bestiary<br>
-        <small style="color:var(--ember-pale);display:block;margin:6px 0;">${err.message}</small>
-        <button class="btn btn-ghost btn-sm" onclick="dsLoaded=false;dsLoading=false;loadDSMonsters()"
-          style="margin-top:8px;">↺ Retry</button>
-        <br><small style="color:var(--steel-pale);margin-top:6px;display:block;">
-          Cache clears automatically after 24h.<br>
-          <span style="cursor:pointer;text-decoration:underline;" 
-            onclick="localStorage.removeItem('rq_ds_monster_index');dsLoaded=false;dsLoading=false;loadDSMonsters()">
-            Force refresh from GitHub →
-          </span>
-        </small>
-      </div>`;
+async function collectJsonFiles(entry, files) {
+  if (entry.isFile && entry.name.endsWith('.json')) {
+    const file = await new Promise(res => entry.file(res));
+    file._path = entry.fullPath;
+    files.push(file);
+  } else if (entry.isDirectory) {
+    const reader = entry.createReader();
+    const entries = await new Promise(res => reader.readEntries(res));
+    for (const e of entries) await collectJsonFiles(e, files);
   }
 }
 
-async function loadDSMonsterDetail(entry) {
-  if (entry._loaded) return entry;
-  try {
-    const res  = await fetch(entry._downloadUrl);
-    const json = await res.json();
-    const converted = convertDSMonster(json, entry);
-    Object.assign(entry, converted, { _loaded: true });
-    return entry;
-  } catch(e) {
-    showToast('Could not load ' + entry.name + ': ' + e.message, true);
-    return entry;
+async function handleDSFolderInput(fileList) {
+  const files = [...fileList].filter(f => f.name.endsWith('.json'));
+  if (!files.length) { showToast('No JSON files found', true); return; }
+  processDSFiles(files);
+}
+
+async function processDSFiles(files) {
+  const zone = document.getElementById('dsImportZone');
+  if (zone) zone.innerHTML = `
+    <div class="ds-import-icon" style="animation:spin 1s linear infinite">⚙️</div>
+    <div class="ds-import-title">Processing ${files.length} files…</div>
+    <div class="ds-import-progress" id="dsProgress">Reading…</div>`;
+
+  const entries = [];
+  let parsed = 0;
+
+  for (const file of files) {
+    // Only process files inside a Statblocks folder
+    const path = file.webkitRelativePath || file._path || file.name;
+    if (!path.includes('Statblocks')) { parsed++; continue; }
+
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+
+      // Extract family name from path: .../FamilyName/Statblocks/MonsterName.json
+      const parts = path.split('/').filter(Boolean);
+      const statblocksIdx = parts.indexOf('Statblocks');
+      const family = statblocksIdx > 0 ? parts[statblocksIdx - 1] : 'Unknown';
+      const monsterName = file.name.replace('.json', '');
+
+      const slug = 'ds-' + monsterName.toLowerCase()
+        .replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'');
+
+      const entry = { slug, name: monsterName, family, source: 'draw-steel', cr: '?', _loaded: false };
+      const converted = convertDSMonster(json, entry);
+      Object.assign(entry, converted, { _loaded: true });
+      entries.push(entry);
+    } catch(e) { /* skip unparseable files */ }
+
+    parsed++;
+    if (parsed % 10 === 0) {
+      const prog = document.getElementById('dsProgress');
+      if (prog) prog.textContent = `${parsed} / ${files.length} files processed…`;
+      await new Promise(r => setTimeout(r, 0)); // yield to UI
+    }
   }
+
+  if (!entries.length) {
+    showDSImportZone();
+    showToast('No valid Draw Steel statblock JSON files found — make sure to use the data-bestiary-json folder', true);
+    return;
+  }
+
+  DS_MONSTERS = entries.sort((a,b) => a.name.localeCompare(b.name));
+  dsLoaded = true;
+
+  // Cache to localStorage
+  try {
+    localStorage.setItem(DS_CACHE_KEY, JSON.stringify({
+      data: DS_MONSTERS,
+      timestamp: Date.now()
+    }));
+  } catch(e) {
+    // localStorage quota — store index-only (no full stats) as fallback
+    const indexOnly = DS_MONSTERS.map(m => ({
+      slug: m.slug, name: m.name, type: m.type, cr: m.cr,
+      source: 'draw-steel', _loaded: false,
+      _downloadUrl: m._downloadUrl || ''
+    }));
+    try { localStorage.setItem(DS_CACHE_KEY, JSON.stringify({ data: indexOnly, timestamp: Date.now() })); }
+    catch(e2) { /* give up on caching */ }
+  }
+
+  document.getElementById('browserList').innerHTML = '';
+  renderBrowserList(DS_MONSTERS);
+  showDSLoadedBar(DS_MONSTERS.length);
+  showToast('✓ ' + DS_MONSTERS.length + ' Draw Steel monsters imported and cached');
+}
+
+async function loadDSMonsterDetail(entry) {
+  // All DS monsters are fully loaded on import now — this is a no-op
+  return entry;
 }
 
 // ── DRAW STEEL JSON → WORKSHOP FORMAT CONVERTER ──
@@ -1742,17 +1841,10 @@ async function selectMonster(slug) {
   currentMonster = all.find(m => m.slug === slug);
   if (!currentMonster) return;
 
-  // Show loading state for unloaded DS monsters
+  // DS monsters are fully loaded at import time — no lazy fetch needed
   if (currentMonster.source === 'draw-steel' && !currentMonster._loaded) {
-    document.getElementById('editorTitle').textContent = currentMonster.name;
-    document.getElementById('editorBody').innerHTML =
-      '<div class="editor-placeholder"><div class="editor-placeholder-icon" style="animation:spin 1s linear infinite">⚙️</div>' +
-      '<div class="editor-placeholder-text">Loading Draw Steel stat block…</div></div>';
-    document.getElementById('editorSourcePill').style.display = 'none';
-    document.getElementById('btnDuplicate').style.display = 'none';
-    document.getElementById('btnAddEncounter').style.display = 'none';
-
-    currentMonster = await loadDSMonsterDetail(currentMonster);
+    showToast('Monster data not fully loaded — try re-importing the folder', true);
+    return;
   }
 
   isEditing = currentMonster.source === 'custom';
