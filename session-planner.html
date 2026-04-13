@@ -975,7 +975,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner</span>
   <span class="topbar-sep">›</span>
-  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.1.7</span>
+  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.1.8</span>
   <div class="topbar-actions">
     <div class="b20-status b20-inactive" id="b20Indicator" title="Beyond20 not detected">
       <div class="b20-dot"></div>
@@ -1323,7 +1323,7 @@ body {
       </div>
 
       <div class="monster-list">
-        <div class="monster-card">
+        <div class="monster-card" data-monster='{"name":"Young Red Dragon","cr":"10","hp":"178","ac":"18","speed":"40 ft., climb 40 ft., fly 80 ft.","size":"Large","type":"dragon","alignment":"chaotic evil","senses":"blindsight 30 ft., darkvision 120 ft.","languages":"Common, Draconic","damage_immunities":["fire"],"actions":[{"name":"Bite","toHit":"+10","reach":"10 ft.","damage":"2d10+6","dmgType":"piercing","desc":"Melee Weapon Attack"},{"name":"Claw","toHit":"+10","reach":"5 ft.","damage":"2d6+6","dmgType":"slashing","desc":"Melee Weapon Attack"},{"name":"Fire Breath (Recharge 5-6)","desc":"30 ft. cone. DC 17 DEX save or 16d6 fire damage, half on success."}]}'>
           <div class="monster-card-top">
             <span class="monster-name">Young Red Dragon</span>
             <div class="monster-stats">
@@ -1341,7 +1341,7 @@ body {
             <button class="btn btn-ghost btn-sm">📋 Stat Block</button>
           </div>
         </div>
-        <div class="monster-card">
+        <div class="monster-card" data-monster='{"name":"Kobold","cr":"1/8","hp":"5","ac":"12","speed":"30 ft.","size":"Small","type":"humanoid","alignment":"lawful evil","senses":"darkvision 60 ft.","languages":"Common, Draconic","actions":[{"name":"Dagger","toHit":"+4","reach":"5 ft.","damage":"1d4+2","dmgType":"piercing","desc":"Melee Weapon Attack"},{"name":"Sling","toHit":"+4","reach":"30/120 ft.","damage":"1d4+2","dmgType":"bludgeoning","desc":"Ranged Weapon Attack"}],"special_abilities":[{"name":"Pack Tactics","desc":"Advantage on attacks if an ally is adjacent to the target."},{"name":"Sunlight Sensitivity","desc":"Disadvantage on attacks and Perception in sunlight."}]}'>
           <div class="monster-card-top">
             <span class="monster-name">Kobold</span>
             <div class="monster-stats">
@@ -1862,6 +1862,18 @@ body {
   <div style="display:flex;gap:8px;align-items:center;">
     <button class="btn-import" onclick="importToFirstEncounter()">Add to First Encounter</button>
     <button class="btn-import-dismiss" onclick="dismissImportBar()" title="Dismiss">✕</button>
+  </div>
+</div>
+
+<!-- STAT BLOCK MODAL -->
+<div id="statBlockOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:600;align-items:center;justify-content:center;" onclick="if(event.target===this)closeStatModal()">
+  <div style="background:linear-gradient(135deg,#1a1610 0%,#0e0c08 100%);border:1px solid rgba(200,66,10,0.4);border-radius:8px;width:min(640px,95vw);max-height:85vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,0.6);">
+    <div style="display:flex;align-items:center;padding:14px 20px;border-bottom:1px solid rgba(200,66,10,0.2);gap:12px;">
+      <span id="sbmName" style="font-family:'Cinzel',serif;font-size:0.9rem;font-weight:700;color:var(--parchment);flex:1;"></span>
+      <span id="sbmBadge" style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;padding:2px 8px;border-radius:3px;border:1px solid rgba(200,66,10,0.4);color:var(--ember-pale);"></span>
+      <button onclick="closeStatModal()" style="background:none;border:none;cursor:pointer;color:var(--steel-pale);font-size:1.1rem;padding:0 4px;">✕</button>
+    </div>
+    <div id="sbmBody" style="overflow-y:auto;padding:16px 20px;flex:1;"></div>
   </div>
 </div>
 
@@ -2561,9 +2573,10 @@ function importQueuedMonsters(blockId) {
     const sbBtn = document.createElement('button');
     sbBtn.className = 'btn btn-ghost btn-sm';
     sbBtn.textContent = '📋 Stat Block';
+    sbBtn.addEventListener('click', () => openStatModal(card));
     actionsDiv.appendChild(sbBtn);
+    try { card.dataset.monster = JSON.stringify(m); } catch(e) {}
 
-    card.appendChild(actionsDiv);
     list.appendChild(card);
 
     // Apply b20 visibility if already active
@@ -2598,6 +2611,105 @@ function showToastSP(msg, isError) {
   ].join(';');
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 3500);
+}
+
+// ── STAT BLOCK MODAL ──
+function openStatModal(card) {
+  let m = null;
+  try { m = JSON.parse(card.dataset.monster || 'null'); } catch(e) {}
+
+  // Fall back to reading visible stats from the card DOM
+  if (!m) {
+    const nameEl  = card.querySelector('.monster-name');
+    const statEls = card.querySelectorAll('.monster-stats span');
+    m = {
+      name:    nameEl?.textContent || 'Unknown',
+      cr:      statEls[0]?.textContent?.replace('CR ','')  || '?',
+      hp:      statEls[1]?.textContent?.replace('HP ','')  || '?',
+      ac:      statEls[2]?.textContent?.replace('AC ','')  || '?',
+      actions: [], special_abilities: []
+    };
+  }
+
+  document.getElementById('sbmName').textContent  = m.name || 'Monster';
+  document.getElementById('sbmBadge').textContent = 'CR ' + (m.cr || '?') + ' · HP ' + (m.hp || '?') + ' · AC ' + (m.ac || '?');
+
+  const body = document.getElementById('sbmBody');
+  body.innerHTML = renderStatBlockHTML(m);
+
+  const overlay = document.getElementById('statBlockOverlay');
+  overlay.style.display = 'flex';
+}
+
+function closeStatModal() {
+  document.getElementById('statBlockOverlay').style.display = 'none';
+}
+
+function renderStatBlockHTML(m) {
+  const row = (label, val) => val
+    ? `<div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);width:90px;flex-shrink:0;">${label}</span>
+        <span style="font-size:0.75rem;color:var(--bone);">${val}</span>
+       </div>` : '';
+
+  const abilityLabels = { str:'STR', dex:'DEX', con:'CON', int:'INT', wis:'WIS', cha:'CHA' };
+  const abs = m.abilities || {};
+  const abilityRow = Object.keys(abilityLabels).map(k => {
+    const v = abs[k];
+    if (!v) return `<div style="text-align:center;"><div style="font-family:'JetBrains Mono',monospace;font-size:0.48rem;color:var(--steel-pale);">${abilityLabels[k]}</div><div style="font-family:'Cinzel',serif;font-size:0.7rem;font-weight:600;">—</div></div>`;
+    const score = Array.isArray(v) ? v[0] : v;
+    const mod   = Array.isArray(v) ? v[1] : (Math.floor((parseInt(score)-10)/2) >= 0 ? '+' : '') + Math.floor((parseInt(score)-10)/2);
+    return `<div style="text-align:center;"><div style="font-family:'JetBrains Mono',monospace;font-size:0.48rem;color:var(--steel-pale);">${abilityLabels[k]}</div><div style="font-family:'Cinzel',serif;font-size:0.7rem;font-weight:600;">${score}</div><div style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--ember-pale);">${mod}</div></div>`;
+  }).join('');
+
+  const sectionHead = (title) =>
+    `<div style="font-family:'Cinzel',serif;font-size:0.55rem;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--ember-pale);margin:12px 0 4px;border-bottom:1px solid rgba(200,66,10,0.2);padding-bottom:4px;">${title}</div>`;
+
+  const actions = (m.actions || []).filter(a => a.name && (a.toHit || a.desc || a.damage)).map(a => `
+    <div style="margin-bottom:8px;">
+      <div style="font-family:'Cinzel',serif;font-size:0.65rem;font-weight:700;color:var(--parchment);margin-bottom:2px;">
+        ${a.name}${a.toHit ? ' <span style="color:var(--ember-pale);font-weight:400;">' + a.toHit + '</span>' : ''}
+        ${a.damage ? ' · <span style="color:var(--gold-pale);">' + a.damage + (a.dmgType ? ' ' + a.dmgType : '') + '</span>' : ''}
+      </div>
+      ${a.reach ? `<div style="font-family:'JetBrains Mono',monospace;font-size:0.5rem;color:var(--steel-pale);">${a.reach}</div>` : ''}
+      ${a.desc ? `<div style="font-size:0.7rem;color:var(--bone);line-height:1.4;margin-top:2px;">${a.desc}</div>` : ''}
+    </div>`).join('');
+
+  const specials = (m.special || m.special_abilities || []).map(s => `
+    <div style="margin-bottom:8px;">
+      <span style="font-family:'Cinzel',serif;font-size:0.65rem;font-weight:700;color:var(--parchment);">${s.name}. </span>
+      <span style="font-size:0.7rem;color:var(--bone);line-height:1.4;">${s.desc || s.description || ''}</span>
+    </div>`).join('');
+
+  const legActions = (m.legendary_actions || []).map(la => `
+    <div style="margin-bottom:6px;">
+      <span style="font-family:'Cinzel',serif;font-size:0.62rem;font-weight:700;color:var(--gold-pale);">${la.name}. </span>
+      <span style="font-size:0.68rem;color:var(--bone);">${la.desc || ''}</span>
+    </div>`).join('');
+
+  const immStr = [
+    ...(m.damage_immunities || []).map(i => 'Immune: ' + i),
+    ...(m.condition_immunities || []).map(i => 'Immune (condition): ' + i)
+  ].join(', ');
+
+  return `
+    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;background:rgba(200,66,10,0.06);border:1px solid rgba(200,66,10,0.15);border-radius:4px;padding:10px;margin-bottom:12px;">
+      ${abilityRow}
+    </div>
+    ${row('Speed',     m.speed)}
+    ${row('Size',      m.size)}
+    ${row('Type',      m.monster_type || m.type)}
+    ${row('Alignment', m.alignment)}
+    ${row('Senses',    m.senses)}
+    ${row('Languages', m.languages)}
+    ${immStr ? row('Immunities', immStr) : ''}
+    ${m.saves && Object.keys(m.saves).length ? row('Saves', Object.entries(m.saves).map(([k,v])=>k.toUpperCase()+' '+v).join(', ')) : ''}
+    ${m.skills && Object.keys(m.skills).length ? row('Skills', Object.entries(m.skills).map(([k,v])=>k+' '+v).join(', ')) : ''}
+    ${actions  ? sectionHead('Actions')  + actions  : ''}
+    ${specials ? sectionHead('Traits')   + specials  : ''}
+    ${legActions ? sectionHead('Legendary Actions') + legActions : ''}
+    ${m.notes  ? `<div style="margin-top:10px;font-size:0.68rem;color:var(--steel-pale);font-style:italic;">${m.notes}</div>` : ''}
+  `;
 }
 
 // ── ROLL BUTTON HANDLER (data-attribute based — no string escaping) ──
@@ -2788,8 +2900,26 @@ function buildRestoredBlock(bd) {
       const sbBtn = document.createElement('button');
       sbBtn.className = 'btn btn-ghost btn-sm';
       sbBtn.textContent = '📋 Stat Block';
+      sbBtn.addEventListener('click', () => openStatModal(card));
       actionsDiv.appendChild(sbBtn);
       card.appendChild(actionsDiv);
+
+      // Restore monster data for stat block modal (from serialized rollData)
+      try {
+        card.dataset.monster = JSON.stringify({
+          name:    mData.name,
+          cr:      (mData.stats?.[0] || '').replace(/^CR\s*/,''),
+          hp:      (mData.stats?.[1] || '').replace(/^HP\s*/,''),
+          ac:      (mData.stats?.[2] || '').replace(/^AC\s*/,''),
+          actions: (mData.rollData || []).map(rd => {
+            let atk = {};
+            try { atk = JSON.parse(rd.atk || '{}'); } catch(e) {}
+            return { name: rd.label.replace(/^🎲\s*/,''), toHit: '+' + (atk.toHit||0), reach: atk.reach || '', damage: (atk.damages||[''])[0], dmgType: (atk.damageTypes||[''])[0], desc: '' };
+          }),
+          special_abilities: []
+        });
+      } catch(e) {}
+
       monsterList.appendChild(card);
     });
     body.appendChild(monsterList);
@@ -2839,6 +2969,14 @@ window.addEventListener('load', () => {
       restoreSession(data);
     }
   } catch(e) {}
+});
+
+// ── STAT BLOCK BUTTON DELEGATION (catches static + dynamic cards) ──
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.btn');
+  if (!btn || !btn.textContent.includes('📋')) return;
+  const card = btn.closest('.monster-card');
+  if (card) openStatModal(card);
 });
 
 // ── INIT ──
