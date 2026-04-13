@@ -1005,8 +1005,8 @@ body {
 .encounter-tray {
   flex-shrink: 0;
   background: linear-gradient(135deg, #0e1a0e 0%, #0a1208 100%);
-  border-top: 1px solid rgba(45,106,45,0.4);
-  padding: 10px 16px;
+  border-top: 2px solid rgba(45,106,45,0.5);
+  padding: 8px 16px;
   display: none;
 }
 .encounter-tray.has-monsters { display: block; }
@@ -1014,7 +1014,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
+  gap: 8px;
 }
 .tray-title {
   font-family: 'Cinzel', serif;
@@ -1023,12 +1024,19 @@ body {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: #6abf6a;
+  flex-shrink: 0;
 }
 .tray-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
+  max-height: 64px;
+  overflow-y: auto;
   margin-bottom: 8px;
+  padding-right: 2px;
+}
+.tray-chips::-webkit-scrollbar { width: 3px; }
+.tray-chips::-webkit-scrollbar-thumb { background: rgba(45,106,45,0.4); border-radius: 2px; }
 }
 .tray-chip {
   display: flex;
@@ -1136,7 +1144,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.3.0</span>
+  <span class="topbar-version">v0.3.1</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -1218,16 +1226,11 @@ body {
     <div class="encounter-tray" id="encounterTray">
       <div class="tray-header">
         <span class="tray-title">⚔️ Encounter Queue</span>
-        <div style="display:flex;gap:6px;">
-          <button class="btn btn-ghost btn-sm" onclick="clearEncounterTray()">Clear</button>
-          <button class="btn btn-gold btn-sm" onclick="sendToSessionPlanner()">→ Send to Session Planner</button>
-        </div>
+        <span class="tray-count" id="trayCount" style="flex:1;margin-left:8px;"></span>
+        <button class="btn btn-ghost btn-sm" onclick="clearEncounterTray()" style="font-size:0.5rem;padding:3px 8px;">✕ Clear</button>
+        <button class="btn btn-gold btn-sm" onclick="sendToSessionPlanner()" style="white-space:nowrap;">→ Send to Session Planner</button>
       </div>
       <div class="tray-chips" id="trayChips"></div>
-      <div class="tray-actions">
-        <span class="tray-count" id="trayCount"></span>
-        <span style="font-size:0.6rem;color:var(--steel-pale);font-style:italic;">Open Session Planner → Encounter block → Import Queued Monsters</span>
-      </div>
     </div>
   </div>
 </div>
@@ -1964,7 +1967,7 @@ function renderEditor(m) {
     <!-- CR ROW -->
     <div class="cr-row">
       <span class="cr-label">Challenge Rating</span>
-      <select class="cr-select" id="f_cr" onchange="updateCRGuidance()" ${ro}>
+      <select class="cr-select" id="f_cr" onchange="updateCRGuidance();showScalePrompt();" ${ro}>
         ${Object.keys(CR_TABLE).map(c=>`<option value="${c}" ${m.cr===c?'selected':''}>${c}</option>`).join('')}
       </select>
       <div class="cr-guidance" id="crGuidance">
@@ -1973,6 +1976,7 @@ function renderEditor(m) {
         <div class="cr-stat"><span class="cr-stat-label">HP Range</span><span class="cr-stat-val" id="cg_hp">${cr.hpLo}–${cr.hpHi}</span></div>
         <div class="cr-stat"><span class="cr-stat-label">Atk Bonus</span><span class="cr-stat-val" id="cg_atk">${cr.atk}</span></div>
         <div class="cr-stat"><span class="cr-stat-label">DPR / DC</span><span class="cr-stat-val" id="cg_dpr">${cr.dprLo}–${cr.dprHi} / ${cr.dc}</span></div>
+        ${isCustom ? `<button id="btnScaleStats" class="btn btn-ember btn-sm" onclick="applyCRScaling()" title="Scale HP, AC, and damage to match new CR" style="display:none;margin-left:8px;font-size:0.5rem;padding:3px 10px;">⚖ Scale Stats</button>` : ''}
       </div>
     </div>
 
@@ -2243,6 +2247,94 @@ function updateCRGuidance() {
   document.getElementById('cg_hp').textContent = t.hpLo + '–' + t.hpHi;
   document.getElementById('cg_atk').textContent = t.atk;
   document.getElementById('cg_dpr').textContent = t.dprLo + '–' + t.dprHi + ' / ' + t.dc;
+}
+
+function showScalePrompt() {
+  const btn = document.getElementById('btnScaleStats');
+  if (btn) btn.style.display = 'inline-flex';
+}
+
+function applyCRScaling() {
+  const newCR = document.getElementById('f_cr').value;
+  const newT  = CR_TABLE[newCR];
+  if (!newT) return;
+
+  // Find what CR the monster is currently built at by reading HP
+  const currentHp = parseInt(document.getElementById('f_hp')?.value) || 0;
+  const currentAc = parseInt(document.getElementById('f_ac')?.value) || 10;
+
+  // Detect old CR by finding closest HP match in table
+  let oldCR = newCR;
+  let bestDiff = Infinity;
+  Object.entries(CR_TABLE).forEach(([cr, t]) => {
+    const midHp = Math.round((t.hpLo + t.hpHi) / 2);
+    const diff = Math.abs(currentHp - midHp);
+    if (diff < bestDiff) { bestDiff = diff; oldCR = cr; }
+  });
+  const oldT = CR_TABLE[oldCR] || newT;
+
+  // ── Apply HP: midpoint of new CR range ──
+  const newHp = Math.round((newT.hpLo + newT.hpHi) / 2);
+  const hpField = document.getElementById('f_hp');
+  if (hpField && !hpField.readOnly) hpField.value = newHp;
+
+  // ── Apply AC: use table value, but keep delta if they customised it ──
+  const acDelta = currentAc - oldT.ac;
+  const newAc   = newT.ac + Math.max(-2, Math.min(2, acDelta)); // cap custom delta at ±2
+  const acField = document.getElementById('f_ac');
+  if (acField && !acField.readOnly) acField.value = newAc;
+
+  // ── Scale action damage ──
+  // Compute a damage ratio between old and new CR midpoint DPR
+  const oldDprMid = Math.round((oldT.dprLo + oldT.dprHi) / 2) || 1;
+  const newDprMid = Math.round((newT.dprLo + newT.dprHi) / 2) || 1;
+  const dprRatio  = newDprMid / oldDprMid;
+
+  // Scale to-hit on all action cards
+  const newToHit = parseInt(newT.atk) || 3;
+
+  document.querySelectorAll('.action-card').forEach(card => {
+    const inputs = card.querySelectorAll('input[type=text]');
+    // inputs[0]=name, inputs[1]=toHit, inputs[2]=reach, inputs[3]=damage, inputs[4]=dmgType
+    if (inputs.length >= 4) {
+      // Update to-hit
+      const toHitInput = inputs[1];
+      if (toHitInput && !toHitInput.readOnly && toHitInput.value && toHitInput.value !== '') {
+        toHitInput.value = (newToHit >= 0 ? '+' : '') + newToHit;
+      }
+      // Scale damage formula
+      const dmgInput = inputs[3];
+      if (dmgInput && !dmgInput.readOnly && dmgInput.value) {
+        dmgInput.value = scaleDamageFormula(dmgInput.value, dprRatio);
+      }
+    }
+  });
+
+  // Update the guidance row
+  updateCRGuidance();
+
+  showToast('✓ CR scaled to ' + newCR + ' — HP: ' + newHp + ', AC: ' + newAc + ', damage proportionally adjusted');
+}
+
+// Scale a damage formula string by a ratio
+// e.g. "2d6+4" × 1.5 → "3d6+6" or "2d8+3" × 0.5 → "1d8+1"
+function scaleDamageFormula(formula, ratio) {
+  if (!formula || ratio === 1) return formula;
+
+  // Match NdM+K or NdM-K or NdM or just N
+  const match = formula.match(/^(\d+)d(\d+)([+-]\d+)?$/i);
+  if (match) {
+    const diceCount = Math.max(1, Math.round(parseInt(match[1]) * ratio));
+    const dieSize   = parseInt(match[2]); // keep die size
+    const bonus     = match[3] ? Math.round(parseInt(match[3]) * ratio) : 0;
+    return diceCount + 'd' + dieSize + (bonus !== 0 ? (bonus > 0 ? '+' : '') + bonus : '');
+  }
+
+  // Flat number
+  const flat = parseInt(formula);
+  if (!isNaN(flat)) return String(Math.max(1, Math.round(flat * ratio)));
+
+  return formula; // can't parse — leave unchanged
 }
 function toggleSection(id) {
   document.getElementById(id).classList.toggle('open');

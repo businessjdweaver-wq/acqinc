@@ -659,7 +659,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Blender</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.1.0</span>
+  <span class="topbar-version">v0.1.1</span>
   <div class="topbar-actions">
     <a href="monster-workshop.html" class="btn">🐉 Workshop</a>
     <a href="session-planner.html" class="btn">📋 Planner</a>
@@ -1018,6 +1018,22 @@ function renderDonorPanel(m) {
     body.appendChild(sec);
   }
 
+  // Movement modes — parse and expose as graftable
+  const moveModes = parseMovementModes(m.speed || '');
+  const extraModes = moveModes.filter(mm => !mm.type.toLowerCase().startsWith('walk'));
+  if (extraModes.length) {
+    const sec = makeComponentSection('🏃 Movement Modes (click to graft)', 'donor');
+    extraModes.forEach(mm => {
+      const fakeFeature = {
+        name: mm.label,
+        desc: mm.label + ' movement speed.',
+        _movementMode: mm
+      };
+      sec.querySelector('.component-list').appendChild(makeComponent(fakeFeature, m, 'movement', true));
+    });
+    body.appendChild(sec);
+  }
+
   // Damage immunities — graftable
   const imm = m.damage_immunities || [];
   if (imm.length) {
@@ -1097,8 +1113,8 @@ function makeComponent(feature, fromMonster, type, graftable) {
   const div = document.createElement('div');
   div.className = 'component' + (graftable ? ' graftable' : '');
 
-  const icons = { action: '⚔️', trait: '⭐', legendary: '👑', immunity: '🛡️' };
-  const typeLabels = { action: 'Action', trait: 'Trait', legendary: 'Legendary Action', immunity: 'Immunity' };
+  const icons = { action: '⚔️', trait: '⭐', legendary: '👑', immunity: '🛡️', movement: '🏃' };
+  const typeLabels = { action: 'Action', trait: 'Trait', legendary: 'Legendary Action', immunity: 'Immunity', movement: 'Movement' };
 
   const id = feature.slug || feature.name + '_' + type + '_' + fromMonster.slug;
   const alreadyGrafted = graftedItems.some(g => g.id === id);
@@ -1310,6 +1326,34 @@ function swapRoles() {
   updateResultBar();
 }
 
+// Parse speed string into typed movement modes
+// "30 ft., fly 80 ft., swim 40 ft." → [{type:'walk',speed:30,label:'Walk 30 ft.'}, ...]
+function parseMovementModes(speedStr) {
+  if (!speedStr) return [];
+  const modes = [];
+  // Walk speed is usually first number
+  const walkMatch = speedStr.match(/^(\d+)\s*ft/i);
+  if (walkMatch) modes.push({ type:'walk', speed:parseInt(walkMatch[1]), label:'Walk ' + walkMatch[1] + ' ft.' });
+
+  const extras = [
+    { key:'fly',    icon:'🦅' },
+    { key:'swim',   icon:'🐟' },
+    { key:'climb',  icon:'🧗' },
+    { key:'burrow', icon:'🪱' },
+    { key:'hover',  icon:'🌀' },
+  ];
+  extras.forEach(({ key, icon }) => {
+    const re = new RegExp(key + '\\s*(\\d+)\\s*ft', 'i');
+    const m  = speedStr.match(re);
+    if (m) modes.push({ type: key, speed: parseInt(m[1]), label: icon + ' ' + key.charAt(0).toUpperCase() + key.slice(1) + ' ' + m[1] + ' ft.' });
+    // hover without a number
+    if (key === 'hover' && speedStr.toLowerCase().includes('hover') && !m) {
+      modes.push({ type:'hover', speed:0, label:'🌀 Hover' });
+    }
+  });
+  return modes;
+}
+
 // ── SAVE TO SUPABASE ──
 async function saveBlend() {
   if (!baseMonster) { showToast('Select a base monster first', true); return; }
@@ -1320,7 +1364,12 @@ async function saveBlend() {
 
   const hp    = parseInt(document.getElementById('resultHp').value)    || baseMonster.hp    || 10;
   const ac    = parseInt(document.getElementById('resultAc').value)     || baseMonster.ac    || 10;
-  const speed = document.getElementById('resultSpeed').value.trim()     || baseMonster.speed || '30 ft.';
+  // Speed — merge grafted movement modes onto base speed
+  const baseSpeedStr = document.getElementById('resultSpeed').value.trim() || baseMonster.speed || '30 ft.';
+  const graftedMoves = graftedItems.filter(g => g.type === 'movement').map(g => g.feature._movementMode?.label || g.feature.name);
+  const speed = graftedMoves.length
+    ? baseSpeedStr.replace(/\s*\(.*?\)/g,'') + ', ' + graftedMoves.join(', ')
+    : baseSpeedStr;
   const cr    = document.getElementById('resultCr').value.trim()        || baseMonster.cr    || '1';
 
   // Build actions: base actions + grafted actions
