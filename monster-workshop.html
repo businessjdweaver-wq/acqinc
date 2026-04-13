@@ -1072,7 +1072,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.2.6</span>
+  <span class="topbar-version">v0.2.7</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -1352,7 +1352,25 @@ async function loadDSMonsters() {
   if (dsLoaded || dsLoading) return;
   dsLoading = true;
   const list = document.getElementById('browserList');
-  list.innerHTML = '<div class="browser-loading">⚔️ Loading Draw Steel bestiary from Steel Compendium…</div>';
+  list.innerHTML = '<div class="browser-loading">⚔️ Loading Draw Steel bestiary…</div>';
+
+  // ── Check localStorage cache first (avoids GitHub rate limits) ──
+  const CACHE_KEY = 'rq_ds_monster_index';
+  const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+  try {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) {
+      const { data, timestamp } = JSON.parse(cached);
+      if (Date.now() - timestamp < CACHE_TTL && data.length > 0) {
+        DS_MONSTERS = data;
+        dsLoaded  = true;
+        dsLoading = false;
+        renderBrowserList(DS_MONSTERS);
+        showToast('✓ ' + DS_MONSTERS.length + ' Draw Steel monsters loaded (cached)');
+        return;
+      }
+    }
+  } catch(e) { /* ignore cache read errors */ }
 
   try {
     // Step 1: Fetch top-level family folders
@@ -1361,7 +1379,22 @@ async function loadDSMonsters() {
     });
     if (!res.ok) {
       const remaining = res.headers.get('X-RateLimit-Remaining');
-      if (remaining === '0') throw new Error('GitHub rate limit hit (60/hour). Try again in ~1 hour.');
+      if (remaining === '0' || res.status === 429) {
+        // Try to use stale cache if available
+        const cached = localStorage.getItem(CACHE_KEY);
+        if (cached) {
+          const { data } = JSON.parse(cached);
+          if (data.length > 0) {
+            DS_MONSTERS = data;
+            dsLoaded  = true;
+            dsLoading = false;
+            renderBrowserList(DS_MONSTERS);
+            showToast('GitHub rate limit hit — using cached data (' + DS_MONSTERS.length + ' monsters)', true);
+            return;
+          }
+        }
+        throw new Error('GitHub rate limit hit (60/hour). Try again in ~1 hour.');
+      }
       throw new Error('GitHub API returned ' + res.status);
     }
     const families = await res.json();
@@ -1370,7 +1403,6 @@ async function loadDSMonsters() {
     const allEntries = [];
 
     // Step 2: For each family, look for a Statblocks subfolder
-    // Repo structure: Monsters/FamilyName/Statblocks/MonsterName.json
     await Promise.all(familyFolders.map(async family => {
       try {
         const r2 = await fetch(family.url, {
@@ -1379,17 +1411,14 @@ async function loadDSMonsters() {
         if (!r2.ok) return;
         const familyContents = await r2.json();
 
-        // Find the Statblocks subfolder
         const statblocksFolder = familyContents.find(f => f.type === 'dir' && f.name === 'Statblocks');
 
         if (statblocksFolder) {
-          // Fetch the Statblocks folder contents
           const r3 = await fetch(statblocksFolder.url, {
             headers: { 'Accept': 'application/vnd.github.v3+json' }
           });
           if (!r3.ok) return;
           const statblocks = await r3.json();
-
           statblocks
             .filter(f => f.type === 'file' && f.name.endsWith('.json'))
             .forEach(f => allEntries.push({
@@ -1400,7 +1429,6 @@ async function loadDSMonsters() {
                              .replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'')
             }));
         } else {
-          // Fallback: JSON files directly in the family folder
           familyContents
             .filter(f => f.type === 'file' && f.name.endsWith('.json'))
             .forEach(f => allEntries.push({
@@ -1411,14 +1439,13 @@ async function loadDSMonsters() {
                              .replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'')
             }));
         }
-      } catch(e) { /* skip this family on error */ }
+      } catch(e) { /* skip this family */ }
     }));
 
     if (allEntries.length === 0) {
       throw new Error('No monster JSON files found — repo structure may have changed');
     }
 
-    // Build lightweight index
     DS_MONSTERS = allEntries.sort((a,b) => a.name.localeCompare(b.name)).map(e => ({
       slug:         e.slug,
       name:         e.name,
@@ -1428,6 +1455,11 @@ async function loadDSMonsters() {
       _downloadUrl: e.downloadUrl,
       _loaded:      false
     }));
+
+    // ── Cache the index in localStorage ──
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ data: DS_MONSTERS, timestamp: Date.now() }));
+    } catch(e) { /* storage full — ignore */ }
 
     dsLoaded  = true;
     dsLoading = false;
@@ -1443,9 +1475,13 @@ async function loadDSMonsters() {
         <small style="color:var(--ember-pale);display:block;margin:6px 0;">${err.message}</small>
         <button class="btn btn-ghost btn-sm" onclick="dsLoaded=false;dsLoading=false;loadDSMonsters()"
           style="margin-top:8px;">↺ Retry</button>
-        <br><br>
-        <a href="https://github.com/SteelCompendium/data-bestiary-json" target="_blank"
-           style="color:var(--steel-pale);font-size:0.65rem;">View repo on GitHub →</a>
+        <br><small style="color:var(--steel-pale);margin-top:6px;display:block;">
+          Cache clears automatically after 24h.<br>
+          <span style="cursor:pointer;text-decoration:underline;" 
+            onclick="localStorage.removeItem('rq_ds_monster_index');dsLoaded=false;dsLoading=false;loadDSMonsters()">
+            Force refresh from GitHub →
+          </span>
+        </small>
       </div>`;
   }
 }
