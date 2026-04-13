@@ -3984,7 +3984,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.684
+      Version 1.6841
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4009,6 +4009,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6841</strong> &mdash; Code sessions now use login_codes.player_data blob for save/load, completely bypassing auth-gated tables. New code accounts get applyStarterLoadout(). Requires SQL: ALTER TABLE login_codes ADD COLUMN IF NOT EXISTS player_data jsonb DEFAULT '{}'::jsonb; and RLS: CREATE POLICY "Code holders can update their own slot" ON login_codes FOR UPDATE USING (true) WITH CHECK (true);</div>
         <div style="margin-bottom:9px"><strong>Version 1.684</strong> &mdash; Class Codes: teachers can generate short alphanumeric codes (e.g. X7K2-M9QP) for students. No email or PII required. Code tab on login screen, code generator in Settings, bulk generate 30 codes, copy-to-clipboard export. Sessions persist across browser reloads.</div>
         <div style="margin-bottom:9px"><strong>Version 1.684</strong> &mdash; Class code login: teacher generates X7K2-style codes from Settings. Students enter code on Class Code tab — no email or PII required. Each code maps to an independent save slot. Bulk generate 30 codes, copy-to-clipboard export. Requires login_codes table in Supabase (see SQL below).</div>
         <div style="margin-bottom:9px"><strong>Version 1.683</strong> &mdash; Projects: accessed via button on Contracts screen (like Archive, not in bottom nav). Task transfer (⇄) moves tasks between projects preserving pct/subtask progress. Pinterest masonry grid with Pinterest-style masonry card grid. Each project has tasks with subtasks. Tasks earn gold to the shared pool. Promote any contract to a project with one button. Projects persist via active_tasks table using cat=__project__ sentinel.</div>
@@ -15589,6 +15590,25 @@ function sbPush(manual){
     if(manual)syncStatus('Log in to sync with Supabase.','var(--crimson)');
     return Promise.resolve(false);
   }
+  // Code-session: save entire state as blob to login_codes.player_data
+  if(currentUser&&currentUser._codeLogin){
+    var _blob={};
+    var _keys=['gold','active','archived','archGroups','taskGroups','projects','party',
+      'squads','partyAssets','franchiseStorage','log','questState','questCycles',
+      'questCycleSquads','questLog','downtimeJobs','qpBalance','qpEarnedToday',
+      'qpEarnDate','settings'];
+    _keys.forEach(function(k){if(S[k]!==undefined)_blob[k]=S[k];});
+    return sbFetch(SB_URL+'/rest/v1/login_codes?id=eq.'+encodeURIComponent(currentUser._codeId),{
+      method:'PATCH',
+      headers:Object.assign({},SB_HDR,{'Prefer':'return=minimal'}),
+      body:JSON.stringify({player_data:_blob})
+    }).then(function(){
+      if(manual)syncStatus('✅ Saved','var(--forest)');
+      saveLocalState();
+    }).catch(function(err){
+      notifySupabaseOffline('code push',err);
+    });
+  }
   // Prevent concurrent pushes — they cause duplicate rows
   if(_pushInProgress){
     if(manual)syncStatus('Push already in progress…','var(--gold-dark)');
@@ -15839,6 +15859,38 @@ function sbPull(manual){
   if(!uid()){
     if(manual)syncStatus('Log in to pull from Supabase.','var(--crimson)');
     return Promise.resolve(false);
+  }
+  // Code-session: load from login_codes.player_data blob
+  if(currentUser&&currentUser._codeLogin){
+    if(manual)syncStatus('Loading save…','var(--gold-dark)');
+    return sbGet('login_codes','id=eq.'+encodeURIComponent(currentUser._codeId)+'&select=player_data,id&limit=1')
+      .then(function(rows){
+        var row=rows&&rows[0];
+        if(row&&row.player_data&&Object.keys(row.player_data).length){
+          // Restore full state from blob
+          var d=row.player_data;
+          S=createDefaultState();
+          for(var k in d){if(d.hasOwnProperty(k))S[k]=d[k];}
+          S.settings=normalizeSettings(S.settings);
+          saveLocalState();
+          S.party.forEach(function(c){if(!c.stats)c.stats=rollStats(c.cls||'Fighter');});
+          mergeCustomContent();
+          setGold();applySettings();renderTasks();renderSettings();renderAdv();
+          renderParty();renderArchive();renderLog();updateQpDisplay();
+          syncStatus('☁ Loaded','var(--ink-light)');
+        } else {
+          // Brand new code account — apply starter loadout
+          var fresh=applyStarterLoadout(true);
+          setGold();applySettings();renderTasks();renderSettings();renderAdv();
+          renderParty();renderArchive();renderLog();updateQpDisplay();
+          maybeShowWelcome(fresh);
+          syncStatus('☁ New account ready','var(--ink-light)');
+        }
+        return true;
+      }).catch(function(err){
+        notifySupabaseOffline('code pull',err);
+        console.error('Code pull error:',err);
+      });
   }
   if(manual)syncStatus('Pulling from Supabase…','var(--gold-dark)');
   var userId=uid();
