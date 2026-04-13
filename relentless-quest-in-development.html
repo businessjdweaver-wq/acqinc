@@ -3508,7 +3508,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6848</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6849</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3994,7 +3994,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6848
+      Version 1.6849
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4019,6 +4019,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6849</strong> &mdash; Quest order fixes: (1) Dupe cycle form initialises from _questOrder not raw idx. (2) Dupe save stores questOrder on new set metadata. (3) Cycle rules save preserves existing questOrder. (4) Editor left panel sorts by sort_order to match game.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6848</strong> &mdash; Quest cycle fixes: (1) Abandon button now always shows on the active cycle regardless of squad assignment — prevents getting stuck after early completion. (2) Early completion now correctly awards capstone reward and logs to questLog.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6847</strong> &mdash; Early completion fix: now correctly awards capstone reward, logs to questLog, and sets repeatCounts so cycle-complete state is properly detected.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6846</strong> &mdash; Quest order fix: quests now sorted by sort_order (editor position) instead of internal idx number, in both loadContentLibrary and mergeCustomContent.</div>
@@ -18810,7 +18811,13 @@ function edRenderList(){
         '<span style="font-size:.62em;color:var(--ink-light);border:1px solid var(--parchment-deep);border-radius:3px;padding:0 3px">set-level</span>'+
         '</div>';
       if(collapsed)return;
-      set.quests.forEach(function(q,qi){
+      // Sort by sort_order (editor position) so left panel matches game order
+      var _sortedQs=set.quests.slice().sort(function(a,b){
+        var sa=(a.sort_order!=null)?a.sort_order:9999;
+        var sb=(b.sort_order!=null)?b.sort_order:9999;
+        return sa!==sb?sa-sb:(a.idx||0)-(b.idx||0);
+      });
+      _sortedQs.forEach(function(q,qi){
         var isCustom=!!q._custom;
         var isSel=edSelected&&edSelected.type==='quest'&&edSelected.setId===set.id&&edSelected.idx===q.idx;
         var isFirst=qi===0;
@@ -19041,6 +19048,9 @@ function edShowCycleForm(){
     var newName=document.getElementById('ec-name').value.trim()||set.name;
     var newTheme=document.getElementById('ec-theme').value.trim();
     var nextMeta=idx>=0?Object.assign({},setMeta[idx]):{id:set.id,name:newName,theme:newTheme,dndTier:set.dndTier,capstoneIdx:set.capstoneIdx};
+    // Preserve existing questOrder from the live set so cycle-rules save doesn't wipe it
+    if(set._questOrder&&set._questOrder.length&&!nextMeta.questOrder)
+      nextMeta.questOrder=set._questOrder.slice();
     nextMeta.name=newName;
     nextMeta.theme=newTheme;
     nextMeta.territory=(document.getElementById('ec-territory').value||'').trim()||undefined;
@@ -21252,7 +21262,18 @@ function edShowDupeCycleForm(){
     if(prevSetId===setId&&el.getAttribute('data-order')){
       try{order=JSON.parse(el.getAttribute('data-order'));}catch(e){}
     }
-    if(!order)order=set.quests.map(function(q){return q.idx;});
+    if(!order){
+      // Use _questOrder (saved editor order) if available, else fall back to current sort
+      if(set._questOrder&&set._questOrder.length){
+        // Start from saved order, append any quests not in it
+        var _qoSet={};
+        set._questOrder.forEach(function(i){_qoSet[i]=true;});
+        var _missing=set.quests.filter(function(q){return !_qoSet[q.idx];}).map(function(q){return q.idx;});
+        order=set._questOrder.concat(_missing);
+      } else {
+        order=set.quests.map(function(q){return q.idx;});
+      }
+    }
     el.setAttribute('data-setid',setId);
     el.setAttribute('data-order',JSON.stringify(order));
     renderDupeList(set,order);
@@ -21324,7 +21345,9 @@ function edShowDupeCycleForm(){
       name:name,
       theme:theme||'Custom quest cycle duplicated from "'+set.name+'".',
       dndTier:set.dndTier||1,
-      capstoneIdx:order.length-1
+      capstoneIdx:order.length-1,
+      // Store the editor-defined order so mergeCustomContent and the game use it
+      questOrder:order.slice()
     };
     // Save set metadata into CONTENT_LIB (the authoritative path, not S.settings)
     var scope=edFormScope()||currentContentScope();
