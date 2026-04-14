@@ -4010,7 +4010,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6863
+      Version 1.6864
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4035,7 +4035,8 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
-        <div style="margin-bottom:9px"><strong>Version 1.6863</strong> &mdash; Fix pets and custom items never loading in store. Two fixes: (1) bootApp() now calls refreshSession(true) before initSession() so expired JWTs are refreshed at startup; if refresh fails the session is cleared and re-login is prompted. (2) The initSession .catch block now calls loadPetsFromDB()+loadItemsFromDB()+renderStore() so pets/items always load even when sbPull fails due to auth errors. Root cause identified: stored JWT was expired, causing sbPull to 401, the promise chain to reject, and loadPetsFromDB to never be called. Previous fix (v1.6862) removed a dead monkey-patch that was also causing issues but was not the primary bug. (lines 21586–21591) was supposed to be removed in a prior version but was left in. It caused loadContentLibrary() to fire a second time immediately after sbPull, before loadItemsFromDB() and loadPetsFromDB() had resolved — resetting GEAR to built-ins and leaving DB_GEAR/PETS empty at the point mergeCustomContent ran. The final renderStore() at the end of initSession had correct data, but the intermediate mergeCustomContent poisoned the CONTENT_LIB state. Fix: removed the monkey-patch entirely.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6864</strong> &mdash; Quest modal peg slot improvements: (1) When a quest has squadReqMax set, support slots are no longer padded beyond that number &mdash; you cannot assign more characters than the max allows. Required prereq slots always appear regardless of the max. (2) Auto-scroll carousel now fires correctly on any page &mdash; when all visible slots on the current page are filled, the carousel advances to the next page with the existing springy animation. Previously the condition required all 6 slots to be non-support prereqs, which almost never fired.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6863</strong> &mdash; Fix pets and custom items never loading in store. Two fixes: (1) bootApp() now calls refreshSession(true) before initSession() so expired JWTs are refreshed at startup; if refresh fails the session is cleared and re-login is prompted. (2) The initSession .catch block now also calls loadPetsFromDB()+loadItemsFromDB()+renderStore() so store content always loads even when sbPull fails. Root cause: stored JWT was expired, sbPull 401'd, promise chain rejected, loadPetsFromDB never called.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6861</strong> &mdash; Fix custom items (e.g. Boxing Gear) and pets not showing in store. Four bugs fixed: (1) loadPetsFromDB query now filters published=eq.true so unpublished pets are excluded and RLS is satisfied. (2) renderStore() added to the sbPull completion chain so it fires after loadContentLibrary + loadPetsFromDB + loadItemsFromDB all resolve. (3) Guest/offline path now uses Promise.all([loadPetsFromDB, loadItemsFromDB]).then(renderStore) instead of fire-and-forget. (4) loadContentLibrary's internal renderStore() is now guarded — only fires if DB_GEAR/PETS caches are already populated, preventing a race where mergeCustomContent resets GEAR to built-ins before loadItemsFromDB has returned.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6860</strong> &mdash; QP Manager access gate removed in -in-development build — any logged-in account can now open it. Previously restricted to app admins and test accounts.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6859</strong> &mdash; Developer Tools section restored to Settings for all logged-in users. "Enable Dev Mode" button sets devModeOverride=true and reveals all dev sections (quest test tools, content editor, milestone loader, d20 table, data tools). "Exit Dev Mode" button in settings and dev bar both disable it. Previously dev mode was only activatable via ?dev=1 URL param or admin account.</div>
@@ -20302,9 +20303,12 @@ function qddBuildCharSlots(questLike,isGrind){
         nonChar:true,isPet:false,isAsset:true,isBuilding:true});
     }
   }
-  // Pad to minimum 6
+  // Pad with support slots up to minimum 6, but cap at squadReqMax if set
+  var _maxSlots=questLike&&questLike.squadReqMax>0
+    ? Math.max(questLike.squadReqMax, slots.length) // never trim required prereq slots
+    : Infinity;
   var _sk=0;
-  while(slots.length<6){
+  while(slots.length<6&&slots.length<_maxSlots){
     slots.push({type:'support',value:'',label:'+ Support',key:'sup'+(_sk++),support:true});
   }
   return slots;
@@ -20659,46 +20663,32 @@ function qddAssignToSlot(slotKey,ci){
       qddSlotAssignments[s.key]=ci;
     }
   });
-  // Auto-advance to page 2 when all page-1 slots are filled and a page 2 exists
-  if(qholeCarOffset===0){
+  // Auto-advance carousel when all visible slots on the current page are filled
+  (function(){
     var allSlots=qddBuildCharSlots(qddQuestLike,qddIsGrind);
     var pages=Math.ceil(allSlots.length/HOLES_PER_PAGE);
-    if(pages>1){
-      var page0Slots=allSlots.slice(0,HOLES_PER_PAGE);
-      var page0Prereqs=page0Slots.filter(function(s){return !s.support;});
-      // Only auto-advance if there are genuinely 4 prereq slots on page 1
-      var allPage0Filled=page0Prereqs.length>=HOLES_PER_PAGE&&page0Prereqs.every(function(s){
-        return qddSlotAssignments[s.key]!==null&&qddSlotAssignments[s.key]!==undefined;
-      });
-      if(allPage0Filled){
-        // Brief pause, then animate the slide with a bouncy transition
-        setTimeout(function(){
-          var track=document.getElementById('qhole-car-track');
-          var nextBtn=document.getElementById('qhole-car-next');
-          var vp=document.querySelector('.qhole-car-viewport');
-          // Pulse the next arrow to signal something is about to happen
-          if(nextBtn){
-            nextBtn.style.animation='qhole-page-nudge .55s ease-out';
-            setTimeout(function(){nextBtn.style.animation='';},600);
-          }
-          // Flash the viewport border
-          if(vp){
-            vp.style.animation='qhole-vp-flash .5s ease-out';
-            setTimeout(function(){vp.style.animation='';},600);
-          }
-          // Swap to a slower, springy transition for the auto-advance only
-          if(track)track.style.transition='transform .55s cubic-bezier(.34,1.22,.64,1)';
-          qholeCarOffset=1;
-          qholeCarApply(allSlots);
-          // Restore the normal transition after the animation completes
-          setTimeout(function(){
-            var t=document.getElementById('qhole-car-track');
-            if(t)t.style.transition='';
-          },650);
-        },180);
-      }
-    }
-  }
+    if(pages<=1)return; // single page — nothing to advance to
+    var curPageSlots=allSlots.slice(qholeCarOffset*HOLES_PER_PAGE,(qholeCarOffset+1)*HOLES_PER_PAGE);
+    // A slot counts as filled if it has an assignment (char slots) or is nonChar (always satisfied by definition)
+    var allFilled=curPageSlots.length>0&&curPageSlots.every(function(s){
+      if(s.nonChar)return true; // status tiles — not char-assigned
+      return qddSlotAssignments[s.key]!==null&&qddSlotAssignments[s.key]!==undefined;
+    });
+    if(!allFilled)return;
+    var nextPage=qholeCarOffset+1;
+    if(nextPage>=pages)return; // already on last page
+    setTimeout(function(){
+      var track=document.getElementById('qhole-car-track');
+      var nextBtn=document.getElementById('qhole-car-next');
+      var vp=document.querySelector('.qhole-car-viewport');
+      if(nextBtn){nextBtn.style.animation='qhole-page-nudge .55s ease-out';setTimeout(function(){nextBtn.style.animation='';},600);}
+      if(vp){vp.style.animation='qhole-vp-flash .5s ease-out';setTimeout(function(){vp.style.animation='';},600);}
+      if(track)track.style.transition='transform .55s cubic-bezier(.34,1.22,.64,1)';
+      qholeCarOffset=nextPage;
+      qholeCarApply(allSlots);
+      setTimeout(function(){var t=document.getElementById('qhole-car-track');if(t)t.style.transition='';},650);
+    },180);
+  })();
 }
 
 // ── Hole carousel state ──
