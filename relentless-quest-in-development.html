@@ -12660,7 +12660,13 @@ function renderAdv(){
       return a.q.idx-b.q.idx;
     });
   } else {
-    questRows.sort(function(a,b){return a.q.idx-b.q.idx;});
+    // sequence mode: sort by sort_order (editor position), fall back to idx
+    questRows.sort(function(a,b){
+      var sa=(a.q.sort_order!=null)?a.q.sort_order:9999;
+      var sb=(b.q.sort_order!=null)?b.q.sort_order:9999;
+      if(sa!==sb)return sa-sb;
+      return (a.q.idx||0)-(b.q.idx||0);
+    });
   }
 
   // Quests are always expanded unless all done (grind mode makes collapse useful)
@@ -17987,15 +17993,12 @@ function persistContentScope(scope,key,arr){
   }
 
   // Build upsert rows — one row per item with stable content_key
-  var upsertRows=(arr||[]).map(function(item,pos){
+  var upsertRows=(arr||[]).map(function(item,idx){
     var stableKey=
-      key==='_customQuestSets' ? (item.id||('set-'+pos)) :
-      // Use item.idx (quest identity) NOT pos (loop position).
-      // The editor also uses setId::item.idx as its content_key, so both systems
-      // must agree on this key for upserts to update the correct row.
+      key==='_customQuestSets' ? (item.id||('set-'+idx)) :
       key==='_customQuests'    ? ((item.setId||'set')+'::'+(item.idx!=null?item.idx:pos)) :
-      key==='_customGrind'     ? (item.id||('grind-'+pos)) :
-      (item.name||('item-'+pos));
+      key==='_customGrind'     ? (item.id||('grind-'+idx)) :
+      (item.name||('item-'+idx));
     return {
       content_type:type,
       content_key:stableKey,
@@ -18004,7 +18007,7 @@ function persistContentScope(scope,key,arr){
       visibility:scope,
       status:'published',
       owner_user_id:uid(),
-      sort_order:pos   // pos = display position in the sorted array
+      sort_order:idx
     };
   });
 
@@ -18290,7 +18293,7 @@ function loadContentLibrary(manual){
       item._ownerUserId=row.owner_user_id||'';
       item._editable=editableContentItem(row);
       item._published=row.status||'published';
-      // Always use the top-level column — never let data.sort_order (stale blob value) win
+      // Always use top-level column — never let data.sort_order (stale blob) win
       item.sort_order=typeof row.sort_order==='number'?row.sort_order:9999;
       CONTENT_LIB[scope][listKey].push(item);
     });
@@ -18488,20 +18491,16 @@ function mergeCustomContent(){
       if(sa!==sb)return sa-sb;
       return (a.idx||0)-(b.idx||0);
     });
-    // Apply questOrder stored on the set — this is the authoritative source and
-    // takes full precedence over sort_order (the two should agree, but questOrder
-    // wins if they diverge due to a partial save from either system).
+    // Apply questOrder stored on the set (from custom quest_set metadata)
     if(set._questOrder&&Array.isArray(set._questOrder)&&set._questOrder.length){
       var _qoMap={};
       set._questOrder.forEach(function(qIdx,pos){_qoMap[qIdx]=pos;});
       set.quests.sort(function(a,b){
         var pa=(_qoMap[a.idx]!==undefined)?_qoMap[a.idx]:9999;
         var pb=(_qoMap[b.idx]!==undefined)?_qoMap[b.idx]:9999;
-        if(pa!==pb)return pa-pb;
-        return (a.idx||0)-(b.idx||0);
+        return pa-pb;
       });
-      // Sync sort_order to match the authoritative questOrder position so all
-      // downstream sort-by-sort_order consumers agree with questOrder.
+      // Sync sort_order to match authoritative questOrder so renderAdv sorts correctly
       set.quests.forEach(function(q,pos){q.sort_order=pos;});
     }
     var capIdx=-1;
