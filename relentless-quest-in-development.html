@@ -3516,7 +3516,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6859</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6861</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4010,7 +4010,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6859
+      Version 1.6861
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4035,6 +4035,8 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6861</strong> &mdash; Fix custom items (e.g. Boxing Gear) and pets not showing in store. Four bugs fixed: (1) loadPetsFromDB query now filters published=eq.true so unpublished pets are excluded and RLS is satisfied. (2) renderStore() added to the sbPull completion chain so it fires after loadContentLibrary + loadPetsFromDB + loadItemsFromDB all resolve. (3) Guest/offline path now uses Promise.all([loadPetsFromDB, loadItemsFromDB]).then(renderStore) instead of fire-and-forget. (4) loadContentLibrary's internal renderStore() is now guarded — only fires if DB_GEAR/PETS caches are already populated, preventing a race where mergeCustomContent resets GEAR to built-ins before loadItemsFromDB has returned.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6860</strong> &mdash; QP Manager access gate removed in -in-development build — any logged-in account can now open it. Previously restricted to app admins and test accounts.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6859</strong> &mdash; Developer Tools section restored to Settings for all logged-in users. "Enable Dev Mode" button sets devModeOverride=true and reveals all dev sections (quest test tools, content editor, milestone loader, d20 table, data tools). "Exit Dev Mode" button in settings and dev bar both disable it. Previously dev mode was only activatable via ?dev=1 URL param or admin account.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6858</strong> &mdash; Hotfix: missing comma after qpLastLoginDate in createDefaultState() caused SyntaxError on load, breaking all script execution (signIn not defined). Added trailing comma.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6857</strong> &mdash; Three new QP income streams: (1) Daily Login Loyalty — awards base 10 QP on first login of each day; consecutive days increase by 5 QP/day up to 50 QP cap; missing a day drops by 5 (floors at base). (2) Grind completion — awards 2 QP per grind collected. (3) Quest completion — 5 QP per regular quest, 20 QP per capstone (first completion only, idempotency-keyed). All three rates plus loyalty base/step/cap are editable in the QP Manager earn section. Loyalty streak and last-login date shown in manager for diagnostics.</div>
@@ -12181,7 +12183,7 @@ function awardCapstonReward(set){
 /* ── Quest Log ── */
 // ── QP Manager ──
 function openQpManager(){
-  if(!isAppAdmin()&&!isTestAccount()){alert('QP Manager is admin-only.');return;}
+  // -in-development: QP Manager open to all accounts
   var cfg=qpCfg();
   document.getElementById('qpm-enabled').checked=!!cfg.enabled;
   document.getElementById('qpm-earn-task').value=cfg.earnTask||2;
@@ -17647,6 +17649,7 @@ function initSession(pullFromCloud){
       renderArchive();
       renderSettings();
       renderAdv();
+      renderStore(); // after loadItemsFromDB+loadPetsFromDB resolved
       renderLog();
       checkLoginLoyalty();
       updateQpDisplay();
@@ -17664,8 +17667,10 @@ function initSession(pullFromCloud){
   }
   suppressAutoPush=false;
   // Load pets and items even for guest/offline (RLS allows reading published rows without auth)
-  loadPetsFromDB().catch(function(){});
-  loadItemsFromDB().catch(function(){});
+  // Chain renderStore() so it fires after both resolve and DB arrays are populated
+  Promise.all([loadPetsFromDB(),loadItemsFromDB()]).then(function(){
+    renderStore();
+  }).catch(function(){renderStore();});
   return Promise.resolve();
 }
 
@@ -18269,7 +18274,7 @@ function migrateLegacyContentIntoPrivateScope(){
 function loadPetsFromDB(){
   // No uid() guard — RLS allows reading published rows without auth
   // Use plain fetch so it works even before session is restored
-  return fetch(SB_URL+'/rest/v1/pets?order=sort_order.asc',{
+  return fetch(SB_URL+'/rest/v1/pets?published=eq.true&order=sort_order.asc',{
     method:'GET',
     headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}
   })
@@ -18539,7 +18544,9 @@ function loadContentLibrary(manual){
     // Re-render anything that shows content-library data
     // Also clear gear stock cache so new custom items can appear in today's stock
     if(S&&S.stockDate)S.stockDate='';
-    if(typeof renderStore==='function')renderStore();
+    // Only renderStore if DB items are already loaded; if not,
+    // the initSession chain's renderStore() will fire after loadItemsFromDB resolves.
+    if(typeof renderStore==='function'&&(DB_GEAR.length||DB_VEHICLES.length||DB_BUILDINGS.length||PETS.length))renderStore();
     if(typeof renderAdv==='function')renderAdv();
     if(manual)syncStatus('☁ Content pulled.','var(--ink-light)');
     return migrateLegacyContentIntoPrivateScope();
