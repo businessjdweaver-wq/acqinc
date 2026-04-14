@@ -4010,7 +4010,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6862
+      Version 1.6863
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4035,7 +4035,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
-        <div style="margin-bottom:9px"><strong>Version 1.6862</strong> &mdash; Fix pets and custom items (e.g. Boxing Gear) not showing in store. Root cause: a dead sbPull monkey-patch (lines 21586–21591) was supposed to be removed in a prior version but was left in. It caused loadContentLibrary() to fire a second time immediately after sbPull, before loadItemsFromDB() and loadPetsFromDB() had resolved — resetting GEAR to built-ins and leaving DB_GEAR/PETS empty at the point mergeCustomContent ran. The final renderStore() at the end of initSession had correct data, but the intermediate mergeCustomContent poisoned the CONTENT_LIB state. Fix: removed the monkey-patch entirely.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6863</strong> &mdash; Fix pets and custom items never loading in store. Two fixes: (1) bootApp() now calls refreshSession(true) before initSession() so expired JWTs are refreshed at startup; if refresh fails the session is cleared and re-login is prompted. (2) The initSession .catch block now calls loadPetsFromDB()+loadItemsFromDB()+renderStore() so pets/items always load even when sbPull fails due to auth errors. Root cause identified: stored JWT was expired, causing sbPull to 401, the promise chain to reject, and loadPetsFromDB to never be called. Previous fix (v1.6862) removed a dead monkey-patch that was also causing issues but was not the primary bug. (lines 21586–21591) was supposed to be removed in a prior version but was left in. It caused loadContentLibrary() to fire a second time immediately after sbPull, before loadItemsFromDB() and loadPetsFromDB() had resolved — resetting GEAR to built-ins and leaving DB_GEAR/PETS empty at the point mergeCustomContent ran. The final renderStore() at the end of initSession had correct data, but the intermediate mergeCustomContent poisoned the CONTENT_LIB state. Fix: removed the monkey-patch entirely.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6861</strong> &mdash; Fix custom items (e.g. Boxing Gear) and pets not showing in store. Four bugs fixed: (1) loadPetsFromDB query now filters published=eq.true so unpublished pets are excluded and RLS is satisfied. (2) renderStore() added to the sbPull completion chain so it fires after loadContentLibrary + loadPetsFromDB + loadItemsFromDB all resolve. (3) Guest/offline path now uses Promise.all([loadPetsFromDB, loadItemsFromDB]).then(renderStore) instead of fire-and-forget. (4) loadContentLibrary's internal renderStore() is now guarded — only fires if DB_GEAR/PETS caches are already populated, preventing a race where mergeCustomContent resets GEAR to built-ins before loadItemsFromDB has returned.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6860</strong> &mdash; QP Manager access gate removed in -in-development build — any logged-in account can now open it. Previously restricted to app admins and test accounts.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6859</strong> &mdash; Developer Tools section restored to Settings for all logged-in users. "Enable Dev Mode" button sets devModeOverride=true and reveals all dev sections (quest test tools, content editor, milestone loader, d20 table, data tools). "Exit Dev Mode" button in settings and dev bar both disable it. Previously dev mode was only activatable via ?dev=1 URL param or admin account.</div>
@@ -17663,6 +17663,7 @@ function initSession(pullFromCloud){
       suppressAutoPush=false;
       // Still render tasks from localStorage data even if cloud pull failed
       renderTasks();renderParty();renderAdv();renderArchive();
+      Promise.all([loadPetsFromDB(),loadItemsFromDB()]).then(function(){renderStore();}).catch(function(){renderStore();});
       navTo('tasks');window.scrollTo({top:0,behavior:'smooth'});
     });
   }
@@ -17874,7 +17875,16 @@ async function bootApp(){
 
   if(uid()){
     closeOv('loginBox');
-    return initSession(true);
+    // Attempt token refresh before starting session — handles expired JWTs stored in localStorage
+    return refreshSession(true).catch(function(){ return null; }).then(function(){
+      if(uid()){
+        return initSession(true);
+      } else {
+        // Refresh failed and cleared session — require re-login
+        openOv('loginBox');
+        setTimeout(function(){var emailEl=document.getElementById('email');if(emailEl){emailEl.focus();emailEl.select();}},50);
+      }
+    });
   } else {
     // No guest mode — require login
     openOv('loginBox');
