@@ -1133,6 +1133,8 @@ function questToRow(q, idx) {
   var pub = q.published ? 'shared' : 'private';
   var data = Object.assign({}, q);
   delete data._dbId;
+  delete data._dbContent;
+  delete data.sort_order;
   delete data.published;
   delete data._visibility;
   return {
@@ -2066,24 +2068,15 @@ function showCycleForm(setId) {
     (function() {
       var cqs = quests
         .filter(function(q) { return q.setId === setId; })
-        .sort(function(a, b) {
-          // Sort by sort_order (editor position) first, fall back to idx
-          var sa = (typeof a.sort_order === 'number') ? a.sort_order : 9999;
-          var sb = (typeof b.sort_order === 'number') ? b.sort_order : 9999;
-          if (sa !== sb) return sa - sb;
-          return (a.idx || 0) - (b.idx || 0);
-        });
-      // Apply saved questOrder if present on the cycle — this is the authoritative order
-      // and takes full precedence over sort_order (the two should always agree, but
-      // questOrder wins if they diverge due to a partial save)
+        .sort(function(a, b) { return (a.idx || 0) - (b.idx || 0); });
+      // Apply saved questOrder if present on the cycle
       if (cycle && Array.isArray(cycle.questOrder) && cycle.questOrder.length) {
         var _qom = {};
         cycle.questOrder.forEach(function(qi, pos) { _qom[qi] = pos; });
         cqs.sort(function(a, b) {
-          var pa = _qom[a.idx] !== undefined ? _qom[a.idx] : 9999;
-          var pb = _qom[b.idx] !== undefined ? _qom[b.idx] : 9999;
-          if (pa !== pb) return pa - pb;
-          return (a.idx || 0) - (b.idx || 0);
+          var pa = _qom[a.idx] !== undefined ? _qom[a.idx] : (a.idx || 0) + 1000;
+          var pb = _qom[b.idx] !== undefined ? _qom[b.idx] : (b.idx || 0) + 1000;
+          return pa - pb;
         });
       }
       if (!cqs.length) return '';
@@ -2244,40 +2237,20 @@ function showCycleForm(setId) {
     // Read current order from _cfCycleQuests (updated in memory by ▲/▼)
     var _cqs = window._cfCycleQuests || [];
     if (_cqs.length) {
-      // questOrder stores the canonical idx sequence
       cycle.questOrder = _cqs.map(function(q) { return q.idx; });
     }
-    // Update sort_order in memory on every quest object in the live quests[] array,
-    // so the sidebar re-render immediately reflects the new order.
-    _cqs.forEach(function(q, pos) {
-      q.sort_order = pos;
-      // Also update the master quests[] entry (same object reference, but be explicit)
-      for (var qi = 0; qi < quests.length; qi++) {
-        if (quests[qi].setId === q.setId && quests[qi].idx === q.idx) {
-          quests[qi].sort_order = pos;
-          break;
-        }
-      }
-    });
-    // Build quest rows to upsert — both top-level sort_order AND data.sort_order are set
+    // Save cycle + re-save all quest rows with updated sort_order
+    // This ensures the main app's sort-by-sort_order also gets the right order
     var _questRowsToSave = _cqs.map(function(q, pos) {
+      q.sort_order = pos; // update in memory too
       return questToRow(q, pos);
     });
-    var _saveBtn = document.getElementById('cf-save');
-    if (_saveBtn) { _saveBtn.disabled = true; _saveBtn.textContent = '⏳ Saving…'; }
-
-    // Save cycle row first (carries questOrder), then all quest rows (carry sort_order)
     saveCycle(cycle).then(function() {
       if (!_questRowsToSave.length) return;
       return sbUpsert(_questRowsToSave);
     }).then(function() {
-      if (_saveBtn) { _saveBtn.disabled = false; _saveBtn.textContent = '💾 Save Cycle'; }
       renderList();
       showCycleForm(cycle.id);
-    }).catch(function(err) {
-      if (_saveBtn) { _saveBtn.disabled = false; _saveBtn.textContent = '💾 Save Cycle'; }
-      alert('Save failed — quest order may not have been stored.\n\n' + (err.message || err));
-      setStatus('Save error: ' + (err.message || err), '#e55');
     });
   };
   document.getElementById('cf-del').onclick = function() {
