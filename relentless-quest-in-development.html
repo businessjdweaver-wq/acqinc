@@ -3508,7 +3508,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6850</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6851</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3994,7 +3994,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6850
+      Version 1.6851
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4019,6 +4019,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6851</strong> &mdash; Removed ▲/▼ reorder buttons from quest editor left panel. Quest order is now managed exclusively via the Quest Sequence Order panel inside the cycle form.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6850</strong> &mdash; Quest order root fix: left-panel ▲/▼ reorder now swaps sort_order (not idx), normalises positions to 0,1,2..., and saves questOrder to set metadata in the same operation. Both sort systems now agree.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6849</strong> &mdash; Quest order fixes: (1) Dupe cycle form initialises from _questOrder not raw idx. (2) Dupe save stores questOrder on new set metadata. (3) Cycle rules save preserves existing questOrder. (4) Editor left panel sorts by sort_order to match game.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6848</strong> &mdash; Quest cycle fixes: (1) Abandon button now always shows on the active cycle regardless of squad assignment — prevents getting stuck after early completion. (2) Early completion now correctly awards capstone reward and logs to questLog.</div>
@@ -18827,8 +18828,7 @@ function edRenderList(){
           '<span style="flex:1;font-size:.88em;'+(isCustom?'color:var(--crimson)':'')+'">'+esc(q.title)+'</span>'+
           (isCustom?'<span style="font-size:.62em;color:var(--crimson);border:1px solid var(--crimson);border-radius:3px;padding:0 3px">custom</span>':
            '<span style="font-size:.62em;color:var(--ink-light);border:1px solid var(--parchment-deep);border-radius:3px;padding:0 3px">built-in</span>')+
-          '<button data-ed-movequest="up" data-setid="'+esc(set.id)+'" data-idx="'+q.idx+'" title="Move up" style="border:1px solid var(--parchment-deep);background:rgba(255,255,255,.25);border-radius:3px;padding:0 4px;font-size:.7em;cursor:pointer;color:var(--ink-light);opacity:'+(isFirst?'0.2':'1')+';pointer-events:'+(isFirst?'none':'auto')+'">▲</button>'+
-          '<button data-ed-movequest="down" data-setid="'+esc(set.id)+'" data-idx="'+q.idx+'" title="Move down" style="border:1px solid var(--parchment-deep);background:rgba(255,255,255,.25);border-radius:3px;padding:0 4px;font-size:.7em;cursor:pointer;color:var(--ink-light);opacity:'+(isLast?'0.2':'1')+';pointer-events:'+(isLast?'none':'auto')+'">▼</button>'+
+          ''+
           '</div>';
       });
     });
@@ -18916,50 +18916,6 @@ function edRenderList(){
       return;
     }
 
-    // ── Quest reorder ▲▼ ─────────────────────────────────────────
-    if(btn&&btn.hasAttribute('data-ed-movequest')){
-      ev.stopPropagation();
-      var dir=btn.getAttribute('data-ed-movequest');
-      var sid=btn.getAttribute('data-setid');
-      var idx=parseInt(btn.getAttribute('data-idx'),10);
-      var set=QUESTSETS.filter(function(s){return s.id===sid;})[0];
-      if(!set)return;
-      // Sort by current sort_order (editor position), fall back to idx
-      var qs=set.quests.slice().sort(function(a,b){
-        var sa=(a.sort_order!=null)?a.sort_order:9999;
-        var sb=(b.sort_order!=null)?b.sort_order:9999;
-        return sa!==sb?sa-sb:(a.idx||0)-(b.idx||0);
-      });
-      var pos=qs.findIndex(function(q){return q.idx===idx;});
-      var swapPos=dir==='up'?pos-1:pos+1;
-      if(swapPos<0||swapPos>=qs.length)return;
-      // Swap sort_order values (not idx — idx is the stable quest identity)
-      var tmpSo=(qs[pos].sort_order!=null)?qs[pos].sort_order:pos;
-      var tmpSo2=(qs[swapPos].sort_order!=null)?qs[swapPos].sort_order:swapPos;
-      qs[pos].sort_order=tmpSo2;
-      qs[swapPos].sort_order=tmpSo;
-      // Re-sort after swap so positions are clean 0,1,2...
-      qs.sort(function(a,b){return (a.sort_order||0)-(b.sort_order||0);});
-      qs.forEach(function(q,i){q.sort_order=i;});
-      // Also update _questOrder on the set metadata
-      var _newOrder=qs.map(function(q){return q.idx;});
-      var scope=currentContentScope();
-      // Update set metadata with new questOrder
-      var _setMeta=contentItemsForScope(scope,'_customQuestSets');
-      var _sm=_setMeta.filter(function(m){return m.id===sid;})[0];
-      if(_sm)_sm.questOrder=_newOrder;
-      contentBucket(scope).questSets=_setMeta.slice();
-      persistContentScope(scope,'_customQuestSets',_setMeta);
-      var setCustom=contentItemsForScope(scope,'_customQuests').filter(function(q){return q.setId!==sid;});
-      var newSetCustom=qs.map(function(q){
-        var existing=set.quests.filter(function(bq){return bq.idx===q.idx;})[0];
-        return Object.assign({},existing||q,{_custom:true,_editable:true,setId:sid,idx:q.idx,sort_order:q.sort_order});
-      });
-      var result=saveCustom('_customQuests',setCustom.concat(newSetCustom),scope);
-      var afterMove=function(){mergeCustomContent();edRenderList();};
-      if(result&&typeof result.then==='function'){result.then(afterMove);}else{afterMove();}
-      return;
-    }
 
     // ── Row selection ─────────────────────────────────────────────
     var row=ev.target.closest('[data-ed]');
