@@ -17987,12 +17987,15 @@ function persistContentScope(scope,key,arr){
   }
 
   // Build upsert rows — one row per item with stable content_key
-  var upsertRows=(arr||[]).map(function(item,idx){
+  var upsertRows=(arr||[]).map(function(item,pos){
     var stableKey=
-      key==='_customQuestSets' ? (item.id||('set-'+idx)) :
-      key==='_customQuests'    ? ((item.setId||'set')+'::'+idx) :
-      key==='_customGrind'     ? (item.id||('grind-'+idx)) :
-      (item.name||('item-'+idx));
+      key==='_customQuestSets' ? (item.id||('set-'+pos)) :
+      // Use item.idx (quest identity) NOT pos (loop position).
+      // The editor also uses setId::item.idx as its content_key, so both systems
+      // must agree on this key for upserts to update the correct row.
+      key==='_customQuests'    ? ((item.setId||'set')+'::'+(item.idx!=null?item.idx:pos)) :
+      key==='_customGrind'     ? (item.id||('grind-'+pos)) :
+      (item.name||('item-'+pos));
     return {
       content_type:type,
       content_key:stableKey,
@@ -18001,7 +18004,7 @@ function persistContentScope(scope,key,arr){
       visibility:scope,
       status:'published',
       owner_user_id:uid(),
-      sort_order:idx
+      sort_order:pos   // pos = display position in the sorted array
     };
   });
 
@@ -18484,10 +18487,9 @@ function mergeCustomContent(){
       if(sa!==sb)return sa-sb;
       return (a.idx||0)-(b.idx||0);
     });
-    // Apply questOrder stored on the set (from custom quest_set metadata).
-    // questOrder is the authoritative source — it is always written at the same
-    // time as sort_order on the quest rows, but questOrder lives on the set row
-    // so it survives even if an individual quest-row save was partial.
+    // Apply questOrder stored on the set — this is the authoritative source and
+    // takes full precedence over sort_order (the two should agree, but questOrder
+    // wins if they diverge due to a partial save from either system).
     if(set._questOrder&&Array.isArray(set._questOrder)&&set._questOrder.length){
       var _qoMap={};
       set._questOrder.forEach(function(qIdx,pos){_qoMap[qIdx]=pos;});
@@ -18497,8 +18499,8 @@ function mergeCustomContent(){
         if(pa!==pb)return pa-pb;
         return (a.idx||0)-(b.idx||0);
       });
-      // Sync sort_order on each quest to match the authoritative questOrder position,
-      // so sort_order and questOrder agree for downstream code that uses either.
+      // Sync sort_order to match the authoritative questOrder position so all
+      // downstream sort-by-sort_order consumers agree with questOrder.
       set.quests.forEach(function(q,pos){q.sort_order=pos;});
     }
     var capIdx=-1;
