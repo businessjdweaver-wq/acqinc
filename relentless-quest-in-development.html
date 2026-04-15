@@ -3518,7 +3518,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6866</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6867</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4023,7 +4023,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6866
+      Version 1.6867
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4048,8 +4048,9 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6867</strong> &mdash; Downtime duplicate progress: the Night Owl badge modal now detects when a character has split progress bars for the same track (caused by the now-fixed prefix-stripping bug). Duplicate tracks are labelled, their values shown combined, and a ⇄ Merge button appears inline. Tapping Merge folds all dirty keys into the canonical clean key, saves, and re-renders the modal body without closing &mdash; no page reload needed.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6866</strong> &mdash; Downtime bug fix: the 🔄 prefix was not being stripped from target values before storing them as dtProgress keys. Root cause was a broken regex using a character class <code>[★🔄]</code> — because 🔄 is a surrogate pair (U+1F504), the two halves were treated as separate characters and never matched the full emoji. Changed to a proper alternation <code>(?:★|🔄)</code> in all three stripping sites. Added a standalone sanitizeDowntimeKeys() that (1) merges any polluted dtProgress keys into their clean equivalents and (2) strips the prefix off any in-flight downtimeJob targets. Called at all three load paths (local load, code login, and main Supabase pull) so corrupted save data heals immediately on next session open.</div>
-        <div style="margin-bottom:9px"><strong>Version 1.6866</strong> &mdash; Two improvements: (1) Sub-task move: each sub-task row now has a ⇄ button that opens a modal to move the sub-task to any other active task. The destination task auto-expands so the moved item is immediately visible. Pie progress recalculates on both source and destination tasks. (2) Collect gold (💰) button in the task action row is now the same visual size as the surrounding icon buttons — targeted font-size rule for .tacts .btn.bg prevents the emoji from rendering oversized.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6865</strong> &mdash; Two improvements: (1) Sub-task move: each sub-task row now has a ⇄ button that opens a modal to move the sub-task to any other active task. The destination task auto-expands so the moved item is immediately visible. Pie progress recalculates on both source and destination tasks. (2) Collect gold (💰) button in the task action row is now the same visual size as the surrounding icon buttons — targeted font-size rule for .tacts .btn.bg prevents the emoji from rendering oversized.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6864</strong> &mdash; Quest modal peg slot improvements: (1) When a quest has squadReqMax set, support slots are no longer padded beyond that number &mdash; you cannot assign more characters than the max allows. Required prereq slots always appear regardless of the max. (2) Auto-scroll carousel now fires correctly on any page &mdash; when all visible slots on the current page are filled, the carousel advances to the next page with the existing springy animation. Previously the condition required all 6 slots to be non-support prereqs, which almost never fired.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6863</strong> &mdash; Fix pets and custom items never loading in store. Two fixes: (1) bootApp() now calls refreshSession(true) before initSession() so expired JWTs are refreshed at startup; if refresh fails the session is cleared and re-login is prompted. (2) The initSession .catch block now also calls loadPetsFromDB()+loadItemsFromDB()+renderStore() so store content always loads even when sbPull fails. Root cause: stored JWT was expired, sbPull 401'd, promise chain rejected, loadPetsFromDB never called.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6861</strong> &mdash; Fix custom items (e.g. Boxing Gear) and pets not showing in store. Four bugs fixed: (1) loadPetsFromDB query now filters published=eq.true so unpublished pets are excluded and RLS is satisfied. (2) renderStore() added to the sbPull completion chain so it fires after loadContentLibrary + loadPetsFromDB + loadItemsFromDB all resolve. (3) Guest/offline path now uses Promise.all([loadPetsFromDB, loadItemsFromDB]).then(renderStore) instead of fire-and-forget. (4) loadContentLibrary's internal renderStore() is now guarded — only fires if DB_GEAR/PETS caches are already populated, preventing a race where mergeCustomContent resets GEAR to built-ins before loadItemsFromDB has returned.</div>
@@ -9587,37 +9588,134 @@ document.getElementById('plist').addEventListener('click',function(e){
     var dtBadgeName=b.getAttribute('data-badge')||'Downtime Mark';
     var bc2=S.party[ci];
     if(!bc2)return;
-    var progressMap=bc2.dtProgress||{};
-    var allBadges=bc2.downtimeBadges||[];
-    // Build progress track rows matching XP badge format
-    var rows=Object.keys(progressMap).filter(function(k){return (progressMap[k]||0)>0;}).map(function(k){
-      var parts=k.split(':');
-      var type=parts[0]||'';
-      var target=parts.slice(1).join(':')||'core';
-      var threshold=(type==='contacts'?6:(type==='intel'?5:8));
-      var prog=progressMap[k]||0;
-      var pct=Math.min(100,Math.round(prog/threshold*100));
-      return '<div style="margin-bottom:8px">'+
-        '<div style="font-size:.82em;color:var(--teal);font-family:\'Cinzel\',serif;margin-bottom:3px">'+esc(downtimeTrackLabel(type,target))+'</div>'+
-        '<div style="font-size:.88em;margin-bottom:4px">'+prog+' / '+threshold+' progress points</div>'+
-        '<div style="height:6px;background:rgba(44,26,14,.1);border-radius:3px">'+
-        '<div style="width:'+pct+'%;height:100%;background:var(--teal);border-radius:3px"></div>'+
-        '</div></div>';
-    });
+
+    function renderDtBadgeBody(bc2){
+      var progressMap=bc2.dtProgress||{};
+      var allBadges=bc2.downtimeBadges||[];
+
+      // Group keys by their clean (prefix-stripped) version to detect duplicates
+      var cleanGroups={};
+      Object.keys(progressMap).forEach(function(k){
+        if((progressMap[k]||0)<=0)return;
+        var cleanKey=k.replace(/^(?:★|🔄) /,'');
+        if(!cleanGroups[cleanKey])cleanGroups[cleanKey]=[];
+        cleanGroups[cleanKey].push(k);
+      });
+
+      var rows=Object.keys(cleanGroups).map(function(cleanKey){
+        var keys=cleanGroups[cleanKey];
+        var parts=cleanKey.split(':');
+        var type=parts[0]||'';
+        var target=parts.slice(1).join(':')||'core';
+        var threshold=(type==='contacts'?6:(type==='intel'?5:8));
+        var isDirty=keys.length>1||(keys.length===1&&keys[0]!==cleanKey);
+        var totalProg=keys.reduce(function(sum,k){return sum+(progressMap[k]||0);},0);
+        var pct=Math.min(100,Math.round(totalProg/threshold*100));
+
+        var mergeBtn=isDirty
+          ?'<button data-a="dt-merge" data-ci="'+ci+'" data-clean="'+esc(cleanKey)+'" '+
+            'style="margin-left:6px;background:none;border:1px solid var(--teal);border-radius:4px;'+
+            'padding:1px 7px;font-size:.72em;color:var(--teal);cursor:pointer;font-family:inherit;vertical-align:middle" '+
+            'title="Merge duplicate progress into one track">⇄ Merge</button>'
+          :'';
+
+        return '<div style="margin-bottom:8px">'+
+          '<div style="display:flex;align-items:center;font-size:.82em;color:var(--teal);font-family:\'Cinzel\',serif;margin-bottom:3px">'+
+          esc(downtimeTrackLabel(type,target))+
+          (isDirty?'<span style="margin-left:6px;font-size:.8em;color:var(--crimson);font-family:inherit">(duplicate)</span>':'')+
+          mergeBtn+
+          '</div>'+
+          '<div style="font-size:.88em;margin-bottom:4px">'+totalProg+' / '+threshold+' progress points'+(isDirty?' <span style="color:var(--ink-light);font-size:.88em">(combined)</span>':'')+
+          '</div>'+
+          '<div style="height:6px;background:rgba(44,26,14,.1);border-radius:3px">'+
+          '<div style="width:'+pct+'%;height:100%;background:var(--teal);border-radius:3px"></div>'+
+          '</div></div>';
+      });
+
+      return '<div style="font-family:\'Cinzel\',serif;font-size:.82em;color:var(--ink-light);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">'+esc(bc2.name)+' · Downtime</div>'+
+        '<div style="margin-bottom:10px">Downtime badges mark major milestones earned through off-quest training and research.</div>'+
+        (rows.length
+          ?'<div style="background:rgba(26,107,138,.09);border:1px solid rgba(26,107,138,.38);border-radius:6px;padding:8px 10px">'+rows.join('')+'</div>'
+          :'<div style="color:var(--ink-light);font-size:.9em">No active downtime progress currently tracked.</div>')+
+        (allBadges.length>1
+          ?'<div style="margin-top:10px;font-size:.82em;color:var(--ink-light)">All earned badges: '+allBadges.map(function(bd){
+            return '<span style="color:var(--teal)">✓ '+esc(bd)+'</span>';
+          }).join(' · ')+'</div>'
+          :'');
+    }
+
     document.getElementById('ov-xp-title').textContent='🕯 '+dtBadgeName;
-    document.getElementById('ov-xp-body').innerHTML=
-      '<div style="font-family:\'Cinzel\',serif;font-size:.82em;color:var(--ink-light);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">'+esc(bc2.name)+' · Downtime</div>'+
-      '<div style="margin-bottom:10px">Downtime badges mark major milestones earned through off-quest training and research.</div>'+
-      (rows.length
-        ?'<div style="background:rgba(26,107,138,.09);border:1px solid rgba(26,107,138,.38);border-radius:6px;padding:8px 10px">'+rows.join('')+'</div>'
-        :'<div style="color:var(--ink-light);font-size:.9em">No active downtime progress currently tracked.</div>')+
-      (allBadges.length>1
-        ?'<div style="margin-top:10px;font-size:.82em;color:var(--ink-light)">All earned badges: '+allBadges.map(function(bd){
-          var earned=true;
-          return '<span style="color:var(--teal)">✓ '+esc(bd)+'</span>';
-        }).join(' · ')+'</div>'
-        :'');
+    document.getElementById('ov-xp-body').innerHTML=renderDtBadgeBody(bc2);
     openOv('ov-xpbadge');
+  } else if(a==='dt-merge'){
+    e.stopPropagation();
+    var mergeCI=parseInt(b.getAttribute('data-ci'));
+    var mergeCleanKey=b.getAttribute('data-clean')||'';
+    var mc=S.party[mergeCI];
+    if(!mc||!mc.dtProgress||!mergeCleanKey)return;
+    // Sum all keys that clean to mergeCleanKey into the canonical clean key
+    var merged=0;
+    Object.keys(mc.dtProgress).forEach(function(k){
+      if(k.replace(/^(?:★|🔄) /,'')=== mergeCleanKey){
+        merged+=(mc.dtProgress[k]||0);
+        delete mc.dtProgress[k];
+      }
+    });
+    mc.dtProgress[mergeCleanKey]=merged;
+    save();
+    // Re-render the modal body in place without closing
+    var bodyEl=document.getElementById('ov-xp-body');
+    if(bodyEl){
+      // Rebuild using same renderDtBadgeBody closure — re-derive bc2 from fresh state
+      var bc2fresh=S.party[mergeCI];
+      var progressMap2=bc2fresh.dtProgress||{};
+      var allBadges2=bc2fresh.downtimeBadges||[];
+      var cleanGroups2={};
+      Object.keys(progressMap2).forEach(function(k){
+        if((progressMap2[k]||0)<=0)return;
+        var ck=k.replace(/^(?:★|🔄) /,'');
+        if(!cleanGroups2[ck])cleanGroups2[ck]=[];
+        cleanGroups2[ck].push(k);
+      });
+      var rows2=Object.keys(cleanGroups2).map(function(cleanKey){
+        var keys=cleanGroups2[cleanKey];
+        var parts=cleanKey.split(':');
+        var type=parts[0]||'';
+        var target=parts.slice(1).join(':')||'core';
+        var threshold=(type==='contacts'?6:(type==='intel'?5:8));
+        var isDirty=keys.length>1||(keys.length===1&&keys[0]!==cleanKey);
+        var totalProg=keys.reduce(function(sum,k){return sum+(progressMap2[k]||0);},0);
+        var pct=Math.min(100,Math.round(totalProg/threshold*100));
+        var mergeBtn2=isDirty
+          ?'<button data-a="dt-merge" data-ci="'+mergeCI+'" data-clean="'+esc(cleanKey)+'" '+
+            'style="margin-left:6px;background:none;border:1px solid var(--teal);border-radius:4px;'+
+            'padding:1px 7px;font-size:.72em;color:var(--teal);cursor:pointer;font-family:inherit;vertical-align:middle" '+
+            'title="Merge duplicate progress into one track">⇄ Merge</button>'
+          :'';
+        return '<div style="margin-bottom:8px">'+
+          '<div style="display:flex;align-items:center;font-size:.82em;color:var(--teal);font-family:\'Cinzel\',serif;margin-bottom:3px">'+
+          esc(downtimeTrackLabel(type,target))+
+          (isDirty?'<span style="margin-left:6px;font-size:.8em;color:var(--crimson);font-family:inherit">(duplicate)</span>':'')+
+          mergeBtn2+
+          '</div>'+
+          '<div style="font-size:.88em;margin-bottom:4px">'+totalProg+' / '+threshold+' progress points'+(isDirty?' <span style="color:var(--ink-light);font-size:.88em">(combined)</span>':'')+
+          '</div>'+
+          '<div style="height:6px;background:rgba(44,26,14,.1);border-radius:3px">'+
+          '<div style="width:'+pct+'%;height:100%;background:var(--teal);border-radius:3px"></div>'+
+          '</div></div>';
+      });
+      bodyEl.innerHTML=
+        '<div style="font-family:\'Cinzel\',serif;font-size:.82em;color:var(--ink-light);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">'+esc(bc2fresh.name)+' · Downtime</div>'+
+        '<div style="margin-bottom:10px">Downtime badges mark major milestones earned through off-quest training and research.</div>'+
+        (rows2.length
+          ?'<div style="background:rgba(26,107,138,.09);border:1px solid rgba(26,107,138,.38);border-radius:6px;padding:8px 10px">'+rows2.join('')+'</div>'
+          :'<div style="color:var(--ink-light);font-size:.9em">No active downtime progress currently tracked.</div>')+
+        (allBadges2.length>1
+          ?'<div style="margin-top:10px;font-size:.82em;color:var(--ink-light)">All earned badges: '+allBadges2.map(function(bd){
+            return '<span style="color:var(--teal)">✓ '+esc(bd)+'</span>';
+          }).join(' · ')+'</div>'
+          :'');
+    }
   } else if(a==='lv'){
     if(window._recentModalClose&&Date.now()-window._recentModalClose<400)return;
     var c=S.party[ci];
