@@ -2886,50 +2886,50 @@ function applyCRScaling() {
   const newT  = CR_TABLE[newCR];
   if (!newT) return;
 
-  // Find what CR the monster is currently built at by reading HP
   const currentHp = parseInt(document.getElementById('f_hp')?.value) || 0;
   const currentAc = parseInt(document.getElementById('f_ac')?.value) || 10;
 
-  // Detect old CR by finding closest HP match in table
+  // ── Detect old CR by closest HP midpoint ──
   let oldCR = newCR;
   let bestDiff = Infinity;
   Object.entries(CR_TABLE).forEach(([cr, t]) => {
-    const midHp = Math.round((t.hpLo + t.hpHi) / 2);
-    const diff = Math.abs(currentHp - midHp);
+    const mid = Math.round((t.hpLo + t.hpHi) / 2);
+    const diff = Math.abs(currentHp - mid);
     if (diff < bestDiff) { bestDiff = diff; oldCR = cr; }
   });
   const oldT = CR_TABLE[oldCR] || newT;
 
-  // ── Apply HP: midpoint of new CR range ──
+  // ── Proficiency bonus change ratio (used for mental stats & save DC) ──
+  const oldProf = oldT.prof;
+  const newProf = newT.prof;
+
+  // ── HP: midpoint of new CR range ──
   const newHp = Math.round((newT.hpLo + newT.hpHi) / 2);
   const hpField = document.getElementById('f_hp');
   if (hpField && !hpField.readOnly) hpField.value = newHp;
 
-  // ── Apply AC: use table value, but keep delta if they customised it ──
+  // ── AC: preserve custom delta, capped at ±2 ──
   const acDelta = currentAc - oldT.ac;
-  const newAc   = newT.ac + Math.max(-2, Math.min(2, acDelta)); // cap custom delta at ±2
+  const newAc   = newT.ac + Math.max(-2, Math.min(2, acDelta));
   const acField = document.getElementById('f_ac');
   if (acField && !acField.readOnly) acField.value = newAc;
 
-  // ── Scale action damage ──
-  // Compute a damage ratio between old and new CR midpoint DPR
+  // ── DPR ratio for damage scaling ──
   const oldDprMid = Math.round((oldT.dprLo + oldT.dprHi) / 2) || 1;
   const newDprMid = Math.round((newT.dprLo + newT.dprHi) / 2) || 1;
   const dprRatio  = newDprMid / oldDprMid;
 
-  // Scale to-hit on all action cards
+  // ── To-hit: read from new CR table ──
   const newToHit = parseInt(newT.atk) || 3;
 
+  // ── Scale action damage and to-hit ──
   document.querySelectorAll('.action-card').forEach(card => {
     const inputs = card.querySelectorAll('input[type=text]');
-    // inputs[0]=name, inputs[1]=toHit, inputs[2]=reach, inputs[3]=damage, inputs[4]=dmgType
     if (inputs.length >= 4) {
-      // Update to-hit
       const toHitInput = inputs[1];
       if (toHitInput && !toHitInput.readOnly && toHitInput.value && toHitInput.value !== '') {
         toHitInput.value = (newToHit >= 0 ? '+' : '') + newToHit;
       }
-      // Scale damage formula
       const dmgInput = inputs[3];
       if (dmgInput && !dmgInput.readOnly && dmgInput.value) {
         dmgInput.value = scaleDamageFormula(dmgInput.value, dprRatio);
@@ -2937,10 +2937,116 @@ function applyCRScaling() {
     }
   });
 
-  // Update the guidance row
+  // ── ABILITY SCORES (DMG pp. 274–281) ──
+  //
+  // The DMG derives stats from the CR target values:
+  //
+  // STR — primary melee stat: back-calculate from new attack bonus.
+  //   attack bonus = prof + STR mod  →  STR mod = atk - prof
+  //   Preserve any STR-mod delta from the old baseline (custom builds).
+  //
+  // DEX — affects AC (unarmored/light), initiative, DEX saves.
+  //   Scale with the AC change ratio; preserve delta for armored monsters.
+  //
+  // CON — drives HP directly.
+  //   Back-calculate from new HP: HP ≈ (HD × (die/2 + CON mod))
+  //   Use CON mod = round(newHp / 20 - 1) as a rough inverse,
+  //   clamped to a sensible range.
+  //
+  // INT / WIS / CHA — "mental" stats set challenge DC and skill checks.
+  //   Scale with proficiency bonus change; the DMG links these to
+  //   save DC (DC = 8 + prof + ability mod).
+  //   New score = old score + (newProf - oldProf) * 2
+  //   (each prof step ≈ +1 mod ≈ +2 score; mental saves track prof).
+
+  const ABILITIES = ['str','dex','con','int','wis','cha'];
+
+  const oldScores = {};
+  ABILITIES.forEach(ab => {
+    const el = document.getElementById('f_ab_' + ab);
+    oldScores[ab] = el ? parseInt(el.value) || 10 : 10;
+  });
+
+  // Old baseline scores implied by old CR
+  const oldAtkMod  = parseInt(oldT.atk) || 3; // e.g. +6
+  const oldProfVal = oldT.prof;               // e.g. 3
+  const oldStrModBase = oldAtkMod - oldProfVal; // implied STR mod at old CR
+
+  // New baseline mods from new CR
+  const newAtkMod  = newToHit;
+  const newStrModBase = newAtkMod - newProf;
+
+  // ── STR: primary attack stat ──
+  const oldStrMod  = Math.floor((oldScores.str - 10) / 2);
+  const strDelta   = oldStrMod - oldStrModBase;          // how far the monster deviates from baseline
+  const newStrMod  = newStrModBase + strDelta;            // preserve deviation
+  const newStrScore = Math.min(30, Math.max(1, 10 + newStrMod * 2));
+
+  // ── DEX: scale mod proportionally with prof change ──
+  const oldDexMod  = Math.floor((oldScores.dex - 10) / 2);
+  const profDelta  = newProf - oldProf;
+  const newDexMod  = oldDexMod + profDelta;
+  const newDexScore = Math.min(30, Math.max(1, 10 + newDexMod * 2));
+
+  // ── CON: back-calculate from target HP ──
+  // Rough formula: HP ≈ 10 + CON mod per HD; CR 1 ≈ 8 HD, scaling up.
+  // Simpler: derive CON mod from HP relative to expected "no-CON" baseline.
+  // Approximate: CON mod = clamp(round(log2(newHp/20)), -2, 7)
+  const conModTarget = Math.min(7, Math.max(-2, Math.round(Math.log2(newHp / 20))));
+  const oldConMod    = Math.floor((oldScores.con - 10) / 2);
+  const conDelta     = oldConMod - Math.min(7, Math.max(-2, Math.round(Math.log2(currentHp / 20))));
+  const newConMod    = conModTarget + conDelta;           // preserve deviation
+  const newConScore  = Math.min(30, Math.max(1, 10 + newConMod * 2));
+
+  // ── INT / WIS / CHA: scale with proficiency step ──
+  // Each prof increase of 1 = +2 to score (one modifier step)
+  const mentalScale = profDelta * 2;
+  const newIntScore = Math.min(30, Math.max(1, oldScores.int + mentalScale));
+  const newWisScore = Math.min(30, Math.max(1, oldScores.wis + mentalScale));
+  const newChaScore = Math.min(30, Math.max(1, oldScores.cha + mentalScale));
+
+  const newScores = {
+    str: newStrScore,
+    dex: newDexScore,
+    con: newConScore,
+    int: newIntScore,
+    wis: newWisScore,
+    cha: newChaScore
+  };
+
+  ABILITIES.forEach(ab => {
+    const el = document.getElementById('f_ab_' + ab);
+    if (el && !el.readOnly) {
+      el.value = newScores[ab];
+      recalcMod(ab);
+    }
+  });
+
+  // ── Save DC: update in saves/skills text field if present ──
+  // New DC = 8 + newProf + highest mental mod
+  const highestMentalMod = Math.max(
+    Math.floor((newIntScore - 10) / 2),
+    Math.floor((newWisScore - 10) / 2),
+    Math.floor((newChaScore - 10) / 2)
+  );
+  const newDC = 8 + newProf + highestMentalMod;
+
   updateCRGuidance();
 
-  showToast('✓ CR scaled to ' + newCR + ' — HP: ' + newHp + ', AC: ' + newAc + ', damage proportionally adjusted');
+  const summary = [
+    `HP: ${newHp}`,
+    `AC: ${newAc}`,
+    `STR: ${newStrScore}`,
+    `DEX: ${newDexScore}`,
+    `CON: ${newConScore}`,
+    `INT: ${newIntScore}`,
+    `WIS: ${newWisScore}`,
+    `CHA: ${newChaScore}`,
+    `Save DC: ${newDC}`,
+    `Dmg ×${dprRatio.toFixed(2)}`
+  ].join(' · ');
+
+  showToast('⚖ Scaled to CR ' + newCR + ' — ' + summary);
 }
 
 // Scale a damage formula string by a ratio
