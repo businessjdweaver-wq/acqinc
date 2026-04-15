@@ -3518,7 +3518,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6867</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6868</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4023,7 +4023,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6867
+      Version 1.6868
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4048,6 +4048,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6868</strong> &mdash; Downtime modal: a &ldquo;↩ Resume last track&rdquo; pill now appears at the top when the character has prior progress. Shows the track name and current progress bar (e.g. 3&thinsp;/&thinsp;8). Tapping it auto-selects the matching activity and target in the dropdowns so the user can confirm without hunting through the lists.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6867</strong> &mdash; Downtime duplicate progress: the Night Owl badge modal now detects when a character has split progress bars for the same track (caused by the now-fixed prefix-stripping bug). Duplicate tracks are labelled, their values shown combined, and a ⇄ Merge button appears inline. Tapping Merge folds all dirty keys into the canonical clean key, saves, and re-renders the modal body without closing &mdash; no page reload needed.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6866</strong> &mdash; Downtime bug fix: the 🔄 prefix was not being stripped from target values before storing them as dtProgress keys. Root cause was a broken regex using a character class <code>[★🔄]</code> — because 🔄 is a surrogate pair (U+1F504), the two halves were treated as separate characters and never matched the full emoji. Changed to a proper alternation <code>(?:★|🔄)</code> in all three stripping sites. Added a standalone sanitizeDowntimeKeys() that (1) merges any polluted dtProgress keys into their clean equivalents and (2) strips the prefix off any in-flight downtimeJob targets. Called at all three load paths (local load, code login, and main Supabase pull) so corrupted save data heals immediately on next session open.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6865</strong> &mdash; Two improvements: (1) Sub-task move: each sub-task row now has a ⇄ button that opens a modal to move the sub-task to any other active task. The destination task auto-expands so the moved item is immediately visible. Pie progress recalculates on both source and destination tasks. (2) Collect gold (💰) button in the task action row is now the same visual size as the surrounding icon buttons — targeted font-size rule for .tacts .btn.bg prevents the emoji from rendering oversized.</div>
@@ -4592,6 +4593,7 @@ body.dev-active #app{margin-top:36px;}
 <div class="ov" id="ov-downtime"><div class="modal">
   <h3>🕯 Downtime Assignment</h3>
   <p>Choose a downtime activity for "<span id="ov-dt-name"></span>" and set when it should complete.</p>
+  <div id="ov-dt-resume" style="display:none;margin-bottom:10px"></div>
   <div class="frow">
     <label class="lbl" for="ov-dt-activity">Activity</label>
     <select id="ov-dt-activity"></select>
@@ -8567,6 +8569,55 @@ function renderDowntimeModal(){
   if(!c)return;
   var nameEl=document.getElementById('ov-dt-name');
   if(nameEl)nameEl.textContent=c.name;
+
+  // ── Resume last track pill ────────────────────────────────────
+  var resumeEl=document.getElementById('ov-dt-resume');
+  if(resumeEl){
+    // Find the key with the highest progress value (most recent meaningful track)
+    var prog=c.dtProgress||{};
+    var bestKey=Object.keys(prog)
+      .filter(function(k){return (prog[k]||0)>0;})
+      .sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
+    if(bestKey){
+      var bParts=bestKey.split(':');
+      var bType=bParts[0];
+      var bTarget=bParts.slice(1).join(':')||'core';
+      var bThreshold=(bType==='contacts'?6:(bType==='intel'?5:8));
+      var bProg=prog[bestKey]||0;
+      resumeEl.style.display='';
+      resumeEl.innerHTML=
+        '<button type="button" id="ov-dt-resume-btn" style="'+
+        'width:100%;text-align:left;background:rgba(26,107,138,.08);'+
+        'border:1px solid rgba(26,107,138,.35);border-radius:7px;'+
+        'padding:8px 11px;cursor:pointer;font-family:inherit">'+
+        '<div style="font-size:.72em;font-family:\'Cinzel\',serif;color:var(--teal);'+
+        'text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">↩ Resume last track</div>'+
+        '<div style="display:flex;align-items:center;gap:10px">'+
+        '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:.88em;font-weight:600;color:var(--ink);white-space:nowrap;'+
+        'overflow:hidden;text-overflow:ellipsis">'+esc(downtimeTrackLabel(bType,bTarget))+'</div>'+
+        '<div style="font-size:.78em;color:var(--ink-light);margin-top:1px">'+bProg+' / '+bThreshold+' progress points</div>'+
+        '</div>'+
+        '<div style="flex-shrink:0;width:72px">'+
+        '<div style="height:5px;background:rgba(44,26,14,.1);border-radius:3px">'+
+        '<div style="width:'+Math.min(100,Math.round(bProg/bThreshold*100))+'%;height:100%;'+
+        'background:var(--teal);border-radius:3px"></div>'+
+        '</div></div>'+
+        '</div></button>';
+      var resumeBtn=document.getElementById('ov-dt-resume-btn');
+      if(resumeBtn){
+        resumeBtn.onclick=function(){
+          DOWNTIME_PENDING.type=bType;
+          DOWNTIME_PENDING.target=bTarget;
+          renderDowntimeModal();
+        };
+      }
+    } else {
+      resumeEl.style.display='none';
+      resumeEl.innerHTML='';
+    }
+  }
+  // ─────────────────────────────────────────────────────────────
   var actSel=document.getElementById('ov-dt-activity');
   if(actSel){
     actSel.innerHTML=DOWNTIME_OPTIONS.map(function(o){
