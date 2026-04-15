@@ -1538,7 +1538,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner</span>
   <span class="topbar-sep">›</span>
-  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.2.0</span>
+  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.3.0</span>
   <div class="topbar-actions">
     <div class="b20-status b20-inactive" id="b20Indicator" title="Beyond20 not detected">
       <div class="b20-dot"></div>
@@ -3876,6 +3876,61 @@ function sbmRoll(bonus, label, doc) {
     void resultEl.offsetWidth;
     resultEl.classList.add('sbm-result-pop');
   }
+
+  // ── Beyond20 ──
+  const adv = mode === 'adv' ? 1 : mode === 'dis' ? -1 : 0;
+  const m   = _sbmMonster || {};
+  const char = makeMonsterChar(m.name || 'Monster', m.cr || '?', m.ac || '?', m.hp || '?');
+  const lbl  = label.toLowerCase();
+
+  if (lbl.includes(' save')) {
+    // Saving throw — e.g. "CON Save"
+    b20Send({
+      action: 'roll', type: 'saving-throw',
+      character: char, roll: `1d20${bonusStr}`,
+      advantage: adv, whisper: 0,
+      name: label, ability: label.replace(/ save$/i, '').trim(),
+      modifier: bonusNum, proficiency: 'None'
+    });
+  } else if (lbl.includes(' check')) {
+    // Ability check — e.g. "Strength check"
+    b20Send({
+      action: 'roll', type: 'ability',
+      character: char, roll: `1d20${bonusStr}`,
+      advantage: adv, whisper: 0,
+      name: label, ability: label.replace(/ check$/i, '').trim(),
+      modifier: bonusNum, proficiency: 'None'
+    });
+  } else if (lbl.includes(' attack')) {
+    // Attack roll from stat block action buttons — e.g. "Bite Attack"
+    const actionName = label.replace(/ attack$/i, '').trim();
+    const action = (m.actions || []).find(a => a.name && a.name.toLowerCase() === actionName.toLowerCase());
+    const damages   = action?.damage   ? [action.damage]   : ['1d6'];
+    const dmgTypes  = action?.dmgType  ? [action.dmgType]  : ['damage'];
+    const critDmg   = action?.extra    ? [action.extra]    : damages;
+    const critType  = action?.extraType ? [action.extraType] : dmgTypes;
+    const atkType   = (action?.reach || '').toLowerCase().includes('ranged') ? 'Ranged' : 'Melee';
+    b20Send({
+      action: 'roll', type: 'attack',
+      character: char, roll: `1d20${bonusStr}`,
+      advantage: adv, whisper: 0,
+      name: actionName, description: action?.desc || '',
+      'to-hit': bonusStr,
+      damages, 'damage-types': dmgTypes,
+      'critical-damages': critDmg, 'critical-damage-types': critType,
+      rollAttack: true, rollDamage: true, rollCritical: false,
+      'critical-limit': 20, 'attack-source': 'action', 'attack-type': atkType,
+      reach: action?.reach || '', range: action?.range || ''
+    });
+  } else {
+    // Skill check — e.g. "Perception"
+    b20Send({
+      action: 'roll', type: 'skill',
+      character: char, roll: `1d20${bonusStr}`,
+      advantage: adv, whisper: 0,
+      skill: label, ability: '', modifier: bonusNum, proficiency: 'None'
+    });
+  }
 }
 
 function sbmRollDmg(formula, label, doc) {
@@ -3891,6 +3946,29 @@ function sbmRollDmg(formula, label, doc) {
     void resultEl.offsetWidth;
     resultEl.classList.add('sbm-result-pop');
   }
+
+  // ── Beyond20 — damage-only roll ──
+  const m    = _sbmMonster || {};
+  const char = makeMonsterChar(m.name || 'Monster', m.cr || '?', m.ac || '?', m.hp || '?');
+  // Infer damage type from label ("Bite Dmg" → find "Bite" in actions)
+  const actionName = label.replace(/ dmg$/i, '').replace(/ extra$/i, '').trim();
+  const action = (m.actions || []).find(a => a.name && a.name.toLowerCase() === actionName.toLowerCase());
+  const isExtra = / extra$/i.test(label);
+  const dmgType = isExtra
+    ? (action?.extraType || 'damage')
+    : (action?.dmgType   || 'damage');
+
+  b20Send({
+    action: 'roll', type: 'attack',
+    character: char, roll: formula,
+    advantage: 0, whisper: 0,
+    name: label, description: dmgType,
+    'to-hit': '0',
+    damages: [formula], 'damage-types': [dmgType],
+    'critical-damages': [], 'critical-damage-types': [],
+    rollAttack: false, rollDamage: true, rollCritical: false,
+    'attack-source': 'action', 'attack-type': 'Melee'
+  });
 }
 
 // ── Build modal body HTML ──
