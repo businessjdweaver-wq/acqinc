@@ -898,7 +898,7 @@ function getDSMonsters() {
 
 async function loadCustomMonstersForPicker() {
   try {
-    const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?order=name.asc&limit=500`, { headers: SB_HEADERS });
+    const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?order=name.asc&limit=2000`, { headers: SB_HEADERS });
     if (res.ok) {
       const rows = await res.json();
       customMonsters = rows.map(r => ({
@@ -928,14 +928,17 @@ function renderPickerList(monsters) {
     !q || m.name.toLowerCase().includes(q) || (m.type||'').toLowerCase().includes(q)
   );
 
-  if (!filtered.length) {
+  // When searching, show all matches. When browsing unfiltered, cap at 500 for DOM perf.
+  const displayList = q ? filtered : filtered.slice(0, 500);
+
+  if (!displayList.length) {
     list.innerHTML = pickerTab === 'ds' && !getDSMonsters().length
       ? '<div style="padding:20px;text-align:center;color:var(--steel-pale);font-size:0.75rem;">No Draw Steel monsters loaded.<br><a href="monster-workshop.html" style="color:var(--ember-pale);">Import them in Monster Workshop →</a></div>'
       : '<div style="padding:20px;text-align:center;color:var(--steel-pale);font-size:0.75rem;">No monsters found</div>';
     return;
   }
 
-  list.innerHTML = filtered.slice(0, 200).map(m => {
+  list.innerHTML = displayList.map(m => {
     const src = m.source === 'custom' ? 'custom' : m.source === 'draw-steel' ? 'ds' : 'srd';
     const srcLabel = m.source === 'custom' ? 'Custom' : m.source === 'draw-steel' ? 'DS' : 'SRD';
     return `<div class="picker-entry" onclick="selectPickerMonster('${m.slug}')">
@@ -944,7 +947,9 @@ function renderPickerList(monsters) {
       <span class="picker-type">${m.type || m.monster_type || ''}</span>
       <span class="picker-source ${src}">${srcLabel}</span>
     </div>`;
-  }).join('');
+  }).join('') + (!q && filtered.length > 500
+    ? `<div style="padding:10px;text-align:center;color:var(--steel-pale);font-size:0.65rem;">Showing first 500 of ${filtered.length} — use search to narrow results</div>`
+    : '');
 }
 
 function filterPickerList() {
