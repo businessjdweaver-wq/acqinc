@@ -4261,6 +4261,15 @@ var _b20Active = false;
 function _openerB20Send(request) {
   try {
     if (window.opener && !window.opener.closed) {
+      // Call opener's own b20Send — this keeps Beyond20's frame context
+      // entirely within the opener tab where its content script lives.
+      // Dispatching from the pop-out directly causes B20 to try to respond
+      // to the pop-out's tab id, which has no content script → "No tab" errors.
+      if (typeof window.opener.b20Send === 'function') {
+        window.opener.b20Send(request);
+        return true;
+      }
+      // Fallback: direct dispatch on opener document (same effect, less reliable)
       window.opener.document.dispatchEvent(
         new CustomEvent('Beyond20_SendMessage', { detail: [request] })
       );
@@ -4477,10 +4486,12 @@ function sbmRollDmg(formula, label) {
 // Poll the opener every 500ms to check if Beyond20 is active there
 function _checkB20() {
   try {
-    if (window.opener && !window.opener.closed && window.opener.beyond20Loaded) {
+    if (window.opener && !window.opener.closed
+        && window.opener.beyond20Loaded
+        && typeof window.opener.b20Send === 'function') {
       _b20Active = true;
       var ind = document.getElementById('b20ind');
-      if (ind) { ind.className='b20-indicator b20-on'; ind.textContent='Beyond20 Active'; }
+      if (ind) { ind.className='b20-indicator b20-on'; ind.textContent='⚡ Beyond20 Active'; }
     } else {
       _b20Active = false;
       var ind = document.getElementById('b20ind');
