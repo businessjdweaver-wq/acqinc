@@ -4176,7 +4176,7 @@ function sbmPopOut() {
   if (!_sbmMonster) return;
   const m = _sbmMonster;
 
-  const W = 820, H = 900;
+  const W = 820, H = 920;
   const left = Math.max(0, window.screenX + window.outerWidth / 2 - W / 2);
   const top  = Math.max(0, window.screenY + 60);
   const pw = window.open('', '_blank',
@@ -4187,6 +4187,11 @@ function sbmPopOut() {
   const styles = [...document.styleSheets].map(ss => {
     try { return [...ss.cssRules].map(r => r.cssText).join('\n'); } catch(e) { return ''; }
   }).join('\n');
+
+  // Embed full monster data as JSON so the pop-out can reconstruct
+  // the correct rollMonsterAttack payload without guessing
+  let mJson = '{}';
+  try { mJson = JSON.stringify(m).replace(/\\/g,'\\\\').replace(/`/g,'\\`'); } catch(e) {}
 
   const content = buildSbmContent(m);
 
@@ -4228,49 +4233,263 @@ body {
   border: 1px solid rgba(200,66,10,0.5); color: #e8703a;
   background: rgba(200,66,10,0.12);
 }
+.b20-indicator {
+  font-family: 'JetBrains Mono', monospace; font-size: 0.55rem;
+  padding: 3px 10px; border-radius: 3px; border: 1px solid;
+  margin-left: auto;
+}
+.b20-on  { border-color:#2d6a2d; color:#6abf6a; background:rgba(45,106,45,0.15); }
+.b20-off { border-color:rgba(160,174,192,0.3); color:#a0aec0; background:rgba(0,0,0,0.2); }
 </style>
 </head>
 <body>
 <div class="popout-hdr">
   <span class="popout-name">${m.name}</span>
   <span class="popout-badge">CR ${m.cr||'?'} · HP ${m.hp||'?'} · AC ${m.ac||'?'}</span>
+  <span class="b20-indicator b20-off" id="b20ind">Beyond20 Off</span>
 </div>
 ${content}
 <script>
-function sbmD20(){return Math.ceil(Math.random()*20)}
+// ── MONSTER DATA ──
+var _m = (function(){ try{ return JSON.parse(\`${mJson}\`); }catch(e){ return {}; } })();
+
+// ── BEYOND20 BRIDGE ──
+// All B20 dispatches go through window.opener so the extension
+// (which only listens on the original tab's document) can receive them.
+var _b20Active = false;
+
+function _openerB20Send(request) {
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.document.dispatchEvent(
+        new CustomEvent('Beyond20_SendMessage', { detail: [request] })
+      );
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
+function _makeChar() {
+  var abs = _m.abilities || {};
+  function pair(k){ var p=abs[k]; return Array.isArray(p)?p:[10,'+0']; }
+  return {
+    name: _m.name || 'Monster',
+    type: 'Monster',
+    url:  window.opener ? window.opener.location.href : window.location.href,
+    cr:   String(_m.cr || '?'),
+    ac:   String(_m.ac || '?'),
+    hp:   String(_m.hp || '?'),
+    abilities: [
+      ['Strength',    'STR', pair('str')[0], pair('str')[1]],
+      ['Dexterity',   'DEX', pair('dex')[0], pair('dex')[1]],
+      ['Constitution','CON', pair('con')[0], pair('con')[1]],
+      ['Intelligence','INT', pair('int')[0], pair('int')[1]],
+      ['Wisdom',      'WIS', pair('wis')[0], pair('wis')[1]],
+      ['Charisma',    'CHA', pair('cha')[0], pair('cha')[1]]
+    ],
+    saves:  _m.saves  || {},
+    skills: _m.skills || {}
+  };
+}
+
+function _getMode() {
+  var el = document.querySelector('.sbm-radio:checked');
+  return el ? el.value : 'normal';
+}
+
+function _advFlag() {
+  var mode = _getMode();
+  return mode === 'adv' ? 1 : mode === 'dis' ? -1 : 0;
+}
+
+// ── DICE (local display) ──
+function sbmD20(){ return Math.ceil(Math.random()*20); }
+
 function sbmRollDice(f){
   var mm=String(f).trim().match(/^(\\d+)d(\\d+)([+-]\\d+)?$/i);
   if(mm){var r=[],n=parseInt(mm[1]),d=parseInt(mm[2]),b=mm[3]?parseInt(mm[3]):0;
     for(var i=0;i<n;i++)r.push(Math.ceil(Math.random()*d));
     return{total:r.reduce(function(a,c){return a+c},0)+b,rolls:r};}
   var fv=parseInt(f);return{total:isNaN(fv)?0:fv,rolls:[]};}
-function sbmGetMode(doc){
-  var el=(doc||document).querySelector('.sbm-radio:checked');return el?el.value:'normal';}
-function sbmRoll(bonus,label,doc){
-  var d=doc||document,mode=sbmGetMode(d),d1=sbmD20(),d2=sbmD20(),kept,rawHtml,modeTag;
-  if(mode==='adv'){kept=Math.max(d1,d2);
-    rawHtml=d1>d2?'🎲 <b style="color:#e8d080">'+d1+'</b>/<span style="opacity:.55">'+d2+'</span>':
-      d2>d1?'🎲 <span style="opacity:.55">'+d1+'</span>/<b style="color:#e8d080">'+d2+'</b>':
-        '🎲 '+d1+'/'+d2;modeTag='<span style="font-size:.44rem;opacity:.65">[Adv]</span> ';}
-  else if(mode==='dis'){kept=Math.min(d1,d2);
-    rawHtml=d1<d2?'🎲 <b style="color:#e8d080">'+d1+'</b>/<span style="opacity:.55">'+d2+'</span>':
-      d2<d1?'🎲 <span style="opacity:.55">'+d1+'</span>/<b style="color:#e8d080">'+d2+'</b>':
-        '🎲 '+d1+'/'+d2;modeTag='<span style="font-size:.44rem;opacity:.65">[Dis]</span> ';}
-  else{kept=d1;rawHtml='🎲 '+d1;modeTag='';}
-  var bn=parseInt(bonus)||0,tot=kept+bn,ic=kept===20,if2=kept===1;
-  var bs=bn>=0?'+'+bn:''+bn,tc=ic?'#6abf6a':if2?'#e07070':'#e8d080';
-  var re=d.getElementById('sbmResult');if(!re)return;
-  re.innerHTML=modeTag+'<span style="opacity:.65;font-size:.57rem;">'+label+'</span>  '+rawHtml+' '+bs+
-    ' = <span style="font-size:.88rem;color:'+tc+';">'+tot+'</span>'+
-    (ic?' <span style="color:#6abf6a;font-size:.5rem">CRIT!</span>':'')+
-    (if2?' <span style="color:#e07070;font-size:.5rem">FUMBLE</span>':'');
-  re.classList.remove('sbm-result-pop');void re.offsetWidth;re.classList.add('sbm-result-pop');}
-function sbmRollDmg(formula,label,doc){
-  var d=doc||document,r=sbmRollDice(formula),detail=r.rolls.length?'['+r.rolls.join('+')+']':'';
-  var re=d.getElementById('sbmResult');if(!re)return;
-  re.innerHTML='<span style="opacity:.65;font-size:.57rem;">'+label+'</span>  '+detail+
-    ' = <span style="font-size:.88rem;color:#e8d080;">'+r.total+'</span>';
-  re.classList.remove('sbm-result-pop');void re.offsetWidth;re.classList.add('sbm-result-pop');}
+
+function _showResult(html) {
+  var re = document.getElementById('sbmResult');
+  if (!re) return;
+  re.innerHTML = html;
+  re.classList.remove('sbm-result-pop');
+  void re.offsetWidth;
+  re.classList.add('sbm-result-pop');
+}
+
+// ── ATTACK ROLL ──
+// Called by the ⚔ Attack buttons (sbm-atk class)
+function sbmRoll(bonus, label) {
+  var bn = parseInt(bonus) || 0;
+  var bs = bn >= 0 ? '+'+bn : ''+bn;
+  var mode = _getMode();
+  var d1 = sbmD20(), d2 = sbmD20();
+  var kept, rawHtml, modeTag;
+
+  if (mode === 'adv') {
+    kept = Math.max(d1,d2);
+    rawHtml = d1>d2 ? '🎲 <b style="color:#e8d080">'+d1+'</b>/<span style="opacity:.55">'+d2+'</span>'
+            : d2>d1 ? '🎲 <span style="opacity:.55">'+d1+'</span>/<b style="color:#e8d080">'+d2+'</b>'
+            : '🎲 '+d1+'/'+d2;
+    modeTag = '<span style="font-size:.44rem;opacity:.65">[Adv]</span> ';
+  } else if (mode === 'dis') {
+    kept = Math.min(d1,d2);
+    rawHtml = d1<d2 ? '🎲 <b style="color:#e8d080">'+d1+'</b>/<span style="opacity:.55">'+d2+'</span>'
+            : d2<d1 ? '🎲 <span style="opacity:.55">'+d1+'</span>/<b style="color:#e8d080">'+d2+'</b>'
+            : '🎲 '+d1+'/'+d2;
+    modeTag = '<span style="font-size:.44rem;opacity:.65">[Dis]</span> ';
+  } else {
+    kept = d1; rawHtml = '🎲 '+d1; modeTag = '';
+  }
+
+  var tot = kept + bn;
+  var ic = kept === 20, ifm = kept === 1;
+  var tc = ic ? '#6abf6a' : ifm ? '#e07070' : '#e8d080';
+
+  _showResult(
+    modeTag + '<span style="opacity:.65;font-size:.57rem;">'+label+'</span>  '+
+    rawHtml+' '+bs+' = <span style="font-size:.88rem;color:'+tc+';">'+tot+'</span>'+
+    (ic  ? ' <span style="color:#6abf6a;font-size:.5rem">CRIT!</span>'   : '')+
+    (ifm ? ' <span style="color:#e07070;font-size:.5rem">FUMBLE</span>' : '')
+  );
+
+  if (!_b20Active) return;
+
+  // Route to the correct Beyond20 message type by label suffix
+  var lbl = label.toLowerCase();
+
+  // Saving throw: label ends with " save" (e.g. "CON Save")
+  if (lbl.indexOf(' save') >= 0) {
+    var ability = label.replace(/ save$/i,'').trim();
+    _openerB20Send({
+      action:'roll', type:'saving-throw',
+      character: _makeChar(),
+      roll:'1d20'+bs, advantage:_advFlag(), whisper:0,
+      name:label, ability:ability, modifier:bn, proficiency:'None'
+    });
+    return;
+  }
+
+  // Skill check: label doesn't end in "check" and matches a known skill
+  var knownSkills = ['athletics','acrobatics','sleight of hand','stealth','arcana','history',
+    'investigation','nature','religion','animal handling','insight','medicine',
+    'perception','survival','deception','intimidation','performance','persuasion'];
+  var isSkill = knownSkills.some(function(s){ return lbl.indexOf(s) >= 0; });
+  if (isSkill) {
+    _openerB20Send({
+      action:'roll', type:'skill',
+      character: _makeChar(),
+      roll:'1d20'+bs, advantage:_advFlag(), whisper:0,
+      skill:label, ability:'', modifier:bn, proficiency:'None'
+    });
+    return;
+  }
+
+  // Ability check: label ends with " check" (e.g. "Strength check")
+  if (lbl.indexOf(' check') >= 0) {
+    _openerB20Send({
+      action:'roll', type:'ability',
+      character: _makeChar(),
+      roll:'1d20'+bs, advantage:_advFlag(), whisper:0,
+      name:label, ability:label.replace(/ check$/i,'').trim(), modifier:bn, proficiency:'None'
+    });
+    return;
+  }
+
+  // Attack or generic roll: try to match an action by label for full attack data
+  var action = null;
+  (_m.actions||[]).forEach(function(a){
+    if (a.name && label.toLowerCase().indexOf(a.name.toLowerCase()) >= 0) action = a;
+  });
+
+  if (action) {
+    var atkType = action.reach && action.reach.toLowerCase().indexOf('ranged') >= 0 ? 'Ranged' : 'Melee';
+    var damages  = action.damage  ? [action.damage]  : ['1d6'];
+    var dmgTypes = action.dmgType ? [action.dmgType] : ['damage'];
+    var critDmg  = action.extra   ? [action.extra]   : damages;
+    var critType = action.extraType ? [action.extraType] : dmgTypes;
+    _openerB20Send({
+      action:'roll', type:'attack',
+      character: _makeChar(),
+      roll:'1d20'+bs, advantage:_advFlag(), whisper:0,
+      name:action.name, description:action.desc||'',
+      'to-hit':bs, damages:damages, 'damage-types':dmgTypes,
+      'critical-damages':critDmg, 'critical-damage-types':critType,
+      rollAttack:true, rollDamage:true, rollCritical:false,
+      'critical-limit':20, 'attack-source':'action', 'attack-type':atkType,
+      reach:action.reach||'', range:action.range||''
+    });
+  } else {
+    _openerB20Send({
+      action:'roll', type:'roll',
+      character: _makeChar(),
+      roll:'1d20'+bs, advantage:_advFlag(), whisper:0,
+      name:label, modifier:bs
+    });
+  }
+}
+
+// ── DAMAGE ROLL ──
+// Called by the 💥 Damage buttons (sbm-dmg class)
+function sbmRollDmg(formula, label) {
+  var r = sbmRollDice(formula);
+  var detail = r.rolls.length ? '['+r.rolls.join('+')+']' : '';
+  _showResult(
+    '<span style="opacity:.65;font-size:.57rem;">'+label+'</span>  '+
+    detail+' = <span style="font-size:.88rem;color:#e8d080;">'+r.total+'</span>'
+  );
+
+  // ── Beyond20 passthrough ──
+  if (_b20Active) {
+    // Find action for dmgType
+    var dmgType = 'damage';
+    var matchName = label.replace(' Dmg','').replace(' Extra','').trim();
+    (_m.actions||[]).forEach(function(a){
+      if (a.name && a.name.toLowerCase() === matchName.toLowerCase()) {
+        dmgType = a.dmgType || dmgType;
+      }
+    });
+    _openerB20Send({
+      action: 'roll', type: 'attack',
+      character: _makeChar(),
+      roll: formula,
+      advantage: 0,
+      whisper: 0,
+      name: label,
+      description: dmgType,
+      'to-hit': '0',
+      damages: [formula],
+      'damage-types': [dmgType],
+      'critical-damages': [],
+      'critical-damage-types': [],
+      rollAttack: false, rollDamage: true, rollCritical: false,
+      'attack-source': 'action', 'attack-type': 'Melee'
+    });
+  }
+}
+
+// ── BEYOND20 DETECTION ──
+// Poll the opener every 500ms to check if Beyond20 is active there
+function _checkB20() {
+  try {
+    if (window.opener && !window.opener.closed && window.opener.beyond20Loaded) {
+      _b20Active = true;
+      var ind = document.getElementById('b20ind');
+      if (ind) { ind.className='b20-indicator b20-on'; ind.textContent='Beyond20 Active'; }
+    } else {
+      _b20Active = false;
+      var ind = document.getElementById('b20ind');
+      if (ind) { ind.className='b20-indicator b20-off'; ind.textContent='Beyond20 Off'; }
+    }
+  } catch(e) { _b20Active = false; }
+}
+setInterval(_checkB20, 500);
+_checkB20();
 <\/script>
 </body></html>`);
   pw.document.close();
