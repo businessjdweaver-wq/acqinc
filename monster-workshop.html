@@ -3590,17 +3590,37 @@ function convertFoundryActor(f) {
     // Build action object
     const atk = iSys.attack;
     const dmg = iSys.damage?.parts || [];
-    const toHit = atk?.flat != null
+    const toHit = (atk?.flat != null && atk?.flat !== false && typeof atk?.flat === 'number')
       ? (atk.flat >= 0 ? '+' : '') + atk.flat
-      : atk?.bonus || '';
+      : (atk?.bonus && atk?.bonus !== false && typeof atk?.bonus === 'number')
+        ? (atk.bonus >= 0 ? '+' : '') + atk.bonus
+        : (typeof atk?.bonus === 'string' && atk?.bonus !== '' && atk?.bonus !== 'false')
+          ? atk.bonus
+          : '';
 
-    const damage = dmg[0] ? dmg[0][0] : '';
-    const dmgType = dmg[0] ? dmg[0][1] : '';
-    const extraDmg = dmg[1] ? dmg[1][0] : '';
+    // Clean up Foundry damage formula quirks:
+    // - "@mod" is a Foundry placeholder for ability modifier — strip it
+    // - "[type]" suffixes like "1d6[bludgeoning]" — strip the bracket part
+    function cleanDmgFormula(f) {
+      if (!f) return '';
+      return f
+        .replace(/\s*[\+\-]\s*@mod/g, '') // remove "+ @mod" or "- @mod"
+        .replace(/\s*@\w+/g, '')           // remove any other @variable
+        .replace(/\[[\w\s]+\]/g, '')       // remove [type] brackets
+        .trim();
+    }
+
+    const damage   = cleanDmgFormula(dmg[0] ? dmg[0][0] : '');
+    const dmgType  = dmg[0] ? dmg[0][1] : '';
+    const extraDmg = cleanDmgFormula(dmg[1] ? dmg[1][0] : '');
     const extraType = dmg[1] ? dmg[1][1] : '';
 
     // Description — strip HTML tags
     const desc = stripHtml(iSys.description?.value || '');
+
+    // Determine if this is a real attack (has toHit or meaningful damage)
+    // or a special ability/passive that Foundry incorrectly typed as 'weapon'/'feat'
+    const isRealAttack = toHit !== '' || damage !== '';
 
     const actionObj = {
       name: item.name,
@@ -3612,14 +3632,15 @@ function convertFoundryActor(f) {
       extra: extraDmg,
       extraType,
       desc: desc.slice(0, 400), // truncate very long descriptions
-      type: toHit ? 'attack' : 'special'
+      type: isRealAttack ? 'attack' : 'special'
     };
 
     if (isLegendary) {
       legActions.push({ name: item.name, desc: desc.slice(0, 300) });
     } else if (isReaction) {
       reactions.push(actionObj);
-    } else if (item.type === 'feat' && !toHit) {
+    } else if (!isRealAttack || item.type === 'feat') {
+      // No attack and no damage → special ability / passive
       special.push({ name: item.name, desc: desc.slice(0, 300) });
     } else if (isAction || item.type === 'weapon') {
       actions.push(actionObj);
