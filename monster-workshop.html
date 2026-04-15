@@ -3590,13 +3590,23 @@ function convertFoundryActor(f) {
     // Build action object
     const atk = iSys.attack;
     const dmg = iSys.damage?.parts || [];
-    const toHit = (atk?.flat != null && atk?.flat !== false && typeof atk?.flat === 'number')
+
+    // Extract to-hit from system.attack fields first, then fall back to parsing the description
+    let toHit = (atk?.flat != null && atk?.flat !== false && typeof atk?.flat === 'number')
       ? (atk.flat >= 0 ? '+' : '') + atk.flat
       : (atk?.bonus && atk?.bonus !== false && typeof atk?.bonus === 'number')
         ? (atk.bonus >= 0 ? '+' : '') + atk.bonus
         : (typeof atk?.bonus === 'string' && atk?.bonus !== '' && atk?.bonus !== 'false')
           ? atk.bonus
           : '';
+
+    // Fallback: parse "+N to hit" from the description text
+    // (DDB importer sometimes leaves system.attack empty but puts the info in the description)
+    if (!toHit) {
+      const descText = stripHtml(iSys.description?.value || '');
+      const hitMatch = descText.match(/([+-]\d+)\s+to\s+hit/i);
+      if (hitMatch) toHit = hitMatch[1].startsWith('+') ? hitMatch[1] : '+' + parseInt(hitMatch[1]);
+    }
 
     // Clean up Foundry damage formula quirks:
     // - "@mod" is a Foundry placeholder for ability modifier — strip it
