@@ -3518,7 +3518,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6865</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6866</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4023,7 +4023,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6865
+      Version 1.6866
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4048,7 +4048,8 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
-        <div style="margin-bottom:9px"><strong>Version 1.6865</strong> &mdash; Two improvements: (1) Sub-task move: each sub-task row now has a ⇄ button that opens a modal to move the sub-task to any other active task. The destination task auto-expands so the moved item is immediately visible. Pie progress recalculates on both source and destination tasks. (2) Collect gold (💰) button in the task action row is now the same visual size as the surrounding icon buttons — targeted font-size rule for .tacts .btn.bg prevents the emoji from rendering oversized.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6866</strong> &mdash; Downtime bug fix: the 🔄 prefix was not being stripped from target values before storing them as dtProgress keys. Root cause was a broken regex using a character class <code>[★🔄]</code> — because 🔄 is a surrogate pair (U+1F504), the two halves were treated as separate characters and never matched the full emoji. Changed to a proper alternation <code>(?:★|🔄)</code> in all three stripping sites. Also added a one-time migration in ensureDowntimeState() that merges any already-polluted keys (e.g. <code>skill:🔄 Animal Handling</code>) into their clean equivalents on next load.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6866</strong> &mdash; Two improvements: (1) Sub-task move: each sub-task row now has a ⇄ button that opens a modal to move the sub-task to any other active task. The destination task auto-expands so the moved item is immediately visible. Pie progress recalculates on both source and destination tasks. (2) Collect gold (💰) button in the task action row is now the same visual size as the surrounding icon buttons — targeted font-size rule for .tacts .btn.bg prevents the emoji from rendering oversized.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6864</strong> &mdash; Quest modal peg slot improvements: (1) When a quest has squadReqMax set, support slots are no longer padded beyond that number &mdash; you cannot assign more characters than the max allows. Required prereq slots always appear regardless of the max. (2) Auto-scroll carousel now fires correctly on any page &mdash; when all visible slots on the current page are filled, the carousel advances to the next page with the existing springy animation. Previously the condition required all 6 slots to be non-support prereqs, which almost never fired.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6863</strong> &mdash; Fix pets and custom items never loading in store. Two fixes: (1) bootApp() now calls refreshSession(true) before initSession() so expired JWTs are refreshed at startup; if refresh fails the session is cleared and re-login is prompted. (2) The initSession .catch block now also calls loadPetsFromDB()+loadItemsFromDB()+renderStore() so store content always loads even when sbPull fails. Root cause: stored JWT was expired, sbPull 401'd, promise chain rejected, loadPetsFromDB never called.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6861</strong> &mdash; Fix custom items (e.g. Boxing Gear) and pets not showing in store. Four bugs fixed: (1) loadPetsFromDB query now filters published=eq.true so unpublished pets are excluded and RLS is satisfied. (2) renderStore() added to the sbPull completion chain so it fires after loadContentLibrary + loadPetsFromDB + loadItemsFromDB all resolve. (3) Guest/offline path now uses Promise.all([loadPetsFromDB, loadItemsFromDB]).then(renderStore) instead of fire-and-forget. (4) loadContentLibrary's internal renderStore() is now guarded — only fires if DB_GEAR/PETS caches are already populated, preventing a race where mergeCustomContent resets GEAR to built-ins before loadItemsFromDB has returned.</div>
@@ -8213,6 +8214,19 @@ function ensureDowntimeState(){
   if(!S.downtimeJobs)S.downtimeJobs=[];
   if(!S.settings)S.settings={};
   if(!S.settings.intelFragments)S.settings.intelFragments=0;
+  // Migration: fix any dtProgress keys that were stored with a ★/🔄 prefix
+  // due to the surrogate-pair regex bug — merge them into the clean key.
+  (S.party||[]).forEach(function(c){
+    if(!c||!c.dtProgress)return;
+    Object.keys(c.dtProgress).forEach(function(k){
+      var clean=k.replace(/^(?:★|🔄) /,'');
+      if(clean!==k){
+        // Key was polluted — merge value into the clean key then delete
+        c.dtProgress[clean]=(c.dtProgress[clean]||0)+(c.dtProgress[k]||0);
+        delete c.dtProgress[k];
+      }
+    });
+  });
 }
 function downtimeJobForChar(ci){
   ensureDowntimeState();
@@ -8554,9 +8568,9 @@ function renderDowntimeModal(){
       DOWNTIME_PENDING.target='';
     }else{
       targetSel.disabled=false;
-      // Strip ★ prefix from stored target so it matches raw option values
-      var _rawTarget=(DOWNTIME_PENDING.target||'').replace(/^[\u2605\uD83D\uDD04] /,'').replace(/^\uD83D\uDD04 /,'');
-      var _matchIdx=targetOpts.findIndex(function(o){return o.replace(/^[\u2605\uD83D\uDD04] /,'').replace(/^\uD83D\uDD04 /,'')===_rawTarget;});
+      // Strip ★ / 🔄 prefix from stored target so it matches raw option values
+      var _rawTarget=(DOWNTIME_PENDING.target||'').replace(/^(?:★|🔄) /,'');
+      var _matchIdx=targetOpts.findIndex(function(o){return o.replace(/^(?:★|🔄) /,'')===_rawTarget;});
       if(_matchIdx===-1){DOWNTIME_PENDING.target=targetOpts[0];}
       else{DOWNTIME_PENDING.target=targetOpts[_matchIdx];}
       targetSel.innerHTML=targetOpts.map(function(t){
@@ -8584,7 +8598,7 @@ function confirmDowntimeModal(){
   var targetSel=document.getElementById('ov-dt-target');
   var dtInp=document.getElementById('ov-dt-dt');
   var type=(actSel&&actSel.value)||DOWNTIME_PENDING.type||'skill';
-  var target=((targetSel&&targetSel.value)||'core').replace(/^[★🔄] /,'');
+  var target=((targetSel&&targetSel.value)||'core').replace(/^(?:★|🔄) /,'');
   var ts=parseDateTimeLocal(dtInp?dtInp.value:'');
   if(!isFinite(ts)||ts<=Date.now()){alert('Choose a future downtime end time.');return;}
   var mins=Math.max(1,Math.round((ts-Date.now())/60000));
