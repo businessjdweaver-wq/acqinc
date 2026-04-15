@@ -2937,81 +2937,90 @@ function applyCRScaling() {
     }
   });
 
-  // ── ABILITY SCORES (DMG pp. 274–281) ──
+  // ── ABILITY SCORE SCALING (DMG pp. 274–281) ──
   //
-  // The DMG derives stats from the CR target values:
+  // Strategy: derive target scores from the new CR's implied values,
+  // then blend in the monster's deviation from its old baseline,
+  // capped so large CR changes don't produce absurd results.
   //
-  // STR — primary melee stat: back-calculate from new attack bonus.
-  //   attack bonus = prof + STR mod  →  STR mod = atk - prof
-  //   Preserve any STR-mod delta from the old baseline (custom builds).
-  //
-  // DEX — affects AC (unarmored/light), initiative, DEX saves.
-  //   Scale with the AC change ratio; preserve delta for armored monsters.
-  //
-  // CON — drives HP directly.
-  //   Back-calculate from new HP: HP ≈ (HD × (die/2 + CON mod))
-  //   Use CON mod = round(newHp / 20 - 1) as a rough inverse,
-  //   clamped to a sensible range.
-  //
-  // INT / WIS / CHA — "mental" stats set challenge DC and skill checks.
-  //   Scale with proficiency bonus change; the DMG links these to
-  //   save DC (DC = 8 + prof + ability mod).
-  //   New score = old score + (newProf - oldProf) * 2
-  //   (each prof step ≈ +1 mod ≈ +2 score; mental saves track prof).
+  // The DMG implies these approximate score ranges by tier:
+  //   CR 0–4:   scores 8–16  (mods -1 to +3)
+  //   CR 5–10:  scores 12–20 (mods +1 to +5)
+  //   CR 11–16: scores 16–24 (mods +3 to +7)
+  //   CR 17+:   scores 20–30 (mods +5 to +10)
 
   const ABILITIES = ['str','dex','con','int','wis','cha'];
+  const crNum = (cr) => {
+    if (cr === '1/8') return 0.125;
+    if (cr === '1/4') return 0.25;
+    if (cr === '1/2') return 0.5;
+    return parseFloat(cr) || 0;
+  };
+  const newCrNum = crNum(newCR);
+  const oldCrNum = crNum(oldCR);
 
+  // Max score allowed at new CR (prevents absurd values after large drops)
+  const maxScoreForCR = (n) => {
+    if (n <= 4)  return 18;
+    if (n <= 10) return 22;
+    if (n <= 16) return 26;
+    return 30;
+  };
+  const minScoreForCR = (n) => {
+    if (n <= 4)  return 6;
+    if (n <= 10) return 8;
+    if (n <= 16) return 10;
+    return 12;
+  };
+  const maxS = maxScoreForCR(newCrNum);
+  const minS = minScoreForCR(newCrNum);
+
+  // Read current scores
   const oldScores = {};
   ABILITIES.forEach(ab => {
     const el = document.getElementById('f_ab_' + ab);
-    oldScores[ab] = el ? parseInt(el.value) || 10 : 10;
+    oldScores[ab] = el ? (parseInt(el.value) || 10) : 10;
   });
 
-  // Old baseline scores implied by old CR
-  const oldAtkMod  = parseInt(oldT.atk) || 3; // e.g. +6
-  const oldProfVal = oldT.prof;               // e.g. 3
-  const oldStrModBase = oldAtkMod - oldProfVal; // implied STR mod at old CR
+  // Implied baseline mods from CR tables
+  const oldAtkMod     = parseInt(oldT.atk) || 3;
+  const newAtkMod     = newToHit;
+  const oldStrModBase = oldAtkMod - oldProf;   // e.g. CR15: +8-5 = +3
+  const newStrModBase = newAtkMod - newProf;   // e.g. CR1:  +3-2 = +1
 
-  // New baseline mods from new CR
-  const newAtkMod  = newToHit;
-  const newStrModBase = newAtkMod - newProf;
-
-  // ── STR: primary attack stat ──
+  // STR: back-calc from attack bonus, preserve capped deviation
   const oldStrMod  = Math.floor((oldScores.str - 10) / 2);
-  const strDelta   = oldStrMod - oldStrModBase;          // how far the monster deviates from baseline
-  const newStrMod  = newStrModBase + strDelta;            // preserve deviation
-  const newStrScore = Math.min(30, Math.max(1, 10 + newStrMod * 2));
+  const strDelta   = Math.max(-2, Math.min(2, oldStrMod - oldStrModBase));
+  const newStrMod  = newStrModBase + strDelta;
+  const newStrScore = Math.min(maxS, Math.max(minS, 10 + newStrMod * 2));
 
-  // ── DEX: scale mod proportionally with prof change ──
+  // DEX: scale proportionally with prof change, cap delta at ±2
   const oldDexMod  = Math.floor((oldScores.dex - 10) / 2);
-  const profDelta  = newProf - oldProf;
-  const newDexMod  = oldDexMod + profDelta;
-  const newDexScore = Math.min(30, Math.max(1, 10 + newDexMod * 2));
+  const oldDexBase = Math.max(0, oldProf - 2);  // approx baseline DEX mod for old CR
+  const newDexBase = Math.max(0, newProf - 2);
+  const dexDelta   = Math.max(-2, Math.min(2, oldDexMod - oldDexBase));
+  const newDexMod  = newDexBase + dexDelta;
+  const newDexScore = Math.min(maxS, Math.max(minS, 10 + newDexMod * 2));
 
-  // ── CON: back-calculate from target HP ──
-  // Rough formula: HP ≈ 10 + CON mod per HD; CR 1 ≈ 8 HD, scaling up.
-  // Simpler: derive CON mod from HP relative to expected "no-CON" baseline.
-  // Approximate: CON mod = clamp(round(log2(newHp/20)), -2, 7)
-  const conModTarget = Math.min(7, Math.max(-2, Math.round(Math.log2(newHp / 20))));
-  const oldConMod    = Math.floor((oldScores.con - 10) / 2);
-  const conDelta     = oldConMod - Math.min(7, Math.max(-2, Math.round(Math.log2(currentHp / 20))));
-  const newConMod    = conModTarget + conDelta;           // preserve deviation
-  const newConScore  = Math.min(30, Math.max(1, 10 + newConMod * 2));
+  // CON: scale with HP change ratio, derived from CON's contribution to HP
+  // CON mod ≈ floor((newHp / estimatedHD) - (die/2))  — simplified:
+  // Use ratio of new to old CON mod, clamped
+  const oldConMod = Math.floor((oldScores.con - 10) / 2);
+  const hpRatio   = newHp / (currentHp || newHp);
+  // Scale the raw mod by the HP ratio, then round
+  const newConMod  = Math.max(-2, Math.min(10, Math.round(oldConMod * hpRatio)));
+  const newConScore = Math.min(maxS, Math.max(minS, 10 + newConMod * 2));
 
-  // ── INT / WIS / CHA: scale with proficiency step ──
-  // Each prof increase of 1 = +2 to score (one modifier step)
-  const mentalScale = profDelta * 2;
-  const newIntScore = Math.min(30, Math.max(1, oldScores.int + mentalScale));
-  const newWisScore = Math.min(30, Math.max(1, oldScores.wis + mentalScale));
-  const newChaScore = Math.min(30, Math.max(1, oldScores.cha + mentalScale));
+  // INT / WIS / CHA: scale with proficiency step (each prof point ≈ +2 score)
+  // Also clamp to CR-appropriate range
+  const profDiff   = newProf - oldProf;  // e.g. -3 for CR15→CR1
+  const newIntScore = Math.min(maxS, Math.max(minS, oldScores.int + profDiff * 2));
+  const newWisScore = Math.min(maxS, Math.max(minS, oldScores.wis + profDiff * 2));
+  const newChaScore = Math.min(maxS, Math.max(minS, oldScores.cha + profDiff * 2));
 
   const newScores = {
-    str: newStrScore,
-    dex: newDexScore,
-    con: newConScore,
-    int: newIntScore,
-    wis: newWisScore,
-    cha: newChaScore
+    str: newStrScore, dex: newDexScore, con: newConScore,
+    int: newIntScore, wis: newWisScore, cha: newChaScore
   };
 
   ABILITIES.forEach(ab => {
@@ -3022,8 +3031,7 @@ function applyCRScaling() {
     }
   });
 
-  // ── Save DC: update in saves/skills text field if present ──
-  // New DC = 8 + newProf + highest mental mod
+  // Highest mental mod → implied save DC
   const highestMentalMod = Math.max(
     Math.floor((newIntScore - 10) / 2),
     Math.floor((newWisScore - 10) / 2),
