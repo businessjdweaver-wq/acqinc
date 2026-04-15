@@ -903,9 +903,14 @@ async function loadCustomMonstersForPicker() {
       const rows = await res.json();
       customMonsters = rows.map(r => ({
         ...r,
-        slug:   'custom-' + r.id,
-        type:   r.monster_type || r.tags?.[0] || 'custom',
-        source: 'custom'
+        slug:    'custom-' + r.id,
+        type:    r.monster_type || r.tags?.[0] || 'custom',
+        source:  'custom',
+        // Explicitly map both field names so blending logic finds them
+        // regardless of whether it checks .special or .special_abilities
+        actions:           r.actions           || [],
+        special_abilities: r.special_abilities || [],
+        special:           r.special_abilities || []
       }));
       // Re-render if we're currently on the custom tab
       if (pickerTab === 'custom') {
@@ -1396,7 +1401,8 @@ async function saveBlend() {
   const allActions = [...baseActions, ...graftedActions];
 
   // Build special abilities: base specials + grafted traits
-  const baseSpecials    = baseMonster.special || baseMonster.special_abilities || [];
+  // Normalise: SRD monsters use .special, DB monsters use .special_abilities, blender maps both
+  const baseSpecials    = baseMonster.special_abilities || baseMonster.special || [];
   const graftedTraits   = graftedItems.filter(g => g.type === 'trait').map(g => ({
     name: g.feature.name,
     desc: (g.feature.desc || g.feature.description || '') + ' [Grafted from ' + g.fromMonster.name + ']'
@@ -1466,6 +1472,8 @@ async function saveBlend() {
     if (res.ok || res.status === 201) {
       showToast('✓ ' + name + ' saved to My Monsters with "blended" tag!');
       btn.textContent = '✓ Saved!';
+      // Signal Workshop and other tools that custom monsters changed
+      try { localStorage.setItem('rq_custom_monsters_dirty', Date.now().toString()); } catch(e) {}
       // Refresh custom list so it appears immediately in the picker
       await loadCustomMonstersForPicker();
       setTimeout(() => { btn.textContent = '💾 Save to My Monsters'; btn.disabled = false; }, 2500);
