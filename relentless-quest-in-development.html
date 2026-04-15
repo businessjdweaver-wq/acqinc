@@ -8220,10 +8220,14 @@ function ensureDowntimeState(){
 // Migration: fix dtProgress keys and downtimeJob targets that were stored with a
 // ★/🔄 prefix due to the surrogate-pair regex bug. Safe to call multiple times.
 function sanitizeDowntimeKeys(){
+  function stripPrefix(k){
+    return k.replace(/^(?:★|🔄) /,'')
+             .replace(/^[^\w:]+:/,function(m){return m.replace(/^[^\w:]+/,'');});
+  }
   (S.party||[]).forEach(function(c){
     if(!c||!c.dtProgress)return;
     Object.keys(c.dtProgress).forEach(function(k){
-      var clean=k.replace(/^(?:★|🔄) /,'');
+      var clean=stripPrefix(k);
       if(clean!==k){
         c.dtProgress[clean]=(c.dtProgress[clean]||0)+(c.dtProgress[k]||0);
         delete c.dtProgress[k];
@@ -8232,7 +8236,7 @@ function sanitizeDowntimeKeys(){
   });
   // Also sanitize targets on any in-flight downtime jobs
   (S.downtimeJobs||[]).forEach(function(j){
-    if(j&&j.target)j.target=j.target.replace(/^(?:★|🔄) /,'');
+    if(j&&j.target)j.target=stripPrefix(j.target);
   });
 }
 function downtimeJobForChar(ci){
@@ -9591,13 +9595,23 @@ document.getElementById('plist').addEventListener('click',function(e){
 
     function renderDtBadgeBody(bc2){
       var progressMap=bc2.dtProgress||{};
+      // DEBUG: log raw keys and their codepoints so we can see exactly what's stored
+      console.log('[DT debug] dtProgress keys for',bc2.name,':',Object.keys(progressMap));
+      Object.keys(progressMap).forEach(function(k){
+        var cps=[];for(var i=0;i<k.length;i++)cps.push('U+'+k.charCodeAt(i).toString(16).toUpperCase().padStart(4,'0'));
+        console.log('[DT debug] key codepoints:',cps.join(' '),'value:',progressMap[k]);
+      });
       var allBadges=bc2.downtimeBadges||[];
 
       // Group keys by their clean (prefix-stripped) version to detect duplicates
+      // Group by the display label so any prefix variant (★, 🔄, or future ones)
+      // collapses into the same bucket and triggers the Merge button.
       var cleanGroups={};
       Object.keys(progressMap).forEach(function(k){
         if((progressMap[k]||0)<=0)return;
         var cleanKey=k.replace(/^(?:★|🔄) /,'');
+        // Extra safety: strip any leading non-word, non-colon token (catches unknown emoji prefixes)
+        cleanKey=cleanKey.replace(/^[^\w:]+:/,function(m){return m.replace(/^[^\w:]+/,'');});
         if(!cleanGroups[cleanKey])cleanGroups[cleanKey]=[];
         cleanGroups[cleanKey].push(k);
       });
@@ -9674,6 +9688,7 @@ document.getElementById('plist').addEventListener('click',function(e){
       Object.keys(progressMap2).forEach(function(k){
         if((progressMap2[k]||0)<=0)return;
         var ck=k.replace(/^(?:★|🔄) /,'');
+        ck=ck.replace(/^[^\w:]+:/,function(m){return m.replace(/^[^\w:]+/,'');});
         if(!cleanGroups2[ck])cleanGroups2[ck]=[];
         cleanGroups2[ck].push(k);
       });
