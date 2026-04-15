@@ -1538,7 +1538,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner</span>
   <span class="topbar-sep">›</span>
-  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.3.2</span>
+  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.3.4</span>
   <div class="topbar-actions">
     <div class="b20-status b20-inactive" id="b20Indicator" title="Beyond20 not detected">
       <div class="b20-dot"></div>
@@ -3867,89 +3867,16 @@ function sbmMakeChar() {
 
 // ── SBM: show a pending state, send to B20, update display from B20's result ──
 function sbmSendAndDisplay(request, fallbackHtml) {
-  // Show "rolling…" immediately
+  // Show the local roll result immediately in the modal
   const resultEl = document.getElementById('sbmResult');
   if (resultEl) {
-    resultEl.innerHTML = '<span style="opacity:.5;font-size:0.65rem;">Rolling…</span>';
-    resultEl.classList.remove('sbm-result-pop');
-  }
-
-  // One-shot listener — fires when B20 returns the rendered result
-  const onResult = (e) => {
-    document.removeEventListener('Beyond20_RenderedRoll', onResult);
-    const roll = e.detail && e.detail[0];
-    if (!roll || !resultEl) return;
-
-    const atkRolls = roll.attack_rolls || [];
-    const dmgRolls = roll.damage_rolls || [];
-    const mode = sbmGetMode();
-
-    // For attack/check/save/skill rolls
-    if (atkRolls.length) {
-      // Find the non-discarded roll (adv/dis shows two, one discarded)
-      const kept = atkRolls.find(r => !r.discarded) || atkRolls[0];
-      const d20val = kept.rolls?.[0]?.roll ?? kept.total;
-      const total  = kept.total;
-      const isCrit = kept['critical-success'];
-      const isFail = kept['critical-failure'];
-      const tc     = isCrit ? '#6abf6a' : isFail ? '#e07070' : '#e8d080';
-
-      // If there's a second roll (adv/dis), show both
-      let rollHtml = '';
-      if (atkRolls.length > 1) {
-        const other = atkRolls.find(r => r.discarded) || atkRolls[1];
-        const otherVal = other.rolls?.[0]?.roll ?? other.total;
-        const keptVal  = kept.rolls?.[0]?.roll ?? kept.total;
-        const modeTag  = mode === 'adv'
-          ? '<span style="font-size:.44rem;opacity:.65">[Adv]</span> '
-          : '<span style="font-size:.44rem;opacity:.65">[Dis]</span> ';
-        rollHtml = modeTag +
-          `🎲 <b style="color:#e8d080">${keptVal}</b>/<span style="opacity:.55">${otherVal}</span>`;
-      } else {
-        rollHtml = `🎲 ${d20val}`;
-      }
-
-      const bonusNum = request.modifier ?? 0;
-      const bonusStr = bonusNum >= 0 ? `+${bonusNum}` : `${bonusNum}`;
-
-      resultEl.innerHTML =
-        `<span style="opacity:.65;font-size:.57rem;">${request.name || request.skill || ''}</span>  ` +
-        `${rollHtml} ${bonusStr} = ` +
-        `<span style="font-size:.88rem;color:${tc};">${total}</span>` +
-        (isCrit ? ' <span style="color:#6abf6a;font-size:.5rem">CRIT!</span>' : '') +
-        (isFail ? ' <span style="color:#e07070;font-size:.5rem">FUMBLE</span>' : '');
-    } else if (dmgRolls.length) {
-      // Damage-only roll
-      const dmg = dmgRolls[0];
-      const parts = dmg.parts?.[0];
-      const rolls = parts?.rolls?.map(r => r.roll) || [];
-      const detail = rolls.length ? `[${rolls.join('+')}]` : '';
-      resultEl.innerHTML =
-        `<span style="opacity:.65;font-size:.57rem;">${request.name || ''}</span>  ` +
-        `${detail} = <span style="font-size:.88rem;color:#e8d080;">${dmg.total}</span>`;
-    } else {
-      // Fallback if B20 didn't return expected structure
-      resultEl.innerHTML = fallbackHtml;
-    }
-
+    resultEl.innerHTML = fallbackHtml;
     resultEl.classList.remove('sbm-result-pop');
     void resultEl.offsetWidth;
     resultEl.classList.add('sbm-result-pop');
-  };
-
-  document.addEventListener('Beyond20_RenderedRoll', onResult);
+  }
+  // Send to VTT — Beyond20 rolls independently there
   b20Send(request);
-
-  // Safety timeout — if B20 doesn't respond in 3s, show local fallback
-  setTimeout(() => {
-    document.removeEventListener('Beyond20_RenderedRoll', onResult);
-    if (resultEl && resultEl.innerHTML.includes('Rolling…')) {
-      resultEl.innerHTML = fallbackHtml;
-      resultEl.classList.remove('sbm-result-pop');
-      void resultEl.offsetWidth;
-      resultEl.classList.add('sbm-result-pop');
-    }
-  }, 3000);
 }
 
 function sbmRoll(bonus, label, doc) {
@@ -4008,11 +3935,13 @@ function sbmRoll(bonus, label, doc) {
       modifier:bonusNum
     };
   } else {
+    // Skill check — send as 'ability' type since Beyond20 routes that
+    // more reliably from custom domains than 'skill'
     request = {
-      action:'roll', type:'skill', character:char,
+      action:'roll', type:'ability', character:char,
       roll:`1d20${bonusStr}`, advantage:adv, whisper:0,
-      skill:label, ability:'', modifier:bonusNum, proficiency:'None',
-      name:label
+      name:label, ability:label,
+      modifier:bonusNum, proficiency:'None'
     };
   }
 
