@@ -883,9 +883,9 @@ body {
 .flex-wrap { flex-wrap: wrap; }
 .gap-6 { gap: 6px; }
 
-/* b20 hidden by default */
-.b20-btn { display: none; }
-.b20-loaded .b20-btn { display: inline-flex; }
+/* b20-btn — always visible; class is just a marker for B20 roll delegation */
+.b20-btn { display: inline-flex; }
+
 
 /* completion */
 .block.complete { opacity: 0.55; }
@@ -3098,10 +3098,8 @@ document.addEventListener('Beyond20_Loaded', () => {
   ind.querySelector('.b20-dot').style.background = '#6abf6a';
   ind.querySelector('span').textContent = 'Beyond20 Active';
 });
-// Simulate for demo — remove in production
-setTimeout(() => {
-  document.dispatchEvent(new CustomEvent('Beyond20_Loaded', { detail: [{}] }));
-}, 800);
+// NOTE: Simulation removed. Attack buttons are always visible.
+// Beyond20 is detected automatically when the extension is installed and active.
 
 function sendBeyond20Event(name, ...args) {
   const event = new CustomEvent('Beyond20_' + name, { detail: args });
@@ -3776,11 +3774,6 @@ function importQueuedMonsters(blockId) {
     try { card.dataset.monster = JSON.stringify(m); } catch(e) {}
 
     list.appendChild(card);
-
-    // Apply b20 visibility if already active
-    if (beyond20Loaded) {
-      card.querySelectorAll('.b20-btn').forEach(b => b.style.display = 'inline-flex');
-    }
   });
 
   // Clear queue and update UI
@@ -4521,7 +4514,34 @@ function handleRollBtnClick(e) {
   const hp  = btn.dataset.hp  || '10';
   let atk;
   try { atk = JSON.parse(btn.dataset.atk); } catch(err) { return; }
-  rollMonsterAttack(monsterName, 'Monster', cr, ac, hp, atk);
+
+  if (beyond20Loaded) {
+    // Full Beyond20 path — sends to VTT
+    rollMonsterAttack(monsterName, 'Monster', cr, ac, hp, atk);
+  } else {
+    // Local roll — no VTT, show result as toast
+    const toHit = typeof atk.toHit === 'number' ? atk.toHit : (parseFloat(String(atk.toHit).replace('+','')) || 0);
+    const d20 = Math.ceil(Math.random() * 20);
+    const total = d20 + toHit;
+    const isCrit = d20 === 20;
+    const isFumble = d20 === 1;
+    // Roll damage
+    const dmgFormula = (atk.damages && atk.damages[0]) || '1d6';
+    const dmgResult = rollLocalFormula(dmgFormula);
+    const dmgType = (atk.damageTypes && atk.damageTypes[0]) || 'damage';
+    const hitStr = `🎲 ${atk.name || 'Attack'}: d20(${d20}) ${toHit >= 0 ? '+' : ''}${toHit} = ${total}${isCrit ? ' CRIT!' : isFumble ? ' MISS' : ''} | Dmg: ${dmgResult} ${dmgType}`;
+    showToastSP(hitStr);
+  }
+}
+
+function rollLocalFormula(formula) {
+  const m = String(formula).match(/^(\d+)d(\d+)([+-]\d+)?$/i);
+  if (!m) return formula;
+  const n = parseInt(m[1]), die = parseInt(m[2]), bonus = m[3] ? parseInt(m[3]) : 0;
+  let total = bonus;
+  const rolls = [];
+  for (let i = 0; i < n; i++) { const r = Math.ceil(Math.random() * die); rolls.push(r); total += r; }
+  return `[${rolls.join('+')}]=${total}`;
 }
 
 // ── SESSION PERSISTENCE (localStorage) ──
@@ -4656,7 +4676,6 @@ function buildRestoredBlock(bd) {
         btn.dataset.hp  = rd.hp;
         btn.dataset.atk = rd.atk;
         btn.addEventListener('click', handleRollBtnClick);
-        if (beyond20Loaded) btn.style.display = 'inline-flex';
         actionsDiv.appendChild(btn);
       });
 
