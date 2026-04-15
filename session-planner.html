@@ -1538,7 +1538,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner</span>
   <span class="topbar-sep">›</span>
-  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.3.1</span>
+  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.3.2</span>
   <div class="topbar-actions">
     <div class="b20-status b20-inactive" id="b20Indicator" title="Beyond20 not detected">
       <div class="b20-dot"></div>
@@ -4481,7 +4481,9 @@ function serializeBlock(block) {
       ac:  b.dataset.ac  || '',
       hp:  b.dataset.hp  || '',
       atk: b.dataset.atk || '{}'
-    }))
+    })),
+    // Save the full monster JSON so stat block modal has abilities/saves/skills
+    monsterData: card.dataset.monster || null
   }));
 
   return { id: block.id, type, title, isOpen, isDone, fields, monsters };
@@ -4597,20 +4599,40 @@ function buildRestoredBlock(bd) {
       actionsDiv.appendChild(sbBtn);
       card.appendChild(actionsDiv);
 
-      // Restore monster data for stat block modal (from serialized rollData)
+      // Restore monster data for stat block modal
+      // Prefer the full saved JSON; fall back to reconstructing from DOM stats
       try {
-        card.dataset.monster = JSON.stringify({
-          name:    mData.name,
-          cr:      (mData.stats?.[0] || '').replace(/^CR\s*/,''),
-          hp:      (mData.stats?.[1] || '').replace(/^HP\s*/,''),
-          ac:      (mData.stats?.[2] || '').replace(/^AC\s*/,''),
-          actions: (mData.rollData || []).map(rd => {
-            let atk = {};
-            try { atk = JSON.parse(rd.atk || '{}'); } catch(e) {}
-            return { name: rd.label.replace(/^🎲\s*/,''), toHit: '+' + (atk.toHit||0), reach: atk.reach || '', damage: (atk.damages||[''])[0], dmgType: (atk.damageTypes||[''])[0], desc: '' };
-          }),
-          special_abilities: []
-        });
+        if (mData.monsterData) {
+          // Full data saved — use it directly
+          card.dataset.monster = mData.monsterData;
+        } else {
+          // Legacy save — reconstruct minimal object from scraped stats
+          // stats spans include nested spans: ["CR 8","8","HP 138","138","AC 14","14","×1","1"]
+          // so use every-other slot starting at 1 to get clean numbers
+          const rawStats = mData.stats || [];
+          const cr  = (rawStats[0] || '').replace(/^CR\s*/i, '').trim();
+          const hp  = (rawStats[2] || '').replace(/^HP\s*/i, '').trim();
+          const ac  = (rawStats[4] || '').replace(/^AC\s*/i, '').trim();
+          card.dataset.monster = JSON.stringify({
+            name: mData.name,
+            cr, hp, ac,
+            actions: (mData.rollData || []).map(rd => {
+              let atk = {};
+              try { atk = JSON.parse(rd.atk || '{}'); } catch(e) {}
+              return {
+                name:    rd.label.replace(/^🎲\s*/,'').replace(/\s*[+-]\d+\s*$/,'').trim(),
+                toHit:   '+' + (atk.toHit || 0),
+                reach:   atk.reach || '',
+                damage:  (atk.damages     && atk.damages[0])     || '',
+                dmgType: (atk.damageTypes && atk.damageTypes[0]) || '',
+                extra:      (atk.critDamages     && atk.critDamages[0])     || '',
+                extraType:  (atk.critDamageTypes && atk.critDamageTypes[0]) || '',
+                desc: ''
+              };
+            }),
+            special_abilities: []
+          });
+        }
       } catch(e) {}
 
       monsterList.appendChild(card);
