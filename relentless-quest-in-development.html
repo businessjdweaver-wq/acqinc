@@ -3518,7 +3518,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6868</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6869</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4023,7 +4023,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6868
+      Version 1.6869
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4048,6 +4048,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6869</strong> &mdash; Downtime merge threshold fix: when duplicate progress tracks are merged (either automatically via sanitizeDowntimeKeys on load, or manually via the ⇄ Merge button), the combined value is now checked against the completion threshold. If it meets or exceeds the threshold, the full reward is granted immediately — skill learned, badge awarded, log entry written — and the remainder is kept. An alert surfaces the unlock message so it isn't silent.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6868</strong> &mdash; Downtime modal: a &ldquo;↩ Resume last track&rdquo; pill now appears at the top when the character has prior progress. Shows the track name and current progress bar (e.g. 3&thinsp;/&thinsp;8). Tapping it auto-selects the matching activity and target in the dropdowns so the user can confirm without hunting through the lists.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6867</strong> &mdash; Downtime duplicate progress: the Night Owl badge modal now detects when a character has split progress bars for the same track (caused by the now-fixed prefix-stripping bug). Duplicate tracks are labelled, their values shown combined, and a ⇄ Merge button appears inline. Tapping Merge folds all dirty keys into the canonical clean key, saves, and re-renders the modal body without closing &mdash; no page reload needed.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6866</strong> &mdash; Downtime bug fix: the 🔄 prefix was not being stripped from target values before storing them as dtProgress keys. Root cause was a broken regex using a character class <code>[★🔄]</code> — because 🔄 is a surrogate pair (U+1F504), the two halves were treated as separate characters and never matched the full emoji. Changed to a proper alternation <code>(?:★|🔄)</code> in all three stripping sites. Added a standalone sanitizeDowntimeKeys() that (1) merges any polluted dtProgress keys into their clean equivalents and (2) strips the prefix off any in-flight downtimeJob targets. Called at all three load paths (local load, code login, and main Supabase pull) so corrupted save data heals immediately on next session open.</div>
@@ -8230,6 +8231,7 @@ function sanitizeDowntimeKeys(){
     if(colon===-1)return stripPrefix(k);
     return k.slice(0,colon+1)+stripPrefix(k.slice(colon+1));
   }
+  var pendingThresholdChecks=[]; // [{c, type, target}] to check after all merges done
   (S.party||[]).forEach(function(c){
     if(!c||!c.dtProgress)return;
     Object.keys(c.dtProgress).forEach(function(k){
@@ -8237,12 +8239,29 @@ function sanitizeDowntimeKeys(){
       if(clean!==k){
         c.dtProgress[clean]=(c.dtProgress[clean]||0)+(c.dtProgress[k]||0);
         delete c.dtProgress[k];
+        // Queue a threshold check for the merged key
+        var colon=clean.indexOf(':');
+        var type=colon===-1?clean:clean.slice(0,colon);
+        var target=colon===-1?'core':clean.slice(colon+1)||'core';
+        pendingThresholdChecks.push({c:c,type:type,target:target});
       }
     });
   });
   (S.downtimeJobs||[]).forEach(function(j){
     if(j&&j.target)j.target=stripPrefix(j.target);
   });
+  // Process threshold crossings caused by the merge
+  var allMsgs=[];
+  pendingThresholdChecks.forEach(function(chk){
+    var msgs=applyDowntimeThreshold(chk.c,chk.type,chk.target);
+    allMsgs=allMsgs.concat(msgs);
+  });
+  if(allMsgs.length){
+    save();
+    setTimeout(function(){
+      alert('🕯 Downtime milestone reached during data cleanup:\n\n'+allMsgs.join('\n'));
+    },800);
+  }
 }
 function downtimeJobForChar(ci){
   ensureDowntimeState();
@@ -8429,6 +8448,55 @@ function showDowntimeRollModal(payload){
       '<div style="margin-top:6px">'+esc(payload.summary)+'</div>';
     closeBtn.style.display='';
   });
+}
+// Apply reward for any dtProgress key that is at or over its threshold.
+// Called after merges so characters don't get stuck with > threshold progress.
+// Returns an array of unlock message strings (one per threshold crossed).
+function applyDowntimeThreshold(c, type, target){
+  if(!c||!c.dtProgress)return[];
+  var key=type+':'+(target||'core');
+  var threshold=(type==='contacts'||type==='faith'?6:(type==='intel'?5:8));
+  var msgs=[];
+  while((c.dtProgress[key]||0)>=threshold){
+    c.dtProgress[key]-=threshold;
+    var unlockMsg='';
+    if(type==='skill'&&(c.skills||[]).indexOf(target)===-1){
+      if(!c.skills)c.skills=[];
+      c.skills.push(target);
+      addDowntimeBadge(c,'Skill Savant');
+      unlockMsg='✅ '+c.name+' learned skill: '+target+'.';
+    }else if(type==='language'&&(c.lang||[]).indexOf(target)===-1){
+      if(!c.lang)c.lang=[];
+      c.lang.push(target);
+      addDowntimeBadge(c,'Tongue Scholar');
+      unlockMsg='✅ '+c.name+' learned language: '+target+'.';
+    }else if(type==='faith'){
+      c.rel=target;
+      addDowntimeBadge(c,'Devoted');
+      unlockMsg='✅ '+c.name+' adopted faith: '+target+'.';
+    }else if(type==='contacts'){
+      c.contact=true;
+      if((c.skills||[]).indexOf('Persuasion')===-1){if(!c.skills)c.skills=[];c.skills.push('Persuasion');}
+      addDowntimeBadge(c,'Franchise Connector');
+      unlockMsg='✅ '+c.name+' expanded franchise contacts.';
+    }else if(type==='intel'){
+      S.settings.intelFragments=(S.settings.intelFragments||0)+1;
+      addDowntimeBadge(c,'Lore Seeker');
+      unlockMsg='✅ Intel fragment discovered ('+S.settings.intelFragments+'/3).';
+      if(S.settings.intelFragments>=3){
+        S.settings.intelFragments=0;
+        logAdd('🗺 Downtime research uncovered a lead to a new questline.','adv');
+        unlockMsg+=' New quest lead added to the ledger.';
+      }
+    }else{
+      unlockMsg='✅ Downtime milestone reached for '+c.name+'.';
+    }
+    if(unlockMsg){
+      msgs.push(unlockMsg);
+      logAdd('🕯 Downtime milestone (merge): '+c.name+' · '+downtimeTrackLabel(type,target)+' · '+unlockMsg,'adv');
+    }
+  }
+  return msgs;
 }
 function runDowntimeCompletion(job){
   if(!job)return;
@@ -9725,7 +9793,17 @@ document.getElementById('plist').addEventListener('click',function(e){
       }
     });
     mc.dtProgress[mergeCleanKey]=merged;
+    // Check if the merged total crosses the threshold and grant reward if so
+    var mColon=mergeCleanKey.indexOf(':');
+    var mType=mColon===-1?mergeCleanKey:mergeCleanKey.slice(0,mColon);
+    var mTarget=mColon===-1?'core':mergeCleanKey.slice(mColon+1)||'core';
+    var mergeUnlocks=applyDowntimeThreshold(mc,mType,mTarget);
     save();
+    if(mergeUnlocks.length){
+      setTimeout(function(){
+        alert('🕯 Downtime milestone reached:\n\n'+mergeUnlocks.join('\n'));
+      },200);
+    }
     // Re-render the modal body in place without closing
     var bodyEl=document.getElementById('ov-xp-body');
     if(bodyEl){
