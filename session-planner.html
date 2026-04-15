@@ -1538,7 +1538,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner</span>
   <span class="topbar-sep">›</span>
-  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.3.0</span>
+  <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);letter-spacing:0.08em;">v0.3.1</span>
   <div class="topbar-actions">
     <div class="b20-status b20-inactive" id="b20Indicator" title="Beyond20 not detected">
       <div class="b20-dot"></div>
@@ -3832,143 +3832,216 @@ function sbmGetMode(doc) {
   return el ? el.value : 'normal';
 }
 
-function sbmRoll(bonus, label, doc) {
-  const d = doc || document;
-  const mode = sbmGetMode(d);
-  const d1 = sbmD20(), d2 = sbmD20();
-  let kept, rawHtml, modeTag;
+// ── SBM: make character payload with actual ability scores from _sbmMonster ──
+function sbmMakeChar() {
+  const m = _sbmMonster || {};
+  const abs = m.abilities || {};
+  function pair(k) {
+    const p = abs[k];
+    if (Array.isArray(p)) return [String(p[0]), String(p[1] || '+0')];
+    if (typeof p === 'number') {
+      const mod = Math.floor((p - 10) / 2);
+      return [String(p), (mod >= 0 ? '+' : '') + mod];
+    }
+    return ['10', '+0'];
+  }
+  return {
+    name: m.name || 'Monster',
+    type: 'Monster',
+    url:  window.location.href,
+    cr:   String(m.cr || '?'),
+    ac:   String(m.ac || '?'),
+    hp:   String(m.hp || '?'),
+    abilities: [
+      ['Strength',    'STR', ...pair('str')],
+      ['Dexterity',   'DEX', ...pair('dex')],
+      ['Constitution','CON', ...pair('con')],
+      ['Intelligence','INT', ...pair('int')],
+      ['Wisdom',      'WIS', ...pair('wis')],
+      ['Charisma',    'CHA', ...pair('cha')]
+    ],
+    saves:  m.saves  || {},
+    skills: m.skills || {}
+  };
+}
 
-  if (mode === 'adv') {
-    kept = Math.max(d1, d2);
-    rawHtml = d1 > d2
-      ? `🎲 <b style="color:#e8d080">${d1}</b>/<span style="opacity:.55">${d2}</span>`
-      : d2 > d1
-        ? `🎲 <span style="opacity:.55">${d1}</span>/<b style="color:#e8d080">${d2}</b>`
-        : `🎲 ${d1}/${d2}`;
-    modeTag = '<span style="font-size:0.44rem;opacity:0.65;">[Adv]</span> ';
-  } else if (mode === 'dis') {
-    kept = Math.min(d1, d2);
-    rawHtml = d1 < d2
-      ? `🎲 <b style="color:#e8d080">${d1}</b>/<span style="opacity:.55">${d2}</span>`
-      : d2 < d1
-        ? `🎲 <span style="opacity:.55">${d1}</span>/<b style="color:#e8d080">${d2}</b>`
-        : `🎲 ${d1}/${d2}`;
-    modeTag = '<span style="font-size:0.44rem;opacity:0.65;">[Dis]</span> ';
-  } else {
-    kept = d1; rawHtml = `🎲 ${d1}`; modeTag = '';
+// ── SBM: show a pending state, send to B20, update display from B20's result ──
+function sbmSendAndDisplay(request, fallbackHtml) {
+  // Show "rolling…" immediately
+  const resultEl = document.getElementById('sbmResult');
+  if (resultEl) {
+    resultEl.innerHTML = '<span style="opacity:.5;font-size:0.65rem;">Rolling…</span>';
+    resultEl.classList.remove('sbm-result-pop');
   }
 
-  const bonusNum = parseInt(bonus) || 0;
-  const total    = kept + bonusNum;
-  const isCrit   = kept === 20;
-  const isFumble = kept === 1;
-  const bonusStr = bonusNum >= 0 ? '+' + bonusNum : '' + bonusNum;
-  const totalColor = isCrit ? '#6abf6a' : isFumble ? '#e07070' : '#e8d080';
-  const critTag  = isCrit   ? ' <span style="color:#6abf6a;font-size:0.5rem;">CRIT!</span>'   : '';
-  const fumTag   = isFumble ? ' <span style="color:#e07070;font-size:0.5rem;">FUMBLE</span>'  : '';
+  // One-shot listener — fires when B20 returns the rendered result
+  const onResult = (e) => {
+    document.removeEventListener('Beyond20_RenderedRoll', onResult);
+    const roll = e.detail && e.detail[0];
+    if (!roll || !resultEl) return;
 
-  const resultEl = d.getElementById('sbmResult');
-  if (resultEl) {
-    resultEl.innerHTML =
-      `${modeTag}<span style="opacity:.65;font-size:0.57rem;">${label}</span>  ${rawHtml} ${bonusStr} = `+
-      `<span style="font-size:0.88rem;color:${totalColor};">${total}</span>${critTag}${fumTag}`;
+    const atkRolls = roll.attack_rolls || [];
+    const dmgRolls = roll.damage_rolls || [];
+    const mode = sbmGetMode();
+
+    // For attack/check/save/skill rolls
+    if (atkRolls.length) {
+      // Find the non-discarded roll (adv/dis shows two, one discarded)
+      const kept = atkRolls.find(r => !r.discarded) || atkRolls[0];
+      const d20val = kept.rolls?.[0]?.roll ?? kept.total;
+      const total  = kept.total;
+      const isCrit = kept['critical-success'];
+      const isFail = kept['critical-failure'];
+      const tc     = isCrit ? '#6abf6a' : isFail ? '#e07070' : '#e8d080';
+
+      // If there's a second roll (adv/dis), show both
+      let rollHtml = '';
+      if (atkRolls.length > 1) {
+        const other = atkRolls.find(r => r.discarded) || atkRolls[1];
+        const otherVal = other.rolls?.[0]?.roll ?? other.total;
+        const keptVal  = kept.rolls?.[0]?.roll ?? kept.total;
+        const modeTag  = mode === 'adv'
+          ? '<span style="font-size:.44rem;opacity:.65">[Adv]</span> '
+          : '<span style="font-size:.44rem;opacity:.65">[Dis]</span> ';
+        rollHtml = modeTag +
+          `🎲 <b style="color:#e8d080">${keptVal}</b>/<span style="opacity:.55">${otherVal}</span>`;
+      } else {
+        rollHtml = `🎲 ${d20val}`;
+      }
+
+      const bonusNum = request.modifier ?? 0;
+      const bonusStr = bonusNum >= 0 ? `+${bonusNum}` : `${bonusNum}`;
+
+      resultEl.innerHTML =
+        `<span style="opacity:.65;font-size:.57rem;">${request.name || request.skill || ''}</span>  ` +
+        `${rollHtml} ${bonusStr} = ` +
+        `<span style="font-size:.88rem;color:${tc};">${total}</span>` +
+        (isCrit ? ' <span style="color:#6abf6a;font-size:.5rem">CRIT!</span>' : '') +
+        (isFail ? ' <span style="color:#e07070;font-size:.5rem">FUMBLE</span>' : '');
+    } else if (dmgRolls.length) {
+      // Damage-only roll
+      const dmg = dmgRolls[0];
+      const parts = dmg.parts?.[0];
+      const rolls = parts?.rolls?.map(r => r.roll) || [];
+      const detail = rolls.length ? `[${rolls.join('+')}]` : '';
+      resultEl.innerHTML =
+        `<span style="opacity:.65;font-size:.57rem;">${request.name || ''}</span>  ` +
+        `${detail} = <span style="font-size:.88rem;color:#e8d080;">${dmg.total}</span>`;
+    } else {
+      // Fallback if B20 didn't return expected structure
+      resultEl.innerHTML = fallbackHtml;
+    }
+
     resultEl.classList.remove('sbm-result-pop');
     void resultEl.offsetWidth;
     resultEl.classList.add('sbm-result-pop');
-  }
+  };
 
-  // ── Beyond20 ──
-  const adv = mode === 'adv' ? 1 : mode === 'dis' ? -1 : 0;
-  const m   = _sbmMonster || {};
-  const char = makeMonsterChar(m.name || 'Monster', m.cr || '?', m.ac || '?', m.hp || '?');
-  const lbl  = label.toLowerCase();
+  document.addEventListener('Beyond20_RenderedRoll', onResult);
+  b20Send(request);
 
+  // Safety timeout — if B20 doesn't respond in 3s, show local fallback
+  setTimeout(() => {
+    document.removeEventListener('Beyond20_RenderedRoll', onResult);
+    if (resultEl && resultEl.innerHTML.includes('Rolling…')) {
+      resultEl.innerHTML = fallbackHtml;
+      resultEl.classList.remove('sbm-result-pop');
+      void resultEl.offsetWidth;
+      resultEl.classList.add('sbm-result-pop');
+    }
+  }, 3000);
+}
+
+function sbmRoll(bonus, label, doc) {
+  const mode    = sbmGetMode(doc || document);
+  const adv     = mode === 'adv' ? 1 : mode === 'dis' ? -1 : 0;
+  const bonusNum = parseInt(bonus) || 0;
+  const bonusStr = bonusNum >= 0 ? `+${bonusNum}` : `${bonusNum}`;
+  const char    = sbmMakeChar();
+  const lbl     = label.toLowerCase();
+
+  // Local fallback display (used only if B20 times out)
+  const d20     = Math.ceil(Math.random() * 20);
+  const total   = d20 + bonusNum;
+  const isCrit  = d20 === 20;
+  const isFail  = d20 === 1;
+  const tc      = isCrit ? '#6abf6a' : isFail ? '#e07070' : '#e8d080';
+  const fallback =
+    `<span style="opacity:.65;font-size:.57rem;">${label}</span>  🎲 ${d20} ${bonusStr} = ` +
+    `<span style="font-size:.88rem;color:${tc};">${total}</span>` +
+    (isCrit ? ' <span style="color:#6abf6a;font-size:.5rem">CRIT!</span>' : '') +
+    (isFail ? ' <span style="color:#e07070;font-size:.5rem">FUMBLE</span>' : '');
+
+  let request;
   if (lbl.includes(' save')) {
-    // Saving throw — e.g. "CON Save"
-    b20Send({
-      action: 'roll', type: 'saving-throw',
-      character: char, roll: `1d20${bonusStr}`,
-      advantage: adv, whisper: 0,
-      name: label, ability: label.replace(/ save$/i, '').trim(),
-      modifier: bonusNum, proficiency: 'None'
-    });
+    request = {
+      action:'roll', type:'saving-throw', character:char,
+      roll:`1d20${bonusStr}`, advantage:adv, whisper:0,
+      name:label, ability:label.replace(/ save$/i,'').trim(),
+      modifier:bonusNum, proficiency:'None'
+    };
   } else if (lbl.includes(' check')) {
-    // Ability check — e.g. "Strength check"
-    b20Send({
-      action: 'roll', type: 'ability',
-      character: char, roll: `1d20${bonusStr}`,
-      advantage: adv, whisper: 0,
-      name: label, ability: label.replace(/ check$/i, '').trim(),
-      modifier: bonusNum, proficiency: 'None'
-    });
+    request = {
+      action:'roll', type:'ability', character:char,
+      roll:`1d20${bonusStr}`, advantage:adv, whisper:0,
+      name:label, ability:label.replace(/ check$/i,'').trim(),
+      modifier:bonusNum, proficiency:'None'
+    };
   } else if (lbl.includes(' attack')) {
-    // Attack roll from stat block action buttons — e.g. "Bite Attack"
-    const actionName = label.replace(/ attack$/i, '').trim();
-    const action = (m.actions || []).find(a => a.name && a.name.toLowerCase() === actionName.toLowerCase());
-    const damages   = action?.damage   ? [action.damage]   : ['1d6'];
-    const dmgTypes  = action?.dmgType  ? [action.dmgType]  : ['damage'];
-    const critDmg   = action?.extra    ? [action.extra]    : damages;
-    const critType  = action?.extraType ? [action.extraType] : dmgTypes;
-    const atkType   = (action?.reach || '').toLowerCase().includes('ranged') ? 'Ranged' : 'Melee';
-    b20Send({
-      action: 'roll', type: 'attack',
-      character: char, roll: `1d20${bonusStr}`,
-      advantage: adv, whisper: 0,
-      name: actionName, description: action?.desc || '',
-      'to-hit': bonusStr,
-      damages, 'damage-types': dmgTypes,
-      'critical-damages': critDmg, 'critical-damage-types': critType,
-      rollAttack: true, rollDamage: true, rollCritical: false,
-      'critical-limit': 20, 'attack-source': 'action', 'attack-type': atkType,
-      reach: action?.reach || '', range: action?.range || ''
-    });
+    const m = _sbmMonster || {};
+    const actionName = label.replace(/ attack$/i,'').trim();
+    const action = (m.actions||[]).find(a => a.name && a.name.toLowerCase() === actionName.toLowerCase());
+    const damages  = action?.damage  ? [action.damage]  : ['1d6'];
+    const dmgTypes = action?.dmgType ? [action.dmgType] : ['damage'];
+    const critDmg  = action?.extra   ? [action.extra]   : damages;
+    const critType = action?.extraType ? [action.extraType] : dmgTypes;
+    const atkType  = (action?.reach||'').toLowerCase().includes('ranged') ? 'Ranged' : 'Melee';
+    request = {
+      action:'roll', type:'attack', character:char,
+      roll:`1d20${bonusStr}`, advantage:adv, whisper:0,
+      name:actionName, description:action?.desc||'',
+      'to-hit':bonusStr, damages, 'damage-types':dmgTypes,
+      'critical-damages':critDmg, 'critical-damage-types':critType,
+      rollAttack:true, rollDamage:true, rollCritical:false,
+      'critical-limit':20, 'attack-source':'action', 'attack-type':atkType,
+      reach:action?.reach||'', range:action?.range||'',
+      modifier:bonusNum
+    };
   } else {
-    // Skill check — e.g. "Perception"
-    b20Send({
-      action: 'roll', type: 'skill',
-      character: char, roll: `1d20${bonusStr}`,
-      advantage: adv, whisper: 0,
-      skill: label, ability: '', modifier: bonusNum, proficiency: 'None'
-    });
+    request = {
+      action:'roll', type:'skill', character:char,
+      roll:`1d20${bonusStr}`, advantage:adv, whisper:0,
+      skill:label, ability:'', modifier:bonusNum, proficiency:'None',
+      name:label
+    };
   }
+
+  sbmSendAndDisplay(request, fallback);
 }
 
 function sbmRollDmg(formula, label, doc) {
-  const d = doc || document;
+  const m        = _sbmMonster || {};
+  const char     = sbmMakeChar();
+  const actionName = label.replace(/ dmg$/i,'').replace(/ extra$/i,'').trim();
+  const action   = (m.actions||[]).find(a => a.name && a.name.toLowerCase() === actionName.toLowerCase());
+  const isExtra  = / extra$/i.test(label);
+  const dmgType  = isExtra ? (action?.extraType||'damage') : (action?.dmgType||'damage');
+
+  // Local fallback
   const r = sbmRollDice(formula);
   const detail = r.rolls.length ? `[${r.rolls.join('+')}]` : '';
-  const resultEl = d.getElementById('sbmResult');
-  if (resultEl) {
-    resultEl.innerHTML =
-      `<span style="opacity:.65;font-size:0.57rem;">${label}</span>  ${detail} = `+
-      `<span style="font-size:0.88rem;color:#e8d080;">${r.total}</span>`;
-    resultEl.classList.remove('sbm-result-pop');
-    void resultEl.offsetWidth;
-    resultEl.classList.add('sbm-result-pop');
-  }
+  const fallback =
+    `<span style="opacity:.65;font-size:.57rem;">${label}</span>  ${detail} = ` +
+    `<span style="font-size:.88rem;color:#e8d080;">${r.total}</span>`;
 
-  // ── Beyond20 — damage-only roll ──
-  const m    = _sbmMonster || {};
-  const char = makeMonsterChar(m.name || 'Monster', m.cr || '?', m.ac || '?', m.hp || '?');
-  // Infer damage type from label ("Bite Dmg" → find "Bite" in actions)
-  const actionName = label.replace(/ dmg$/i, '').replace(/ extra$/i, '').trim();
-  const action = (m.actions || []).find(a => a.name && a.name.toLowerCase() === actionName.toLowerCase());
-  const isExtra = / extra$/i.test(label);
-  const dmgType = isExtra
-    ? (action?.extraType || 'damage')
-    : (action?.dmgType   || 'damage');
-
-  b20Send({
-    action: 'roll', type: 'attack',
-    character: char, roll: formula,
-    advantage: 0, whisper: 0,
-    name: label, description: dmgType,
-    'to-hit': '0',
-    damages: [formula], 'damage-types': [dmgType],
-    'critical-damages': [], 'critical-damage-types': [],
-    rollAttack: false, rollDamage: true, rollCritical: false,
-    'attack-source': 'action', 'attack-type': 'Melee'
-  });
+  sbmSendAndDisplay({
+    action:'roll', type:'attack', character:char, roll:formula,
+    advantage:0, whisper:0, name:label, description:dmgType,
+    'to-hit':'0', damages:[formula], 'damage-types':[dmgType],
+    'critical-damages':[], 'critical-damage-types':[],
+    rollAttack:false, rollDamage:true, rollCritical:false,
+    'attack-source':'action', 'attack-type':'Melee'
+  }, fallback);
 }
 
 // ── Build modal body HTML ──
