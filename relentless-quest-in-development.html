@@ -3590,7 +3590,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6878</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6879</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4095,7 +4095,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6878
+      Version 1.6879
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4120,6 +4120,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6879</strong> &mdash; Critical fix: projects were not persisting to Supabase. Three bugs: (1) Race condition — regular active_tasks and project rows were pushed as two separate ops in Promise.all(), both starting with DELETE active_tasks. The regular delete was wiping project rows that the project op had just re-inserted, or vice versa. Fixed by merging both into a single delete+insert op. (2) Empty projects were silently dropped — if a project had no tasks, projRows was empty and the insert was skipped entirely, losing the project on next pull. Fixed by writing a sentinel row (name='__proj_meta__') for every project regardless of task count. (3) Pull skipped S.projects assignment when _projTasks was empty, leaving projects=[]. Fixed by always running the rebuild and reading sentinel rows to restore empty projects.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6878</strong> &mdash; Squad manager desktop: (1) Member count and coverage % now appear as a second line inside each squad tile (below the name), on both regular and Unassigned tiles. (2) Transfer buttons now show a green +X% coverage delta when moving that character into the destination squad would improve its coverage. Characters that add no new coverage show 0%.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6877</strong> &mdash; Squad manager desktop: (1) Transfer column widened from 54px to 80px; buttons widened from 44px to 72px; button labels now show first name on line 1, surname on line 2, arrow on line 3 — no mid-word breaks. (2) Unassigned character cards no longer inherit the first squad's color; the virtual squad's _virtual flag is now checked before calling squadColor(), defaulting to the neutral parchment background.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6876</strong> &mdash; Squad manager desktop: (1) Coverage % shown on every squad tile including Unassigned (format: "N · X%"). (2) Unassigned now works as a proper transfer column — clicking its tile loads all unassigned characters into the left or right column, with transfer buttons that move characters to/from it like any other squad.</div>
@@ -16423,36 +16424,49 @@ function sbPush(manual){
       }));
     }));
 
+  // active tasks + project tasks — single delete+insert to avoid race condition
+  // (previously two separate ops both deleting active_tasks caused projects to be wiped)
   ops.push(sbDel('active_tasks','user_id=eq.'+encodeURIComponent(userId)).then(function(){
-    if(!(S.active||[]).length)return true;
     ensureTaskIds();
-    return sbInsert('active_tasks',S.active.map(function(t,i){
+    var allRows=[];
+
+    // Regular active tasks
+    (S.active||[]).forEach(function(t,i){
       var packedSubtasks=(t.subtasks||[]).map(function(st){return st;});
       packedSubtasks.push({__meta:true,_tid:t._tid||('t'+Date.now().toString(36)+Math.random().toString(36).slice(2,8)+i),note:t.note||'',desc:t.desc||''});
-      return {user_id:userId,sort_order:i,name:t.name,gp:t.gp||5,count:t.count||0,
+      allRows.push({user_id:userId,sort_order:i,name:t.name,gp:t.gp||5,count:t.count||0,
         pct:t.pct||0,
         subtasks:packedSubtasks,collapsed:!!t.collapsed,fav:!!t.fav,
-        freq:t.freq||null,cat:t.cat||null,burner_until:t.burnerUntil||null};
-    }));
-  }));
+        freq:t.freq||null,cat:t.cat||null,burner_until:t.burnerUntil||null});
+    });
 
-  // projects
-  ops.push(sbDel('active_tasks','user_id=eq.'+encodeURIComponent(userId)+'&cat=eq.__project__').then(function(){
-    var projRows=[];
+    // Project rows — one sentinel row per project (preserves empty projects),
+    // plus one row per task
     (S.projects||[]).forEach(function(proj,pi){
+      // Sentinel row: name='__proj_meta__', carries project metadata, no task content
+      allRows.push({user_id:userId,sort_order:pi*1000-1,
+        name:'__proj_meta__',gp:0,count:0,pct:0,
+        subtasks:[{__meta:true,__proj_sentinel:true,
+          _projId:proj.id,_projName:proj.name,
+          _projIc:proj.ic||'📁',_projColor:proj.color||PROJ_COLORS[0],
+          _projSort:pi,_projCollapsed:!!proj.collapsed}],
+        collapsed:false,fav:false,freq:null,cat:'__project__',burner_until:null});
+      // One row per task
       (proj.tasks||[]).forEach(function(t,ti){
         var packed=(t.subtasks||[]).slice();
-        packed.push({__meta:true,_tid:t._tid||newProjTaskId(),_projId:proj.id,
-          _projName:proj.name,_projIc:proj.ic||'📁',_projColor:proj.color||PROJ_COLORS[0],
+        packed.push({__meta:true,_tid:t._tid||newProjTaskId(),
+          _projId:proj.id,_projName:proj.name,
+          _projIc:proj.ic||'📁',_projColor:proj.color||PROJ_COLORS[0],
           _projSort:pi,_taskSort:ti});
-        projRows.push({user_id:userId,sort_order:pi*1000+ti,
+        allRows.push({user_id:userId,sort_order:pi*1000+ti,
           name:t.name,gp:t.gp||5,count:t.count||0,pct:t.pct||0,
           subtasks:packed,collapsed:false,fav:false,
           freq:null,cat:'__project__',burner_until:null});
       });
     });
-    if(!projRows.length)return true;
-    return sbInsert('active_tasks',projRows);
+
+    if(!allRows.length)return true;
+    return sbInsert('active_tasks',allRows);
   }));
 
   ops.push(sbDel('archived_tasks','user_id=eq.'+encodeURIComponent(userId)).then(function(){
@@ -16737,34 +16751,35 @@ function sbPull(manual){
       // Separate project tasks from regular tasks
       var _projTasks=tasks.filter(function(t){return t.cat==='__project__';});
       var _regTasks=tasks.filter(function(t){return t.cat!=='__project__';});
-      // Rebuild S.projects from project task rows
-      if(_projTasks.length){
-        var _projMap={};
-        _projTasks.forEach(function(t){
-          var packed=t.subtasks||[];
-          var meta={};
-          var cleanSubs=packed.filter(function(s){
-            if(s&&s.__meta){meta=s;return false;}return true;
-          });
-          var pid=meta._projId||'proj-unknown';
-          if(!_projMap[pid]){
-            _projMap[pid]={id:pid,name:meta._projName||'Project',
-              ic:meta._projIc||'📁',color:meta._projColor||PROJ_COLORS[0],
-              _sort:meta._projSort||0,tasks:[]};
-          }
-          _projMap[pid].tasks.push({
-            _tid:meta._tid||newProjTaskId(),name:t.name,gp:t.gp,
-            count:t.count||0,pct:t.pct||0,subtasks:cleanSubs,
-            _sort:meta._taskSort||0
-          });
+      // Rebuild S.projects from project task rows (including sentinel rows for empty projects)
+      var _projMap={};
+      _projTasks.forEach(function(t){
+        var packed=t.subtasks||[];
+        var meta={};
+        var cleanSubs=packed.filter(function(s){
+          if(s&&s.__meta){meta=s;return false;}return true;
         });
-        S.projects=Object.values(_projMap)
-          .sort(function(a,b){return a._sort-b._sort;})
-          .map(function(p){
-            p.tasks.sort(function(a,b){return (a._sort||0)-(b._sort||0);});
-            return p;
-          });
-      }
+        var pid=meta._projId||'proj-unknown';
+        if(!_projMap[pid]){
+          _projMap[pid]={id:pid,name:meta._projName||'Project',
+            ic:meta._projIc||'📁',color:meta._projColor||PROJ_COLORS[0],
+            collapsed:!!meta._projCollapsed,
+            _sort:meta._projSort||0,tasks:[]};
+        }
+        // Sentinel rows (name='__proj_meta__') carry only metadata — no task to add
+        if(t.name==='__proj_meta__')return;
+        _projMap[pid].tasks.push({
+          _tid:meta._tid||newProjTaskId(),name:t.name,gp:t.gp,
+          count:t.count||0,pct:t.pct||0,subtasks:cleanSubs,
+          _sort:meta._taskSort||0
+        });
+      });
+      S.projects=Object.values(_projMap)
+        .sort(function(a,b){return a._sort-b._sort;})
+        .map(function(p){
+          p.tasks.sort(function(a,b){return (a._sort||0)-(b._sort||0);});
+          return p;
+        });
       // Build regular active tasks (excluding project rows)
       var tasks=_regTasks;
       S.active=tasks.map(function(t,ti){
