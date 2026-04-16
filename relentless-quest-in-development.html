@@ -3590,7 +3590,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6883</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6884</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4095,7 +4095,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6883
+      Version 1.6884
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4120,6 +4120,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6884</strong> &mdash; Device lock for class codes: when a student first uses a code, their device fingerprint (canvas render + screen/UA/timezone hash) is recorded in login_codes.device_fingerprint. Subsequent logins from a different device are blocked with a teacher-contact message. Teacher panel gains a Device column showing 🔒 Locked / Unlocked status and a 🔓 reset button per code to clear the lock (e.g. for a new device). Requires SQL: ALTER TABLE login_codes ADD COLUMN IF NOT EXISTS device_fingerprint text;</div>
         <div style="margin-bottom:9px"><strong>Version 1.6883</strong> &mdash; Downtime duration now has mechanical weight. 8h is the standard baseline (no modifier). 1h: −3, 4h: −1, 12h: +1, 24h: +3 applied to the d20 roll before comparing against the gain thresholds (6/11/16). The datetime-local picker is removed — pills are now the only selection method. Default selection is 8h. The roll result modal shows stat modifier and duration modifier as separate line items. Both the main downtime modal and the "Continue Downtime" QP picker use the updated 1/4/8/12/24h pill set.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6882</strong> &mdash; Fix: squadReqMax prerequisite row showed as not-met when one character filled multiple slots. The check was counting total slot assignments instead of unique characters — if Lindir filled all 4 slots, _assigned was 4, making 4 &lt;= 1 false. Fixed by deduplicating the char index list before comparing against squadReqMax.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6881</strong> &mdash; Fix: abandoning a quest cycle now clears grind missions from both the live questState.grindPending and the saved setProgress[setId].grindPending snapshot. Previously, active grind missions with their old squad char indices survived the abandon and were restored when re-entering the same cycle with a new squad — causing phantom busy characters and wrong names showing as in-progress grinders. Also added a safety filter in loadSetProgress that drops any already-completed grind missions (doneAt in the past) when loading a cycle.</div>
@@ -15529,12 +15530,80 @@ document.getElementById('class-code-input').addEventListener('keydown',function(
   if(e.key==='Enter')document.getElementById('btn-code-login').click();
 });
 
+// ── Device Fingerprint ──────────────────────────────────────────────────────
+// Generates a stable hash from browser/device signals. Not cryptographic —
+// purpose is to stop casual code-sharing, not determined circumvention.
+async function getDeviceFingerprint(){
+  try{
+    // Canvas fingerprint — GPU-level rendering differences per device
+    var canvas=document.createElement('canvas');
+    var ctx=canvas.getContext('2d');
+    canvas.width=200;canvas.height=50;
+    ctx.fillStyle='#f0f';ctx.fillRect(0,0,200,50);
+    ctx.fillStyle='#0ff';ctx.font='14px Arial';
+    ctx.fillText('RQ-device-fp-2024',10,30);
+    ctx.strokeStyle='rgba(100,200,50,0.8)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(150,25,20,0,Math.PI*2);ctx.stroke();
+    var canvasData=canvas.toDataURL();
+
+    // Collect stable browser signals
+    var signals=[
+      navigator.userAgent||'',
+      (screen.width||0)+'x'+(screen.height||0),
+      (screen.colorDepth||0)+'',
+      Intl.DateTimeFormat().resolvedOptions().timeZone||'',
+      navigator.language||'',
+      (navigator.hardwareConcurrency||0)+'',
+      canvasData.slice(-200) // last 200 chars of canvas data url
+    ].join('|');
+
+    // Simple but effective hash
+    var hash=0;
+    for(var i=0;i<signals.length;i++){
+      hash=((hash<<5)-hash)+signals.charCodeAt(i);
+      hash=hash&hash; // 32-bit int
+    }
+    // Return positive hex string
+    return (hash>>>0).toString(16).padStart(8,'0');
+  }catch(e){
+    // Fallback: random value stored in localStorage (persists per browser)
+    var stored;
+    try{stored=localStorage.getItem('acq_device_id');}catch(e2){}
+    if(!stored){
+      stored=Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2);
+      try{localStorage.setItem('acq_device_id',stored);}catch(e2){}
+    }
+    return stored;
+  }
+}
+
+// ── Device lock check helpers ───────────────────────────────────────────────
+// Returns true if this fingerprint is allowed to use the given row
+function deviceAllowed(row,fp){
+  if(!row.device_fingerprint)return true; // not yet locked — first use
+  return row.device_fingerprint===fp;
+}
+
+// Patch the login_codes row to lock to this fingerprint
+async function lockDeviceToCode(codeId,fp){
+  try{
+    await sbFetch(SB_URL+'/rest/v1/login_codes?id=eq.'+encodeURIComponent(codeId),{
+      method:'PATCH',
+      headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=minimal'},
+      body:JSON.stringify({device_fingerprint:fp})
+    });
+  }catch(e){console.warn('Device lock patch failed:',e);}
+}
+
 document.getElementById('btn-code-login').addEventListener('click',async function(){
   var raw=document.getElementById('class-code-input').value.trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
   if(raw.length<8){setLoginStatus('Enter your full class code (e.g. X7K2-M9QP).',true);return;}
   var code=raw.slice(0,4)+'-'+raw.slice(4);
   setLoginStatus('Checking code…',false);
   try{
+    // Generate device fingerprint before hitting Supabase
+    var fp=await getDeviceFingerprint();
+
     // Look up code in login_codes table
     var rows=await sbGet('login_codes','code=eq.'+encodeURIComponent(code)+'&limit=1');
     if(!rows||!rows.length){setLoginStatus('Code not found. Check with your teacher.',true);return;}
@@ -15542,17 +15611,29 @@ document.getElementById('btn-code-login').addEventListener('click',async functio
     if(row.expires_at&&new Date(row.expires_at)<new Date()){
       setLoginStatus('This code has expired. Ask your teacher for a new one.',true);return;
     }
+
+    // ── Device lock check ──────────────────────────────────────────────────
+    if(!deviceAllowed(row,fp)){
+      setLoginStatus('🔒 This code is locked to another device. See your teacher to reset it.',true);
+      return;
+    }
+    // First use — lock code to this device now
+    var isFirstUse=!row.device_fingerprint;
+    if(isFirstUse) await lockDeviceToCode(row.id,fp);
+    // ──────────────────────────────────────────────────────────────────────
+
     // Store code-based session (no Supabase auth token — uses code as identity)
     currentUser={
       _codeLogin:true,
       _codeId:row.id,
       _code:code,
       user_id:row.player_user_id, // stable UUID for this code slot
+      _deviceFp:fp,
       access_token:null
     };
-    try{localStorage.setItem('acq_code_session',JSON.stringify({codeId:row.id,code:code,playerId:row.player_user_id}));}catch(e){}
+    try{localStorage.setItem('acq_code_session',JSON.stringify({codeId:row.id,code:code,playerId:row.player_user_id,fp:fp}));}catch(e){}
     closeOv('loginBox');
-    setLoginStatus('Welcome! Code: '+code,false);
+    setLoginStatus((isFirstUse?'Welcome! Code activated: ':'Welcome back! Code: ')+code,false);
     initSession(true);
   }catch(err){
     setLoginStatus('Error: '+(err.message||'Could not check code.')+'',true);
@@ -15584,16 +15665,27 @@ function renderCodeList(){
         '<thead><tr style="color:var(--ink-light);font-size:.8em">'+
         '<th style="text-align:left;padding:4px 6px">Code</th>'+
         '<th style="text-align:left;padding:4px 6px">Label</th>'+
+        '<th style="text-align:left;padding:4px 6px">Device</th>'+
         '<th style="text-align:left;padding:4px 6px">Expires</th>'+
         '<th></th>'+
         '</tr></thead><tbody>'+
         rows.map(function(r){
+          var locked=!!r.device_fingerprint;
+          var lockBadge=locked
+            ? '<span title="Locked to one device — click 🔓 to reset" style="color:var(--ink-light);font-size:.78em">🔒 Locked</span>'
+            : '<span style="color:var(--ink-light);font-size:.78em">Unlocked</span>';
+          var resetBtn=locked
+            ? ' <button class="btn bink sm" data-a="cc-reset" data-id="'+esc(r.id)+'" title="Reset device lock — student can log in from any device once" style="font-size:.68em;padding:1px 5px">🔓</button>'
+            : '';
           return '<tr style="border-top:1px solid var(--parchment-deep)">'+
             '<td style="padding:5px 6px;font-family:monospace;font-weight:700;letter-spacing:.06em;color:var(--gold)">'+esc(r.code)+'</td>'+
             '<td style="padding:5px 6px;color:var(--ink-light)">'+esc(r.label||'—')+'</td>'+
+            '<td style="padding:5px 6px">'+lockBadge+resetBtn+'</td>'+
             '<td style="padding:5px 6px;color:var(--ink-light);font-size:.8em">'+(r.expires_at?new Date(r.expires_at).toLocaleDateString():'Never')+'</td>'+
-            '<td style="padding:5px 6px"><button class="btn bink sm" data-a="cc-copy" data-code="'+esc(r.code)+'" style="font-size:.72em;padding:1px 6px">📋</button> '+
-            '<button class="btn bpur sm" data-a="cc-del" data-id="'+esc(r.id)+'" style="font-size:.72em;padding:1px 6px">✕</button></td>'+
+            '<td style="padding:5px 6px;white-space:nowrap">'+
+              '<button class="btn bink sm" data-a="cc-copy" data-code="'+esc(r.code)+'" style="font-size:.72em;padding:1px 6px">📋</button> '+
+              '<button class="btn bpur sm" data-a="cc-del" data-id="'+esc(r.id)+'" style="font-size:.72em;padding:1px 6px">✕</button>'+
+            '</td>'+
             '</tr>';
         }).join('')+
         '</tbody></table>';
@@ -15613,6 +15705,20 @@ document.getElementById('cc-list').addEventListener('click',function(e){
     if(!confirm('Delete this code? The student will no longer be able to log in.'))return;
     sbDel('login_codes','id=eq.'+encodeURIComponent(btn.getAttribute('data-id')))
       .then(function(){renderCodeList();});
+  }
+  if(btn.getAttribute('data-a')==='cc-reset'){
+    if(!confirm('Reset device lock for this code?\n\nThe student will be able to log in from any device once — it will then lock to whichever device they use next.'))return;
+    var id=btn.getAttribute('data-id');
+    sbFetch(SB_URL+'/rest/v1/login_codes?id=eq.'+encodeURIComponent(id),{
+      method:'PATCH',
+      headers:{'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'return=minimal'},
+      body:JSON.stringify({device_fingerprint:null})
+    }).then(function(){
+      btn.textContent='✓';
+      setTimeout(function(){renderCodeList();},800);
+    }).catch(function(err){
+      alert('Reset failed: '+(err.message||err));
+    });
   }
 });
 
@@ -15668,7 +15774,8 @@ document.getElementById('btn-export-codes').addEventListener('click',function(){
     if(saved){
       var sess=JSON.parse(saved);
       if(sess&&sess.codeId&&sess.playerId){
-        currentUser={_codeLogin:true,_codeId:sess.codeId,_code:sess.code,player_user_id:sess.playerId,access_token:null};
+        // Restore session including stored fingerprint so device stays recognised
+        currentUser={_codeLogin:true,_codeId:sess.codeId,_code:sess.code,player_user_id:sess.playerId,_deviceFp:sess.fp||null,access_token:null};
       }
     }
   }catch(e){}
