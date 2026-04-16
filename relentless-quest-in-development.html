@@ -164,6 +164,7 @@ label.lbl{font-family:\'Cinzel\',serif;font-size:.72em;letter-spacing:.04em;
 .strow input[type=checkbox]{width:1.6em;height:1.6em;flex-shrink:0;cursor:pointer;accent-color:var(--crimson);}
 .st-drag-handle{display:flex;align-items:center;justify-content:center;width:32px;min-height:44px;cursor:grab;color:var(--parchment-deep);font-size:1.1em;flex-shrink:0;touch-action:none;user-select:none;-webkit-user-select:none;}
 .st-drag-handle:active{cursor:grabbing;color:var(--gold-dark);}
+.st-drag-handle.arming{color:var(--gold-dark);transform:scale(1.35);transition:transform .45s ease,color .1s;}
 .strow.st-dragging{opacity:.4;background:rgba(201,146,42,.08);}
 .strow.st-drag-over{border-top:2px solid var(--gold-dark);margin-top:-2px;}
 .stname{flex:1;font-size:.9em;color:var(--ink-light);line-height:1.3;}
@@ -1929,6 +1930,7 @@ label.lbl{font-family:\'Cinzel\',serif;font-size:.72em;letter-spacing:.04em;
 .strow input[type=checkbox]{width:1.6em;height:1.6em;flex-shrink:0;cursor:pointer;accent-color:var(--crimson);}
 .st-drag-handle{display:flex;align-items:center;justify-content:center;width:32px;min-height:44px;cursor:grab;color:var(--parchment-deep);font-size:1.1em;flex-shrink:0;touch-action:none;user-select:none;-webkit-user-select:none;}
 .st-drag-handle:active{cursor:grabbing;color:var(--gold-dark);}
+.st-drag-handle.arming{color:var(--gold-dark);transform:scale(1.35);transition:transform .45s ease,color .1s;}
 .strow.st-dragging{opacity:.4;background:rgba(201,146,42,.08);}
 .strow.st-drag-over{border-top:2px solid var(--gold-dark);margin-top:-2px;}
 .stname{flex:1;font-size:.9em;color:var(--ink-light);line-height:1.3;}
@@ -3518,7 +3520,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6869</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6870</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4023,7 +4025,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6869
+      Version 1.6870
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4048,6 +4050,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6870</strong> &mdash; Sub-task drag handle hold delay increased from 320ms to 500ms and movement cancel threshold from 8px to 14px, making accidental drags much less likely on mobile. The handle now scales up during the arming window as a clearer visual cue that drag is about to activate.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6869</strong> &mdash; Downtime merge threshold fix: when duplicate progress tracks are merged (either automatically via sanitizeDowntimeKeys on load, or manually via the ⇄ Merge button), the combined value is now checked against the completion threshold. If it meets or exceeds the threshold, the full reward is granted immediately — skill learned, badge awarded, log entry written — and the remainder is kept. An alert surfaces the unlock message so it isn't silent.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6868</strong> &mdash; Downtime modal: a &ldquo;↩ Resume last track&rdquo; pill now appears at the top when the character has prior progress. Shows the track name and current progress bar (e.g. 3&thinsp;/&thinsp;8). Tapping it auto-selects the matching activity and target in the dropdowns so the user can confirm without hunting through the lists.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6867</strong> &mdash; Downtime duplicate progress: the Night Owl badge modal now detects when a character has split progress bars for the same track (caused by the now-fixed prefix-stripping bug). Duplicate tracks are labelled, their values shown combined, and a ⇄ Merge button appears inline. Tapping Merge folds all dirty keys into the canonical clean key, saves, and re-renders the modal body without closing &mdash; no page reload needed.</div>
@@ -7469,32 +7472,67 @@ function renderTasks(){
     }
     // Touch support
     var _touchRow=null,_touchClone=null,_touchTaskI=null,_touchSI=null;
+    var _touchHoldTimer=null,_touchStartX=0,_touchStartY=0,_touchDragging=false;
+    var HOLD_MS=500; // ms before drag activates
+    var MOVE_SLOP=14; // px movement cancels the hold
+
+    function _cancelTouchHold(){
+      if(_touchHoldTimer){clearTimeout(_touchHoldTimer);_touchHoldTimer=null;}
+      if(_touchRow){var h=_touchRow.querySelector('.st-drag-handle');if(h)h.classList.remove('arming');}
+    }
+    function _abortTouch(){
+      _cancelTouchHold();
+      if(_touchClone){_touchClone.remove();_touchClone=null;}
+      if(_touchRow)_touchRow.classList.remove('st-dragging');
+      _touchRow=null;_touchTaskI=null;_touchSI=null;_touchDragging=false;
+    }
+    function _beginDrag(row,clientX,clientY){
+      var h=row.querySelector('.st-drag-handle');if(h)h.classList.remove('arming');
+      _touchDragging=true;
+      row.classList.add('st-dragging');
+      _touchClone=row.cloneNode(true);
+      _touchClone.style.cssText='position:fixed;left:0;top:0;width:'+row.offsetWidth+'px;opacity:.8;pointer-events:none;z-index:9999;background:var(--parchment);border:1px solid var(--gold-dark);border-radius:5px;box-shadow:0 4px 16px rgba(0,0,0,.25);';
+      document.body.appendChild(_touchClone);
+      _touchClone.style.transform='translate('+clientX+'px,'+(clientY-30)+'px)';
+    }
     function onTouchStart(e){
       var handle=e.target.closest('.st-drag-handle');if(!handle)return;
       var row=getStrow(handle);if(!row)return;
       _touchRow=row;
       _touchTaskI=parseInt(row.getAttribute('data-task-i'));
       _touchSI=parseInt(row.getAttribute('data-sub-si'));
-      row.classList.add('st-dragging');
-      _touchClone=row.cloneNode(true);
-      _touchClone.style.cssText='position:fixed;left:0;top:0;width:'+row.offsetWidth+'px;opacity:.8;pointer-events:none;z-index:9999;background:var(--parchment);border:1px solid var(--gold-dark);border-radius:5px;box-shadow:0 4px 16px rgba(0,0,0,.25);';
-      document.body.appendChild(_touchClone);
+      _touchDragging=false;
       var t=e.touches[0];
-      _touchClone.style.transform='translate('+t.clientX+'px,'+(t.clientY-30)+'px)';
-      e.preventDefault();
+      _touchStartX=t.clientX;_touchStartY=t.clientY;
+      _cancelTouchHold();
+      var _handle=handle;
+      _touchHoldTimer=setTimeout(function(){
+        _touchHoldTimer=null;
+        if(_handle)_handle.classList.remove('arming');
+        if(_touchRow)_beginDrag(_touchRow,_touchStartX,_touchStartY);
+      },HOLD_MS);
+      _handle.classList.add('arming');
+      // Don't preventDefault yet — allow scroll if they don't hold long enough
     }
     function onTouchMove(e){
-      if(!_touchClone)return;
       var t=e.touches[0];
-      _touchClone.style.transform='translate('+t.clientX+'px,'+(t.clientY-30)+'px)';
-      el.querySelectorAll('.strow.st-drag-over').forEach(function(r){r.classList.remove('st-drag-over');});
-      var under=document.elementFromPoint(t.clientX,t.clientY);
-      if(under){var row=getStrow(under);if(row&&row!==_touchRow)row.classList.add('st-drag-over');}
-      e.preventDefault();
+      var dx=t.clientX-_touchStartX,dy=t.clientY-_touchStartY;
+      if(_touchDragging){
+        // Active drag — move the clone
+        _touchClone.style.transform='translate('+t.clientX+'px,'+(t.clientY-30)+'px)';
+        el.querySelectorAll('.strow.st-drag-over').forEach(function(r){r.classList.remove('st-drag-over');});
+        var under=document.elementFromPoint(t.clientX,t.clientY);
+        if(under){var row=getStrow(under);if(row&&row!==_touchRow)row.classList.add('st-drag-over');}
+        e.preventDefault();
+      } else if(_touchHoldTimer&&(Math.abs(dx)>MOVE_SLOP||Math.abs(dy)>MOVE_SLOP)){
+        // Moved too much before hold fired — cancel, let scroll happen
+        _abortTouch();
+      }
     }
     function onTouchEnd(e){
-      if(!_touchClone)return;
-      _touchClone.remove();_touchClone=null;
+      _cancelTouchHold();
+      if(!_touchDragging){_abortTouch();return;}
+      if(_touchClone){_touchClone.remove();_touchClone=null;}
       var t=e.changedTouches[0];
       el.querySelectorAll('.strow.st-drag-over').forEach(function(r){r.classList.remove('st-drag-over');});
       var under=document.elementFromPoint(t.clientX,t.clientY);
@@ -7510,7 +7548,7 @@ function renderTasks(){
         }
       }
       if(_touchRow)_touchRow.classList.remove('st-dragging');
-      _touchRow=null;_touchTaskI=null;_touchSI=null;
+      _touchRow=null;_touchTaskI=null;_touchSI=null;_touchDragging=false;
     }
     el.addEventListener('dragstart',onDragStart);
     el.addEventListener('dragend',onDragEnd);
