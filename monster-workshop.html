@@ -3290,25 +3290,36 @@ async function saveMonster() {
 
 async function loadCustomMonsters() {
   try {
-    const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?order=created_at.desc&limit=500`, { headers: SB_HEADERS });
-    if (res.ok) {
-      const rows = await res.json();
-      customMonsters = rows.map(r => ({
-        ...r,
-        slug:    'custom-' + r.id,
-        type:    r.monster_type || r.tags?.[0] || 'custom',
-        source:  'custom',
-        actions: r.actions || [],
-        special: r.special_abilities || []
-      }));
-      // Always re-render if we're already on the custom tab
-      if (currentTab === 'custom') renderBrowserList(customMonsters);
-      return customMonsters.length;
-    } else {
-      const err = await res.text();
-      console.warn('loadCustomMonsters HTTP', res.status, err);
-      return 0;
+    const PAGE = 1000;
+    let allRows = [];
+    let offset = 0;
+
+    while (true) {
+      const res = await fetch(
+        `${SB_URL}/rest/v1/rq_monsters?select=*&order=created_at.desc&limit=${PAGE}&offset=${offset}`,
+        { headers: { ...SB_HEADERS, 'Prefer': 'count=none' } }
+      );
+      if (!res.ok) {
+        const err = await res.text();
+        console.warn('loadCustomMonsters HTTP', res.status, err);
+        return 0;
+      }
+      const batch = await res.json();
+      allRows = allRows.concat(batch);
+      if (batch.length < PAGE) break;
+      offset += PAGE;
     }
+
+    customMonsters = allRows.map(r => ({
+      ...r,
+      slug:    'custom-' + r.id,
+      type:    r.monster_type || r.tags?.[0] || 'custom',
+      source:  'custom',
+      actions: r.actions || [],
+      special: r.special_abilities || []
+    }));
+    if (currentTab === 'custom') renderBrowserList(customMonsters);
+    return customMonsters.length;
   } catch(e) {
     console.warn('loadCustomMonsters error:', e);
     return 0;
