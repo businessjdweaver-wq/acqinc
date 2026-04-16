@@ -3524,7 +3524,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6871</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6872</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4029,7 +4029,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6871
+      Version 1.6872
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4054,6 +4054,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6872</strong> &mdash; Continue Downtime panel (party screen) is now collapsible. Expanded view shows each eligible character with a checkbox (all checked by default), their best active track name, and a mini progress bar (e.g. 3 / 8). The ⚡ QP button updates live as checkboxes are toggled — cost reflects only the selected characters. Unchecking all disables the button. The duration picker that follows only queues jobs for the checked subset.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6871</strong> &mdash; Fix: 💰 Collect Gold button now matches the size of the other action row buttons on mobile. The earlier .tacts .btn.bg font-size fix was being overridden by the mobile media query rules (@media max-width:600px and max-width:420px), which set .tacts .btn font-size after the fix rule in the cascade. Added matching .tacts .btn.bg overrides inside both breakpoints in both style blocks.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6870</strong> &mdash; Sub-task drag handle hold delay increased from 320ms to 500ms and movement cancel threshold from 8px to 14px, making accidental drags much less likely on mobile. The handle now scales up during the arming window as a clearer visual cue that drag is about to activate.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6869</strong> &mdash; Downtime merge threshold fix: when duplicate progress tracks are merged (either automatically via sanitizeDowntimeKeys on load, or manually via the ⇄ Merge button), the combined value is now checked against the completion threshold. If it meets or exceeds the threshold, the full reward is granted immediately — skill learned, badge awarded, log entry written — and the remainder is kept. An alert surfaces the unlock message so it isn't silent.</div>
@@ -9148,8 +9149,6 @@ function renderParty(){
     var bar=document.getElementById('continue-downtime-bar');
     if(!bar)return;
     var _now=Date.now();
-    // Find chars with dtProgress but not currently on a downtime job
-    // Build set of char indices currently on an active quest
     var _questingCis={};
     (S.questState&&S.questState.pending||[]).forEach(function(pq){
       if((pq.doneAt||0)>_now)(pq.chars||[]).forEach(function(ci){_questingCis[ci]=true;});
@@ -9162,72 +9161,135 @@ function renderParty(){
       return hasProgress&&!isBusy&&!isQuesting;
     });
     if(!resumable.length||!qpEnabled()){bar.style.display='none';return;}
-    var qpCost=resumable.length*(qpCfg().costDowntime||5);
+    var perCharCost=qpCfg().costDowntime||5;
+
+    // Build per-character rows with checkbox + track + progress bar
+    var charRows=resumable.map(function(e,idx){
+      var prog=e.c.dtProgress||{};
+      var bestKey=Object.keys(prog).filter(function(k){return (prog[k]||0)>0;})
+        .sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0]
+        ||Object.keys(prog).sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
+      var trackLabel='',trackProg=0,trackThreshold=8;
+      if(bestKey){
+        var bParts=bestKey.split(':');
+        var bType=bParts[0],bTarget=bParts.slice(1).join(':')||'core';
+        trackLabel=downtimeTrackLabel(bType,bTarget);
+        trackThreshold=(bType==='contacts'||bType==='faith'?6:(bType==='intel'?5:8));
+        trackProg=prog[bestKey]||0;
+      }
+      var pct=Math.min(100,Math.round(trackProg/trackThreshold*100));
+      var sep=idx<resumable.length-1?'border-bottom:1px dotted rgba(26,107,138,.2);':'';
+      return '<label style="display:flex;align-items:center;gap:9px;padding:7px 0;'+sep+'cursor:pointer">'+
+        '<input type="checkbox" class="dt-resume-cb" data-ci="'+e.ci+'" checked '+
+        'style="width:16px;height:16px;accent-color:var(--teal);flex-shrink:0;cursor:pointer">'+
+        '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:.82em;font-weight:600;color:var(--ink)">'+esc(e.c.name.split(' ')[0])+'</div>'+
+        (trackLabel?
+          '<div style="font-size:.72em;color:var(--teal);margin-top:1px">'+esc(trackLabel)+'</div>'+
+          '<div style="display:flex;align-items:center;gap:6px;margin-top:3px">'+
+          '<div style="flex:1;height:4px;background:rgba(44,26,14,.1);border-radius:2px">'+
+          '<div style="width:'+pct+'%;height:100%;background:var(--teal);border-radius:2px"></div>'+
+          '</div>'+
+          '<div style="font-size:.68em;color:var(--ink-light);white-space:nowrap;flex-shrink:0">'+trackProg+' / '+trackThreshold+'</div>'+
+          '</div>'
+          :'<div style="font-size:.72em;color:var(--ink-light);margin-top:1px">No active track</div>')+
+        '</div>'+
+        '</label>';
+    }).join('');
+
     bar.style.display='';
-    bar.innerHTML='<div style="background:rgba(26,107,138,.08);border:1px solid rgba(26,107,138,.3);border-radius:7px;padding:8px 12px;display:flex;align-items:center;gap:10px">'+
+    bar.innerHTML=
+      '<details id="dt-resume-panel" style="background:rgba(26,107,138,.08);border:1px solid rgba(26,107,138,.3);border-radius:7px;overflow:hidden">'+
+      '<summary style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;list-style:none;-webkit-appearance:none">'+
       '<div style="flex:1;min-width:0">'+
       '<div style="font-family:\'Cinzel\',serif;font-size:.78em;color:var(--teal);font-weight:700">🕯 Continue Downtime</div>'+
-      '<div style="font-size:.72em;color:var(--ink-light);margin-top:2px">'+resumable.length+' character'+(resumable.length!==1?'s':'')+' have in-progress downtime paths: '+
-      resumable.map(function(e){return esc(e.c.name.split(' ')[0]);}).join(', ')+'</div>'+
+      '<div style="font-size:.72em;color:var(--ink-light);margin-top:2px" id="dt-resume-summary-line">'+
+        resumable.length+' character'+(resumable.length!==1?'s':'')+' ready — tap to select</div>'+
       '</div>'+
       '<button id="btn-continue-dt" style="background:var(--teal);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:.78em;cursor:pointer;white-space:nowrap;flex-shrink:0">'+
-      '⚡ '+qpCost+' QP</button>'+
-      '</div>';
-    var _resumable=resumable;
+      '\u26a1 '+(resumable.length*perCharCost)+' QP</button>'+
+      '</summary>'+
+      '<div style="padding:0 12px 10px" id="dt-resume-char-list">'+charRows+'</div>'+
+      '</details>';
+
+    // Checkbox changes → update button cost + summary line
+    function _updateDtBtn(){
+      var checked=bar.querySelectorAll('.dt-resume-cb:checked');
+      var n=checked.length;
+      var cost=n*perCharCost;
+      var btn=document.getElementById('btn-continue-dt');
+      var sumLine=document.getElementById('dt-resume-summary-line');
+      if(btn){btn.textContent='\u26a1 '+cost+' QP';btn.disabled=(n===0);btn.style.opacity=(n===0)?'.4':'1';}
+      if(sumLine){sumLine.textContent=n+' / '+resumable.length+' character'+(resumable.length!==1?'s':'')+' selected';}
+    }
+    bar.addEventListener('change',function(e){
+      if(e.target.classList.contains('dt-resume-cb'))_updateDtBtn();
+    });
+
+    // Button click — prevent <details> toggle, open duration picker for checked chars only
     var _dtBtn=document.getElementById('btn-continue-dt');
-    if(_dtBtn)_dtBtn.onclick=function(){
-      // Open duration picker modal
-      var _msgEl=document.getElementById('ov-dt-dur-msg');
-      var _okEl=document.getElementById('ov-dt-dur-ok');
-      var _cancelEl=document.getElementById('ov-dt-dur-cancel');
-      var _pillsEl=document.getElementById('ov-dt-dur-pills');
-      if(!_msgEl||!_okEl||!_cancelEl){return;}
-      _msgEl.textContent=_resumable.length+' character'+(_resumable.length!==1?'s':'')+' will resume downtime: '+
-        _resumable.map(function(e){return e.c.name.split(' ')[0];}).join(', ')+'.';
-      // Reset pill selection to 4hr default
-      var _selectedHours=4;
-      if(_pillsEl)_pillsEl.querySelectorAll('.ov-dt-dur-pill').forEach(function(btn){
-        var h=parseFloat(btn.getAttribute('data-hours'));
-        btn.style.background=h===_selectedHours?'var(--teal)':'';
-        btn.style.color=h===_selectedHours?'#fff':'';
-        btn.style.borderColor=h===_selectedHours?'var(--teal)':'';
-        btn.onclick=function(){
-          _selectedHours=h;
-          _pillsEl.querySelectorAll('.ov-dt-dur-pill').forEach(function(b){
-            var bh=parseFloat(b.getAttribute('data-hours'));
-            b.style.background=bh===_selectedHours?'var(--teal)':'';
-            b.style.color=bh===_selectedHours?'#fff':'';
-            b.style.borderColor=bh===_selectedHours?'var(--teal)':'';
-          });
-        };
-      });
-      var _ok2=_okEl.cloneNode(true);_okEl.parentNode.replaceChild(_ok2,_okEl);
-      var _cancel2=_cancelEl.cloneNode(true);_cancelEl.parentNode.replaceChild(_cancel2,_cancelEl);
-      _cancel2.addEventListener('click',function(){closeOv('ov-dt-dur');});
-      _ok2.textContent='\u26a1 '+qpCost+' QP';
-      _ok2.style.background='var(--teal)';
-      _ok2.addEventListener('click',function(){
-        var _hours=_selectedHours||4;
-        var _ms=Math.round(_hours*60*60000);
-        closeOv('ov-dt-dur');
-        if(!qpSpend(qpCost,'continue_downtime','Continue downtime for '+_resumable.length+' chars'))return;
-        var _endsAt=Date.now()+_ms;
-        _resumable.forEach(function(e){
-          var prog=e.c.dtProgress||{};
-          // Only resume tracks with actual progress > 0 to avoid spurious type switches
-          var bestKey=Object.keys(prog).filter(function(k){return (prog[k]||0)>0;})
-            .sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0]
-            || Object.keys(prog).sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
-          if(!bestKey)return;
-          var parts=bestKey.split(':');
-          var type=parts[0],target=parts.slice(1).join(':')||'core';
-          S.downtimeJobs.push({ci:e.ci,type:type,target:target,startedAt:Date.now(),endsAt:_endsAt,durationMins:Math.round(_hours*60)});
-          logAdd('\uD83D\uDD6F '+e.c.name+' resumed downtime: '+downtimeTrackLabel(type,target),'adv');
+    if(_dtBtn){
+      _dtBtn.addEventListener('click',function(e){
+        e.preventDefault();e.stopPropagation();
+        var checked=bar.querySelectorAll('.dt-resume-cb:checked');
+        if(!checked.length)return;
+        var _selected=[];
+        checked.forEach(function(cb){
+          var ci=parseInt(cb.getAttribute('data-ci'));
+          var match=resumable.filter(function(r){return r.ci===ci;})[0];
+          if(match)_selected.push(match);
         });
-        save();renderParty();
+        var qpCost=_selected.length*perCharCost;
+        var _msgEl=document.getElementById('ov-dt-dur-msg');
+        var _okEl=document.getElementById('ov-dt-dur-ok');
+        var _cancelEl=document.getElementById('ov-dt-dur-cancel');
+        var _pillsEl=document.getElementById('ov-dt-dur-pills');
+        if(!_msgEl||!_okEl||!_cancelEl)return;
+        _msgEl.textContent=_selected.length+' character'+(_selected.length!==1?'s':'')+' will resume downtime: '+
+          _selected.map(function(e){return e.c.name.split(' ')[0];}).join(', ')+'.';
+        var _selectedHours=4;
+        if(_pillsEl)_pillsEl.querySelectorAll('.ov-dt-dur-pill').forEach(function(btn){
+          var h=parseFloat(btn.getAttribute('data-hours'));
+          btn.style.background=h===_selectedHours?'var(--teal)':'';
+          btn.style.color=h===_selectedHours?'#fff':'';
+          btn.style.borderColor=h===_selectedHours?'var(--teal)':'';
+          btn.onclick=function(){
+            _selectedHours=h;
+            _pillsEl.querySelectorAll('.ov-dt-dur-pill').forEach(function(b){
+              var bh=parseFloat(b.getAttribute('data-hours'));
+              b.style.background=bh===_selectedHours?'var(--teal)':'';
+              b.style.color=bh===_selectedHours?'#fff':'';
+              b.style.borderColor=bh===_selectedHours?'var(--teal)':'';
+            });
+          };
+        });
+        var _ok2=_okEl.cloneNode(true);_okEl.parentNode.replaceChild(_ok2,_okEl);
+        var _cancel2=_cancelEl.cloneNode(true);_cancelEl.parentNode.replaceChild(_cancel2,_cancelEl);
+        _cancel2.addEventListener('click',function(){closeOv('ov-dt-dur');});
+        _ok2.textContent='\u26a1 '+qpCost+' QP';
+        _ok2.style.background='var(--teal)';
+        _ok2.addEventListener('click',function(){
+          var _hours=_selectedHours||4;
+          var _ms=Math.round(_hours*60*60000);
+          closeOv('ov-dt-dur');
+          if(!qpSpend(qpCost,'continue_downtime','Continue downtime for '+_selected.length+' chars'))return;
+          var _endsAt=Date.now()+_ms;
+          _selected.forEach(function(e){
+            var prog=e.c.dtProgress||{};
+            var bestKey=Object.keys(prog).filter(function(k){return (prog[k]||0)>0;})
+              .sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0]
+              ||Object.keys(prog).sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
+            if(!bestKey)return;
+            var parts=bestKey.split(':');
+            var type=parts[0],target=parts.slice(1).join(':')||'core';
+            S.downtimeJobs.push({ci:e.ci,type:type,target:target,startedAt:Date.now(),endsAt:_endsAt,durationMins:Math.round(_hours*60)});
+            logAdd('\uD83D\uDD6F '+e.c.name+' resumed downtime: '+downtimeTrackLabel(type,target),'adv');
+          });
+          save();renderParty();
+        });
+        openOv('ov-dt-dur');
       });
-      openOv('ov-dt-dur');
-    };
+    }
   }());
   var squads=S.squads||[];
   var activeFilter=S.partyTagFilter||null;
