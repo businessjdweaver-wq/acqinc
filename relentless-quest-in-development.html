@@ -3590,7 +3590,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6877</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6878</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4095,7 +4095,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6877
+      Version 1.6878
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4120,6 +4120,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6878</strong> &mdash; Squad manager desktop: (1) Member count and coverage % now appear as a second line inside each squad tile (below the name), on both regular and Unassigned tiles. (2) Transfer buttons now show a green +X% coverage delta when moving that character into the destination squad would improve its coverage. Characters that add no new coverage show 0%.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6877</strong> &mdash; Squad manager desktop: (1) Transfer column widened from 54px to 80px; buttons widened from 44px to 72px; button labels now show first name on line 1, surname on line 2, arrow on line 3 — no mid-word breaks. (2) Unassigned character cards no longer inherit the first squad's color; the virtual squad's _virtual flag is now checked before calling squadColor(), defaulting to the neutral parchment background.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6876</strong> &mdash; Squad manager desktop: (1) Coverage % shown on every squad tile including Unassigned (format: "N · X%"). (2) Unassigned now works as a proper transfer column — clicking its tile loads all unassigned characters into the left or right column, with transfer buttons that move characters to/from it like any other squad.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6875</strong> &mdash; Squad manager desktop: grid changed from 4×2 to 8×1 layout so all squad tiles fit in a single compact row. Tiles switch to a horizontal chip style (emoji + name side by side) with no aspect-ratio constraint, giving the two squad columns below maximum height.</div>
@@ -17678,20 +17679,38 @@ function renderSqmgrDesktop(){
   var html='';
   if(bothSelected){
     html+='<div style="font-size:.6em;color:var(--ink-light);text-align:center;width:100%;padding:2px 0 4px;font-family:\'Cinzel\',serif">'+perCharCost+' QP ea.</div>';
+    // Pre-compute squad objects for coverage delta
+    var _leftSq=sqmgrDeskLeft==='__unassigned__'?_unassignedVirtualSquad():((S.squads||[]).filter(function(s){return s.name===sqmgrDeskLeft;})[0]);
+    var _rightSq=sqmgrDeskRight==='__unassigned__'?_unassignedVirtualSquad():((S.squads||[]).filter(function(s){return s.name===sqmgrDeskRight;})[0]);
+    function _covDelta(ci,fromSq,toSq){
+      // Coverage gained by dest squad when this char moves in (ignoring removal from src for simplicity)
+      if(!toSq||toSq._virtual)return null; // unassigned dest: no coverage metric
+      var before=squadCoverage(toSq).pct;
+      var after=squadCoverageWithSwap(toSq,ci,null).pct;
+      return after-before;
+    }
+    function _deltaLabel(delta){
+      if(delta===null)return '';
+      if(delta>0)return '<span style="font-size:.72em;color:#4caf50">+'+delta+'%</span>';
+      if(delta===0)return '<span style="font-size:.72em;opacity:.5">0%</span>';
+      return '';
+    }
     leftCis.forEach(function(ci){
       var c=S.party[ci];if(!c)return;
       var parts=c.name.split(' ');
       var label=parts[0]+(parts[1]?'<br>'+parts[1]:'');
+      var delta=_covDelta(ci,_leftSq,_rightSq);
       html+='<button class="sqmgr-xfer-btn" data-xfer-ci="'+ci+'" data-xfer-dir="right" title="Move '+esc(c.name)+' → '+esc(sqmgrDeskRight)+'">'+
-        label+'<br><span style="font-size:.9em">→</span></button>';
+        label+'<br><span style="font-size:.9em">→</span> '+_deltaLabel(delta)+'</button>';
     });
     if(leftCis.length&&rightCis.length)html+='<div style="border-top:1px dotted rgba(26,107,138,.3);width:60px;margin:4px 0"></div>';
     rightCis.forEach(function(ci){
       var c=S.party[ci];if(!c)return;
       var parts=c.name.split(' ');
       var label=parts[0]+(parts[1]?'<br>'+parts[1]:'');
+      var delta=_covDelta(ci,_rightSq,_leftSq);
       html+='<button class="sqmgr-xfer-btn" data-xfer-ci="'+ci+'" data-xfer-dir="left" title="Move '+esc(c.name)+' → '+esc(sqmgrDeskLeft)+'">'+
-        '<span style="font-size:.9em">←</span><br>'+label+'</button>';
+        _deltaLabel(delta)+' <span style="font-size:.9em">←</span><br>'+label+'</button>';
     });
   } else {
     html='<div style="font-size:.62em;color:var(--ink-light);text-align:center;padding:8px 2px">Select both squads</div>';
@@ -17831,7 +17850,7 @@ function renderSqmgrGrid(){
           ' style="background:rgba(44,26,14,.12);color:var(--ink)">'+
           '<div style="font-size:1.2em;line-height:1">·</div>'+
           '<div style="font-size:.62em;font-weight:700;margin-top:2px;color:var(--ink-light)">None'+(uLabel?' <span style="background:rgba(26,107,138,.25);border-radius:3px;padding:0 3px">'+uLabel+'</span>':'')+'</div>'+
-          '<div class="sqmgr-tile-count">'+uCnt+' · '+uCov.pct+'%</div>'+
+          '<div class="sqmgr-tile-count" style="white-space:nowrap">'+uCnt+' · '+uCov.pct+'%</div>'+
           '</div>';
       }
       var sq=cell.sq,col=squadColor(sq),ic=squadEmoji(sq);
@@ -17841,12 +17860,13 @@ function renderSqmgrGrid(){
         :(sqmgrSortSquad===sq.name);
       var deskLabel=isDesktop?(sqmgrDeskLeft===sq.name?'L':sqmgrDeskRight===sq.name?'R':''):'';
       var cnt=(sq.memberIdxs||[]).filter(function(ci){return S.party[ci];}).length;
+      var sqCovPct=squadCoverage(sq).pct;
       return '<div class="sqmgr-squad-tile'+(isSortSq?' sqmgr-tile-active':'')+'" data-sqi="'+cell.sqi+'" data-sqname="'+esc(sq.name)+'"'+
         ' style="background:'+col+'">'+
         '<div style="font-size:1.2em;line-height:1">'+ic+'</div>'+
         '<div style="font-size:.62em;font-weight:700;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+esc(sq.name)+(deskLabel?' <span style="background:rgba(255,255,255,.3);border-radius:3px;padding:0 3px">'+deskLabel+'</span>':'')+'</div>'+
+        '<div class="sqmgr-tile-count" style="white-space:nowrap">'+cnt+' members · '+sqCovPct+'%</div>'+
         (isDevModeActive()?'<div style="font-family:monospace;font-size:.5em;color:rgba(255,255,255,.75);margin-top:1px">id:'+esc(String(sq.id||''))+'</div>':'')+
-        '<div class="sqmgr-tile-count">'+cnt+' · '+squadCoverage(sq).pct+'%</div>'+
         (squadIsLockedByCycle(sq.name)&&squadTerritory(sq)?'<div style="font-size:.52em;opacity:.7;color:#fff">📍 '+esc(squadTerritory(sq))+'</div>':'')+
         '</div>';
     }).join('')+
