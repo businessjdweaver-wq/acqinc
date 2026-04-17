@@ -3590,7 +3590,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6889</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6890</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4096,7 +4096,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6889
+      Version 1.6890
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4121,6 +4121,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6890</strong> &mdash; Countdown readability at multi-day durations. (1) Back Burner task deferrals now display as "Xd Yh Zm" when 48h or more remain (was "72 hr 15 min", now "3d 0 hr 15 min"). Under 48h keeps the existing hr / hr+min format so short deferrals read the same. (2) The shared <code>fmtCountdown</code> helper used by quest, grind, and downtime tickers now also breaks out days at 48h+, dropping the seconds field at that range (ticking seconds on a multi-day countdown adds no value and flickers the UI).</div>
         <div style="margin-bottom:9px"><strong>Version 1.6889</strong> &mdash; Fix: Task Edit modal was wiping subtask completion state. The Save handler at line 7996 did <code>t.subtasks=subLines.map(n=>({name:n,done:false}))</code>, hardcoding every subtask back to undone on every save — even if only the title or gold value changed. Fixed by preserving existing done flags via a name-indexed lookup (with duplicate-name positional matching), so renamed or added lines get <code>done:false</code> but untouched or reordered lines keep their state. Also added a proactive <code>t.pct</code> recompute so the progress pie reflects reality immediately if the user deleted a done subtask.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6888</strong> &mdash; QP Manager: split Short Rest and Early Completion into separate cost fields. Previously both shared <code>costShortRest</code>, making it impossible to tune them independently despite very different mechanics (Short Rest pre-pays a fraction and the quest continues; Early Completion skips the timer and pays the full remainder). New field <code>costEarlyCompletion</code> (default 10 QP); existing <code>costShortRest</code> unchanged (default 5 QP). Labels clarified: "Short rest (pre-earn gp, quest continues)" and "Early completion (skip timer, full reward)". Handler at line 13680 now branches on <code>_isEarly</code>. Button rendering also updated so each button shows its actual cost; also added a missing QP-balance gate to the Early Complete button (previously it rendered regardless of balance).</div>
         <div style="margin-bottom:9px"><strong>Version 1.6887</strong> &mdash; Fix: a character on a quest/grind could sometimes be sent on downtime, bypassing gates. Root cause: <code>startDowntimeForChar</code> (line 8716) checks <code>questBusyForChar</code> when the modal opens, but <code>confirmDowntimeModal</code> had no matching recheck when the modal's Confirm button was clicked. Between open and confirm, the character could be sent on a quest in a separate flow (two tabs, stale render, long-lived modal) and the confirm would push an overlapping downtime job. Added defense-in-depth rechecks in <code>confirmDowntimeModal</code>: both <code>questBusyForChar(ci)</code> and <code>downtimeJobForChar(ci)</code> now run at confirm time, with alerts and modal-close fallbacks. The reverse direction (downtime → quest) already has a forfeit-modal handler at line 14452.</div>
@@ -7447,7 +7448,21 @@ function taskCardHtml(t,showArrows,nbIdxs){
   var brnLabel='';
   if(onBurner){
     var rm=Math.ceil((t.burnerUntil-now)/60000);
-    var rl=rm<60?rm+' min':(rm%60===0?(rm/60)+' hr':Math.floor(rm/60)+' hr '+(rm%60)+' min');
+    var rl;
+    if(rm<60){
+      rl=rm+' min';
+    } else if(rm<2880){ // under 48h — keep existing hr / hr+min format
+      rl=(rm%60===0?(rm/60)+' hr':Math.floor(rm/60)+' hr '+(rm%60)+' min');
+    } else {
+      // 48h+ — break out days so the value stays scrutable
+      var _days=Math.floor(rm/1440);
+      var _remMin=rm-_days*1440;
+      var _hr=Math.floor(_remMin/60);
+      var _mn=_remMin%60;
+      rl=_days+'d';
+      if(_hr>0)rl+=' '+_hr+' hr';
+      if(_mn>0)rl+=' '+_mn+' min';
+    }
     brnLabel='<div class="burner-lbl">🕐 Back burner — '+rl+' remaining</div>';
   }
   var canU=false,canD=false;
@@ -12456,10 +12471,19 @@ function grindReadiness(g){
 
 function fmtCountdown(ms){
   if(ms<=0)return 'Ready to collect!';
-  var h=Math.floor(ms/3600000);
-  var m=Math.floor((ms%3600000)/60000);
-  var s=Math.floor((ms%60000)/1000);
-  return h+'h '+'0'.concat(m).slice(-2)+'m '+'0'.concat(s).slice(-2)+'s remaining';
+  var totalSec=Math.floor(ms/1000);
+  var d=Math.floor(totalSec/86400);
+  var h=Math.floor((totalSec%86400)/3600);
+  var m=Math.floor((totalSec%3600)/60);
+  var s=totalSec%60;
+  // Under 48h: keep the existing "Xh YYm ZZs remaining" format so the
+  // ticker reads the same for quests/downtime (<24h is typical).
+  if(d<2){
+    var totH=Math.floor(ms/3600000);
+    return totH+'h '+'0'.concat(m).slice(-2)+'m '+'0'.concat(s).slice(-2)+'s remaining';
+  }
+  // 48h+: break out days so multi-day deferrals remain scrutable.
+  return d+'d '+h+'h '+'0'.concat(m).slice(-2)+'m remaining';
 }
 
 /* ── Quest collect + XP ── */
