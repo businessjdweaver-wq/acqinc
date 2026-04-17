@@ -3590,7 +3590,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6891</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6892</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4096,7 +4096,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6891
+      Version 1.6892
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4121,6 +4121,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6892</strong> &mdash; Party screen: collapsible squad panels now show a thin-row roster of members when expanded. Each row shows name, species · class · Lv, and current status (⚔ on quest / 🕯 on downtime / free). Sorted by level desc, class asc, name asc. Empty squads show "No members." The existing assets and role-kit rows follow below. Reuses the questingChars and downtimeChars maps already computed at the top of renderParty, so no additional state scans.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6891</strong> &mdash; Prereq vocabulary audit: added <code>Vehicle (Land)</code> and <code>Vehicle (Water)</code> to <code>DND.tools</code>. These values were already offered by the Quest Editor as tool prereqs but the main app's character generator never produced them, making any quest with those prereqs impossible to satisfy. Adding them to the main app's universe means they now appear (1) in the random recruiter roll at a 1-in-28 chance per tool slot, (2) in the premium hand-pick recruiter's tool pills, (3) in the recruitment wish-list ribbon, (4) in the squad manager tool ribbon, (5) as valid prereq satisfiers in <code>questPrereqCheck</code>. Quest Editor updated to v1.673 alongside this change to add <code>Healer's Kit</code> which the main app was producing but the editor could not require.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6890</strong> &mdash; Countdown readability at multi-day durations. (1) Back Burner task deferrals now display as "Xd Yh Zm" when 48h or more remain (was "72 hr 15 min", now "3d 0 hr 15 min"). Under 48h keeps the existing hr / hr+min format so short deferrals read the same. (2) The shared <code>fmtCountdown</code> helper used by quest, grind, and downtime tickers now also breaks out days at 48h+, dropping the seconds field at that range (ticking seconds on a multi-day countdown adds no value and flickers the UI).</div>
         <div style="margin-bottom:9px"><strong>Version 1.6889</strong> &mdash; Fix: Task Edit modal was wiping subtask completion state. The Save handler at line 7996 did <code>t.subtasks=subLines.map(n=>({name:n,done:false}))</code>, hardcoding every subtask back to undone on every save — even if only the title or gold value changed. Fixed by preserving existing done flags via a name-indexed lookup (with duplicate-name positional matching), so renamed or added lines get <code>done:false</code> but untouched or reordered lines keep their state. Also added a proactive <code>t.pct</code> recompute so the progress pie reflects reality immediately if the user deleted a done subtask.</div>
@@ -9517,6 +9518,40 @@ function renderParty(){
           }())+
         '</summary>'+
         '<div style="padding:8px 12px;background:rgba(44,26,14,.04)">'+
+        (function(){
+          // ── Thin roster rows: name · species · class · Lv · status ──
+          // Sort: level desc, class asc, name asc
+          var memberCis=(sq.memberIdxs||[]).filter(function(ci){return S.party[ci];});
+          if(!memberCis.length){
+            return '<div style="font-size:.78em;color:var(--ink-light);font-style:italic;padding:3px 0 6px 0">No members.</div>';
+          }
+          var members=memberCis.map(function(ci){return {ci:ci,c:S.party[ci]};});
+          members.sort(function(a,b){
+            var lvA=parseInt(a.c.level,10)||0, lvB=parseInt(b.c.level,10)||0;
+            if(lvA!==lvB)return lvB-lvA; // level desc
+            var clA=(a.c.cls||'').toLowerCase(), clB=(b.c.cls||'').toLowerCase();
+            if(clA!==clB)return clA<clB?-1:1; // class asc
+            var nmA=(a.c.name||'').toLowerCase(), nmB=(b.c.name||'').toLowerCase();
+            return nmA<nmB?-1:(nmA>nmB?1:0); // name asc
+          });
+          var rosterRows=members.map(function(m,idx){
+            var c=m.c, ci=m.ci;
+            var onQ=!!questingChars[ci];
+            var onDT=!!downtimeChars[ci];
+            var status,statusCol;
+            if(onQ){status='\u2694 on quest';statusCol='var(--gold-dark)';}
+            else if(onDT){status='\uD83D\uDD6F on downtime';statusCol='var(--teal)';}
+            else{status='free';statusCol='var(--forest)';}
+            var meta=[esc(c.species||''),esc(c.cls||''),'Lv '+((parseInt(c.level,10)||0))].filter(Boolean).join(' \u00b7 ');
+            var sep=idx<members.length-1?'border-bottom:1px dotted rgba(44,26,14,.15);':'';
+            return '<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:.8em;'+sep+'">'+
+              '<span style="font-weight:600;color:var(--ink);flex-shrink:0">'+esc(c.name||'')+'</span>'+
+              '<span style="color:var(--ink-light);font-size:.92em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+meta+'</span>'+
+              '<span style="font-size:.75em;color:'+statusCol+';font-weight:600;flex-shrink:0">'+status+'</span>'+
+              '</div>';
+          }).join('');
+          return '<div style="margin-bottom:6px">'+rosterRows+'</div>';
+        }())+
         (sqAssets.length?sqAssets.map(function(a){
           return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.15)">'+
             '<span style="font-size:1.1em">'+(a.ic||'📦')+'</span>'+
