@@ -263,12 +263,14 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
         <button class="icon-btn" id="btn-new-quest" title="New quest" style="display:none">+ Quest</button>
         <button class="icon-btn" id="btn-new-pet" title="New pet" style="display:none">+ Pet</button>
         <button class="icon-btn" id="btn-new-item" title="New item" style="display:none">+ Item</button>
+        <button class="icon-btn" id="btn-new-trait" title="New trait (admin only)" style="display:none">+ Trait</button>
         <button class="icon-btn" id="btn-dupe-cycle" title="Duplicate a cycle">⧉</button>
       </div>
-      <div id="tab-bar" style="display:flex;border-bottom:1px solid var(--border2);flex-shrink:0">
+      <div id="tab-bar" style="display:flex;border-bottom:1px solid var(--border2);flex-shrink:0;flex-wrap:wrap">
         <button class="tab-btn active" data-tab="quests" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid var(--gold);background:rgba(201,146,42,.1);color:var(--gold);cursor:pointer">⚔ Quests</button>
         <button class="tab-btn" data-tab="pets" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">🐾 Pets</button>
         <button class="tab-btn" data-tab="items" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">📦 Items</button>
+        <button class="tab-btn" data-tab="traits" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">🏷 Traits</button>
       </div>
       <div id="list-scroll">
         <div class="list-empty">Log in to load your quests.</div>
@@ -311,6 +313,11 @@ var currentUser = null;
 function uid() {
   return currentUser && currentUser.user ? currentUser.user.id : null;
 }
+// Admin UUID — owns 'official' vocabulary rows (traits, terrain, conditions,
+// game_rules, outcome_template). Only this UUID can edit/create/delete those
+// rows. Other users see them read-only.
+var ADMIN_UID = '566fc455-3cd5-4a93-8663-9b361296e5a9';
+function isAdmin() { return uid() === ADMIN_UID; }
 function userEmail() {
   return currentUser && currentUser.user ? currentUser.user.email : '';
 }
@@ -1346,8 +1353,10 @@ function renderList() {
   document.getElementById('btn-new-quest').style.display  = (isQuests && sel && (sel.kind==='cycle'||sel.kind==='quest')) ? '' : 'none';
   document.getElementById('btn-new-pet').style.display    = activeTab === 'pets'  ? '' : 'none';
   document.getElementById('btn-new-item').style.display   = activeTab === 'items' ? '' : 'none';
-  if (activeTab === 'pets')  { renderPetList();  return; }
-  if (activeTab === 'items') { renderItemList(); return; }
+  document.getElementById('btn-new-trait').style.display  = (activeTab === 'traits' && isAdmin()) ? '' : 'none';
+  if (activeTab === 'pets')   { renderPetList();   return; }
+  if (activeTab === 'items')  { renderItemList();  return; }
+  if (activeTab === 'traits') { renderTraitList(); return; }
   var el = document.getElementById('list-scroll');
   if (!uid()) {
     el.innerHTML = '<div class="list-empty">Log in to load your quests.</div>';
@@ -2035,6 +2044,260 @@ function showPlaceholder() {
     '<polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/>' +
     '<line x1="16" y1="17" x2="8" y2="17"/></svg>' +
     'Select a quest or cycle from the list, or create a new one.</div>';
+}
+
+// ══════════════════════════════════════════════════
+// TRAITS TAB — vocabulary for gear/monster/quest encounter tagging
+// Admin-only editing; read-only for non-admins.
+// Data model:
+//   content_type='trait'
+//   content_key=slug-id (e.g. 'fire', 'rope')
+//   title=human-readable label (e.g. 'Fire')
+//   data.category=grouping for dropdowns (damage, utility, nav, etc.)
+//   data.label=display label (mirrors title; kept in data for runtime consumers)
+//   data.desc=tooltip description
+// ══════════════════════════════════════════════════
+
+// Canonical category order for grouping in the list.
+var TRAIT_CATEGORIES = [
+  {id:'damage',     label:'Damage Types',     color:'var(--crimson)'},
+  {id:'damage_mod', label:'Damage Modifiers', color:'var(--gold)'},
+  {id:'utility',    label:'Utility',          color:'var(--ink2)'},
+  {id:'nav',        label:'Navigation',       color:'var(--teal)'},
+  {id:'arcane',     label:'Arcane',           color:'var(--purple)'},
+  {id:'social',     label:'Social',           color:'var(--gold)'},
+  {id:'terrain',    label:'Terrain Kits',     color:'var(--forest)'},
+  {id:'anti',       label:'Creature Counters',color:'var(--crimson)'},
+  {id:'counter',    label:'Consumable Counters',color:'var(--forest)'}
+];
+function traitCategoryLabel(id) {
+  var c = TRAIT_CATEGORIES.filter(function(x){return x.id===id;})[0];
+  return c ? c.label : (id || 'Other');
+}
+
+function renderTraitList() {
+  var el = document.getElementById('list-scroll');
+  if (!uid()) { el.innerHTML = '<div class="list-empty">Log in to load traits.</div>'; return; }
+  if (!traits.length) {
+    el.innerHTML = '<div class="list-empty">No traits loaded. Click ↓ to pull from Supabase.</div>';
+    return;
+  }
+
+  // Sort into category buckets
+  var groups = {};
+  traits.forEach(function(t) {
+    var cat = t.category || 'Other';
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(t);
+  });
+  // Sort within each group by sort_order then label
+  Object.keys(groups).forEach(function(cat) {
+    groups[cat].sort(function(a,b) {
+      var sa = typeof a.sort_order === 'number' ? a.sort_order : 9999;
+      var sb = typeof b.sort_order === 'number' ? b.sort_order : 9999;
+      if (sa !== sb) return sa - sb;
+      return (a.label||'').localeCompare(b.label||'');
+    });
+  });
+
+  var html = '';
+  if (!isAdmin()) {
+    html += '<div style="padding:10px 12px;background:rgba(26,107,138,.08);' +
+      'border-bottom:1px solid var(--border2);font-size:.78em;color:var(--ink2);' +
+      'font-style:italic">👁 Read-only — only the admin can edit the trait vocabulary.</div>';
+  }
+  // Ordered categories first
+  var ordered = TRAIT_CATEGORIES.map(function(c){return c.id;});
+  var catKeys = Object.keys(groups).sort(function(a,b) {
+    var ia = ordered.indexOf(a); var ib = ordered.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+  catKeys.forEach(function(cat) {
+    var label = traitCategoryLabel(cat);
+    html += '<div style="padding:6px 12px 3px;font-family:\'Cinzel\',serif;font-size:.7em;' +
+      'text-transform:uppercase;letter-spacing:.05em;color:var(--gold);' +
+      'border-top:1px solid var(--border2);margin-top:4px">' + esc(label) +
+      ' <span style="color:var(--ink2);font-weight:normal">(' + groups[cat].length + ')</span></div>';
+    groups[cat].forEach(function(t) {
+      var isSel = sel && sel.kind === 'trait' && sel.key === t.content_key;
+      var adminOwned = t._ownerUserId === ADMIN_UID;
+      var badge = adminOwned
+        ? '<span class="qbadge" style="border-color:var(--gold);color:var(--gold)">official</span>'
+        : '<span class="qbadge">custom</span>';
+      html += '<div class="quest-row ' + (isSel ? 'sel' : '') +
+        '" data-sel-trait="' + esc(t.content_key) + '">' +
+        '<span class="quest-row-title" style="flex:1">' + esc(t.label || t.content_key) + '</span>' +
+        '<span style="color:var(--ink2);font-size:.75em;margin-right:6px">' + esc(t.content_key) + '</span>' +
+        badge +
+        '</div>';
+    });
+  });
+  el.innerHTML = html;
+  el.onclick = function(e) {
+    var row = e.target.closest('[data-sel-trait]');
+    if (!row) return;
+    var key = row.getAttribute('data-sel-trait');
+    sel = { kind: 'trait', key: key };
+    renderTraitList();
+    showTraitForm(key);
+  };
+}
+
+function showTraitForm(key) {
+  var t = traits.filter(function(x){return x.content_key===key;})[0] || null;
+  var isNew = !t;
+  var canEdit = isAdmin();
+  var fi = document.getElementById('form-inner');
+
+  var catOpts = TRAIT_CATEGORIES.map(function(c) {
+    var selAttr = (t && t.category === c.id) ? ' selected' : '';
+    return '<option value="' + esc(c.id) + '"' + selAttr + '>' + esc(c.label) + '</option>';
+  }).join('');
+  // Allow unrecognized category to still render without loss
+  if (t && t.category && !TRAIT_CATEGORIES.some(function(c){return c.id===t.category;})) {
+    catOpts = '<option value="' + esc(t.category) + '" selected>' + esc(t.category) + ' (custom)</option>' + catOpts;
+  }
+
+  var roAttr = canEdit ? '' : ' readonly disabled';
+  fi.innerHTML =
+    '<div id="form-title-row">' +
+      '<div id="form-heading">🏷 ' + (isNew ? 'New Trait' : esc(t.label || t.content_key)) + '</div>' +
+    '</div>' +
+
+    (canEdit ? '' :
+      '<div style="padding:10px 12px;background:rgba(26,107,138,.08);border:1px solid var(--border2);' +
+      'border-radius:4px;margin-bottom:10px;font-size:.85em;color:var(--ink2);font-style:italic">' +
+      'You are viewing this trait in read-only mode. Only the admin can modify the official vocabulary.</div>') +
+
+    '<div class="fsec">' +
+      '<div class="fsec-title">Identity</div>' +
+      '<div class="fgrid c2">' +
+        frow('Label *', '<input type="text" id="tf-label" value="' + esc(t ? (t.label||'') : '') +
+          '" placeholder="e.g. Fire"' + roAttr + '>') +
+        frow('ID / Key *', '<input type="text" id="tf-key" value="' + esc(t ? t.content_key : '') +
+          '" placeholder="e.g. fire (lowercase, underscores)"' +
+          (isNew && canEdit ? '' : ' readonly') + ' style="font-family:monospace">') +
+      '</div>' +
+      '<div class="fgrid c1" style="margin-top:10px">' +
+        frow('Category *', '<select id="tf-cat"' + roAttr + '>' + catOpts + '</select>') +
+        frow('Description', '<textarea id="tf-desc" rows="2" placeholder="What does this trait represent?"' +
+          roAttr + '>' + esc(t ? (t.desc||'') : '') + '</textarea>') +
+        frow('Sort Order', '<input type="number" id="tf-sort" value="' +
+          (t && typeof t.sort_order === 'number' ? t.sort_order : 9999) +
+          '" min="0" step="1"' + roAttr + '>') +
+      '</div>' +
+    '</div>' +
+
+    (canEdit ? (
+      '<div id="action-row">' +
+        '<button class="btn btn-save" id="tf-save">💾 Save Trait</button>' +
+        (!isNew && t && t._ownerUserId === ADMIN_UID ? '<button class="btn btn-del" id="tf-del">🗑 Delete</button>' : '') +
+        (!isNew ? '<button class="btn btn-new" id="tf-dupe">⧉ Duplicate</button>' : '') +
+        '<button class="btn btn-new" id="tf-new" style="margin-left:auto">+ New Trait</button>' +
+        '<span id="save-flash"></span>' +
+      '</div>'
+    ) : '');
+
+  if (!canEdit) return;
+
+  document.getElementById('tf-save').onclick = function() {
+    var label = (document.getElementById('tf-label').value || '').trim();
+    var rawKey = (document.getElementById('tf-key').value || '').trim().toLowerCase();
+    var slugKey = rawKey.replace(/[^a-z0-9_]/g,'_').replace(/^_+|_+$/g,'');
+    var cat   = document.getElementById('tf-cat').value || 'utility';
+    var desc  = (document.getElementById('tf-desc').value || '').trim();
+    var srt   = parseInt(document.getElementById('tf-sort').value, 10);
+    if (isNaN(srt)) srt = 9999;
+    if (!label || !slugKey) { alert('Label and ID are required.'); return; }
+    if (isNew && traits.some(function(x){return x.content_key===slugKey;})) {
+      alert('A trait with ID "' + slugKey + '" already exists. Choose a different ID.');
+      return;
+    }
+    var row = {
+      content_type: 'trait',
+      content_key:  slugKey,
+      title:        label,
+      owner_user_id: ADMIN_UID,      // admin-owned vocabulary row
+      visibility:   'official',
+      status:       'published',
+      sort_order:   srt,
+      data: { category: cat, label: label, desc: desc }
+    };
+    sbUpsert(row).then(function(){
+      flash('✓ Trait saved');
+      return pullData();
+    }).then(function(){
+      sel = { kind: 'trait', key: slugKey };
+      activeTab = 'traits';
+      renderList();
+      showTraitForm(slugKey);
+    }).catch(function(err){
+      alert('Save failed: ' + (err.message || err));
+    });
+  };
+
+  if (!isNew && t && t._ownerUserId === ADMIN_UID) {
+    document.getElementById('tf-del').onclick = function() {
+      if (prompt('Type DELETE to confirm removing trait "' + (t.label||t.content_key) + '". ' +
+        'Items referencing this trait will retain the dangling reference until re-saved.') !== 'DELETE') {
+        alert('Cancelled.'); return;
+      }
+      var filter = 'content_type=eq.trait' +
+        '&content_key=eq.' + encodeURIComponent(t.content_key) +
+        '&owner_user_id=eq.' + encodeURIComponent(ADMIN_UID);
+      sbDelete(filter).then(function(){
+        flash('✓ Trait deleted');
+        return pullData();
+      }).then(function(){
+        sel = null;
+        activeTab = 'traits';
+        renderList();
+        showPlaceholder();
+      }).catch(function(err){
+        alert('Delete failed: ' + (err.message || err));
+      });
+    };
+  }
+
+  if (!isNew) {
+    document.getElementById('tf-dupe').onclick = function() {
+      var dupeKey = t.content_key + '_copy';
+      var n = 2;
+      while (traits.some(function(x){return x.content_key===dupeKey;})) {
+        dupeKey = t.content_key + '_copy' + (n++);
+      }
+      sel = { kind: 'trait', key: null };
+      activeTab = 'traits';
+      // Render an empty form pre-filled from t with new key
+      var fi2 = document.getElementById('form-inner');
+      var oldT = t;
+      // Show form by simulating a new trait with prefilled label/cat/desc
+      // Simplest: push a transient preview into the form (not into traits[])
+      var preview = {
+        content_key: dupeKey,
+        label: (t.label || t.content_key) + ' (copy)',
+        category: t.category,
+        desc: t.desc || '',
+        sort_order: (typeof t.sort_order === 'number' ? t.sort_order : 9999)
+      };
+      // Directly render a new-trait form with preview values
+      showTraitForm(null);
+      document.getElementById('tf-label').value = preview.label;
+      document.getElementById('tf-key').value = preview.content_key;
+      document.getElementById('tf-cat').value = preview.category;
+      document.getElementById('tf-desc').value = preview.desc;
+      document.getElementById('tf-sort').value = preview.sort_order;
+    };
+  }
+
+  document.getElementById('tf-new').onclick = function() {
+    sel = { kind: 'trait', key: null };
+    activeTab = 'traits';
+    showTraitForm(null);
+  };
 }
 
 // ══════════════════════════════════════════════════
@@ -2835,6 +3098,12 @@ document.getElementById('btn-new-item').onclick = function() {
 document.getElementById('btn-new-pet').onclick = function() {
   sel = { kind: 'pet', name: null };
   showPetForm(null);
+};
+document.getElementById('btn-new-trait').onclick = function() {
+  if (!isAdmin()) { alert('Only the admin can create traits.'); return; }
+  sel = { kind: 'trait', key: null };
+  activeTab = 'traits';
+  showTraitForm(null);
 };
 document.getElementById('btn-new-quest').onclick = function() {
   if (!sel) return;
