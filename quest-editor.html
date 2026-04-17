@@ -806,6 +806,13 @@ var quests  = [];   // flat list, all quests across all cycles
 var pets    = [];   // all pets from Supabase pets table
 var items   = [];   // all items from Supabase items table
 var effects = [];   // all effects from Supabase effects table
+// Post-Quest Resolution System — vocabulary & config (Phase 1 plumbing)
+var traits            = [];   // trait rows from content_items
+var terrain           = [];   // terrain rows from content_items
+var conditions        = [];   // condition rows from content_items
+var gameRules         = [];   // game_rules rows from content_items (expect 1)
+var outcomeTemplates  = [];   // outcome_template rows from content_items
+var monsters          = [];   // simplified monster rows from content_items
 
 // Store type → tab/subtab mapping
 var ITEM_TYPES = [
@@ -979,13 +986,48 @@ function _mergeDbIntoPrereqLists() {
 function pullData() {
   if (!uid()) { setStatus('Not connected.'); return; }
   setStatus('Loading…');
-  var filter = 'select=*' +
+
+  // Fetch 1: author's own quest/quest_set content (private authoring) + own monsters
+  var ownFilter = 'select=*' +
     '&owner_user_id=eq.' + encodeURIComponent(uid()) +
-    '&content_type=in.(quest_set,quest)' +
+    '&content_type=in.(quest_set,quest,monster)' +
     '&order=sort_order.asc';
-  return sbGet(filter).then(function(rows) {
+
+  // Fetch 2: shared vocabulary visible to all authors regardless of owner
+  // Monsters: include official+shared from any owner (for Pull-from-Workshop)
+  // Traits/terrain/conditions/game_rules/outcome_template: official+shared only
+  var vocabFilter = 'select=*' +
+    '&visibility=in.(official,shared)' +
+    '&content_type=in.(trait,terrain,condition,game_rules,outcome_template,monster)' +
+    '&order=sort_order.asc';
+
+  return Promise.all([
+    sbGet(ownFilter),
+    sbGet(vocabFilter)
+  ]).then(function(results) {
+    // Merge, dedupe by (content_type, content_key). Own rows take precedence
+    // so author drafts override any shared version of the same key.
+    var ownRows   = results[0] || [];
+    var vocabRows = results[1] || [];
+    var seen = {};
+    var rows = [];
+    ownRows.forEach(function(r) {
+      var k = r.content_type + '::' + r.content_key;
+      if (!seen[k]) { seen[k] = true; rows.push(r); }
+    });
+    vocabRows.forEach(function(r) {
+      var k = r.content_type + '::' + r.content_key;
+      if (!seen[k]) { seen[k] = true; rows.push(r); }
+    });
+
     cycles = [];
     quests = [];
+    traits = [];
+    terrain = [];
+    conditions = [];
+    gameRules = [];
+    outcomeTemplates = [];
+    monsters = [];
     // pets reset inside the pets table fetch below
     (rows || []).forEach(function(row) {
       var d = row.data || {};
@@ -995,6 +1037,7 @@ function pullData() {
       // Set fresh fields from the row itself
       d._dbId       = row.id;
       d._visibility = row.visibility;
+      d._ownerUserId = row.owner_user_id || '';
       d.published   = (row.visibility === 'shared' || row.visibility === 'official');
       if (row.content_type === 'quest_set') {
         if (!d.cycleGate) d.cycleGate = {};
@@ -1003,6 +1046,29 @@ function pullData() {
         // Preserve sort_order from DB row for reordering
         if (typeof row.sort_order === 'number') d.sort_order = row.sort_order;
         quests.push(d);
+      } else if (row.content_type === 'trait') {
+        if (typeof row.sort_order === 'number') d.sort_order = row.sort_order;
+        d.content_key = row.content_key;
+        traits.push(d);
+      } else if (row.content_type === 'terrain') {
+        if (typeof row.sort_order === 'number') d.sort_order = row.sort_order;
+        d.content_key = row.content_key;
+        terrain.push(d);
+      } else if (row.content_type === 'condition') {
+        if (typeof row.sort_order === 'number') d.sort_order = row.sort_order;
+        d.content_key = row.content_key;
+        conditions.push(d);
+      } else if (row.content_type === 'game_rules') {
+        d.content_key = row.content_key;
+        gameRules.push(d);
+      } else if (row.content_type === 'outcome_template') {
+        if (typeof row.sort_order === 'number') d.sort_order = row.sort_order;
+        d.content_key = row.content_key;
+        outcomeTemplates.push(d);
+      } else if (row.content_type === 'monster') {
+        if (typeof row.sort_order === 'number') d.sort_order = row.sort_order;
+        d.content_key = row.content_key;
+        monsters.push(d);
       }
     });
     // Default: collapse all cycles
@@ -1050,7 +1116,9 @@ function pullData() {
       });
 
       setStatus('Loaded ' + cycles.length + ' cycles, ' + quests.length + ' quests, '
-        + pets.length + ' pets, ' + items.length + ' items.');
+        + pets.length + ' pets, ' + items.length + ' items, '
+        + traits.length + ' traits, ' + terrain.length + ' terrains, '
+        + conditions.length + ' conditions.');
       _mergeDbIntoPrereqLists(); // inject custom items/pets into prereq dropdowns
       renderList();
     });
