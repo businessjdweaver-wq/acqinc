@@ -3590,7 +3590,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6886</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6887</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4095,7 +4095,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6886
+      Version 1.6887
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4120,6 +4120,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6887</strong> &mdash; Fix: a character on a quest/grind could sometimes be sent on downtime, bypassing gates. Root cause: <code>startDowntimeForChar</code> (line 8716) checks <code>questBusyForChar</code> when the modal opens, but <code>confirmDowntimeModal</code> had no matching recheck when the modal's Confirm button was clicked. Between open and confirm, the character could be sent on a quest in a separate flow (two tabs, stale render, long-lived modal) and the confirm would push an overlapping downtime job. Added defense-in-depth rechecks in <code>confirmDowntimeModal</code>: both <code>questBusyForChar(ci)</code> and <code>downtimeJobForChar(ci)</code> now run at confirm time, with alerts and modal-close fallbacks. The reverse direction (downtime → quest) already has a forfeit-modal handler at line 14452.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6886</strong> &mdash; Fix: class-code (student) first-login was broken. At line 15551 the currentUser object set <code>user_id:row.player_user_id</code>, but the patched <code>uid()</code> function reads <code>currentUser.player_user_id</code>. On first login this check failed and <code>uid()</code> fell through to returning <code>_codeId</code> — a different UUID than what any Supabase data was keyed under. Result: new students saw empty party, no welcome modal, no tutorial task. On reload the session-restore path (line 15672) set the property correctly so subsequent loads behaved differently again. Fixed by renaming the property to <code>player_user_id</code> so uid() returns the correct stable UUID on every login path.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6885</strong> &mdash; Post-Quest Resolution plumbing (Phase 1 of spec). Added 6 new content_types to CONTENT_LIB / CONTENT_TYPE_MAP / CONTENT_LIST_MAP / loadContentLibrary routing: monster, trait, terrain, condition, game_rules, outcome_template. No player-visible changes yet; new buckets populate from Supabase on load but are unconsumed. Supabase constraint expanded and default vocabulary seeded in Parts A and B migrations.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6883</strong> &mdash; Downtime duration now has mechanical weight. 8h is the standard baseline (no modifier). 1h: −3, 4h: −1, 12h: +1, 24h: +3 applied to the d20 roll before comparing against the gain thresholds (6/11/16). The datetime-local picker is removed — pills are now the only selection method. Default selection is 8h. The roll result modal shows stat modifier and duration modifier as separate line items. Both the main downtime modal and the "Continue Downtime" QP picker use the updated 1/4/8/12/24h pill set.</div>
@@ -8873,6 +8874,21 @@ function confirmDowntimeModal(){
   var ci=DOWNTIME_PENDING.ci;
   var c=S.party[ci];
   if(!c){closeOv('ov-downtime');return;}
+  // Recheck busy state at confirmation time. The gate in startDowntimeForChar
+  // runs when the modal opens, but between open and confirm the character
+  // may have been sent on a quest/grind or assigned to another downtime job
+  // through a separate flow (open tab, stale render, etc). Without this
+  // recheck, confirming would push a duplicate/overlapping job.
+  if(questBusyForChar(ci)){
+    alert(c.name+' is now on a quest or grind. Downtime cancelled.');
+    closeOv('ov-downtime');
+    return;
+  }
+  if(downtimeJobForChar(ci)){
+    alert(c.name+' already has active downtime. Downtime cancelled.');
+    closeOv('ov-downtime');
+    return;
+  }
   var actSel=document.getElementById('ov-dt-activity');
   var targetSel=document.getElementById('ov-dt-target');
   var type=(actSel&&actSel.value)||DOWNTIME_PENDING.type||'skill';
