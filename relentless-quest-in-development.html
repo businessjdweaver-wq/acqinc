@@ -3590,7 +3590,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6888</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6889</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4096,7 +4096,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6888
+      Version 1.6889
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4121,6 +4121,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6889</strong> &mdash; Fix: Task Edit modal was wiping subtask completion state. The Save handler at line 7996 did <code>t.subtasks=subLines.map(n=>({name:n,done:false}))</code>, hardcoding every subtask back to undone on every save — even if only the title or gold value changed. Fixed by preserving existing done flags via a name-indexed lookup (with duplicate-name positional matching), so renamed or added lines get <code>done:false</code> but untouched or reordered lines keep their state. Also added a proactive <code>t.pct</code> recompute so the progress pie reflects reality immediately if the user deleted a done subtask.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6888</strong> &mdash; QP Manager: split Short Rest and Early Completion into separate cost fields. Previously both shared <code>costShortRest</code>, making it impossible to tune them independently despite very different mechanics (Short Rest pre-pays a fraction and the quest continues; Early Completion skips the timer and pays the full remainder). New field <code>costEarlyCompletion</code> (default 10 QP); existing <code>costShortRest</code> unchanged (default 5 QP). Labels clarified: "Short rest (pre-earn gp, quest continues)" and "Early completion (skip timer, full reward)". Handler at line 13680 now branches on <code>_isEarly</code>. Button rendering also updated so each button shows its actual cost; also added a missing QP-balance gate to the Early Complete button (previously it rendered regardless of balance).</div>
         <div style="margin-bottom:9px"><strong>Version 1.6887</strong> &mdash; Fix: a character on a quest/grind could sometimes be sent on downtime, bypassing gates. Root cause: <code>startDowntimeForChar</code> (line 8716) checks <code>questBusyForChar</code> when the modal opens, but <code>confirmDowntimeModal</code> had no matching recheck when the modal's Confirm button was clicked. Between open and confirm, the character could be sent on a quest in a separate flow (two tabs, stale render, long-lived modal) and the confirm would push an overlapping downtime job. Added defense-in-depth rechecks in <code>confirmDowntimeModal</code>: both <code>questBusyForChar(ci)</code> and <code>downtimeJobForChar(ci)</code> now run at confirm time, with alerts and modal-close fallbacks. The reverse direction (downtime → quest) already has a forfeit-modal handler at line 14452.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6886</strong> &mdash; Fix: class-code (student) first-login was broken. At line 15551 the currentUser object set <code>user_id:row.player_user_id</code>, but the patched <code>uid()</code> function reads <code>currentUser.player_user_id</code>. On first login this check failed and <code>uid()</code> fell through to returning <code>_codeId</code> — a different UUID than what any Supabase data was keyed under. Result: new students saw empty party, no welcome modal, no tutorial task. On reload the session-restore path (line 15672) set the property correctly so subsequent loads behaved differently again. Fixed by renaming the property to <code>player_user_id</code> so uid() returns the correct stable UUID on every login path.</div>
@@ -7993,8 +7994,32 @@ document.getElementById('ov-te-yes').addEventListener('click',function(){
   t.gp=Math.min(100,Math.max(1,parseInt(document.getElementById('ov-te-gp').value)||5));
   t.note=document.getElementById('ov-te-note').value.trim();
   var subLines=document.getElementById('ov-te-subs').value.split("\n").map(function(v){return v.trim();}).filter(Boolean);
-  t.subtasks=subLines.map(function(name){return {name:name,done:false};});
+  // Preserve done state from existing subtasks: match by name, handling duplicates by position.
+  // Renamed/added lines get done:false. Deleted lines are dropped entirely.
+  var _oldSubs=(t.subtasks||[]).map(function(s){return {name:(s&&s.name)||'',done:!!(s&&s.done)};});
+  var _oldByName={};
+  _oldSubs.forEach(function(s){
+    if(!_oldByName[s.name])_oldByName[s.name]=[];
+    _oldByName[s.name].push(s);
+  });
+  t.subtasks=subLines.map(function(name){
+    var bucket=_oldByName[name];
+    if(bucket&&bucket.length){
+      var match=bucket.shift(); // consume oldest duplicate first
+      return {name:name,done:!!match.done};
+    }
+    return {name:name,done:false};
+  });
   assignTaskToGroupByName(t._tid,document.getElementById('ov-te-group').value||'');
+
+  // Recompute progress pie now that subtasks are rebuilt. If user deleted a
+  // done subtask, pct would be stale until the next render that recalculates.
+  if(t.subtasks&&t.subtasks.length){
+    var _doneCount=t.subtasks.filter(function(s){return s.done;}).length;
+    t.pct=Math.min(6,Math.round(_doneCount/t.subtasks.length*6));
+  }else{
+    t.pct=0;
+  }
 
   var burnerMode=document.getElementById('ov-te-burner').value;
   if(burnerMode==='burner'){
