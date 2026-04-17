@@ -3590,7 +3590,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6892</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6893</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4096,7 +4096,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6892
+      Version 1.6893
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4121,6 +4121,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6893</strong> &mdash; Fix: when creating a squad via the expensive "+500 gp includes Bag of Holding" path, the bag would sometimes land in the franchise Assets &amp; Investments panel instead of being bound to the new squad. Root cause: the asset pushed at line 10480 carried no direct <code>bagOfHolding</code> / <code>effect.squadFormation</code> flags; it relied on a GEAR-list round-trip via <code>hasSquadFormationEffect</code>. If a user's DB gear row for "Bag of Holding" (saved through Quest Editor) lacked those flags, <code>applyDBItemsToArrays</code> at line 19298 fully replaced the built-in entry — wiping them — and the check returned false, so <code>sqSave</code>'s filter excluded the asset and the bag stayed unassigned in <code>partyAssets</code>. Two-layered fix: (1) set <code>bagOfHolding:true</code> and <code>effect:{squadFormation:true}</code> directly on the asset at creation so recognition doesn't depend on a GEAR lookup; (2) <code>hasSquadFormationEffect</code> now falls back to <code>BUILTIN_GEAR</code> when the merged <code>GEAR</code> entry is missing flags, catching other code paths (franchiseStorage migration, recovery, future entrypoints) exposed to the same stripping.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6892</strong> &mdash; Party screen: collapsible squad panels now show a thin-row roster of members when expanded. Each row shows name, species · class · Lv, and current status (⚔ on quest / 🕯 on downtime / free). Sorted by level desc, class asc, name asc. Empty squads show "No members." The existing assets and role-kit rows follow below. Reuses the questingChars and downtimeChars maps already computed at the top of renderParty, so no additional state scans.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6891</strong> &mdash; Prereq vocabulary audit: added <code>Vehicle (Land)</code> and <code>Vehicle (Water)</code> to <code>DND.tools</code>. These values were already offered by the Quest Editor as tool prereqs but the main app's character generator never produced them, making any quest with those prereqs impossible to satisfy. Adding them to the main app's universe means they now appear (1) in the random recruiter roll at a 1-in-28 chance per tool slot, (2) in the premium hand-pick recruiter's tool pills, (3) in the recruitment wish-list ribbon, (4) in the squad manager tool ribbon, (5) as valid prereq satisfiers in <code>questPrereqCheck</code>. Quest Editor updated to v1.673 alongside this change to add <code>Healer's Kit</code> which the main app was producing but the editor could not require.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6890</strong> &mdash; Countdown readability at multi-day durations. (1) Back Burner task deferrals now display as "Xd Yh Zm" when 48h or more remain (was "72 hr 15 min", now "3d 0 hr 15 min"). Under 48h keeps the existing hr / hr+min format so short deferrals read the same. (2) The shared <code>fmtCountdown</code> helper used by quest, grind, and downtime tickers now also breaks out days at 48h+, dropping the seconds field at that range (ticking seconds on a multi-day countdown adds no value and flickers the UI).</div>
@@ -10477,7 +10478,14 @@ document.getElementById('btn-sq-enroll').addEventListener('click',function(){
   if(!goldSpend(500,'Squad enrollment fee + Bag of Holding','buy'))return;
   // Add bag directly to partyAssets unassigned — sqSave will assign it to the squad
   if(!S.partyAssets)S.partyAssets=[];
+  // Set the squad-formation flags directly on the asset so sqSave's
+  // hasSquadFormationEffect() check doesn't depend on a GEAR-list round trip.
+  // If a user-authored DB gear row for "Bag of Holding" replaced the built-in
+  // one in GEAR (applyDB at line 19298 fully overrides by name), the built-in
+  // effect:{squadFormation:true} / bagOfHolding:true flags would be lost,
+  // and sqSave would fail to find an eligible squad-formation asset.
   S.partyAssets.push({name:'Bag of Holding',ic:'👜',type:'magic',
+    bagOfHolding:true,effect:{squadFormation:true},
     meta:{uid:newAssetUid(),ownerType:'',ownerRef:''}});
   save();
   sqGo(1);
@@ -17514,6 +17522,16 @@ function hasSquadFormationEffect(a){
   var gearItem=(GEAR||[]).filter(function(g){return g.name===a.name;})[0];
   if(gearItem&&gearItem.effect&&gearItem.effect.squadFormation)return true;
   if(gearItem&&gearItem.bagOfHolding)return true;
+  // Fallback: if the GEAR entry was replaced by a DB row that stripped the
+  // effect/bagOfHolding flags (applyDB at line 19298 fully overrides by name),
+  // also consult the untouched BUILTIN_GEAR. This prevents squad-formation
+  // recognition from silently breaking when a user saves a homebrew gear item
+  // under the same name as a built-in bag.
+  if(typeof BUILTIN_GEAR!=='undefined'){
+    var builtinItem=(BUILTIN_GEAR||[]).filter(function(g){return g.name===a.name;})[0];
+    if(builtinItem&&builtinItem.effect&&builtinItem.effect.squadFormation)return true;
+    if(builtinItem&&builtinItem.bagOfHolding)return true;
+  }
   return false;
 }
 
