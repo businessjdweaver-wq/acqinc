@@ -263,7 +263,9 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 .qmx input[type="text"]:focus,.qmx input[type="number"]:focus,
 .qmx textarea:focus,.qmx select:focus{border-color:var(--gold);outline:none;
   background:#fffde8;}
-.qmx textarea{resize:vertical;min-height:28px;max-height:80px;line-height:1.3;}
+.qmx textarea{resize:vertical;min-height:28px;max-height:300px;line-height:1.3;
+  overflow-y:hidden;}
+.qmx textarea[data-qmx-autogrow]{overflow-y:auto;}
 .qmx select{cursor:pointer;appearance:none;-webkit-appearance:none;
   padding-right:18px;background-image:linear-gradient(45deg,transparent 50%,#8b6914 50%),
   linear-gradient(135deg,#8b6914 50%,transparent 50%);
@@ -280,6 +282,14 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
   font-family:'Cinzel',serif;letter-spacing:.04em;}
 .qmx .qmx-more button:hover{background:#f0b429;color:#1d1209;border-color:var(--gold);}
 .qmx .qmx-badge-cell{width:26px;text-align:center;font-size:.9em;}
+
+/* Header action buttons (column clear, gradient interpolate) */
+.qmx thead .qmx-hdr-btn{border:1px solid rgba(139,26,26,.4);background:rgba(255,253,232,.6);
+  color:#8b1a1a;font-size:.7em;line-height:1;padding:1px 6px;cursor:pointer;
+  border-radius:3px;font-family:'Cinzel',serif;}
+.qmx thead .qmx-hdr-btn:hover{background:#8b1a1a;color:#fff;border-color:#8b1a1a;}
+.qmx thead .qmx-hdr-btn.qmx-hdr-grad{border-color:rgba(45,80,22,.5);color:#2d5016;}
+.qmx thead .qmx-hdr-btn.qmx-hdr-grad:hover{background:#2d5016;color:#fff;border-color:#2d5016;}
 
 /* Chip multi-picker (used inline in matrix for skills/langs/tools/etc.) */
 .qmx-chipbox{display:flex;flex-wrap:wrap;gap:3px;padding:3px 4px;min-height:28px;
@@ -2554,42 +2564,92 @@ function showCycleForm(setId) {
           return;
         }
 
-        // ── Cycle analysis summary (same logic as before, smaller footprint) ──
-        var _allSkills = {}, _allTools = {}, _allLang = {}, _allRel = {};
-        var _hasGold = 0, _hasItems = [];
+        // ── Predecessor analysis: walk up to 2 hops back via cycleGate.requiredCycleSetId ──
+        var predChain = [];
+        (function() {
+          var seen = {};
+          var cur = cycle;
+          for (var hop = 0; hop < 2; hop++) {
+            var parentId = cur && cur.cycleGate && cur.cycleGate.requiredCycleSetId;
+            if (!parentId || seen[parentId]) break;
+            seen[parentId] = true;
+            var parent = cycles.filter(function(c) { return c.id === parentId; })[0];
+            if (!parent) break;
+            predChain.push(parent);
+            cur = parent;
+          }
+        }());
+
+        function _collectPre(cyc) {
+          var out = { skills:{}, tools:{}, lang:{}, rel:{}, items:{} };
+          quests.filter(function(q) { return q.setId === cyc.id; }).forEach(function(q) {
+            var pre = q.pre || {};
+            (pre.skills || []).forEach(function(s) { out.skills[s] = true; });
+            (pre.tools  || []).forEach(function(t) { out.tools[t]  = true; });
+            (pre.lang   || []).forEach(function(l) { out.lang[l]   = true; });
+            var relArr = Array.isArray(pre.rel) ? pre.rel : (pre.rel ? [pre.rel] : []);
+            relArr.forEach(function(r) { out.rel[r] = true; });
+            (pre.items  || []).forEach(function(x) { out.items[x] = true; });
+          });
+          return out;
+        }
+        var consumed = { skills:{}, tools:{}, lang:{}, rel:{}, items:{} };
+        predChain.forEach(function(p) {
+          var pc = _collectPre(p);
+          ['skills','tools','lang','rel','items'].forEach(function(k) {
+            Object.keys(pc[k]).forEach(function(v) { consumed[k][v] = true; });
+          });
+        });
+        // Also subtract what this cycle already uses, so the recommendation is "what's left to try"
+        var thisUsed = { skills:{}, tools:{}, lang:{}, rel:{}, items:{} };
         rows.forEach(function(q) {
           var pre = q.pre || {};
-          (pre.skills || []).forEach(function(s) { _allSkills[s] = (_allSkills[s] || 0) + 1; });
-          (pre.tools  || []).forEach(function(t) { _allTools[t]  = (_allTools[t]  || 0) + 1; });
-          (pre.lang   || []).forEach(function(l) { _allLang[l]   = (_allLang[l]   || 0) + 1; });
-          (pre.rel || []).forEach(function(r) { _allRel[r] = (_allRel[r] || 0) + 1; });
-          if (pre.gold && pre.gold > _hasGold) _hasGold = pre.gold;
-          (pre.items  || []).forEach(function(x) { if (_hasItems.indexOf(x) === -1) _hasItems.push(x); });
+          (pre.skills || []).forEach(function(s) { thisUsed.skills[s] = true; });
+          (pre.tools  || []).forEach(function(t) { thisUsed.tools[t]  = true; });
+          (pre.lang   || []).forEach(function(l) { thisUsed.lang[l]   = true; });
+          (pre.rel    || []).forEach(function(r) { thisUsed.rel[r]    = true; });
+          (pre.items  || []).forEach(function(x) { thisUsed.items[x]  = true; });
         });
-        function _pill(label, count, color) {
-          return '<span style="display:inline-flex;align-items:center;gap:3px;'
-            + 'background:' + color + ';border-radius:10px;padding:1px 7px;'
-            + 'font-size:.72em;margin:2px;white-space:nowrap">' + esc(label)
-            + (count > 1 ? ' <span style="opacity:.6">×' + count + '</span>' : '') + '</span>';
+        function _remainder(fullList, consumedMap, usedMap) {
+          return fullList.filter(function(v) { return !consumedMap[v] && !usedMap[v]; });
         }
-        var _typeCount = {};
-        rows.forEach(function(q) { _typeCount[q.type || 'unknown'] = (_typeCount[q.type || 'unknown'] || 0) + 1; });
-        var _typeSummary = Object.keys(_typeCount).map(function(t) {
-          var icons = {combat:'⚔',social:'🤝',explore:'🗺',wonder:'✨'};
-          return (icons[t] || '📜') + ' ' + t + ' ×' + _typeCount[t];
-        }).join(' &nbsp; ');
+        var recSkills = _remainder(DND_SKILLS,        consumed.skills, thisUsed.skills);
+        var recTools  = _remainder(DND_TOOLS,         consumed.tools,  thisUsed.tools);
+        var recLang   = _remainder(DND_LANG,          consumed.lang,   thisUsed.lang);
+        var recRel    = _remainder(DND_REL,           consumed.rel,    thisUsed.rel);
+        var recItems  = _remainder(GEAR_PREREQ_NAMES, consumed.items,  thisUsed.items);
+
+        function _pill(label, color) {
+          return '<span style="display:inline-flex;align-items:center;background:' + color
+            + ';border-radius:10px;padding:1px 7px;font-size:.72em;margin:2px;white-space:nowrap">'
+            + esc(label) + '</span>';
+        }
+        function _pillList(arr, color, cap) {
+          cap = cap || 20;
+          var shown = arr.slice(0, cap);
+          var more = arr.length - shown.length;
+          var html = shown.map(function(v) { return _pill(v, color); }).join('');
+          if (more > 0) html += '<span style="font-size:.72em;color:#888;margin-left:4px">+' + more + ' more</span>';
+          return html;
+        }
+
+        var predSummary = predChain.length
+          ? predChain.map(function(p, i) { return '<strong>' + (i === 0 ? 'Immediate predecessor' : 'Previous predecessor') + ':</strong> ' + esc(p.name); }).join(' &nbsp; | &nbsp; ')
+          : '<em>No predecessor cycle gated by cycleGate.requiredCycleSetId — showing full available pool.</em>';
+
         var _analysisHtml =
-          '<div style="background:rgba(201,146,42,.05);border:1px solid rgba(201,146,42,.25);'
+          '<div style="background:rgba(45,80,22,.06);border:1px solid rgba(45,80,22,.25);'
           + 'border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.78em">' +
-            '<div style="font-family:\'Cinzel\',serif;font-size:.8em;color:#8b6914;'
-            + 'text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Cycle Analysis</div>' +
-            '<div style="margin-bottom:4px"><span style="color:#888">Types: </span>' + _typeSummary + '</div>' +
-            (Object.keys(_allSkills).length ? '<div style="margin-bottom:3px"><span style="color:#888">Skills: </span>' + Object.keys(_allSkills).sort().map(function(s){return _pill(s,_allSkills[s],'rgba(26,95,160,.12)');}).join('') + '</div>' : '') +
-            (Object.keys(_allTools).length ? '<div style="margin-bottom:3px"><span style="color:#888">Tools: </span>' + Object.keys(_allTools).sort().map(function(t){return _pill(t,_allTools[t],'rgba(80,120,60,.12)');}).join('') + '</div>' : '') +
-            (Object.keys(_allLang).length ? '<div style="margin-bottom:3px"><span style="color:#888">Languages: </span>' + Object.keys(_allLang).sort().map(function(l){return _pill(l,_allLang[l],'rgba(130,70,160,.12)');}).join('') + '</div>' : '') +
-            (Object.keys(_allRel).length ? '<div style="margin-bottom:3px"><span style="color:#888">Faith: </span>' + Object.keys(_allRel).sort().map(function(r){return _pill(r,_allRel[r],'rgba(180,100,20,.12)');}).join('') + '</div>' : '') +
-            (_hasItems.length ? '<div style="margin-bottom:3px"><span style="color:#888">Items: </span>' + _hasItems.map(function(x){return _pill(x,0,'rgba(100,100,100,.1)');}).join('') + '</div>' : '') +
-            (_hasGold ? '<div><span style="color:#888">Max gold req: </span>' + _hasGold + ' gp</div>' : '') +
+            '<div style="font-family:\'Cinzel\',serif;font-size:.8em;color:#2d5016;'
+            + 'text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Recommended Prerequisites <span style="font-weight:normal;text-transform:none;letter-spacing:0;color:#888;font-size:.9em">— available pool minus predecessors &amp; current cycle</span></div>' +
+            '<div style="margin-bottom:6px;color:#555;font-size:.92em">' + predSummary + '</div>' +
+            (recSkills.length ? '<div style="margin-bottom:3px"><span style="color:#888">Skills: </span>' + _pillList(recSkills, 'rgba(26,95,160,.12)') + '</div>' : '') +
+            (recTools.length  ? '<div style="margin-bottom:3px"><span style="color:#888">Tools: </span>'  + _pillList(recTools,  'rgba(80,120,60,.12)') + '</div>' : '') +
+            (recLang.length   ? '<div style="margin-bottom:3px"><span style="color:#888">Languages: </span>' + _pillList(recLang,   'rgba(130,70,160,.12)') + '</div>' : '') +
+            (recRel.length    ? '<div style="margin-bottom:3px"><span style="color:#888">Faiths: </span>'  + _pillList(recRel,    'rgba(180,100,20,.12)') + '</div>' : '') +
+            (recItems.length  ? '<div style="margin-bottom:3px"><span style="color:#888">Items: </span>'  + _pillList(recItems,  'rgba(100,100,100,.12)', 12) + '</div>' : '') +
+            ((recSkills.length + recTools.length + recLang.length + recRel.length + recItems.length) === 0
+              ? '<div style="color:#8b1a1a;font-style:italic">No prerequisites left to recommend — the predecessor chain plus this cycle already cover the full pool.</div>' : '') +
           '</div>';
 
         // ── Build table rows ──
@@ -2617,7 +2677,7 @@ function showCycleForm(setId) {
             '</td>' +
             '<td class="qmx-badge-cell" title="' + esc(badgeTitle) + '">' + badge + '</td>' +
             '<td class="qmx-title"><input type="text" data-qmx-field="title" value="' + esc(q.title || '') + '" placeholder="(untitled)"></td>' +
-            '<td class="qmx-desc"><textarea data-qmx-field="desc" rows="1" placeholder="(no description)">' + esc(q.desc || '') + '</textarea></td>' +
+            '<td class="qmx-desc"><textarea data-qmx-field="desc" data-qmx-autogrow rows="1" placeholder="(no description)">' + esc(q.desc || '') + '</textarea></td>' +
             '<td class="qmx-type"><select data-qmx-field="type">' + _typeOpts(q.type || 'explore') + '</select></td>' +
             '<td class="qmx-num"><input type="number" data-qmx-field="minLevel" min="0" max="20" value="' + (q.minLevel || 0) + '"></td>' +
             '<td class="qmx-num"><input type="number" data-qmx-field="squadReqMin" min="0" max="20" value="' + (q.squadReqMin || 0) + '"></td>' +
@@ -2632,32 +2692,57 @@ function showCycleForm(setId) {
           '</tr>';
         }).join('');
 
+        // Header action buttons: ✕ clears a column; ∕ on baseGp interpolates a gradient.
+        // Each <th> gets a label row plus a tiny action row beneath it, so <thead> stays one row grid-wise.
+        function _hdr(label, cls, actionHtml) {
+          return '<th' + (cls ? ' class="' + cls + '"' : '') + '>' +
+            '<div style="display:flex;flex-direction:column;align-items:center;gap:2px">' +
+              '<span>' + label + '</span>' +
+              '<div style="display:flex;gap:2px;min-height:16px">' + (actionHtml || '') + '</div>' +
+            '</div>' +
+          '</th>';
+        }
+        function _clearBtn(col) {
+          return '<button type="button" class="qmx-hdr-btn" data-qmx-clear="' + col + '" title="Clear entire column">✕</button>';
+        }
+        function _gradBtn() {
+          return '<button type="button" class="qmx-hdr-btn qmx-hdr-grad" data-qmx-gradient="baseGp" title="Interpolate gradient from first to last row">∕</button>';
+        }
+
+        var theadHtml =
+          '<thead><tr>' +
+            _hdr('#', 'num', '') +
+            _hdr('Move', 'num', '') +
+            _hdr('', '', '') +
+            _hdr('Title', '', _clearBtn('title')) +
+            _hdr('Description', '', _clearBtn('desc')) +
+            _hdr('Type', '', _clearBtn('type')) +
+            _hdr('Min Lvl', 'num', _clearBtn('minLevel')) +
+            _hdr('Min Pty', 'num', _clearBtn('squadReqMin')) +
+            _hdr('Max Pty', 'num', _clearBtn('squadReqMax')) +
+            _hdr('Base GP', 'num', _gradBtn() + _clearBtn('baseGp')) +
+            _hdr('Skills', '', _clearBtn('pre.skills')) +
+            _hdr('Faiths', '', _clearBtn('pre.rel')) +
+            _hdr('Languages', '', _clearBtn('pre.lang')) +
+            _hdr('Tools', '', _clearBtn('pre.tools')) +
+            _hdr('Items', '', _clearBtn('pre.items')) +
+            _hdr('More', 'num', '') +
+          '</tr></thead>';
+
         wrap.innerHTML =
           _analysisHtml +
-          '<div style="font-size:.74em;color:var(--ink2);margin-bottom:8px">Edit any field inline. Use ▲/▼ to reorder. Click ⋯ More for less-common fields. Changes apply when you press Save Cycle.</div>' +
+          '<div style="font-size:.74em;color:var(--ink2);margin-bottom:8px">Edit any field inline. Use ▲/▼ to reorder. Click a column\u2019s ✕ to clear that column. Click ∕ above Base GP to interpolate values between first and last rows. Click ⋯ More for less-common fields. Changes apply when you press Save Cycle.</div>' +
           '<div class="qmx-wrap">' +
             '<table class="qmx">' +
-              '<thead><tr>' +
-                '<th class="num">#</th>' +
-                '<th class="num">Move</th>' +
-                '<th></th>' +
-                '<th>Title</th>' +
-                '<th>Description</th>' +
-                '<th>Type</th>' +
-                '<th class="num">Min Lvl</th>' +
-                '<th class="num">Min Pty</th>' +
-                '<th class="num">Max Pty</th>' +
-                '<th class="num">Base GP</th>' +
-                '<th>Skills</th>' +
-                '<th>Faiths</th>' +
-                '<th>Languages</th>' +
-                '<th>Tools</th>' +
-                '<th>Items</th>' +
-                '<th class="num">More</th>' +
-              '</tr></thead>' +
+              theadHtml +
               '<tbody>' + tbody + '</tbody>' +
             '</table>' +
           '</div>';
+
+        // Auto-size all description textareas to fit content.
+        wrap.querySelectorAll('textarea[data-qmx-autogrow]').forEach(function(ta) {
+          _qmxAutosize(ta);
+        });
       };
 
       return '<div class="fsec">' +
@@ -2706,6 +2791,10 @@ function showCycleForm(setId) {
     } else {
       q[field] = v;
     }
+    // Auto-size description textareas as the user types
+    if (e.target.hasAttribute && e.target.hasAttribute('data-qmx-autogrow')) {
+      _qmxAutosize(e.target);
+    }
   });
   document.getElementById('form-inner').addEventListener('change', function _cfMatrixChange(e) {
     var field = e.target.getAttribute && e.target.getAttribute('data-qmx-field');
@@ -2735,6 +2824,54 @@ function showCycleForm(setId) {
     if (!btn) return;
     var qi = parseInt(btn.getAttribute('data-qmx-more'), 10);
     openQuestMoreModal(qi);
+  });
+
+  // Column clear: ✕ button in a header — reset that field across all rows.
+  document.getElementById('form-inner').addEventListener('click', function _cfClearCol(e) {
+    var btn = e.target.closest('[data-qmx-clear]');
+    if (!btn) return;
+    var field = btn.getAttribute('data-qmx-clear');
+    var rows = window._cfCycleQuests;
+    if (!rows || !rows.length) return;
+    // field may be 'pre.skills', 'pre.rel', etc. for chip columns
+    var defaults = {
+      title: '', desc: '', type: 'explore',
+      minLevel: 0, squadReqMin: 0, squadReqMax: 0, baseGp: 0
+    };
+    rows.forEach(function(q) {
+      if (field.indexOf('pre.') === 0) {
+        var sub = field.slice(4);
+        q.pre = q.pre || {};
+        q.pre[sub] = [];
+      } else if (defaults.hasOwnProperty(field)) {
+        q[field] = defaults[field];
+      }
+    });
+    window._cfRenderMatrix();
+  });
+
+  // Base GP gradient: ∕ button — linearly interpolate from row[0] to row[last] across all middle rows.
+  document.getElementById('form-inner').addEventListener('click', function _cfGradient(e) {
+    var btn = e.target.closest('[data-qmx-gradient]');
+    if (!btn) return;
+    var field = btn.getAttribute('data-qmx-gradient');
+    var rows = window._cfCycleQuests;
+    if (!rows || rows.length < 2) {
+      alert('Need at least 2 quests to interpolate a gradient.');
+      return;
+    }
+    var start = parseInt(rows[0][field], 10) || 0;
+    var end   = parseInt(rows[rows.length - 1][field], 10) || 0;
+    if (start === 0 && end === 0) {
+      alert('Set the first and/or last row\u2019s ' + field + ' before generating a gradient.');
+      return;
+    }
+    var n = rows.length;
+    for (var i = 1; i < n - 1; i++) {
+      var t = i / (n - 1);
+      rows[i][field] = Math.round(start + (end - start) * t);
+    }
+    window._cfRenderMatrix();
   });
 
   document.getElementById('cf-save').onclick = function() {
@@ -3269,6 +3406,12 @@ document.addEventListener('change', function(e) {
 // ══════════════════════════════════════════════════
 // GENERIC MODAL (used by Quest Matrix chip picker + More button)
 // ══════════════════════════════════════════════════
+function _qmxAutosize(ta) {
+  if (!ta) return;
+  // Reset then grow to scrollHeight; CSS max-height (300px) is the cap.
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 300) + 'px';
+}
 function closeQeModal() {
   var m = document.getElementById('qe-modal-root');
   if (m) m.remove();
