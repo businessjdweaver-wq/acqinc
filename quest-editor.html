@@ -1278,6 +1278,7 @@ function cycleToRow(cycle, idx) {
   };
   if (cycle.territory) data.territory = cycle.territory;
   if (cycle.cycleGate) data.cycleGate = cycle.cycleGate;
+  if (cycle.realEstateDeny) data.realEstateDeny = cycle.realEstateDeny;
   if (Array.isArray(cycle.questOrder) && cycle.questOrder.length) data.questOrder = cycle.questOrder;
   return {
     content_type:  'quest_set',
@@ -2526,6 +2527,48 @@ function showCycleForm(setId) {
     '<div style="margin-top:10px;padding:8px 12px;background:rgba(139,26,26,.06);border:1px solid rgba(139,26,26,.15);border-radius:5px;font-size:.82em;color:var(--ink2)">Leave dropdowns at "— None —" and numeric fields at 0 to disable those gate conditions.</div>' +
     '</div>' +
 
+    // ── Real Estate Options (v1.678) ──
+    // When this cycle is completed, the main app offers a curated list of
+    // buildings the player can purchase and name, bound to this cycle. Writers
+    // can deny individual buildings (or the whole catalog) per cycle — e.g. a
+    // maritime cycle might disallow Smithy but permit Safe House + Storage.
+    // Data is persisted onto cycle.realEstateDeny = {all:bool, buildings:{name:true,...}}
+    // which rides along the existing content_items.data JSONB blob — no SQL.
+    (function() {
+      var re = cycle.realEstateDeny || {};
+      var denyAll = !!re.all;
+      var deniedMap = (re.buildings && typeof re.buildings === 'object') ? re.buildings : {};
+      var REAL_ESTATE_CATALOG = [
+        {name:'Storage Shed',            price:200},
+        {name:'Stables',                 price:500},
+        {name:'Market Stall',            price:800},
+        {name:'Barracks',                price:1000},
+        {name:'Smithy',                  price:1200},
+        {name:'Tavern (Common Room)',    price:1500},
+        {name:'Greenhouse',              price:1800},
+        {name:"Alchemist's Lab",         price:2000},
+        {name:'Library & Scriptorium',   price:2500},
+        {name:'Safe House',              price:3000}
+      ];
+      var rows = REAL_ESTATE_CATALOG.map(function(b) {
+        var denied = !!deniedMap[b.name];
+        return '<label class="cf-re-row" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);cursor:pointer;font-size:.88em;'+(denyAll?'opacity:.4;pointer-events:none;':'')+'">' +
+          '<input type="checkbox" class="cf-re-deny" data-bname="'+esc(b.name)+'"'+(denied?' checked':'')+'>' +
+          '<span style="flex:1;color:var(--ink)">'+esc(b.name)+'</span>' +
+          '<span style="color:var(--ink2);font-size:.82em">'+b.price.toLocaleString()+' gp</span>' +
+          '</label>';
+      }).join('');
+      return '<div class="fsec">' +
+        '<div class="fsec-title">Real Estate Options <span class="select-hint">— deny specific buildings (or all) from being purchasable against this completed cycle</span></div>' +
+        '<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(201,146,42,.08);border:1px solid rgba(201,146,42,.3);border-radius:5px;margin-bottom:10px;cursor:pointer;font-size:.92em;font-weight:600;color:var(--ink)">' +
+          '<input type="checkbox" id="cf-re-deny-all"'+(denyAll?' checked':'')+'>' +
+          '<span>🚫 Deny all real estate on this cycle</span>' +
+        '</label>' +
+        '<div style="font-size:.78em;color:var(--ink2);margin-bottom:8px">Check a building below to block its purchase when this cycle is completed. Unchecked = available.</div>' +
+        '<div id="cf-re-list" class="fgrid c2" style="gap:6px">' + rows + '</div>' +
+      '</div>';
+    })() +
+
     // ── Quest Matrix ──
     (function() {
       var cqs = quests
@@ -2874,6 +2917,24 @@ function showCycleForm(setId) {
     window._cfRenderMatrix();
   });
 
+  // ── Real Estate: "Deny all" toggle greys out per-building rows (v1.678) ──
+  (function() {
+    var denyAllEl = document.getElementById('cf-re-deny-all');
+    if (!denyAllEl) return;
+    denyAllEl.addEventListener('change', function() {
+      var on = denyAllEl.checked;
+      document.querySelectorAll('#cf-re-list .cf-re-row').forEach(function(row) {
+        if (on) {
+          row.style.opacity = '.4';
+          row.style.pointerEvents = 'none';
+        } else {
+          row.style.opacity = '';
+          row.style.pointerEvents = '';
+        }
+      });
+    });
+  })();
+
   document.getElementById('cf-save').onclick = function() {
     var name = (document.getElementById('cf-name').value || '').trim();
     if (!name) { alert('Cycle name is required.'); return; }
@@ -2914,6 +2975,28 @@ function showCycleForm(setId) {
     if (avgLevel) gate.minAvgSquadLevel = avgLevel;
 
     cycle.cycleGate = gate;
+
+    // ── Real Estate denial (v1.678) ────────────────────────────────
+    // Collect per-building deny flags and the master "deny all" flag.
+    // Persist as cycle.realEstateDeny. If nothing is denied, remove the
+    // property entirely to keep the saved blob clean.
+    var reDenyAll = !!document.getElementById('cf-re-deny-all').checked;
+    var reBuildings = {};
+    document.querySelectorAll('#cf-re-list .cf-re-deny').forEach(function(cb) {
+      if (cb.checked) {
+        var bn = cb.getAttribute('data-bname');
+        if (bn) reBuildings[bn] = true;
+      }
+    });
+    if (reDenyAll || Object.keys(reBuildings).length) {
+      cycle.realEstateDeny = {};
+      if (reDenyAll) cycle.realEstateDeny.all = true;
+      if (Object.keys(reBuildings).length) cycle.realEstateDeny.buildings = reBuildings;
+    } else {
+      delete cycle.realEstateDeny;
+    }
+    // ──────────────────────────────────────────────────────────────
+
     // Read current order + edits from _cfCycleQuests (deep-copies; updated in memory by inline edits and ▲/▼)
     var _cqs = window._cfCycleQuests || [];
     if (_cqs.length) {
