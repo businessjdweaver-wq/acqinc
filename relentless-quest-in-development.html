@@ -3590,7 +3590,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6917</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6918</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4112,7 +4112,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6917
+      Version 1.6918
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4137,6 +4137,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6918</strong> &mdash; Fix: the v1.6915 limited-contact Begin warning wasn't firing even when an assigned Contact had a quest-limit counter set. <strong>Root cause:</strong> <code>questsRemaining</code> is only ever written to <code>S.party[i].questsRemaining</code> in memory &mdash; the <code>party</code>-table Supabase INSERT at line 18750 serialized about 15 fields (name, class, stats, xp, is_contact, ...) but not this one. So Javvox-style Contacts held their value for a single session, then on any subsequent <code>sbPull</code> the field was dropped. The warning check <code>typeof c.questsRemaining !== 'number'</code> saw <code>undefined</code> and correctly returned null (no warning). Same pattern as the v1.543 Bag of Holding bug. <strong>Fix (client, 3 sites):</strong> (1) push path now serializes <code>quests_remaining</code> and <code>quest_quota</code> columns in the party INSERT payload; (2) pull mapper restores both fields with legacy-meta fallback plus a heal path &mdash; if <code>quest_quota</code> is missing but <code>quests_remaining</code> is present (saves written before this version), the quota is backfilled to the current remaining count so the display isn't empty; (3) capstone NPC creation now stamps both <code>questsRemaining</code> and <code>questQuota</code> at awardCapstonReward time. <strong>Warning text improved:</strong> when quota is known, the modal shows "<em>N</em> of <em>Q</em> quests remaining (including this one)" rather than just the remaining count; the crimson final-quest line now reads "will depart after this quest (last of Q)". Falls back to the older format when quota is unknown. <strong>SQL required this time:</strong> run <code>add-contact-quest-quota-columns.sql</code> to add <code>quests_remaining</code> and <code>quest_quota</code> integer columns to the <code>party</code> table &mdash; idempotent, safe to re-run, includes an optional backfill from a legacy <code>meta</code> blob if one exists.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6917</strong> &mdash; Completes the Contact-eligibility rollout. After v1.6915/6916 fixed the peg-slot level match and the <code>questHardGateIssues</code> topLevel computation, the Begin button was still disabled on a quest staffed by Javvox (a Lv 4 Contact) because <code>regularQuestRosterStatus</code> &mdash; the "at least one Level 1+ adventurer" gate &mdash; still filtered out Contacts via the raw <code>!c.hireling</code> check. The info card showed the contradictory state of "✓ Level 4+ adventurer" (from the already-fixed difficulty gate) alongside "Difficulty gate not met" (from this roster-status gate). The v1.6915 design note said roster-composition gates should stay strict, but that was wrong for Contacts: the narrative intent of those gates is "don't let a quest be staffed entirely by 50gp disposable hirelings," which Contacts are not. Four more sites now use <code>_charCountsForLevelSlot</code>: (a) <code>regularQuestRosterStatus</code> &mdash; Contacts qualify as the required Lv 1+ adventurer; (b) <code>grindRosterStatus</code> &mdash; Contacts qualify as the solo-adventurer path, but are NOT counted toward the "two hirelings pair" path (which is explicitly for 50gp disposable bodies); (c) <code>grindReadiness</code> available pool; (d) <code>questDifficultyRequirementMet</code> and (e) <code>averageLevelForIndices</code> for tier/avg-level calculations. Helper's inline policy note rewritten to reflect the unified rule: all "is this a proper adventurer" gates now treat Contacts as qualifying; only level-up-UI remains strict (<code>_showLvUp</code> correctly hides the Level Up button on Contacts since they're not upgradeable via player gold). No SQL change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6916</strong> &mdash; Follow-up to v1.6915: Contacts now also count toward the <em>difficulty gate</em> and related party-level calculations. After v1.6915, a Lv 4 Contact like Javvox could be placed on a Lv 4+ peg slot (the slot border turned green), but <code>questHardGateIssues</code> still computed its <code>topLevel</code> with the raw <code>!c.hireling</code> filter and reported "Missing: Party level 4+ (highest: 0)" &mdash; blocking the Begin button. Four more sites updated to use <code>_charCountsForLevelSlot</code>: (a) <code>questHardGateIssues</code> topLevel loop, (b) its busyHighLevel loop (controls the "your highest eligible adventurer is on another quest" message), (c) <code>partyMaxLevel</code> (used for tier selection and reward-range display), (d) <code>questCalcReward</code> topLevel loop (level bonus in gold reward). The "⬆ Level Up" peg button's <code>!c.hireling</code> gate is kept as-is &mdash; Contacts aren't level-upable through the player-pays-gold UI, and since they carry <code>hireling:true</code> the existing check correctly hides the button. <code>buildTestRoster</code> also kept raw: test rosters never include Contacts. No SQL change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6915</strong> &mdash; Two Contact-related changes. <strong>(1) Fix: capstone-reward NPC Contacts count toward level prereqs.</strong> Root cause: capstone NPCs are created with <code>hireling:true, contact:true</code> so they inherit hireling-style defaults (zero hire cost, no level-up upsell). But six level-prereq sites gated eligibility with a raw <code>!c.hireling</code> check, so a Lv 4 Contact like "Javvox" was rejected from a Lv 4+ peg slot despite clearly meeting the requirement. New <code>_charCountsForLevelSlot(c)</code> helper: true for non-hirelings AND for <code>hireling:true + contact:true</code> NPCs; false for standard hirelings (which still cap at Lv 0). Applied at six sites: <code>qddCharCoversSlot</code> peg match (the direct symptom), prereq-row level met check (assigned pool + full pool), info-card level met check (assigned + full pool), <code>characterMeetsAssignmentLevel</code>, <code>characterCanMeetAssignmentLevelAfterOneLevel</code>, and the "meets level" pill in the adventurer pick list. Deliberately unchanged: <code>grindRosterStatus</code> and <code>regularQuestRosterStatus</code> still use the raw <code>!c.hireling</code> check because those gates enforce "the squad has at least one real adventurer" &mdash; that's a roster-composition policy separate from the level question. <strong>(2) Feature: limited-contact Begin warning.</strong> Contacts with a tracked <code>questsRemaining</code> counter are consumed by each quest and depart when it hits zero (existing mechanic, v1.666). Previously a user could click Begin and not realize they were burning a contact's last slot. Now on Begin: if any peg-assigned character is a contact with <code>questsRemaining &gt; 0</code>, a new <code>ov-contact-warn</code> modal surfaces with one row per limited contact showing "N quests remaining (including this one)" (or "will depart after this quest" in crimson if only 1 left), a per-contact ✕ Unassign button that clears them from all peg slots without committing, plus Cancel and Begin Anyway footer actions. <code>confirmQuestAssignment</code> gained a <code>skipContactWarn</code> parameter so Begin Anyway doesn't re-prompt on re-entry; the downtime-forfeit gate still runs normally. No SQL change: Contact data already carries <code>contact:true</code> + <code>questsRemaining</code> from the NPC contact editor.</div>
@@ -14808,7 +14809,10 @@ function awardCapstonReward(set){
         contactBg:override.contactBg||'',
         exoticTrait:override.exoticTrait||'',
         stats:override.stats||rollStats(override.cls||'Fighter'),
-        questsRemaining:(typeof override.questsRemaining==='number'&&override.questsRemaining>0)?override.questsRemaining:null
+        questsRemaining:(typeof override.questsRemaining==='number'&&override.questsRemaining>0)?override.questsRemaining:null,
+        // v1.6918: preserve the initial quota so the Begin warning can show
+        // "2 of 6 remaining" rather than just "2 quests remaining."
+        questQuota:(typeof override.questsRemaining==='number'&&override.questsRemaining>0)?override.questsRemaining:null
       };
       if(!S.party)S.party=[];
       // Mark every item the contact brings with them as personal property
@@ -16654,9 +16658,21 @@ function showLimitedContactWarning(entries){
     body.innerHTML=entries.map(function(e){
       var c=e.c;
       var left=c.questsRemaining;
-      var afterTxt=left===1
-        ?'<span style="color:var(--crimson);font-weight:700">will depart after this quest</span>'
-        :('<strong>'+left+'</strong> quest'+(left===1?'':'s')+' remaining (including this one)');
+      var quota=(typeof c.questQuota==='number'&&c.questQuota>=left)?c.questQuota:null;
+      // v1.6918: include the original quota when we know it. Format:
+      //   left===1  → crimson "will depart after this quest (1 of Q)"
+      //   otherwise → "<left> of <quota> quests remaining (including this one)"
+      // When quota is unknown (very old saves pre-v1.6918 without healing
+      // meta), fall back to just the remaining count.
+      var afterTxt;
+      if(left===1){
+        afterTxt='<span style="color:var(--crimson);font-weight:700">will depart after this quest'+
+          (quota?' (last of '+quota+')':'')+'</span>';
+      } else if(quota){
+        afterTxt='<strong>'+left+'</strong> of <strong>'+quota+'</strong> quests remaining (including this one)';
+      } else {
+        afterTxt='<strong>'+left+'</strong> quest'+(left===1?'':'s')+' remaining (including this one)';
+      }
       return '<div style="padding:8px 10px;margin-bottom:6px;background:rgba(201,146,42,.08);border:1px solid rgba(201,146,42,.35);border-radius:5px">'+
         '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'+
         '<strong style="flex:1">\uD83E\uDD1D '+esc(c.name||('Character #'+e.ci))+'</strong>'+
@@ -18768,7 +18784,15 @@ function sbPush(manual){
           exotic_trait:c.exoticTrait||'',
           former_hireling:!!c.formerHireling,
           owned_items:c.ownedItems||[],
-          first_hire:!!c.firstHire
+          first_hire:!!c.firstHire,
+          // v1.6918: persist the contact quest-limit counter so it survives
+          // sbPush/sbPull cycles. Without this, Javvox-style limited Contacts
+          // lose their questsRemaining field on every reload — so the Begin
+          // warning modal (v1.6915) sees undefined and skips. quest_quota
+          // preserves the initial total so the warning can show "2 of 6"
+          // rather than just "2 remaining."
+          quests_remaining:(typeof c.questsRemaining==='number')?c.questsRemaining:null,
+          quest_quota:(typeof c.questQuota==='number')?c.questQuota:null
         };
       }));
     }));
@@ -19094,6 +19118,21 @@ function sbPull(manual){
           ownedItems:c.owned_items||legacyMeta.ownedItems||[],
           coinPurse:c.coin_purse||legacyMeta.coinPurse||0,
           firstHire:!!(c.first_hire||legacyMeta.firstHire),
+          // v1.6918: restore the quest-limit counter. Falls back to legacy
+          // meta blob for pre-migration rows, then to null. The push path
+          // stores null for non-limited Contacts and plain party members.
+          // quest_quota preserved separately for the "N of Q" message.
+          // Heal: if remaining is known but quota missing (older saves before
+          // v1.6918), treat quota as the current remaining count so the
+          // display doesn't look like "6 of 6" from a brand-new perspective.
+          questsRemaining:(typeof c.quests_remaining==='number')?c.quests_remaining
+                           :(typeof legacyMeta.questsRemaining==='number')?legacyMeta.questsRemaining
+                           :null,
+          questQuota:(typeof c.quest_quota==='number')?c.quest_quota
+                     :(typeof legacyMeta.questQuota==='number')?legacyMeta.questQuota
+                     :(typeof c.quests_remaining==='number')?c.quests_remaining
+                     :(typeof legacyMeta.questsRemaining==='number')?legacyMeta.questsRemaining
+                     :null,
           skills:c.skills||[],tools:c.tools||[],lang:c.lang||[],
           weapons:c.weapons||[],inv:cleanInv};
       });
