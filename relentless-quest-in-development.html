@@ -3590,7 +3590,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6918</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6919</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4112,7 +4112,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6918
+      Version 1.6919
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4137,6 +4137,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6919</strong> &mdash; Diagnostic pass for the v1.6918 contact-warning bug. User reported the warning still didn't fire after the v1.6918 SQL + client changes. Two additions to narrow the cause: <strong>(1) Console logging</strong> in <code>confirmQuestAssignment</code>'s pre-flight check &mdash; every Begin click now logs each assigned character's <code>contact</code> flag, <code>hireling</code> flag, <code>questsRemaining</code> type and value, and <code>questQuota</code>. A second log line reports how many limited contacts were detected. This tells us whether the field is missing entirely (Supabase persistence still broken), wrong type (stored as string instead of number), or zero (already exhausted). <strong>(2) <code>window.setContactQuests</code> console utility</strong> &mdash; lets you manually reset Javvox or any Contact's remaining/quota without touching the database or NPC editor. Usage: <code>setContactQuests('Javvox', 6)</code> sets both to 6; <code>setContactQuests('Javvox', 3, 6)</code> sets remaining=3 of 6; <code>setContactQuests('Javvox')</code> reads without changing. Runs <code>save()</code> after mutation. Useful for confirming the warning modal itself works in isolation from the round-trip persistence. No SQL change beyond what v1.6918 already added.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6918</strong> &mdash; Fix: the v1.6915 limited-contact Begin warning wasn't firing even when an assigned Contact had a quest-limit counter set. <strong>Root cause:</strong> <code>questsRemaining</code> is only ever written to <code>S.party[i].questsRemaining</code> in memory &mdash; the <code>party</code>-table Supabase INSERT at line 18750 serialized about 15 fields (name, class, stats, xp, is_contact, ...) but not this one. So Javvox-style Contacts held their value for a single session, then on any subsequent <code>sbPull</code> the field was dropped. The warning check <code>typeof c.questsRemaining !== 'number'</code> saw <code>undefined</code> and correctly returned null (no warning). Same pattern as the v1.543 Bag of Holding bug. <strong>Fix (client, 3 sites):</strong> (1) push path now serializes <code>quests_remaining</code> and <code>quest_quota</code> columns in the party INSERT payload; (2) pull mapper restores both fields with legacy-meta fallback plus a heal path &mdash; if <code>quest_quota</code> is missing but <code>quests_remaining</code> is present (saves written before this version), the quota is backfilled to the current remaining count so the display isn't empty; (3) capstone NPC creation now stamps both <code>questsRemaining</code> and <code>questQuota</code> at awardCapstonReward time. <strong>Warning text improved:</strong> when quota is known, the modal shows "<em>N</em> of <em>Q</em> quests remaining (including this one)" rather than just the remaining count; the crimson final-quest line now reads "will depart after this quest (last of Q)". Falls back to the older format when quota is unknown. <strong>SQL required this time:</strong> run <code>add-contact-quest-quota-columns.sql</code> to add <code>quests_remaining</code> and <code>quest_quota</code> integer columns to the <code>party</code> table &mdash; idempotent, safe to re-run, includes an optional backfill from a legacy <code>meta</code> blob if one exists.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6917</strong> &mdash; Completes the Contact-eligibility rollout. After v1.6915/6916 fixed the peg-slot level match and the <code>questHardGateIssues</code> topLevel computation, the Begin button was still disabled on a quest staffed by Javvox (a Lv 4 Contact) because <code>regularQuestRosterStatus</code> &mdash; the "at least one Level 1+ adventurer" gate &mdash; still filtered out Contacts via the raw <code>!c.hireling</code> check. The info card showed the contradictory state of "✓ Level 4+ adventurer" (from the already-fixed difficulty gate) alongside "Difficulty gate not met" (from this roster-status gate). The v1.6915 design note said roster-composition gates should stay strict, but that was wrong for Contacts: the narrative intent of those gates is "don't let a quest be staffed entirely by 50gp disposable hirelings," which Contacts are not. Four more sites now use <code>_charCountsForLevelSlot</code>: (a) <code>regularQuestRosterStatus</code> &mdash; Contacts qualify as the required Lv 1+ adventurer; (b) <code>grindRosterStatus</code> &mdash; Contacts qualify as the solo-adventurer path, but are NOT counted toward the "two hirelings pair" path (which is explicitly for 50gp disposable bodies); (c) <code>grindReadiness</code> available pool; (d) <code>questDifficultyRequirementMet</code> and (e) <code>averageLevelForIndices</code> for tier/avg-level calculations. Helper's inline policy note rewritten to reflect the unified rule: all "is this a proper adventurer" gates now treat Contacts as qualifying; only level-up-UI remains strict (<code>_showLvUp</code> correctly hides the Level Up button on Contacts since they're not upgradeable via player gold). No SQL change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6916</strong> &mdash; Follow-up to v1.6915: Contacts now also count toward the <em>difficulty gate</em> and related party-level calculations. After v1.6915, a Lv 4 Contact like Javvox could be placed on a Lv 4+ peg slot (the slot border turned green), but <code>questHardGateIssues</code> still computed its <code>topLevel</code> with the raw <code>!c.hireling</code> filter and reported "Missing: Party level 4+ (highest: 0)" &mdash; blocking the Begin button. Four more sites updated to use <code>_charCountsForLevelSlot</code>: (a) <code>questHardGateIssues</code> topLevel loop, (b) its busyHighLevel loop (controls the "your highest eligible adventurer is on another quest" message), (c) <code>partyMaxLevel</code> (used for tier selection and reward-range display), (d) <code>questCalcReward</code> topLevel loop (level bonus in gold reward). The "⬆ Level Up" peg button's <code>!c.hireling</code> gate is kept as-is &mdash; Contacts aren't level-upable through the player-pays-gold UI, and since they carry <code>hireling:true</code> the existing check correctly hides the button. <code>buildTestRoster</code> also kept raw: test rosters never include Contacts. No SQL change.</div>
@@ -16736,12 +16737,27 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit,skipContactWarn){
   // Require explicit peg assignments — no silent fallback to full party
   if(!chars.length){alert('Assign at least one adventurer to the peg slots before beginning.');return;}
 
-  // v1.6915: Limited-contact warning. If any assigned character is a
+  // v1.6915+: Limited-contact warning. If any assigned character is a
   // contact NPC with a tracked quests-remaining counter, surface a
   // warning modal before committing. Lets the user unassign specific
   // contacts (peg clears and quest modal returns) or proceed with full
   // awareness of the impending departure.
+  // v1.6919: added diagnostic logging so we can tell from the console why
+  // the warning didn't fire — the field must be named questsRemaining,
+  // must be typed as a number, must be > 0, AND c.contact must be truthy.
   if(!skipContactWarn){
+    console.log('[ContactWarn] assigned chars:', chars.map(function(ci){
+      var c=S.party[ci];
+      if(!c)return {ci:ci,err:'no c'};
+      return {
+        ci:ci, name:c.name,
+        contact:c.contact,
+        hireling:c.hireling,
+        questsRemainingType:typeof c.questsRemaining,
+        questsRemaining:c.questsRemaining,
+        questQuota:c.questQuota
+      };
+    }));
     var limitedContacts=chars.map(function(ci){
       var c=S.party[ci];
       if(!c)return null;
@@ -16749,6 +16765,7 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit,skipContactWarn){
       if(typeof c.questsRemaining!=='number'||c.questsRemaining<=0)return null;
       return {ci:ci,c:c};
     }).filter(Boolean);
+    console.log('[ContactWarn] limitedContacts found:', limitedContacts.length);
     if(limitedContacts.length){
       showLimitedContactWarning(limitedContacts);
       return;
@@ -20975,6 +20992,35 @@ window.burnerPillClick=burnerPillClick;
 window.showBurnerPicker=showBurnerPicker;
 window.cancelBurner=cancelBurner;
 window.confirmBurner=confirmBurner;
+
+// v1.6919: diagnostic console utility. Call from the browser console:
+//   setContactQuests('Javvox', 6)        — sets remaining and quota both to 6
+//   setContactQuests('Javvox', 3, 6)     — sets remaining=3 (of quota 6)
+//   setContactQuests('Javvox')           — shows current state without changing
+// Finds by case-insensitive name contains. Useful when Supabase persistence
+// lost the field (pre-v1.6918) and you want to seed the state locally to
+// verify the Begin warning modal fires correctly.
+window.setContactQuests = function(nameFragment, remaining, quota){
+  var frag=(nameFragment||'').toLowerCase();
+  if(!frag){console.log('Usage: setContactQuests(nameFragment, remaining?, quota?)');return;}
+  var matches=(S.party||[]).map(function(c,i){return {c:c,i:i};})
+    .filter(function(x){return x.c && (x.c.name||'').toLowerCase().indexOf(frag)!==-1;});
+  if(!matches.length){console.warn('No party character matches "'+nameFragment+'"');return;}
+  matches.forEach(function(m){
+    var c=m.c;
+    console.log('Found:', {ci:m.i, name:c.name, contact:c.contact, hireling:c.hireling,
+      current_questsRemaining:c.questsRemaining, current_questQuota:c.questQuota});
+    if(typeof remaining==='number'){
+      c.questsRemaining=remaining;
+      c.questQuota=(typeof quota==='number'?quota:remaining);
+      console.log('Updated:', {name:c.name, questsRemaining:c.questsRemaining, questQuota:c.questQuota});
+    }
+  });
+  if(typeof remaining==='number'){
+    save();
+    console.log('[setContactQuests] save() called. Reload quest modal to re-run check.');
+  }
+};
 
 var _burnerPills=document.getElementById('ov-brn-pills');
 if(_burnerPills && !_burnerPills.dataset.bound){
