@@ -3732,7 +3732,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6928</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6930</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4357,7 +4357,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6928
+      Version 1.6930
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4382,6 +4382,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6930</strong> &mdash; Critical persistence fix: v1.6924's Split / Merge / Pin features claimed to ride inside existing JSON columns but the push/pull paths were never updated. Result: splitting a task and reloading lost the group association; pinning anything and reloading emptied the Spotlight; split-group colors/emoji reset on every sync. <strong>SQL migration required before deploying this version:</strong><br><br><code>ALTER TABLE active_tasks ADD COLUMN IF NOT EXISTS split_group text DEFAULT NULL;</code><br><code>ALTER TABLE franchise ADD COLUMN IF NOT EXISTS split_group_meta jsonb NOT NULL DEFAULT '{}'::jsonb;</code><br><code>ALTER TABLE franchise ADD COLUMN IF NOT EXISTS pinned jsonb NOT NULL DEFAULT '[]'::jsonb;</code><br><br><strong>Code changes:</strong> (1) <code>sbPush</code> active_tasks row now includes <code>split_group:t._splitGroup||null</code>. (2) <code>sbPush</code> franchise row now includes <code>split_group_meta:S.splitGroupMeta||{}</code> and <code>pinned:S.pinned||[]</code>. (3) <code>sbPull</code> franchise hydration reads the two new jsonb columns and restores <code>S.splitGroupMeta</code> and <code>S.pinned</code>, with <code>||{}</code> / <code>||[]</code> fallbacks for pre-migration rows so no crash on first pull. (4) <code>sbPull</code> active_tasks hydration reads <code>t.split_group</code> into <code>_splitGroup</code>. (5) Code-session login path's <code>_keys</code> blob list now includes <code>splitGroupMeta</code> and <code>pinned</code> so code-account users get persistence via the <code>login_codes.player_data</code> blob. <strong>Deployment order:</strong> run the SQL in Supabase first, then deploy the HTML. The new columns have sensible defaults so existing franchise rows get <code>{}</code> / <code>[]</code> automatically and the app continues working identically until users create their first split group or pin. <strong>What finally works after this:</strong> splits survive reloads (both halves remember their group id); pins survive reloads (Pinned Spotlight restores on pull); split group colors/emoji survive reloads. No behavior change for users with no splits or pins. No data migration needed — new columns start empty and get populated by natural app use.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6928</strong> &mdash; Split groups now get per-group colour + optional emoji, borrowing the visual pattern from the old Projects system. Rationale: even after the v1.6927 subtle redesign, users reported that two tasks inside a split group still read as siblings in a bordered box rather than members of a unit. Stronger visual grouping was needed. <strong>(1) Data model.</strong> New top-level <code>S.splitGroupMeta</code> dict keyed by <code>_splitGroup</code> id, each entry <code>{color, ic}</code>. Colours round-robin through the Projects palette (<code>PROJ_COLORS</code>) avoiding collisions with existing groups. Icons default to <code>null</code> (renders as a ✂ placeholder); users can pick from a curated emoji list. <code>ensureTaskIds</code> extended to auto-create missing meta entries with non-colliding colours and drop orphan entries for groups that no longer have ≥2 members. Rides inside existing JSON — no SQL change. <strong>(2) Render.</strong> Split-group wrapper now uses two CSS custom properties (<code>--sg-color</code>, <code>--sg-tint</code>) populated from meta: a 5px coloured left-stripe (was 4px gold), 1.5px coloured outer border, tinted background at ~8% alpha, and a tappable header row with the group's emoji + "SPLIT GROUP" label + a ✎ edit affordance. Member cards inside the group still strip their own chrome so the group reads as one unit, and the dotted divider between members now inherits the group colour too. <strong>(3) Picker modal.</strong> New <code>ov-splitgrp-color</code> modal repurposes the old Projects picker UI: emoji grid with 28 curated choices plus a "None" reset option, colour swatch grid with 18 swatches. All swatches/emoji are ≥44×44px for touch. Live-saves and re-renders on every tap so the user sees the group update in real time. <strong>(4) Two access paths.</strong> Per user spec: (a) tap the group header (<code>data-a="sgpick"</code>) routes through the existing <code>#tlist</code> click handler, and (b) long-press (500ms hold, 8px move-slop cancel, desktop mousedown fallback) on any member task card opens the same picker. The long-press IIFE ignores touches on buttons, inputs, sub-task rows, the drag handle, pie toggle, and the group header itself so it doesn't compete with existing interactions. <strong>(5) Auto-colour on split creation.</strong> When the Split modal confirms, <code>ensureTaskIds</code> runs on the next <code>renderTasks</code> call and assigns the new group a colour from the palette that isn't already used by any other live group. Users can re-pick at any time via either access path.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6927</strong> &mdash; Split group visual redesign. Previous implementation read as "two sibling cards in a bordered box" with a jarring Cinzel uppercase "SPLIT GROUP" label notched into the top border — style clashed with the rest of the Contracts screen and the two member tasks didn't feel connected. New design combines a shared gold left-stripe bracket (reusing the <code>::before</code> pattern every task card already has) with a warm parchment-tinted background (<code>rgba(201,146,42,.06)</code>) filling the whole group. Inner cards inside a split group have their own borders, left-stripe, box-shadow, and background stripped so they visually merge into the group as members of one unit rather than siblings. A thin dotted divider (<code>1px dotted rgba(139,96,16,.25)</code>) separates members — same pattern as sub-task row dividers inside a task, reinforcing the "parts of a whole" read. The badge is now just a tiny ✂ icon (no text, <code>.68em</code>, <code>gold-dark</code>, <code>opacity:.75</code>) tucked into the top-left corner pocket between the gold stripe and the first card's content. New CSS selectors: <code>.split-group::before</code>, <code>.split-group > .card + .card</code> for the divider. No data model changes, no SQL change. No changes to Split, Merge, Pin, or Reorder logic — purely visual.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6926</strong> &mdash; Two mobile fixes for the v1.6924/6925 Contracts overhaul. <strong>(1) Multi-line sub-task alignment.</strong> On long sub-task names that wrap to multiple lines, the drag handle (⠿), pie-progress toggle (◐), checkbox, and ⋯ menu dot were vertically centered relative to the whole wrapped block, leaving them floating in the middle of the row. Changed <code>.strow-main</code> from <code>align-items:center</code> to <code>align-items:flex-start</code> and added per-element <code>padding-top</code> (~8-10px) on the handle / pie / dot so they visually sit on the first line of text. Label contents also top-align now. <strong>(2) Split / Merge / Reorder modal overflow on mobile.</strong> Modals had <code>padding:0;overflow:hidden</code> inline, which overrode the base <code>.modal</code>'s <code>max-height:86vh; overflow-y:auto</code> — on a phone with enough sub-tasks, the footer (Cancel + Split/Merge buttons) rendered below the viewport and couldn't be reached. Fix: all three modals restructured as flex columns with <code>max-height:86vh</code> on the outer wrapper, <code>flex-shrink:0</code> on header/footer/fixed sections, and <code>flex:1; overflow-y:auto</code> on only the scrollable inner list. Footer is now always pinned at the bottom of the modal regardless of list length; inner list scrolls independently. Same structural fix applied to the Reorder modal for consistency even though it didn't have a footer. No data-model changes, no SQL change.</div>
@@ -20509,7 +20510,11 @@ function sbPush(manual){
     var _keys=['gold','active','archived','archGroups','taskGroups','projects','party',
       'squads','partyAssets','franchiseStorage','log','questState','questCycles',
       'questCycleSquads','questLog','downtimeJobs','qpBalance','qpEarnedToday',
-      'qpEarnDate','settings'];
+      'qpEarnDate','settings',
+      // v1.6930: Pinned Spotlight + split-group metadata persist for code-
+      // session accounts via the player_data blob. (The regular user path
+      // uses dedicated jsonb columns on franchise.)
+      'splitGroupMeta','pinned'];
     _keys.forEach(function(k){if(S[k]!==undefined)_blob[k]=S[k];});
     return sbFetch(SB_URL+'/rest/v1/login_codes?id=eq.'+encodeURIComponent(currentUser._codeId),{
       method:'PATCH',
@@ -20550,6 +20555,11 @@ function sbPush(manual){
       franchise_storage:S.franchiseStorage||[],
       downtime_jobs:S.downtimeJobs||[],
       quest_log:(S.questLog||[]).slice(0,200),
+      // v1.6930: persist Pinned Spotlight array + split-group metadata
+      // (color/emoji per group). Both are franchise-level state, not
+      // per-task, so they ride on the franchise row alongside settings.
+      split_group_meta:S.splitGroupMeta||{},
+      pinned:S.pinned||[],
       last_sync:new Date().toISOString()
     }],'user_id');
   }));
@@ -20605,7 +20615,11 @@ function sbPush(manual){
       allRows.push({user_id:userId,sort_order:i,name:t.name,gp:t.gp||5,count:t.count||0,
         pct:t.pct||0,
         subtasks:packedSubtasks,collapsed:!!t.collapsed,fav:!!t.fav,
-        freq:t.freq||null,cat:t.cat||null,burner_until:t.burnerUntil||null});
+        freq:t.freq||null,cat:t.cat||null,burner_until:t.burnerUntil||null,
+        // v1.6930: split_group column persists the _splitGroup id so pairs
+        // of split tasks stay visually grouped across reloads. Null for
+        // tasks that aren't part of any split group.
+        split_group:t._splitGroup||null});
     });
 
     // Project rows — one sentinel row per project (preserves empty projects),
@@ -20867,6 +20881,11 @@ function sbPull(manual){
       S.franchiseStorage=fr.franchise_storage||rawSettings._franchiseStorage||[];
       S.questLog=fr.quest_log||rawSettings._questLog||[];
       S.downtimeJobs=fr.downtime_jobs||rawSettings._downtimeJobs||[];
+      // v1.6930: Pinned Spotlight array + split-group metadata. Both ride on
+      // dedicated jsonb columns on franchise. Fall back to empty collection
+      // for rows from before this migration.
+      S.splitGroupMeta=fr.split_group_meta||{};
+      S.pinned=fr.pinned||[];
       // QP — proper columns first
       S.qpBalance=typeof fr.qp_balance==='number'?fr.qp_balance:(typeof rawSettings._qpBalance==='number'?rawSettings._qpBalance:0);
       S.qpEarnedToday=fr.qp_earned_today||rawSettings._qpEarnedToday||0;
@@ -20977,7 +20996,10 @@ function sbPull(manual){
         return {_sbId:t.id,_tid:meta._tid||('t'+Date.now().toString(36)+Math.random().toString(36).slice(2,8)+ti),name:t.name,gp:t.gp,count:t.count,
           pct:t.pct||0,
           subtasks:cleanSubtasks,
-          collapsed:t.collapsed,fav:t.fav,freq:t.freq,cat:t.cat,burnerUntil:t.burner_until||null,note:meta.note,desc:meta.desc||''||''};
+          collapsed:t.collapsed,fav:t.fav,freq:t.freq,cat:t.cat,burnerUntil:t.burner_until||null,note:meta.note,desc:meta.desc||''||'',
+          // v1.6930: restore split-group membership. Null for tasks that
+          // aren't part of any group, otherwise the shared sg id.
+          _splitGroup:t.split_group||null};
       });
     }
     if(archived&&archived.length){
