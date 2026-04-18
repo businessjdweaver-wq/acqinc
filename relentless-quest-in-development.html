@@ -3590,7 +3590,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6913</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6915</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4112,7 +4112,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6913
+      Version 1.6915
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4137,6 +4137,8 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6915</strong> &mdash; Two Contact-related changes. <strong>(1) Fix: capstone-reward NPC Contacts count toward level prereqs.</strong> Root cause: capstone NPCs are created with <code>hireling:true, contact:true</code> so they inherit hireling-style defaults (zero hire cost, no level-up upsell). But six level-prereq sites gated eligibility with a raw <code>!c.hireling</code> check, so a Lv 4 Contact like "Javvox" was rejected from a Lv 4+ peg slot despite clearly meeting the requirement. New <code>_charCountsForLevelSlot(c)</code> helper: true for non-hirelings AND for <code>hireling:true + contact:true</code> NPCs; false for standard hirelings (which still cap at Lv 0). Applied at six sites: <code>qddCharCoversSlot</code> peg match (the direct symptom), prereq-row level met check (assigned pool + full pool), info-card level met check (assigned + full pool), <code>characterMeetsAssignmentLevel</code>, <code>characterCanMeetAssignmentLevelAfterOneLevel</code>, and the "meets level" pill in the adventurer pick list. Deliberately unchanged: <code>grindRosterStatus</code> and <code>regularQuestRosterStatus</code> still use the raw <code>!c.hireling</code> check because those gates enforce "the squad has at least one real adventurer" &mdash; that's a roster-composition policy separate from the level question. <strong>(2) Feature: limited-contact Begin warning.</strong> Contacts with a tracked <code>questsRemaining</code> counter are consumed by each quest and depart when it hits zero (existing mechanic, v1.666). Previously a user could click Begin and not realize they were burning a contact's last slot. Now on Begin: if any peg-assigned character is a contact with <code>questsRemaining &gt; 0</code>, a new <code>ov-contact-warn</code> modal surfaces with one row per limited contact showing "N quests remaining (including this one)" (or "will depart after this quest" in crimson if only 1 left), a per-contact ✕ Unassign button that clears them from all peg slots without committing, plus Cancel and Begin Anyway footer actions. <code>confirmQuestAssignment</code> gained a <code>skipContactWarn</code> parameter so Begin Anyway doesn't re-prompt on re-entry; the downtime-forfeit gate still runs normally. No SQL change: Contact data already carries <code>contact:true</code> + <code>questsRemaining</code> from the NPC contact editor.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6914</strong> &mdash; Fix: phantom empty Faith peg slot on the quest-assignment modal (e.g. "Cellar Savant" showed a ✝ FAITH slot with no deity named). <strong>Root cause:</strong> shape drift between the Quest Editor's quest-matrix chip-picker (writes <code>pre.rel</code> as a JSON array) and the rest of the codebase (expects a single string or <code>""</code>). The main app's peg-slot guard at <code>qddBuildCharSlots</code> only defended against <code>null</code>/<code>undefined</code>/<code>""</code>; empty arrays slipped through because <code>[]</code> is truthy AND <code>[] !== ""</code>, so a Faith slot was pushed with <code>slot.value = []</code>. The render coerced <code>esc([])</code> to the empty string and produced a bordered slot with a label but no visible requirement. Same drift also broke the single-faith quests (Ravenous, Hope Springs Eternal, Cold Trail, Rune Corrupted) whose <code>pre.rel</code> was <code>["Faith Name"]</code> instead of <code>"Faith Name"</code> \u2014 peg-fill checks like <code>c.rel===slot.value</code> compared a string to an array and never matched, making the slots un-fillable. <strong>Fix (3 layers):</strong> (1) <code>qddBuildCharSlots</code> at line 23355 now accepts both array and string shapes, skips blank/whitespace/non-string entries, and trims. (2) <code>mergeCustomContent</code> now normalizes <code>pre.rel</code> to a single string at merge time \u2014 so all 10+ downstream consumers (<code>grindReadiness</code>, confirm-path best-fit scoring, prereq row rendering, hireling suggestions, etc.) see a canonical shape without per-site patching. (3) Quest Editor (v1.679) now writes <code>pre.rel</code> as a string consistently \u2014 both the form save path and the <code>questToRow</code> serializer coerce to the first non-empty string on save, preventing new bad data. <strong>One-time SQL cleanup</strong> provided as <code>normalize-rel-shape.sql</code>: flattens existing array-shaped <code>pre.rel</code> values across all quest rows. Dry-run preview + commented UPDATE; idempotent, safe to re-run. After the client fixes alone, rendering works correctly regardless of DB shape; the SQL is optional tidy-up to canonicalize the stored data.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6913</strong> &mdash; Grind refactor: grinds are now a unified, cycle-independent list reached through the Quest Map. <strong>(1) Adventure screen stripped of grinds.</strong> The per-cycle adventure view no longer renders the <code>⚙ Grind Missions</code> section, its auto-assign button, in-progress cards, or <code>[data-grind-header]</code> anchor. Per-cycle screens show only that cycle's quests. The dead pre-block auto-assign button tied to use-before-def <code>_canAutoGrind</code>/<code>_grindAutoCost</code> (never actually rendered due to var hoisting) was also removed. <strong>(2) New dedicated Grinds modal</strong> <code>ov-grinds-list</code>: summary band (clocked-in squads · eligible characters · in-progress count), auto-assign button, all grinds sorted in-progress → ready → stretch → overreach → reward desc. Owns its own 1s countdown tick (<code>grindsCountdownTimer</code>) while open; re-renders when a mission crosses zero. <strong>(3) Ten new harder grinds (g12\u2013g21)</strong> with sliding difficulty: rewards 45\u2013100 gp, enforced <code>minLevel</code> 2\u20136, enforced <code>minSquadSize</code> 2\u20134, progressive prereqs (single-skill \u2192 multi-skill + tools + languages). <code>grindRosterStatus()</code> signature extended with a second <code>grindObj</code> parameter (backward-compatible when omitted) and now rejects rosters under a grind's <code>minSquadSize</code>; all four callers updated (<code>grindReadiness</code>, auto-assign loop, and both confirm-path checks). The Grinds modal surfaces <code>minLevel</code> and <code>minSquadSize</code> in each card's prereq line alongside skills/tools/languages. <strong>(4) Click handlers rebound to document scope.</strong> <code>gassign</code> / <code>gcollect</code> / <code>grind-auto</code> branches moved out of <code>#avcontent</code>'s click listener into a fresh document-scoped listener so they fire from the new modal. Each mutation also triggers <code>renderGrindsList()</code> when the modal is visible so the view stays current without a manual reopen; <code>confirmQuestAssignment</code>'s grind path does the same. Auto-assign's character pool was widened to match the Grinds modal's eligibility rules (active cycle + clocked-in + unassigned), replacing the old active-cycle-only pool. <strong>(5) Entry points re-wired.</strong> Quest Map \u201cOpen Grinds\u201d button no longer navigates to the Adventure screen and scrolls to a now-missing anchor \u2014 it calls <code>openGrindsList()</code> and closes the map modal. The v1.6912 party-row free-chooser\u2019s Grind path does the same. No SQL change: new grind entries are static data on <code>GRIND[]</code>, and pending grind entries continue to store only <code>id</code> \u2014 <code>minLevel</code>/<code>minSquadSize</code> are looked up from <code>GRIND[]</code> at check time.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6912</strong> &mdash; Two coordinated features. <strong>(1) Quest-Editor Real Estate deny rules consumer.</strong> The Quest Editor (v1.678) now lets writers deny specific buildings (or the whole catalog) per completed cycle via a <code>realEstateDeny</code> field on the cycle's <code>data</code> JSONB blob &mdash; no SQL change needed. Main app now honors it: <code>realEstateCatalog(setId)</code> takes a setId and filters the curated list against the cycle's deny rules. New helpers <code>realEstateDenyForSet(setId)</code> and <code>realEstateAllDeniedForSet(setId)</code>. <code>renderRealEstateCatalog</code> shows a clear 🚫 "Real estate unavailable" notice when the whole cycle is denied. The 🏘 Real Estate button on Quest Map cycle cards is hidden when all real estate is denied AND no buildings have already been assigned to the cycle; if owned buildings exist, the button stays available so users can still view them. <strong>(2) Party-row free chooser.</strong> Clicking the dotted-underline "free" status on a squad roster row no longer jumps straight to the downtime modal &mdash; it now opens <code>ov-free-choice</code>, a compact picker with 🕯 Downtime and ⚙ Grind Mission options. Downtime routes to the existing <code>startDowntimeForChar(ci)</code> unchanged. Grind option is hard-gated by <code>_charCanGrind(ci)</code>: eligible only when the character is in a squad currently clocked in to the grind shift OR not in any squad (unassigned/ad-hoc); when ineligible the Grind button is hidden and the modal message explains why (either grinds not yet unlocked, or squad not clocked in). Confirming Grind navigates to the Adventure screen and scrolls to the grind section via the existing <code>[data-grind-header]</code> anchor. Same pattern as Quest Map's "Open Grinds" button. Gate is re-checked at confirm time as defense-in-depth.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6911</strong> &mdash; Fix: abandoning an active quest cycle caused previously-completed cycles (e.g. Root &amp; Branch 10/10) to visually regress to a partial count matching the abandoned cycle's progress (e.g. 3/10). <strong>Root cause:</strong> the abandon handler cleared <code>qs.setId</code>, <code>qs.pending</code>, and <code>qs.grindPending</code> but left <code>qs.done</code>, <code>qs.repeatCounts</code>, <code>qs.revealed</code>, and <code>qs.assigned</code> holding the abandoned cycle's indices. With <code>setId=null</code>, <code>activeQuestSet()</code> falls back to <code>QUESTSETS[0]</code> (Root &amp; Branch) &mdash; so render code then evaluated the stale indices against a <em>different</em> set's quests. Because quest indices (0, 1, 2, …) collide across sets, the first N quests of the fallback set appeared falsely complete. The true progress for both cycles was still correct in <code>setProgress[setId]</code> &mdash; only the live <code>qs.*</code> arrays were corrupt, so the regression was cosmetic but persistent (survived save/reload). Previously latent because players rarely lingered in the no-active-cycle state between abandon and re-activate; v1.6910's Real Estate button and Grind Missions card on the Quest Map invited exactly that browsing pattern, exposing the bug. <strong>Fix (abandon handler):</strong> when <code>isActive</code> and we null <code>qs.setId</code>, also reset <code>qs.done=[]</code>, <code>qs.repeatCounts={}</code>, <code>qs.revealed=[]</code>, <code>qs.assigned={}</code>. The cycle's persisted progress in <code>setProgress[setId]</code> (written one line above by <code>saveActiveSetProgress()</code>) is untouched, so re-activating the same cycle via Quest Map restores the correct state through the normal <code>loadSetProgress()</code> path. <strong>Fix (self-heal):</strong> added <code>healOrphanedQuestState()</code> &mdash; runs at load time alongside <code>sanitizeDowntimeKeys()</code> and <code>migrateArtificerToRunesmith()</code> across all three load paths (local <code>load()</code>, code-login, and <code>sbPull</code>). If <code>qs.setId</code> is null/missing but any of <code>done</code> / <code>repeatCounts</code> / <code>revealed</code> / <code>assigned</code> hold entries, those live arrays are cleared. Idempotent; no-op when state is legitimate. Self-heals any save already corrupted by the old handler so existing users recover on first load without manual re-activation.</div>
@@ -4783,6 +4785,20 @@ body.dev-active #app{margin-top:36px;}
   <div class="mbtns">
     <button class="btn bink" type="button" id="ov-dtf-no">Back</button>
     <button class="btn bpur" type="button" id="ov-dtf-yes">Approve & Assign</button>
+  </div>
+</div></div>
+
+<!-- v1.6915: LIMITED-CONTACT WARNING — shown on Begin when one or more
+     assigned Contacts have questsRemaining tracked. After their quota runs
+     out they depart the franchise. Lets the user unassign individuals or
+     proceed anyway. -->
+<div class="ov" id="ov-contact-warn"><div class="modal" style="max-width:440px">
+  <h3>⚠ Limited Contact Assigned</h3>
+  <p style="font-size:.88em;margin-bottom:8px">One or more contacts on this quest have a limited number of quests remaining before departing the franchise. Each contact below will be used once if you proceed.</p>
+  <div id="ov-cwarn-body" style="font-size:.84em;color:var(--ink);margin:4px 0 10px;max-height:40vh;overflow-y:auto"></div>
+  <div class="mbtns">
+    <button class="btn bink" type="button" id="ov-cwarn-cancel">Cancel</button>
+    <button class="btn bg" type="button" id="ov-cwarn-proceed">Begin Anyway</button>
   </div>
 </div></div>
 
@@ -9786,6 +9802,26 @@ function _dtFmtDate(ts){
 // in to the grind shift, OR not a member of any squad (unassigned, ad-hoc).
 // This matches the gate applied by the grind-assignment modal's squad
 // picker and the adventure-screen grind section.
+// v1.6914: Capstone-reward NPC Contacts are stored with hireling:true so
+// they share hireling-style defaults (zero hire cost, no level-up UI paid
+// from party funds, etc.) — but they are conceptually full companion
+// adventurers with a real .level value assigned by the quest author. For
+// any gate specifically about "this character counts toward a level
+// prerequisite," Contacts must qualify. Standard hirelings (hireling:true,
+// no contact flag) still fail the check because they cap at level 0.
+// This helper is the canonical test — use it wherever a level prereq is
+// being evaluated. For ROSTER-composition gates that need at least one
+// "real" adventurer (e.g. grindRosterStatus, regularQuestRosterStatus),
+// keep the direct !c.hireling check; those gates protect against sending
+// only-hirelings-only parties, and Contacts are not meant to satisfy the
+// squad-has-an-adventurer rule either (that's a separate policy call).
+function _charCountsForLevelSlot(c){
+  if(!c)return false;
+  if(!c.hireling)return true;
+  // Hireling with contact:true flag → capstone NPC companion; level counts.
+  if(c.contact)return true;
+  return false;
+}
 function _charIsUnassigned(ci){
   return !(S.squads||[]).some(function(sq){
     return sq&&(sq.memberIdxs||[]).indexOf(ci)!==-1;
@@ -13571,7 +13607,11 @@ function grindRequiredLevel(g){
   return resolveQuestLikeRequiredLevel(g,true);
 }
 function characterMeetsAssignmentLevel(c, reqLv, isGrind){
-  if(!c || c.hireling) return false;
+  // v1.6915: Capstone NPC Contacts (hireling:true + contact:true) count
+  // toward level prereqs via _charCountsForLevelSlot. Regular hirelings
+  // (hireling:true, no contact flag) still fail the check.
+  if(!c) return false;
+  if(!_charCountsForLevelSlot(c)) return false;
   var lv=Number(c.level);
   if(!isFinite(lv)) lv=0;
   reqLv=Number(reqLv);
@@ -13579,7 +13619,11 @@ function characterMeetsAssignmentLevel(c, reqLv, isGrind){
   return lv>=reqLv;
 }
 function characterCanMeetAssignmentLevelAfterOneLevel(c, reqLv, isGrind){
-  if(!c || c.hireling) return false;
+  // v1.6915: Same Contact-aware gate — plus existing level-up-ready
+  // check. Contacts rarely have a level-up path exposed to the player
+  // but we keep the logic parallel so no site diverges.
+  if(!c) return false;
+  if(!_charCountsForLevelSlot(c)) return false;
   if(!charReadyToLevel(c)) return false;
   var lv=Number(c.level);
   if(!isFinite(lv)) lv=0;
@@ -13618,7 +13662,7 @@ function buildQuestLevelActionHtml(c,ci,questLike,isGrind,isBusy){
   var reqLv=resolveQuestLikeRequiredLevel(questLike,!!isGrind);
   var lv=Number(c.level);
   if(!isFinite(lv))lv=0;
-  if(!c.hireling&&lv>=reqLv){
+  if(_charCountsForLevelSlot(c)&&lv>=reqLv){
     return '<span class="pill" style="background:rgba(45,80,22,.10);border-color:rgba(45,80,22,.35);color:var(--forest);font-family:\'Cinzel\',serif">meets level</span>';
   }
   return '<button class="qcb-lvup" data-ci="'+ci+'" style="font-size:.72em;padding:2px 7px;border:1px solid var(--forest);border-radius:4px;background:rgba(31,111,31,.1);color:var(--forest);cursor:pointer;white-space:nowrap;margin-left:4px">⬆ Level Up</button>';
@@ -16577,6 +16621,49 @@ function activeDowntimeJobsForChars(chars){
     return job&&((job.endsAt||0)>now)?{ci:ci,job:job}:null;
   }).filter(Boolean);
 }
+// v1.6915: Limited-contact warning. Contacts (capstone-reward NPCs with
+// c.contact:true) may carry c.questsRemaining — a counter decremented on
+// collectQuest that removes the NPC from the party when it hits zero. This
+// gate ensures the user doesn't accidentally burn a limited contact's last
+// quest slot without realizing it. Called from confirmQuestAssignment if
+// any peg-assigned character is a contact with questsRemaining > 0.
+function showLimitedContactWarning(entries){
+  var body=document.getElementById('ov-cwarn-body');
+  if(body){
+    body.innerHTML=entries.map(function(e){
+      var c=e.c;
+      var left=c.questsRemaining;
+      var afterTxt=left===1
+        ?'<span style="color:var(--crimson);font-weight:700">will depart after this quest</span>'
+        :('<strong>'+left+'</strong> quest'+(left===1?'':'s')+' remaining (including this one)');
+      return '<div style="padding:8px 10px;margin-bottom:6px;background:rgba(201,146,42,.08);border:1px solid rgba(201,146,42,.35);border-radius:5px">'+
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'+
+        '<strong style="flex:1">\uD83E\uDD1D '+esc(c.name||('Character #'+e.ci))+'</strong>'+
+        '<button class="btn bink sm" data-cwarn-unassign="'+e.ci+'" style="font-size:.7em;padding:3px 8px">\u2715 Unassign</button>'+
+        '</div>'+
+        '<div style="font-size:.82em;color:var(--ink-light)">'+afterTxt+'</div>'+
+        '</div>';
+    }).join('');
+  }
+  openOv('ov-contact-warn');
+}
+// Delegated Unassign click — clears all peg slots holding that char,
+// re-renders the quest-assignment modal, and closes the warning. The user
+// can then re-click Begin (which will re-check and either re-prompt if
+// another limited contact is still assigned, or commit).
+document.addEventListener('click',function(e){
+  var btn=e.target.closest('[data-cwarn-unassign]');
+  if(!btn)return;
+  var rci=parseInt(btn.getAttribute('data-cwarn-unassign'),10);
+  if(!isFinite(rci))return;
+  Object.keys(qddSlotAssignments||{}).forEach(function(k){
+    if(qddSlotAssignments[k]===rci)qddSlotAssignments[k]=null;
+  });
+  qcarSelected=null;
+  closeOv('ov-contact-warn');
+  if(typeof qddRender==='function'&&qddQuestLike)qddRender(qddQuestLike,qddIsGrind);
+});
+
 function showDowntimeForfeitModal(jobs){
   var body=document.getElementById('ov-dtf-body');
   if(body){
@@ -16605,12 +16692,31 @@ function forfeitDowntimeJobs(jobs){
     }
   });
 }
-function confirmQuestAssignment(forceApproveDowntimeForfeit){
+function confirmQuestAssignment(forceApproveDowntimeForfeit,skipContactWarn){
 
   var squadName=activeCycleSquadName(); // use active cycle squad for terrain checks
   var chars=getQuestChars();
   // Require explicit peg assignments — no silent fallback to full party
   if(!chars.length){alert('Assign at least one adventurer to the peg slots before beginning.');return;}
+
+  // v1.6915: Limited-contact warning. If any assigned character is a
+  // contact NPC with a tracked quests-remaining counter, surface a
+  // warning modal before committing. Lets the user unassign specific
+  // contacts (peg clears and quest modal returns) or proceed with full
+  // awareness of the impending departure.
+  if(!skipContactWarn){
+    var limitedContacts=chars.map(function(ci){
+      var c=S.party[ci];
+      if(!c)return null;
+      if(!c.contact)return null;
+      if(typeof c.questsRemaining!=='number'||c.questsRemaining<=0)return null;
+      return {ci:ci,c:c};
+    }).filter(Boolean);
+    if(limitedContacts.length){
+      showLimitedContactWarning(limitedContacts);
+      return;
+    }
+  }
 
   var dtJobs=forceApproveDowntimeForfeit?(P4.downtimeForfeit||activeDowntimeJobsForChars(chars)):activeDowntimeJobsForChars(chars);
   if(dtJobs.length&&!forceApproveDowntimeForfeit){
@@ -20910,6 +21016,26 @@ if(_dtfYes && !_dtfYes.dataset.bound){
     confirmQuestAssignment(true);
   });
 }
+// v1.6915: limited-contact warning buttons
+var _cwarnCancel=document.getElementById('ov-cwarn-cancel');
+if(_cwarnCancel && !_cwarnCancel.dataset.bound){
+  _cwarnCancel.dataset.bound='1';
+  _cwarnCancel.addEventListener('click',function(e){
+    e.preventDefault();e.stopPropagation();
+    closeOv('ov-contact-warn');
+  });
+}
+var _cwarnGo=document.getElementById('ov-cwarn-proceed');
+if(_cwarnGo && !_cwarnGo.dataset.bound){
+  _cwarnGo.dataset.bound='1';
+  _cwarnGo.addEventListener('click',function(e){
+    e.preventDefault();e.stopPropagation();
+    closeOv('ov-contact-warn');
+    // Skip the contact-warn check on re-entry so we don't loop; the downtime
+    // and other gates still run.
+    confirmQuestAssignment(false,true);
+  });
+}
 
 async function bootApp(){
   if(DEV_MODE_URL){
@@ -21746,6 +21872,31 @@ function mergeCustomContent(){
         _custom:!!(q._editable||q._custom||(q.setId&&q.setId.indexOf('custom-')===0)),
         _visibility:q._visibility||scope
       });
+      // v1.6914: Faith/rel shape normalization. Quests saved through the
+      // QE quest-matrix multi-select path store pre.rel as an array, while
+      // seed quests + the form editor store it as a string. Downstream
+      // consumers (peg slots, prereq checks, best-fit scoring) all assume
+      // a string. Coerce here so every site sees one canonical shape —
+      // empty string when unset, first non-empty string in the array
+      // otherwise. Multi-faith quests lose their secondary entries, which
+      // matches the current data model (pre.rel was never plural).
+      if(payload.pre){
+        var _rr=payload.pre.rel;
+        if(Array.isArray(_rr)){
+          var _picked='';
+          for(var _i=0;_i<_rr.length;_i++){
+            if(typeof _rr[_i]==='string'&&_rr[_i].trim()){_picked=_rr[_i].trim();break;}
+          }
+          payload.pre=Object.assign({},payload.pre,{rel:_picked});
+        } else if(typeof _rr==='string'){
+          // Preserve string shape, just trim incidental whitespace
+          var _rt=_rr.trim();
+          if(_rt!==_rr)payload.pre=Object.assign({},payload.pre,{rel:_rt});
+        } else if(_rr!=null){
+          // Non-string, non-array truthy (boolean, number, object) → clear
+          payload.pre=Object.assign({},payload.pre,{rel:''});
+        }
+      }
       var replaced=false;
       for(var qi=0; qi<set.quests.length; qi++){
         if(set.quests[qi].idx===builtIdx){
@@ -23352,7 +23503,19 @@ function qddBuildCharSlots(questLike,isGrind){
   (pr.skills||[]).forEach(function(s){slots.push({type:'skill',value:s,label:'\u2605 Skill',key:'skill:'+s});});
   (pr.tools ||[]).forEach(function(t){slots.push({type:'tool', value:t,label:'\uD83D\uDD27 Tool', key:'tool:'+t});});
   (pr.lang  ||[]).forEach(function(l){slots.push({type:'lang', value:l,label:'\uD83D\uDDE3 Lang', key:'lang:'+l});});
-  if(pr.rel&&pr.rel!=='')slots.push({type:'rel',value:pr.rel,label:'\u271D Faith',key:'rel:'+pr.rel});
+  // v1.6914: Faith/rel normalization. Historically pr.rel was a string ('' = no
+  // req). The Quest Editor's quest-matrix multi-select saves it as an array
+  // when >1 value or [] when none, causing empty/degenerate faith peg slots
+  // to render (array is truthy and !== '' so the old guard failed). Accept
+  // both shapes here: iterate array entries, coerce strings, skip blanks.
+  var _relRaw = pr.rel;
+  var _relList = Array.isArray(_relRaw) ? _relRaw : (_relRaw ? [_relRaw] : []);
+  _relList.forEach(function(r){
+    if (typeof r !== 'string') return;
+    var rn = r.trim();
+    if (!rn) return;
+    slots.push({type:'rel', value:rn, label:'\u271D Faith', key:'rel:'+rn});
+  });
   // Level: real drop target — accepts char of sufficient level
   var reqLv=resolveQuestLikeRequiredLevel(questLike,!!isGrind)||0;
   if(reqLv>0)slots.push({type:'level',value:reqLv,label:'\u2B06 Lv '+reqLv+'+',key:'level:'+reqLv});
@@ -23409,10 +23572,10 @@ function qddBuildInfoPrereqs(questLike){
     var hasLv=_assignedCis.length>0
       ? _assignedCis.some(function(ci){
           var c=S.party[ci];
-          return c&&!c.hireling&&(c.level||0)>=reqLv;
+          return c&&_charCountsForLevelSlot(c)&&(c.level||0)>=reqLv;
         })
       // No one assigned yet — check whole available pool so the row shows before assignment
-      : (S.party||[]).some(function(c){return c&&!c.hireling&&(c.level||0)>=reqLv;});
+      : (S.party||[]).some(function(c){return c&&_charCountsForLevelSlot(c)&&(c.level||0)>=reqLv;});
     rows.push({icon:'🧑',label:'Level '+reqLv+'+ adventurer',met:hasLv,isLevelReq:true,reqLv:reqLv});
   }
   // Gold
@@ -23458,7 +23621,7 @@ function qddCharCoversSlot(c,slot){
   if(slot.type==='tool') return(c.tools ||[]).indexOf(slot.value)!==-1;
   if(slot.type==='lang') return(c.lang  ||[]).indexOf(slot.value)!==-1;
   if(slot.type==='rel')  return c.rel===slot.value;
-  if(slot.type==='level')return !c.hireling&&(c.level||0)>=slot.value;
+  if(slot.type==='level')return _charCountsForLevelSlot(c)&&(c.level||0)>=slot.value;
   if(slot.type==='item'){
     // Pet slots: the char whose pet matches the prereq lights up as a candidate
     if(slot.isPet){
@@ -23799,8 +23962,8 @@ function qddRenderHole(slot,partyEntries,busy){
     (S.questState&&S.questState.pending||[]).forEach(function(pq){if(pq.doneAt>_nh)(pq.chars||[]).forEach(function(ci){_bH[ci]=true;});});
     if(slot.type==='level'){
       var _aCis=Object.keys(qddSlotAssignments||{}).map(function(k){return qddSlotAssignments[k];}).filter(function(ci){return ci!==null&&ci!==undefined&&!_bH[ci];});
-      met=_aCis.length>0?_aCis.some(function(ci){var c=S.party[ci];return c&&!c.hireling&&(c.level||0)>=slot.value;})
-        :(S.party||[]).some(function(c,ci){return c&&!c.hireling&&!_bH[ci]&&(c.level||0)>=slot.value;});
+      met=_aCis.length>0?_aCis.some(function(ci){var c=S.party[ci];return c&&_charCountsForLevelSlot(c)&&(c.level||0)>=slot.value;})
+        :(S.party||[]).some(function(c,ci){return c&&_charCountsForLevelSlot(c)&&!_bH[ci]&&(c.level||0)>=slot.value;});
     } else if(slot.type==='gold'){
       met=S.gold>=(slot.value||0);
     } else if(slot.type==='item'){

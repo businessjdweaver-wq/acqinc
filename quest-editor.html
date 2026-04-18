@@ -1344,6 +1344,28 @@ function questToRow(q, idx) {
   delete data.sort_order;
   delete data.published;
   delete data._visibility;
+  // v1.679: coerce pre.rel to a single string on save. The quest-matrix
+  // chip-picker writes rel as an array (internal multi-select shape), but
+  // the main app's data model treats it as a single faith string. Pick the
+  // first non-empty entry when an array, coerce everything else to string
+  // or '' so the DB shape is always canonical going forward.
+  if (data.pre) {
+    data.pre = Object.assign({}, data.pre);
+    var _rr = data.pre.rel;
+    if (Array.isArray(_rr)) {
+      var _picked = '';
+      for (var _i = 0; _i < _rr.length; _i++) {
+        if (typeof _rr[_i] === 'string' && _rr[_i].trim()) { _picked = _rr[_i].trim(); break; }
+      }
+      data.pre.rel = _picked;
+    } else if (typeof _rr === 'string') {
+      data.pre.rel = _rr.trim();
+    } else if (_rr == null) {
+      data.pre.rel = '';
+    } else {
+      data.pre.rel = '';
+    }
+  }
   return {
     content_type:  'quest',
     content_key:   q.setId + '::' + q.idx,
@@ -3358,7 +3380,12 @@ function showQuestForm(setId, idx) {
       skills: selValues('qf-skills'),
       tools:  selValues('qf-tools'),
       lang:   selValues('qf-lang'),
-      rel:    _relVals.length === 1 ? _relVals[0] : (_relVals.length > 1 ? _relVals : ''),
+      // v1.679: rel is persisted as a string (first non-empty value if the
+      // multi-select has multiple entries). The main app's quest data model
+      // treats pre.rel as a single faith string throughout — the QE's earlier
+      // behavior of writing arrays for 2+ and empty string for 0 created a
+      // shape drift that caused empty/un-fillable Faith peg slots in the app.
+      rel:    (_relVals.filter(function(r){return typeof r==='string'&&r.trim();})[0] || ''),
       gold:   parseInt(document.getElementById('qf-gold').value) || 0,
       items:  _gearItems.concat(_petItems.filter(function(p){ return _gearItems.indexOf(p) === -1; }))
     };
