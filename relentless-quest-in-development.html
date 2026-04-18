@@ -3590,7 +3590,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6910</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6911</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4112,7 +4112,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6910
+      Version 1.6911
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4137,6 +4137,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6911</strong> &mdash; Fix: abandoning an active quest cycle caused previously-completed cycles (e.g. Root &amp; Branch 10/10) to visually regress to a partial count matching the abandoned cycle's progress (e.g. 3/10). <strong>Root cause:</strong> the abandon handler cleared <code>qs.setId</code>, <code>qs.pending</code>, and <code>qs.grindPending</code> but left <code>qs.done</code>, <code>qs.repeatCounts</code>, <code>qs.revealed</code>, and <code>qs.assigned</code> holding the abandoned cycle's indices. With <code>setId=null</code>, <code>activeQuestSet()</code> falls back to <code>QUESTSETS[0]</code> (Root &amp; Branch) &mdash; so render code then evaluated the stale indices against a <em>different</em> set's quests. Because quest indices (0, 1, 2, …) collide across sets, the first N quests of the fallback set appeared falsely complete. The true progress for both cycles was still correct in <code>setProgress[setId]</code> &mdash; only the live <code>qs.*</code> arrays were corrupt, so the regression was cosmetic but persistent (survived save/reload). Previously latent because players rarely lingered in the no-active-cycle state between abandon and re-activate; v1.6910's Real Estate button and Grind Missions card on the Quest Map invited exactly that browsing pattern, exposing the bug. <strong>Fix (abandon handler):</strong> when <code>isActive</code> and we null <code>qs.setId</code>, also reset <code>qs.done=[]</code>, <code>qs.repeatCounts={}</code>, <code>qs.revealed=[]</code>, <code>qs.assigned={}</code>. The cycle's persisted progress in <code>setProgress[setId]</code> (written one line above by <code>saveActiveSetProgress()</code>) is untouched, so re-activating the same cycle via Quest Map restores the correct state through the normal <code>loadSetProgress()</code> path. <strong>Fix (self-heal):</strong> added <code>healOrphanedQuestState()</code> &mdash; runs at load time alongside <code>sanitizeDowntimeKeys()</code> and <code>migrateArtificerToRunesmith()</code> across all three load paths (local <code>load()</code>, code-login, and <code>sbPull</code>). If <code>qs.setId</code> is null/missing but any of <code>done</code> / <code>repeatCounts</code> / <code>revealed</code> / <code>assigned</code> hold entries, those live arrays are cleared. Idempotent; no-op when state is legitimate. Self-heals any save already corrupted by the old handler so existing users recover on first load without manual re-activation.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6910</strong> &mdash; Quest Map overhaul redirecting access to Grind Missions and repurposing completed ("old") cycles as real-estate destinations. <strong>Data model:</strong> <code>cycleSquadMap()</code> now recognizes a special <code>'__grind__'</code> key whose value is an <em>array</em> of squad names (multi-squad clock-in). All existing <code>setId &rarr; string</code> entries are unchanged; the stale-cleanup pass now dedupes the grind array and handles arrays vs strings per key. New helpers: <code>grindSquadNames()</code>, <code>isSquadClockedInToGrinds()</code>, <code>clockInSquadToGrinds()</code>, <code>clockOutSquadFromGrinds()</code>, <code>availableSquadsForGrindClockIn()</code>, <code>grindsUnlocked()</code> (gated on <code>isSetCompleted('root-and-branch')</code>), plus a split of <code>squadIsLockedByCycle()</code> into a narrow <code>squadIsLockedByActiveCycle()</code> (excludes grinds) and the original back-compat wrapper (still used by squad-manager roster gates, which correctly reject both cycle- and grind-locked squads). <code>squadsAssignedToOtherCycles()</code> now also excludes squads clocked into grinds, so cycle activation can't steal them. <strong>Quest Map card changes:</strong> (1) Grind Missions card is now interactive &mdash; renders clocked-in squad chips with ✕ clock-out buttons, an "➕ Add Squad" button (opens new <code>ov-grind-clockin</code> picker), and an "⚡ Open Grinds" button that navigates to the Adventure screen and scroll-targets the new <code>data-grind-header</code> anchor. Locked state shown when Root &amp; Branch isn't complete. (2) Completed cycle cards get a 🏘 Real Estate button (opens new <code>ov-cycle-realestate</code> catalog modal) and a building-count badge in the header. (3) Completed-cycle expanded bodies now list assigned buildings inline. <strong>Real Estate catalog:</strong> new <code>realEstateCatalog()</code> returns a curated 10-item subset of <code>BUILDINGS</code> across 200&ndash;3000 gp price points (Storage Shed, Stables, Market Stall, Barracks, Smithy, Tavern, Greenhouse, Alchemist's Lab, Library, Safe House). Purchase flow uses <code>goldSpend()</code>, pushes an asset with <code>meta.ownerType:'cycle'</code> and <code>meta.ownerRef:setId</code>, then opens a pet-purchase-style <code>ov-cre-name</code> naming modal (Skip / Save / Enter-to-save). <code>cycleAssignedBuildings(setId)</code> enumerates them for display. <strong>Adventure screen gate widened:</strong> the grind section previously required <code>doneCount &ge; totalQ</code> on the active cycle; it now also renders when <code>grindsUnlocked() &amp;&amp; grindSquadNames().length &gt; 0</code>. The auto-assign eligibility pool unions active-cycle squad + every clocked-in grind squad + unassigned characters. <strong>Grind assignment modal:</strong> <code>populateQuestSquadPicker()</code> detects <code>P4.grind</code> and swaps in a grind-specific squad list (active cycle squad prefixed with ⚔, clocked-in grind squads prefixed with ⚙, plus a 🧭 Unassigned (ad-hoc) sentinel that bypasses the squad auto-check-and-lock). <code>applyQuestSquadSelection()</code> treats <code>'__unassigned__'</code> specially so all peg slots stay unlocked for ad-hoc picking. The <code>gassign</code> handler no longer force-disables the dropdown, and <code>confirmQuestAssignment()</code> now reads the dropdown value for the grind path (storing <code>''</code> for ad-hoc) instead of blindly persisting <code>activeCycleSquadName()</code>.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6906</strong> &mdash; Renamed the <code>Artificer</code> class to <code>Runesmith</code> across both character generators. Six sites updated in the main app (the <code>DND.cls</code> list, plus the class-keyed maps for skills, base stats, starting equipment, weapon proficiencies, and inventory) and two in the Quest Editor (class-stats map, class list). Because <code>c.cls</code> is used as a data key throughout — e.g. <code>CLASS_SKILLS[c.cls]</code>, <code>CLASS_STATS[c.cls]</code> — a pure rename would have stranded any saved character with <code>cls:'Artificer'</code> (all their class-driven lookups would silently miss). Added <code>migrateArtificerToRunesmith()</code> that rewrites <code>cls</code> to <code>'Runesmith'</code> on <code>S.party</code>, any pending capstone-NPC queue, and <code>partyAssets.meta</code> (both direct <code>.cls</code> and nested <code>.npc.cls</code> shapes). The migration is idempotent and runs from all three load paths alongside <code>sanitizeDowntimeKeys()</code> — local <code>load()</code>, code-login, and the main <code>sbPull</code> — so corrupted save data heals on first session open.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6905</strong> &mdash; Party-screen roster status was wrong for any character on a <em>non-active</em> quest cycle. Root cause: three independent scans (<code>questBusyForChar</code>, the <code>questingChars</code>/<code>downtimeChars</code> map at the top of <code>renderParty</code>, and the <code>_msUntilFree</code> helper inside each squad panel) only read <code>S.questState.pending</code> and <code>S.questState.grindPending</code> — which hold the active cycle's live state only. Per the v1.551/v1.476 infrastructure, non-active cycles' pending quests and grind missions live in <code>S.questState.setProgress[setId].pending</code> / <code>.grindPending</code>. So squads assigned to any cycle other than the current active one rendered "free" regardless of whether their characters were actually out on quests. All four call sites now iterate every <code>setProgress[*]</code> entry in addition to the live active-cycle arrays, using the minimum remaining <code>doneAt</code>/<code>endsAt</code> across every source for the time-until-free label. The "click a busy status" <code>ov-char-status</code> modal (v1.6902) was fixed in the same pass: it now finds matches across all cycles, captures the match's <code>setId</code>, and resolves the correct <code>QUESTSETS</code> entry by that id instead of always calling <code>activeQuestSet()</code> — so a non-active-cycle character's modal now shows the correct quest title and set name. Cycle number is omitted when the match isn't the currently-active cycle (non-active <code>setProgress</code> entries don't carry a comparable counter).</div>
@@ -6361,6 +6362,7 @@ function load(){
   S.settings.accessFontSize=18;
   sanitizeDowntimeKeys();
   migrateArtificerToRunesmith();
+  healOrphanedQuestState();
   (S.active||[]).forEach(function(t,i){
     if(!t._tid)t._tid='t'+Date.now().toString(36)+Math.random().toString(36).slice(2,8)+i;
   });
@@ -8878,6 +8880,29 @@ function migrateArtificerToRunesmith(){
     if(a&&a.meta)renameOn(a.meta,'cls');
     if(a&&a.meta&&a.meta.npc)renameOn(a.meta.npc,'cls');
   });
+}
+// v1.6911: Self-heal for the abandon-state-leakage bug. When the abandon
+// handler cleared qs.setId without clearing qs.done/repeatCounts/revealed/
+// assigned, those arrays held indices from the abandoned cycle. With
+// setId=null, activeQuestSet() falls back to QUESTSETS[0], and render code
+// reads the stale indices against the fallback set — causing quests to
+// appear falsely complete. Fix in the handler prevents new occurrences;
+// this healer cleans up already-persisted corrupt state on load. Anything
+// that was legitimately in progress is already preserved in setProgress.
+function healOrphanedQuestState(){
+  var qs=S.questState;
+  if(!qs)return;
+  if(qs.setId)return; // setId present → state is legitimate for whichever cycle
+  var hadDone=(qs.done||[]).length>0;
+  var hadRc=qs.repeatCounts&&Object.keys(qs.repeatCounts).length>0;
+  var hadRev=(qs.revealed||[]).length>0;
+  var hadAsg=qs.assigned&&Object.keys(qs.assigned).length>0;
+  if(hadDone||hadRc||hadRev||hadAsg){
+    qs.done=[];
+    qs.repeatCounts={};
+    qs.revealed=[];
+    qs.assigned={};
+  }
 }
 function downtimeJobForChar(ci){
   ensureDowntimeState();
@@ -15056,6 +15081,24 @@ document.getElementById('ov-cycle-abandon-yes').addEventListener('click',functio
   if(isActive){
     qs.setId=null;
     qs.pending=[];
+    // v1.6911: CRITICAL — also clear the live per-cycle arrays. Before this
+    // fix, qs.done / qs.repeatCounts / qs.revealed / qs.assigned kept the
+    // abandoned cycle's state. With setId=null, activeQuestSet() falls back
+    // to QUESTSETS[0] (Root & Branch), so render code would read the stale
+    // indices against a DIFFERENT set's quests — quest indices 0,1,2,...
+    // collide across sets so quests in QUESTSETS[0] would falsely appear
+    // complete. Symptom: after abandoning e.g. 3/10 rising-reputation,
+    // Root & Branch renders as "3 of 10 complete" (borrowing the 3 stale
+    // indices). Previously latent because users rarely lingered in the
+    // no-active-cycle state; v1.6910's Real Estate / Grinds cards made
+    // the quest-map the natural post-abandon destination, exposing it.
+    // The cycle's true progress is already persisted in setProgress[setId]
+    // by the saveActiveSetProgress() call above, so clearing these live
+    // arrays is lossless.
+    qs.done=[];
+    qs.repeatCounts={};
+    qs.revealed=[];
+    qs.assigned={};
   }
   P4.abandonSetId=null;
   closeOv('ov-cycle-abandon');
@@ -18539,6 +18582,7 @@ function sbPull(manual){
           mergeCustomContent();
           sanitizeDowntimeKeys();
           migrateArtificerToRunesmith();
+          healOrphanedQuestState();
           setGold();applySettings();renderTasks();renderSettings();renderAdv();
           renderParty();renderArchive();renderLog();updateQpDisplay();
           syncStatus('☁ Loaded','var(--ink-light)');
@@ -18869,6 +18913,7 @@ function sbPull(manual){
     mergeCustomContent();
     sanitizeDowntimeKeys();
     migrateArtificerToRunesmith();
+    healOrphanedQuestState();
     setGold();applySettings();renderTasks();renderSettings();renderAdv();renderParty();window.scrollTo({top:0,behavior:'smooth'});renderArchive();renderLog();updateQpDisplay();maybeShowWelcome(starterAppliedFromCloud);
     var inv=0;(S.party||[]).forEach(function(c){inv+=(c.inv||[]).length;});
     if(manual){
