@@ -3830,7 +3830,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6949</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6951</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4472,7 +4472,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6949
+      Version 1.6951
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4497,6 +4497,8 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6951</strong> &mdash; Squad gold-out badges prorate shared engagements. Refinement of v1.6950's per-squad calculation. Previously, when a single quest or grind had characters from multiple squads assigned to it, each involved squad's badge showed the full reward — so the sum across all badges could exceed the true total anticipated income. Now the reward is split evenly across the distinct current squads that its characters span. <strong>Algorithm addition:</strong> after confirming a pending has at least one current member of this squad in its <code>chars</code>, iterate the full <code>chars</code> list, map each char to their current squad(s), count the distinct squad names, and add <code>Math.floor(reward / squadCount)</code> to this squad's total. A grind with chars in two squads and reward 24 gp now shows 12 gp on each squad's badge rather than 24 on both. A quest with chars across three squads and reward 100 gp shows 33 gp on each. <strong>Edge cases:</strong> floor rounding means the sum may be slightly less than the full reward when the division isn't even (e.g., 25 gp split three ways yields 8+8+8 = 24, dropping 1 gp). Characters in no squad don't contribute to <code>squadCount</code>, so a grind with chars [unassigned, squadA-member] counts squadCount=1 and gives squad A the full reward — correct, since squad A is the only entity anticipating any income from that grind. No SQL change, no data-model change.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6950</strong> &mdash; Squad gold-out badge: rewritten to match user's explicit specification. The v1.6949 fix added a <code>squadName</code>-based fallback to recover "orphaned" grinds whose characters had moved out of their originally-assigned squad. User correctly pushed back: the mental model should be simpler — just look at each squad's current roster, find what they're assigned to, sum the rewards, dedupe duplicates. No stored-squadName fallback. The cleaner algorithm is more predictable because it always reflects the <em>current</em> roster state: if a character moves to a new squad, their anticipated income moves with them on the next render. If a grind was assigned to Squad A but all chars have since moved to Squad B, Squad B's badge shows the income (because it's Squad B's members who'll be collecting the gold), not Squad A's. This matches how users intuitively think about squad income. <strong>The new algorithm (exact pseudocode from the user):</strong> for each squad, for each character in the squad, find any quest/grind they're assigned to, add the <code>Math.floor</code> of the reward, dedupe so a pending shared by multiple members of the same squad is only counted once, sum and display. Repeat for the next squad. <strong>Implementation:</strong> gather every pending engagement from all four sources (<code>qs.pending</code>, <code>qs.grindPending</code>, and both inside every <code>setProgress[*]</code>) into a single flat list. For each engagement with <code>doneAt &gt; now</code>, check whether any current squad member is in its <code>chars[]</code>. If yes and we haven't counted this engagement's key yet for this squad, add <code>Math.floor(reward)</code>. Key is <code>(q:idx|g:id)|squadName|doneAt</code>, so the same engagement appearing in both live and archive lists only counts once per squad. <strong>Dropped from v1.6949:</strong> the <code>hitByName</code> fallback (no more credit based on stored <code>squadName</code> matching current squad name) and the <code>!Object.keys(memberSet).length</code> short-circuit removal (if a squad has no members, no gold badge — correct, since there's nobody in the squad to collect anything). <strong>User-facing result:</strong> each squad badge now shows exactly what its current members are anticipated to bring in. Sum across all badges will equal the total anticipated income only if every pending's chars are all in the same squad; pending with chars across multiple squads will contribute to each of those squads' badges (intentional — each squad's perspective independently reflects its share of ongoing engagements). No SQL change. No data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6949</strong> &mdash; Grind gold-out under-count fix + diagnostic. User reported 14 grinds in progress at &gt;20 gp each, but total across all squad badges showed only 65 gp. Two root causes found, both fixed. <strong>(1) Dedup key didn't handle grinds.</strong> The <code>_pendKey</code> helper in the gold-out calc used <code>String(pq.idx)</code> as the lead token, but grinds have <code>id</code> (e.g., "g0", "g10"), not <code>idx</code>. For all 14+ grinds, <code>pq.idx</code> was <code>undefined</code> → <code>String(undefined)</code> = "undefined" literally. Key became <code>"undefined|{squadName}|{doneAt}"</code>, still differentiated by doneAt's ms-precision across grinds, so this alone wasn't fatal. But it prefigured the second bug by making the grind vs quest distinction invisible. Fix: use <code>'g:'+(pq.id||'')</code> prefix when <code>idx</code> is undefined so the key carries semantic info and grinds can't collide with quests. <strong>(2) Orphan grinds weren't credited to any squad.</strong> The per-squad hit check was <code>chars.some(ci =&gt; memberSet[ci])</code> — "does any char in the grind belong to this squad's current roster?". But grinds assigned with <code>squadName</code> set will have that field stored even if the named characters later moved out of that squad (e.g., user reorganized squads, ran Back-to-HQ, used the v1.6943 seat-trade). When chars no longer match the squad that was the intended owner, the char-based check fails → <em>no</em> squad claims the grind → its reward goes uncounted in every badge → sum across all badges is dramatically lower than the true total. Fix: each grind now credits the squad if EITHER (a) any char is a current member of this squad OR (b) the grind's stored <code>squadName</code> matches this squad's name. The second path recovers orphaned grinds whose chars have been moved. Ad-hoc grinds (<code>squadName:''</code>) still fall through to pure char-member check. The empty-squad short-circuit at line 13486 (<code>if(!Object.keys(memberSet).length)return;</code>) was also removed so a squad with no current members can still receive credit for grinds assigned under its name before the roster changed. <strong>(3) Enhanced rqDiag() output.</strong> <code>window.rqDiag()</code> now produces a grind gold-out breakdown section showing total unique grinds (active vs ready/expired), sum of all grind rewards, per-squad credit, sum across squads, orphan reward (grinds where no squad owns the chars), and the first 5 orphan grind details with char info. Useful for verifying the fix is working on the user's specific state and for future diagnosis. No SQL change. No data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6948</strong> &mdash; Root &amp; Branch archive wipe: actual root causes + diagnostic/repair toolkit. After v1.6946's monotonic-merge and v1.6945's renderer fixes both shipped, the R&amp;B completion kept regressing. Deep investigation found <strong>three more destructive pathways</strong> that can wipe <code>setProgress</code>, beyond the one v1.6946 addressed. <strong>(1) initQuestState wiped every cycle's archive.</strong> Line 16890 wrote <code>setProgress:{}</code>, replacing <em>all</em> past-cycle completion entries with an empty map. This fires from <code>checkQuestCycleReset()</code> on every calendar rollover (new day for daily cycles, new month for monthly) and from <code>(!S.questState) initQuestState(0)</code> on rare cold-load paths. Fix: preserve existing <code>setProgress</code> across reinit — the new cycle's fresh entry is added without clobbering the map. <strong>(2) Dev Jump to Cycle 2 wiped every cycle's archive.</strong> Same structural bug at line 21158 (<code>btn-jump-cycle2</code> handler) — replaced <code>S.questState</code> wholesale with no <code>setProgress</code> preservation. If anyone used this button after completing R&amp;B, that single click destroyed the archive permanently (until v1.6948's load-time heal can reconstruct from <code>S.questCycles</code> history). Fix: capture <code>setProgress</code> into a local before the replacement, assign it back. Also preserves <code>questCycles</code> history across the jump. <strong>(3) Load-time archive heal.</strong> New <code>healCompletedCycleArchives()</code> runs at all three load paths (local load, code-login, sbPull) alongside the existing <code>healOrphanedQuestState()</code>. For each <code>QUESTSETS</code> entry, if any source (live <code>qs.done</code> when active, <code>setProgress[setId].done</code>, or <code>S.questCycles</code> history rows) indicates total completion (<code>length &gt;= totalQuests</code>), but <code>setProgress[setId]</code> currently doesn't reflect that, the function rebuilds a full archive entry from the best-available source. Logs repaired cycles to the adventure log. Idempotent. Self-heals future saves that arrive with a wiped archive regardless of which of the three pathways caused the wipe. <strong>(4) Dev-mode diagnostic + repair buttons.</strong> Two new buttons in Settings &gt; Dev section: <strong>🩺 Diagnose Quest State</strong> (dumps active setId, all setProgress keys with done counts, questCycles history rows, isSetCompleted verdicts per cycle, and grindsUnlocked status to both browser console and a condensed alert summary) and <strong>🔧 Heal Root &amp; Branch Archive</strong> (one-click force-heal: writes a complete <code>setProgress['root-and-branch']</code> with <code>done=[0..9]</code> + <code>repeatCounts={0:1,...,9:1}</code>, adds a <code>questCycles</code> history row if absent, and clears a stuck-active R&amp;B state if the cycle is the current active set with <code>qs.done=[]</code>). Wired through new <code>window.rqDiag()</code> and <code>window.rqHealRB()</code> functions so the same API is available from the browser console for power users. <strong>(5) window.S exposure.</strong> <code>var S</code> at top-level should be global in a plain &lt;script&gt; tag, but browser contexts (strict mode via extensions, CSP module shims, etc.) sometimes make it local to the script scope, blocking copy-paste console diagnostics with "S is not defined". Explicit <code>window.S=S</code> immediately after declaration sidesteps this. No SQL change. No data-model change. <strong>Migration note:</strong> users with a previously-wiped archive will see their R&amp;B completion auto-restored on the next load via <code>healCompletedCycleArchives()</code> — no manual intervention required as long as <code>S.questCycles</code> has any record of prior completion. If <code>S.questCycles</code> is also empty (fresh Supabase install post-corruption), use the 🔧 Heal Root &amp; Branch Archive button in Settings.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6947</strong> &mdash; Squad gold-out badge showed inflated anticipated income. User reported that the 💰 ~N gp out pill on squad panels was counting the same income stream more than once; framed as "per-character duplication" but the actual bug was cross-source duplication. <strong>Root cause:</strong> when a cycle is currently active, its pending quests and grinds exist in BOTH <code>S.questState.pending</code>/<code>grindPending</code> (live) AND in <code>S.questState.setProgress[qs.setId].pending</code>/<code>grindPending</code> (mirrored by <code>saveActiveSetProgress</code> on every save, v1.6946's monotonic-merge path also keeps this mirror current). The gold-out calc iterated both sources without de-duplicating, so every active-cycle pending with a squad member on it was counted twice, inflating the badge to 2× the true figure. <strong>Fix:</strong> a <code>seenPending{}</code> Set keyed by <code>idx|squadName|doneAt</code> (which uniquely identifies a pending regardless of which source it's pulled from) skips any pending already counted. The within-pending dedup was already correct — <code>.some()</code> ensured a pending wasn't re-counted per-character — so the per-character framing in the bug report was a reasonable misread; the actual double-count happened when the active cycle's pendings appeared in both the live array and the archive mirror. <strong>Visual tweaks (folded in):</strong> the badge now reads "💰 ~N" without the trailing "gp out" (the gold-coin icon already conveys currency, the ~ conveys anticipated), and its text color changed from <code>var(--gold-dark)</code> to white for contrast against the gold-tinted background. Hover tooltip still explains the full meaning. <strong>Unchanged:</strong> pending across different cycles are still summed (a squad could have pendings across multiple cycles via past assignments), and if two squads each have members on the same pending both badges will still show the reward (correct — each squad's perspective independently reflects what income it anticipates). No SQL change, no data-model change.</div>
@@ -13539,44 +13541,70 @@ function renderParty(){
             // same pending was counted from both, inflating the gold-out badge
             // to 2× the true anticipated income. Dedup by (idx, squadName,
             // doneAt) which uniquely identifies a pending regardless of source.
+            // v1.6950: rewritten per user spec. Algorithm (simple + literal):
+            //   For each squad:
+            //     For each character in that squad:
+            //       Find any quest/grind they're assigned to (scan all sources)
+            //       Add the floor of the reward
+            //     Deduplicate (if two members are on the same engagement, count once)
+            //     Sum and display
+            // v1.6951: prorate when a pending's chars span multiple squads so
+            // the sum of all squad badges equals the true total anticipated
+            // income. Each squad's share = floor(reward / squadCount).
+            // Sources scanned:
+            //   - S.questState.pending (active cycle live quests)
+            //   - S.questState.grindPending (active cycle live grinds)
+            //   - S.questState.setProgress[*].pending (non-active cycle quests)
+            //   - S.questState.setProgress[*].grindPending (non-active cycle grinds)
+            // A single engagement is de-duplicated by a stable key so it's never
+            // counted twice for the same squad even if it appears in multiple
+            // sources. Expired engagements (doneAt <= now) are skipped.
             var goldOut=0;
             (function(){
-              var memberSet={};
-              (sq.memberIdxs||[]).forEach(function(ci){memberSet[ci]=true;});
+              var members=(sq.memberIdxs||[]).filter(function(ci){return S.party[ci];});
+              if(!members.length)return;
               var _qs=S.questState||{};
               var nowTs=Date.now();
-              var seenPending={};
-              function _pendKey(pq){
-                // Stable key across live + archive. idx can collide across
-                // cycles, so salt with squadName + doneAt to disambiguate.
-                // For grinds (which have id, not idx), use id|squadName|doneAt.
-                var head=pq.idx!==undefined?String(pq.idx):('g:'+(pq.id||''));
-                return head+'|'+(pq.squadName||'')+'|'+(pq.doneAt||0);
-              }
-              function _addPending(list){
-                (list||[]).forEach(function(pq){
-                  if(!pq||(pq.doneAt||0)<=nowTs)return;
-                  var k=_pendKey(pq);
-                  if(seenPending[k])return; // already counted from another source
-                  // v1.6949: credit the squad if EITHER (a) any char is a current
-                  // member of this squad, OR (b) the pending's stored squadName
-                  // matches this squad (handles the case where chars were moved
-                  // out of the squad after the pending was created). Grinds with
-                  // squadName:'' (ad-hoc) fall through to pure char-member check.
-                  var hitByMember=(pq.chars||[]).some(function(ci){return memberSet[ci];});
-                  var hitByName=pq.squadName&&pq.squadName===sq.name;
-                  if(hitByMember||hitByName){
-                    goldOut+=Number(pq.reward)||0;
-                    seenPending[k]=true;
-                  }
-                });
-              }
-              _addPending(_qs.pending);
-              _addPending(_qs.grindPending);
+              // Gather every pending engagement across every source
+              var allEngagements=[];
+              (_qs.pending||[]).forEach(function(pq){allEngagements.push(pq);});
+              (_qs.grindPending||[]).forEach(function(pq){allEngagements.push(pq);});
               var sp=_qs.setProgress||{};
               Object.keys(sp).forEach(function(sid){
-                _addPending((sp[sid]||{}).pending);
-                _addPending((sp[sid]||{}).grindPending);
+                ((sp[sid]||{}).pending||[]).forEach(function(pq){allEngagements.push(pq);});
+                ((sp[sid]||{}).grindPending||[]).forEach(function(pq){allEngagements.push(pq);});
+              });
+              var counted={};
+              allEngagements.forEach(function(pq){
+                if(!pq||(pq.doneAt||0)<=nowTs)return;
+                // Dedup key: stable across sources. Grinds use id, quests use idx.
+                var head=(pq.idx!==undefined&&pq.idx!==null)?('q:'+pq.idx):('g:'+(pq.id||''));
+                var key=head+'|'+(pq.squadName||'')+'|'+(pq.doneAt||0);
+                if(counted[key])return;
+                // Is ANY squad member assigned to this engagement?
+                var anyMember=(pq.chars||[]).some(function(ci){
+                  return members.indexOf(ci)!==-1;
+                });
+                if(!anyMember)return;
+                counted[key]=true;
+                // v1.6951: prorate — count how many distinct squads this
+                // engagement's chars span, and this squad's share is
+                // floor(reward / squadCount). If no chars belong to any
+                // current squad (orphans), fall back to squadCount=1 so
+                // this squad gets the full reward (since we've already
+                // confirmed anyMember=true above, this branch can't fire).
+                var distinctSquads={};
+                (pq.chars||[]).forEach(function(ci){
+                  (S.squads||[]).forEach(function(sq2){
+                    if(!sq2||!sq2.name)return;
+                    if((sq2.memberIdxs||[]).indexOf(ci)!==-1){
+                      distinctSquads[sq2.name]=true;
+                    }
+                  });
+                });
+                var squadCount=Object.keys(distinctSquads).length||1;
+                var reward=Number(pq.reward)||0;
+                goldOut+=Math.floor(reward/squadCount);
               });
             }());
             var goldBadge=goldOut>0?
