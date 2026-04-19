@@ -3830,7 +3830,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6953</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6954</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4472,7 +4472,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6953
+      Version 1.6954
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4497,6 +4497,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6954</strong> &mdash; Continue Downtime bar incorrectly offered characters already on grinds or non-active-cycle quests. User reported the "Continue Downtime · 19 characters ready — tap to select · ⚡ 95 QP" bar showing despite every character being on an active engagement. <strong>Root cause:</strong> the resumable filter's <code>isQuesting</code> check built its busy set exclusively from <code>S.questState.pending</code> — the active cycle's live quest pendings. It missed: <code>S.questState.grindPending</code> (active cycle live grinds), <code>S.questState.setProgress[*].pending</code> (non-active cycle quests), and <code>S.questState.setProgress[*].grindPending</code> (non-active cycle grinds). With 14 grinds in progress plus a few non-active-cycle pendings, the filter thought those 19 characters were free even though they were visibly committed elsewhere. Spending 95 QP to "resume" their downtime would have had one of two outcomes depending on what downstream code does when you try to enqueue downtime for a character already on a grind — either a silent no-op or an actual overwrite that broke their grind participation. Neither is what the user wanted. <strong>Fix:</strong> the <code>_markBusy</code> helper now populates the <code>_questingCis</code> map from all four sources, matching the pattern used by the squad gold-out calc (v1.6951) and <code>questBusyForChar</code> (v1.6905). Matches the v1.6905 precedent that called out exactly this class of bug: "three independent scans ... only read <code>S.questState.pending</code> and <code>S.questState.grindPending</code>". The list of spots reading only <code>qs.pending</code> just got one shorter. No SQL change, no data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6953</strong> &mdash; Gold-out proration now counts the virtual Unassigned panel. User diagnostic (via v1.6952's live <code>window.S</code> getter) traced an 88 gp over-count to a proration blind spot: v1.6951 divided rewards by the number of distinct <em>real</em> squads in a pending's <code>chars</code> list, but the party screen also renders a virtual "Unassigned" panel (constructed at render time from any <code>ci</code> not in <code>S.squads</code>'s <code>memberIdxs</code>). A grind with chars like <code>[Stellani-member, unassigned-char]</code> had <code>distinctSquads={Stellani}</code> → <code>squadCount=1</code>, so Stellani got the full reward AND the Unassigned virtual panel independently passed its <code>.some()</code> check and also got the full reward. Three grinds in the diagnostic fit this pattern (g10 Street Rumours r17, g11 Map the Back Alleys r31, g12 Collect Guild Dues r40) contributing 17+31+40 = 88 of inflation — matching the user's reported discrepancy to the gp. <strong>Fix:</strong> the proration count now also checks whether any char in <code>chars[]</code> is NOT a member of any real squad. If so, add 1 to <code>squadCount</code> to represent the Unassigned virtual panel. Mixed grinds now split evenly: <code>[squadA-member, unassigned]</code> gets <code>floor(reward/2)</code> on each panel. Fully-unassigned grinds (<code>[unassigned, unassigned]</code>) get the full reward on the Unassigned panel (<code>squadCount=1</code> since <code>distinctSquads</code> is empty but <code>hasUnassignedChar=true</code>). After this fix, sum across all four panels on the reporter's save drops from 1066 to 976, matching the true unique-rewards total of 978 to within 2 gp of floor rounding. No SQL change, no data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6952</strong> &mdash; <code>window.S</code> diagnostic now reflects live state. User reported diagnostic script returning 0 engagements across all sources despite the party screen showing 538 gp in badges. Root cause: <code>window.S=S</code> at line 6936 captured the reference to the <em>original</em> empty <code>createDefaultState()</code> object. Every load path — <code>load()</code> at 6952, franchise code-login at 15902, sbPull at 22291, and the post-pull fallback at 22341 — reassigns <code>S</code> wholesale via <code>S=createDefaultState()</code> before re-hydrating from localStorage or Supabase. JavaScript doesn't auto-follow variable reassignments through previously-taken references: <code>window.S</code> stayed pinned to the first empty object while the closure-scoped <code>S</code> got replaced four times with populated versions. The confusing part for debugging was that <code>window.S === S</code> evaluated to <code>true</code> in the console at any given moment — but that's because each execution of that expression resolved both sides fresh in the moment; it didn't mean the <em>previously-stored</em> <code>window.S</code> was tracking. <strong>Fix:</strong> <code>window.S</code> is now a live getter (<code>Object.defineProperty(window, 'S', {get:()=>S})</code>) that resolves the closure-scoped <code>S</code> on each property access. Every console read of <code>window.S</code> returns whatever the current closure <code>S</code> points at, regardless of how many times load paths have reassigned it. A plain <code>window.S=S</code> fallback is kept in a try/catch for any runtime that rejects <code>defineProperty</code> on window. Applies immediately on reload — no extra heal logic needed, it's just a scoping fix to the diagnostic surface. <strong>No gameplay logic changes.</strong> This version does not revise the v1.6951 proration math; it just makes the console tooling honest so we can actually diagnose whether the 538 vs 450 discrepancy is real in the data or a display-only issue.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6951</strong> &mdash; Squad gold-out badges prorate shared engagements. Refinement of v1.6950's per-squad calculation. Previously, when a single quest or grind had characters from multiple squads assigned to it, each involved squad's badge showed the full reward — so the sum across all badges could exceed the true total anticipated income. Now the reward is split evenly across the distinct current squads that its characters span. <strong>Algorithm addition:</strong> after confirming a pending has at least one current member of this squad in its <code>chars</code>, iterate the full <code>chars</code> list, map each char to their current squad(s), count the distinct squad names, and add <code>Math.floor(reward / squadCount)</code> to this squad's total. A grind with chars in two squads and reward 24 gp now shows 12 gp on each squad's badge rather than 24 on both. A quest with chars across three squads and reward 100 gp shows 33 gp on each. <strong>Edge cases:</strong> floor rounding means the sum may be slightly less than the full reward when the division isn't even (e.g., 25 gp split three ways yields 8+8+8 = 24, dropping 1 gp). Characters in no squad don't contribute to <code>squadCount</code>, so a grind with chars [unassigned, squadA-member] counts squadCount=1 and gives squad A the full reward — correct, since squad A is the only entity anticipating any income from that grind. No SQL change, no data-model change.</div>
@@ -13317,9 +13318,26 @@ function renderParty(){
     var bar=document.getElementById('continue-downtime-bar');
     if(!bar)return;
     var _now=Date.now();
+    // v1.6954: scan ALL pending sources, not just the active cycle's live
+    // qs.pending. Previously this filter missed grinds (qs.grindPending) and
+    // non-active-cycle pendings in setProgress[*].pending/grindPending, so
+    // characters currently out on a grind or on a non-active-cycle quest
+    // appeared as "ready" to resume downtime — even though they are visibly
+    // committed to something else. Matches the pattern used by the gold-out
+    // and busy-check scans.
     var _questingCis={};
-    (S.questState&&S.questState.pending||[]).forEach(function(pq){
-      if((pq.doneAt||0)>_now)(pq.chars||[]).forEach(function(ci){_questingCis[ci]=true;});
+    var _qs=S.questState||{};
+    function _markBusy(list){
+      (list||[]).forEach(function(pq){
+        if((pq.doneAt||0)>_now)(pq.chars||[]).forEach(function(ci){_questingCis[ci]=true;});
+      });
+    }
+    _markBusy(_qs.pending);
+    _markBusy(_qs.grindPending);
+    var _sp=_qs.setProgress||{};
+    Object.keys(_sp).forEach(function(sid){
+      _markBusy((_sp[sid]||{}).pending);
+      _markBusy((_sp[sid]||{}).grindPending);
     });
     var resumable=(S.party||[]).map(function(c,ci){return{c:c,ci:ci};}).filter(function(e){
       if(!e.c)return false;
