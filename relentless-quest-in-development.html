@@ -3830,7 +3830,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6952</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6953</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4472,7 +4472,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6952
+      Version 1.6953
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4497,6 +4497,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6953</strong> &mdash; Gold-out proration now counts the virtual Unassigned panel. User diagnostic (via v1.6952's live <code>window.S</code> getter) traced an 88 gp over-count to a proration blind spot: v1.6951 divided rewards by the number of distinct <em>real</em> squads in a pending's <code>chars</code> list, but the party screen also renders a virtual "Unassigned" panel (constructed at render time from any <code>ci</code> not in <code>S.squads</code>'s <code>memberIdxs</code>). A grind with chars like <code>[Stellani-member, unassigned-char]</code> had <code>distinctSquads={Stellani}</code> → <code>squadCount=1</code>, so Stellani got the full reward AND the Unassigned virtual panel independently passed its <code>.some()</code> check and also got the full reward. Three grinds in the diagnostic fit this pattern (g10 Street Rumours r17, g11 Map the Back Alleys r31, g12 Collect Guild Dues r40) contributing 17+31+40 = 88 of inflation — matching the user's reported discrepancy to the gp. <strong>Fix:</strong> the proration count now also checks whether any char in <code>chars[]</code> is NOT a member of any real squad. If so, add 1 to <code>squadCount</code> to represent the Unassigned virtual panel. Mixed grinds now split evenly: <code>[squadA-member, unassigned]</code> gets <code>floor(reward/2)</code> on each panel. Fully-unassigned grinds (<code>[unassigned, unassigned]</code>) get the full reward on the Unassigned panel (<code>squadCount=1</code> since <code>distinctSquads</code> is empty but <code>hasUnassignedChar=true</code>). After this fix, sum across all four panels on the reporter's save drops from 1066 to 976, matching the true unique-rewards total of 978 to within 2 gp of floor rounding. No SQL change, no data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6952</strong> &mdash; <code>window.S</code> diagnostic now reflects live state. User reported diagnostic script returning 0 engagements across all sources despite the party screen showing 538 gp in badges. Root cause: <code>window.S=S</code> at line 6936 captured the reference to the <em>original</em> empty <code>createDefaultState()</code> object. Every load path — <code>load()</code> at 6952, franchise code-login at 15902, sbPull at 22291, and the post-pull fallback at 22341 — reassigns <code>S</code> wholesale via <code>S=createDefaultState()</code> before re-hydrating from localStorage or Supabase. JavaScript doesn't auto-follow variable reassignments through previously-taken references: <code>window.S</code> stayed pinned to the first empty object while the closure-scoped <code>S</code> got replaced four times with populated versions. The confusing part for debugging was that <code>window.S === S</code> evaluated to <code>true</code> in the console at any given moment — but that's because each execution of that expression resolved both sides fresh in the moment; it didn't mean the <em>previously-stored</em> <code>window.S</code> was tracking. <strong>Fix:</strong> <code>window.S</code> is now a live getter (<code>Object.defineProperty(window, 'S', {get:()=>S})</code>) that resolves the closure-scoped <code>S</code> on each property access. Every console read of <code>window.S</code> returns whatever the current closure <code>S</code> points at, regardless of how many times load paths have reassigned it. A plain <code>window.S=S</code> fallback is kept in a try/catch for any runtime that rejects <code>defineProperty</code> on window. Applies immediately on reload — no extra heal logic needed, it's just a scoping fix to the diagnostic surface. <strong>No gameplay logic changes.</strong> This version does not revise the v1.6951 proration math; it just makes the console tooling honest so we can actually diagnose whether the 538 vs 450 discrepancy is real in the data or a display-only issue.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6951</strong> &mdash; Squad gold-out badges prorate shared engagements. Refinement of v1.6950's per-squad calculation. Previously, when a single quest or grind had characters from multiple squads assigned to it, each involved squad's badge showed the full reward — so the sum across all badges could exceed the true total anticipated income. Now the reward is split evenly across the distinct current squads that its characters span. <strong>Algorithm addition:</strong> after confirming a pending has at least one current member of this squad in its <code>chars</code>, iterate the full <code>chars</code> list, map each char to their current squad(s), count the distinct squad names, and add <code>Math.floor(reward / squadCount)</code> to this squad's total. A grind with chars in two squads and reward 24 gp now shows 12 gp on each squad's badge rather than 24 on both. A quest with chars across three squads and reward 100 gp shows 33 gp on each. <strong>Edge cases:</strong> floor rounding means the sum may be slightly less than the full reward when the division isn't even (e.g., 25 gp split three ways yields 8+8+8 = 24, dropping 1 gp). Characters in no squad don't contribute to <code>squadCount</code>, so a grind with chars [unassigned, squadA-member] counts squadCount=1 and gives squad A the full reward — correct, since squad A is the only entity anticipating any income from that grind. No SQL change, no data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6950</strong> &mdash; Squad gold-out badge: rewritten to match user's explicit specification. The v1.6949 fix added a <code>squadName</code>-based fallback to recover "orphaned" grinds whose characters had moved out of their originally-assigned squad. User correctly pushed back: the mental model should be simpler — just look at each squad's current roster, find what they're assigned to, sum the rewards, dedupe duplicates. No stored-squadName fallback. The cleaner algorithm is more predictable because it always reflects the <em>current</em> roster state: if a character moves to a new squad, their anticipated income moves with them on the next render. If a grind was assigned to Squad A but all chars have since moved to Squad B, Squad B's badge shows the income (because it's Squad B's members who'll be collecting the gold), not Squad A's. This matches how users intuitively think about squad income. <strong>The new algorithm (exact pseudocode from the user):</strong> for each squad, for each character in the squad, find any quest/grind they're assigned to, add the <code>Math.floor</code> of the reward, dedupe so a pending shared by multiple members of the same squad is only counted once, sum and display. Repeat for the next squad. <strong>Implementation:</strong> gather every pending engagement from all four sources (<code>qs.pending</code>, <code>qs.grindPending</code>, and both inside every <code>setProgress[*]</code>) into a single flat list. For each engagement with <code>doneAt &gt; now</code>, check whether any current squad member is in its <code>chars[]</code>. If yes and we haven't counted this engagement's key yet for this squad, add <code>Math.floor(reward)</code>. Key is <code>(q:idx|g:id)|squadName|doneAt</code>, so the same engagement appearing in both live and archive lists only counts once per squad. <strong>Dropped from v1.6949:</strong> the <code>hitByName</code> fallback (no more credit based on stored <code>squadName</code> matching current squad name) and the <code>!Object.keys(memberSet).length</code> short-circuit removal (if a squad has no members, no gold badge — correct, since there's nobody in the squad to collect anything). <strong>User-facing result:</strong> each squad badge now shows exactly what its current members are anticipated to bring in. Sum across all badges will equal the total anticipated income only if every pending's chars are all in the same squad; pending with chars across multiple squads will contribute to each of those squads' badges (intentional — each squad's perspective independently reflects its share of ongoing engagements). No SQL change. No data-model change.</div>
@@ -13603,20 +13604,32 @@ function renderParty(){
                 counted[key]=true;
                 // v1.6951: prorate — count how many distinct squads this
                 // engagement's chars span, and this squad's share is
-                // floor(reward / squadCount). If no chars belong to any
-                // current squad (orphans), fall back to squadCount=1 so
-                // this squad gets the full reward (since we've already
-                // confirmed anyMember=true above, this branch can't fire).
+                // floor(reward / squadCount).
+                // v1.6953: the virtual "Unassigned" panel is rendered on the
+                // party screen as if it were a squad (alongside real squads
+                // from S.squads), so a grind with chars that straddle a real
+                // squad AND an unassigned character was being credited to
+                // BOTH panels without proration — the calc only counted real
+                // squads toward squadCount. Fix: if any char in the pending
+                // is not a member of any real squad, add 1 to squadCount to
+                // represent the Unassigned virtual panel. Mixed grinds now
+                // split evenly (e.g. [squadA-member, unassigned] → each gets
+                // half the reward instead of both showing the full amount).
                 var distinctSquads={};
+                var hasUnassignedChar=false;
                 (pq.chars||[]).forEach(function(ci){
+                  var inAnySquad=false;
                   (S.squads||[]).forEach(function(sq2){
                     if(!sq2||!sq2.name)return;
                     if((sq2.memberIdxs||[]).indexOf(ci)!==-1){
                       distinctSquads[sq2.name]=true;
+                      inAnySquad=true;
                     }
                   });
+                  if(!inAnySquad&&S.party[ci])hasUnassignedChar=true;
                 });
-                var squadCount=Object.keys(distinctSquads).length||1;
+                var squadCount=Object.keys(distinctSquads).length+(hasUnassignedChar?1:0);
+                if(squadCount<1)squadCount=1; // defensive: shouldn't fire since anyMember=true
                 var reward=Number(pq.reward)||0;
                 goldOut+=Math.floor(reward/squadCount);
               });
