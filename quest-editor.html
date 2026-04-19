@@ -5069,14 +5069,16 @@ function showQuestForm(setId, idx) {
       var lbl = 'font-family:\'Cinzel\',serif;font-size:.68em;color:#8b6914;text-transform:uppercase;letter-spacing:.03em;display:block;margin-bottom:3px';
       var inp = 'width:100%;padding:6px 9px;font-size:.88em;border:1px solid #d4b87a;border-radius:4px;background:#fffde8;box-sizing:border-box';
       var sel = inp;
-      var itemD = crType === 'item' ? '' : 'display:none';
-      var petD  = crType === 'pet'  ? '' : 'display:none';
+      var itemD   = crType === 'item'   ? '' : 'display:none';
+      var petD    = crType === 'pet'    ? '' : 'display:none';
+      var reskinD = crType === 'reskin' ? '' : 'display:none';
       return '<div style="margin-top:14px;border:1px solid rgba(201,146,42,.35);border-radius:8px;padding:14px;background:rgba(201,146,42,.04)">'+
         '<div style="font-family:\'Cinzel\',serif;font-size:.72em;color:#8b6914;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px">⭐ Capstone Reward</div>'+
         '<div style="margin-bottom:10px"><label style="'+lbl+'">Reward Type</label>'+
         '<select id="qf-cr-type" style="'+inp+'">'+
           '<option value="random"'+(crType==='random'?' selected':'')+'>🎲 Random (default pool)</option>'+
           '<option value="item"'+(crType==='item'?' selected':'')+'>✨ Specific Item / Artifact</option>'+
+          '<option value="reskin"'+(crType==='reskin'?' selected':'')+'>🎨 Reskinned Store Item</option>'+
           '<option value="pet"'+(crType==='pet'?' selected':'')+'>🐾 Specific Pet</option>'+
           '<option value="npc"'+(crType==='npc'?' selected':'')+'>🤝 NPC Contact</option>'+
         '</select></div>'+
@@ -5092,6 +5094,54 @@ function showQuestForm(setId, idx) {
             '<textarea id="qf-cr-item-desc" rows="2" placeholder="What is this item?" style="'+inp+';resize:vertical">'+esc(crType==='item'?cr.desc||'':'')+'</textarea></div>'+
           '<div style="margin-top:6px"><label class="chk-row"><input type="checkbox" id="qf-cr-item-bag"'+(crType==='item'&&cr.bagOfHolding?' checked':'')+'>'+
             '<span class="chk-label">Is a Bag of Holding (counts for squad enrollment)</span></label></div>'+
+        '</div>'+
+        // Reskin panel — picks an existing store item, lets author rename/restyle it,
+        // optionally bump rarity, and stack additional effects on top of the source's
+        // native effect list. Reward persists as a reference (sourceItemId) so the
+        // main app resolves base stats/price/type/weight/effects from the live item
+        // row and merges the overrides. Counts as its own distinct entry for
+        // quest-cycle prereqs and quartermaster dashboard grouping.
+        '<div id="qf-cr-reskin-panel" style="'+reskinD+'">'+
+          '<div style="font-size:.78em;color:var(--ink2);margin-bottom:8px;line-height:1.4">'+
+            'Pick an existing store item, then override its name/icon/description. The reskin inherits the source item\'s stats, effects, type, weight and price, but counts as a separate entry for quest-cycle prerequisites and the quartermaster dashboard.'+
+          '</div>'+
+          '<div style="margin-bottom:8px"><label style="'+lbl+'">Source Item *</label>'+
+            '<select id="qf-cr-reskin-src" style="'+inp+'">'+
+              '<option value="">— select a store item —</option>'+
+              items.slice().sort(function(a,b){return (a.name||'').localeCompare(b.name||'');}).map(function(it){
+                var selAttr = (crType==='reskin' && cr.sourceItemId === it.id) ? ' selected' : '';
+                return '<option value="'+esc(it.id)+'"'+selAttr+'>'+esc(it.ic||'📦')+' '+esc(it.name)+' ('+esc(it.type||'gear')+', '+esc(it.rar||'common')+')</option>';
+              }).join('')+
+            '</select>'+
+            '<div id="qf-cr-reskin-src-info" style="font-size:.72em;color:#8b6914;margin-top:3px;min-height:1em"></div>'+
+          '</div>'+
+          '<div style="display:grid;grid-template-columns:70px 1fr;gap:8px;margin-bottom:8px">'+
+            '<div><label style="'+lbl+'">Icon</label>'+
+              '<input id="qf-cr-reskin-ic" type="text" value="'+esc(crType==='reskin'?cr.ic||'✨':'')+'" style="width:100%;padding:6px;font-size:1.2em;border:1px solid #d4b87a;border-radius:4px;background:#fffde8;text-align:center;box-sizing:border-box"></div>'+
+            '<div><label style="'+lbl+'">Reskin Name *</label>'+
+              '<input id="qf-cr-reskin-name" type="text" value="'+esc(crType==='reskin'?cr.name||'':'')+'" placeholder="e.g. Longinus Carpetbag of Holding" style="'+inp+'"></div>'+
+          '</div>'+
+          '<div style="margin-bottom:8px"><label style="'+lbl+'">Description</label>'+
+            '<textarea id="qf-cr-reskin-desc" rows="2" placeholder="Flavor text for this reskinned variant…" style="'+inp+';resize:vertical">'+esc(crType==='reskin'?cr.desc||'':'')+'</textarea></div>'+
+          '<div style="margin-bottom:8px"><label style="'+lbl+'">Rarity Override</label>'+
+            '<select id="qf-cr-reskin-rar" style="'+inp+'">'+
+              '<option value=""'+(crType==='reskin'&&!cr.rarOverride?' selected':'')+'>— inherit from source —</option>'+
+              ['common','uncommon','rare','veryrare'].map(function(r){
+                var selAttr = (crType==='reskin' && cr.rarOverride === r) ? ' selected' : '';
+                return '<option value="'+r+'"'+selAttr+'>'+r+'</option>';
+              }).join('')+
+            '</select>'+
+            '<div style="font-size:.7em;color:#888;margin-top:2px">Leave as inherit unless the reskinned version is meaningfully rarer than the base item.</div>'+
+          '</div>'+
+          '<div><label style="'+lbl+'">Additional Effects (stacked on top of source)</label>'+
+            '<select id="qf-cr-reskin-fx" multiple style="'+inp+';height:100px">'+
+              effects.slice().sort(function(a,b){return (a.name||'').localeCompare(b.name||'');}).map(function(fx){
+                var selAttr = (crType==='reskin' && (cr.extraEffectIds||[]).indexOf(fx.id) !== -1) ? ' selected' : '';
+                return '<option value="'+esc(fx.id)+'"'+selAttr+'>'+esc(fx.name)+(fx.effect_type?' ('+esc(fx.effect_type)+')':'')+'</option>';
+              }).join('')+
+            '</select>'+
+            '<div style="font-size:.7em;color:#888;margin-top:2px">Ctrl/Cmd-click to select multiple. These add to (do not replace) the source item\'s native effects.</div>'+
+          '</div>'+
         '</div>'+
         // Pet panel
         '<div id="qf-cr-pet-panel" style="'+petD+'">'+
@@ -5183,13 +5233,35 @@ function showQuestForm(setId, idx) {
     function updateCrPanel() {
       if (!crType) return;
       var v = crType.value;
-      ['item', 'pet', 'npc'].forEach(function(k) {
+      ['item', 'reskin', 'pet', 'npc'].forEach(function(k) {
         var p = document.getElementById('qf-cr-' + k + '-panel');
         if (p) p.style.display = (v === k ? '' : 'none');
       });
     }
     if (crType) crType.addEventListener('change', updateCrPanel);
     updateCrPanel();
+    // Reskin: live info line for the selected source item so the author can
+    // see what they're inheriting (type, rarity, price, native effects).
+    (function() {
+      var srcSel = document.getElementById('qf-cr-reskin-src');
+      var infoEl = document.getElementById('qf-cr-reskin-src-info');
+      if (!srcSel || !infoEl) return;
+      function renderInfo() {
+        var id = srcSel.value;
+        if (!id) { infoEl.textContent = ''; return; }
+        var src = items.filter(function(it){return it.id === id;})[0];
+        if (!src) { infoEl.textContent = 'Source item not found.'; return; }
+        var fxNames = (src.effect_ids || []).map(function(eid){
+          var fx = effects.filter(function(f){return f.id === eid;})[0];
+          return fx ? fx.name : null;
+        }).filter(Boolean);
+        infoEl.textContent = 'Inherits: ' + (src.type||'gear') + ' · ' + (src.rar||'common')
+          + ' · ' + (src.price||0) + 'gp · ' + (src.weight||0) + 'lb'
+          + (fxNames.length ? ' · effects: ' + fxNames.join(', ') : ' · no native effects');
+      }
+      srcSel.addEventListener('change', renderInfo);
+      renderInfo();
+    }());
     // Re-roll stats when class changes
     function updateNpcStats(cls) {
       var stats = rollStatsQE(cls || 'Fighter');
@@ -5415,6 +5487,25 @@ function showQuestForm(setId, idx) {
           ic: (document.getElementById('qf-cr-item-ic').value || '✨').trim(),
           desc: (document.getElementById('qf-cr-item-desc').value || '').trim(),
           bagOfHolding: document.getElementById('qf-cr-item-bag').checked || false
+        };
+      } else if (t === 'reskin') {
+        // Reskin reward: requires a source item + a new name. Stores a reference
+        // to the source item ID plus cosmetic overrides and optional extras.
+        // Main app is responsible for resolving base stats/effects from the
+        // source item row at reward-grant time.
+        var srcId = (document.getElementById('qf-cr-reskin-src').value || '').trim();
+        var n = (document.getElementById('qf-cr-reskin-name').value || '').trim();
+        if (!srcId || !n) { q.capstoneReward = null; return; }
+        var rarOv = (document.getElementById('qf-cr-reskin-rar').value || '').trim();
+        var extraFx = Array.from(document.getElementById('qf-cr-reskin-fx').selectedOptions).map(function(o){return o.value;});
+        q.capstoneReward = {
+          type: 'reskin',
+          sourceItemId: srcId,
+          name: n,
+          ic: (document.getElementById('qf-cr-reskin-ic').value || '✨').trim(),
+          desc: (document.getElementById('qf-cr-reskin-desc').value || '').trim(),
+          rarOverride: rarOv || null,
+          extraEffectIds: extraFx
         };
       } else if (t === 'pet') {
         var n = (document.getElementById('qf-cr-pet-name').value || '').trim();
