@@ -3830,7 +3830,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6945</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6946</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4472,7 +4472,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6945
+      Version 1.6946
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4497,6 +4497,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6946</strong> &mdash; Two related fixes after the v1.6945 Root &amp; Branch repair didn't stick. <strong>(1) saveActiveSetProgress is now monotonic.</strong> Root &amp; Branch kept regressing because line 16893's save path unconditionally overwrote <code>setProgress[qs.setId]</code> with current live state. If a user ever ended up with <code>qs.done=[]</code> on a set whose archive held <code>done=[0..9]</code> (which v1.6945 properly rendered as "✓ Completed" but didn't prevent from being clobbered on next save), every subsequent <code>save()</code> call wrote <code>done=[]</code> back into the archive, destroying the completion record. The v1.6945 renderer then had no archive to heal from on reload. Progress is semantically monotonic — you can't un-complete a quest — so <code>saveActiveSetProgress</code> now takes the <strong>union</strong> of live and archived <code>done</code> indices, and preserves the <strong>higher</strong> <code>repeatCounts</code> per quest idx. <code>revealed</code>/<code>assigned</code>/<code>pending</code>/<code>grindPending</code> still overwrite because those are live working state that can legitimately shrink (user reassigns chars, collects pendings). A user who loads a corrupted save will see their archive repair itself on first successful save. <strong>(2) Grind eligibility narrowed to clocked-in + unassigned only.</strong> Previously <code>computeGrindEligibility</code> (v1.6923) unioned <em>(active-cycle squad members) + (clocked-in-grind-squad members) + (unassigned characters)</em>. Users reported seeing active-cycle squad members in the grind picker even when that squad was busy on quests, and the stuck-R&amp;B-as-active state from the v1.6945 report had the side effect of exposing the entire (now-broken) R&amp;B squad in grind menus. New rule: a squad on a quest cycle must <strong>explicitly clock in</strong> via the Quest Map's Grind Missions card before any member is grind-eligible. <code>computeGrindEligibility</code> drops the <code>acName</code> inclusion; the <code>populateQuestSquadPicker</code> grind branch drops the "⚔ active cycle" option and defaults to the first clocked-in squad (or 🧭 Unassigned (ad-hoc) when no squads are clocked in). All 6 call sites of <code>computeGrindEligibility</code> inherit the narrowed pool automatically — no behavior change for truly-unassigned chars or legitimately-clocked-in squad members. No SQL change. No data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6945</strong> &mdash; Cascading completed-cycle re-activation bug + grind modal z-index. User reported a save where Root &amp; Branch showed 0/10 progression despite being completed long ago, activating it let Dev Mode "re-complete" each quest, the capstone awarded a second Longinus Carpetbag, and even after completion the cycle still showed "Activate". All five symptoms cascaded from one misconception in the codebase: the implicit assumption that "active" and "completed" are mutually exclusive. They are not — a user who re-activates a previously-completed cycle ends up with <code>qs.setId===setId</code>, <code>qs.done===[]</code> (fresh), but <code>setProgress[setId].done===[0..9]</code> with full repeatCounts from the prior run. <strong>Five coordinated fixes:</strong> <strong>(1) Activation is blocked at click time.</strong> The <code>cycle-activate</code> click handler (document-scoped at line ~18036) now calls <code>isSetCompleted(setId)</code> first; if true, it routes to <code>openCycleLog</code> instead of starting a fresh <code>qs.done=[]</code> run. This is the authoritative fix — no way to even reach the broken state. <strong>(2) Renderer self-heals existing stuck saves.</strong> The <code>doneCount</code> computation in <code>renderCycleMapCards</code> now takes <code>Math.max(activeDone, archiveDone)</code> instead of picking one based on <code>isActive</code>. Users already stuck (like the reporter) will see "✓ Completed" the moment they reload. The <code>'\u2713 Completed'</code> progress string guard similarly drops its <code>!isActive</code> clause. <strong>(3) Activate button swap.</strong> The ternary that decides between "📜 Quest Log" and "⚔ Activate Cycle" drops <code>&amp;&amp; !isActive</code> so completed cycles always show Quest Log regardless of active state — even when temporarily stuck as the current set. <strong>(4) Capstone idempotency.</strong> <code>awardCapstonReward(set)</code> now inspects <code>S.questState.setProgress[set.id]</code> before awarding — if <code>repeatCounts[capstoneIdx] &gt;= 1</code> OR the capstone idx is in the archive's <code>done</code> array, the function short-circuits with a log message and does not mint a second artifact/pet/NPC. This protects against both the normal completion path (<code>completeQuest</code>) and the dev-mode path (<code>devMarkQuestComplete</code>) since both call the same helper. Defense-in-depth even after Fix #1 prevents reaching this state normally. <strong>(5) Grind modal z-index.</strong> <code>ov-grinds-list</code> had no explicit <code>z-index</code>, defaulting to the base <code>.ov</code> stacking context (500), same as <code>ov-cycle-map</code>. DOM order then determined which rendered on top, causing the Grinds modal to appear <em>underneath</em> the Quest Map modal when opened via its "Open Grinds" button. Now <code>style="z-index:510"</code> matches the pattern used by <code>ov-cpk-inv</code> (v1.6900), <code>ov-xpbadge</code> (v1.6898), <code>ov-contact-warn</code> (v1.6920), and <code>ov-assign-squad</code> (v1.6942) for modal stacking above a base modal. <strong>Deliberately unchanged:</strong> Dev Mode's per-quest gold award isn't guarded — dev mode exists to fudge state and the capstone loot was the only real asset leak. The Abandon button visibility is unchanged (already available for active cycles regardless of completion); users stuck mid-reactivation can Abandon to clear. No SQL change, no data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6944</strong> &mdash; Two refinements. <strong>(1) Cycle-locked squads now appear in the character-card assignment picker.</strong> Previously (v1.6942/43) <code>openAssignSquadModal</code> filtered with <code>!squadIsLockedByCycle(sq.name)</code>, completely hiding squads currently deployed on a quest cycle. This was inherited from the Squad Manager tile workflow's convention but wrong for character-card assignment: a player who just recruited a mercenary may want to slot them into the active-cycle squad so they're ready when the next quest in that cycle fires. Now every squad shows up in the picker; cycle-locked ones carry a <strong>🔒 on cycle · {territory}</strong> gold badge next to the squad name so the user knows they're joining an active deployment. The existing <code>sqmgrAssignChar</code> guard that red-flashes the tile when the drag-workflow targets a locked squad is kept — it's the Squad Manager's UX idiom. For the character-card flow we pass a new third argument <code>allowLocked=true</code> into <code>sqmgrAssignChar</code> which short-circuits that guard. Signature backward-compatible: every existing call site omits the argument and gets the original behavior. The seat-trade flow also passes <code>allowLocked=true</code> since trading into a locked squad is the whole point of unlocking this path. <strong>(2) Swipe-nav in the character modal.</strong> The modal header (<code>#ov-charpeek-header</code>) now accepts horizontal touch swipes: swipe left → next squadmate, swipe right → previous squadmate. "Squadmate" means members of the same named squad; for unassigned characters, the pool is the Unassigned virtual squad (every party member not in any named squad). The boundary wraps — swiping past the last member returns to the first. Tab swipes on the body (Overview → Traits → Gear) still work; they live on <code>#ov-charpeek-body</code>, a different element, so there's no gesture conflict. As a mobile-ambiguity fallback, two small teal circular arrow buttons (◀ ▶) render absolutely-positioned at left/right edges of the header; they only appear when the current pool has 2+ characters (i.e. there's actually somewhere to navigate to) and work as click-fallbacks. On character change the tab resets to Overview, the header re-renders (name + subtitle + unassigned chip), the body re-renders, and the footer buttons re-evaluate (Level Up cost, Back-to-HQ availability). <strong>New helpers:</strong> <code>_charpeekNavPool()</code> returns the ordered CI list that bounds navigation; <code>_charpeekNav(delta)</code> performs the step with wrap; <code>_refreshCharpeekNavArrows()</code> toggles the button visibility. The header wrapper got <code>position:relative</code> and <code>touch-action:pan-y</code> (same convention the body uses so vertical scroll isn't hijacked by the swipe detector). No SQL change. No data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6943</strong> &mdash; QP-gated squad assignment from the character modal. The v1.6942 "🧭 unassigned" chip shipped without QP costs, making squad assignment a free zero-friction action that could bypass the 10-QP costSquadSwap fee the Squad Manager's Territory Swap Zone charges for similar movements. Now balanced. <strong>(1) Open-seat join: 5 QP.</strong> Tapping a squad with room on the roster charges <code>costAssignToSquad</code> (default 5, stored under the franchise QP settings blob). Button label reads "⚔ join (5 QP)" in forest-green. If QP balance is insufficient, the row greys to .5 opacity with a "need 5 QP" explainer. If the QP system is disabled globally, the cost is skipped and assignments are free (matches existing <code>qpSpend</code> contract). Confirm dialog surfaces the full cost before committing. <strong>(2) Full-squad seat trade: 10 QP.</strong> Tapping a squad at capacity (10/10) now opens a second-stage modal (repurposes the same <code>ov-assign-squad</code> surface) listing every current member of the target squad with a "→ HQ" bump button. Members on active engagements (quest, grind, or downtime — checked via <code>_buildBusySet</code>) are greyed with "on quest/grind/downtime" reason text. If every member is busy, the target squad row is pre-disabled in the main picker with "all on quests" rather than making users tap through to a dead end. The trade action calls <code>sqmgrUnassignChar</code> on the bumped character (sending them to HQ/unassigned), spends <code>costSquadSwap</code> (default 10, shared with the Territory Swap Zone so there's one knob for "paid shuffles"), then calls <code>sqmgrAssignChar</code> on the incoming character. Logged to the adventure log as "Seat trade: X → HQ, Y → {squad} (10 QP)". A "← Back to squad picker" row at the bottom of the bump list returns to the main modal without committing. <strong>(3) Pricing header.</strong> The assign modal's message row now shows "Open seat: 5 QP · Trade into a full squad: 10 QP · Current balance: N QP" so users know both options and their ability to afford either at a glance, before even scanning the squad list. <strong>New setting:</strong> <code>S.settings.qp.costAssignToSquad</code> (default 5). Not yet exposed in the QP Manager UI — inherits from <code>qpCfg().costAssignToSquad||5</code> so power users can poke it via console. Adding a dedicated manager field is a 3-line patch if you want to tune without shell access. <strong>Unchanged:</strong> "Create new squad…" row is still free (squad creation has its own upstream flow with its own cost structure), and character peek's "🏠 Back to HQ" button (10 QP, v1.6900) is untouched. No SQL change. No data-model change. No new modal — the existing <code>ov-assign-squad</code> is repurposed for the trade stage.</div>
@@ -7891,23 +7892,23 @@ function computeGrindEligibility(){
   (qs.pending||[]).forEach(function(pq){if((pq.doneAt||0)>now)(pq.chars||[]).forEach(function(ci){busy[ci]=true;});});
   (qs.grindPending||[]).forEach(function(gp){(gp.chars||[]).forEach(function(ci){busy[ci]=true;});});
   (S.downtimeJobs||[]).forEach(function(j){if(j&&j.ci!==undefined&&(j.endsAt||0)>now)busy[j.ci]=true;});
-  // Pool of squad IDs eligible to participate: the one active-cycle squad
-  // (if any) plus every squad currently clocked into grinds. Explicitly
-  // NOT squads committed to non-active cycles — those are locked to that
-  // cycle's commitments per rule.
+  // v1.6946: pool is now STRICTLY squads-clocked-into-grinds + unassigned
+  // characters. Previously (v1.6923) we also included the active-cycle squad
+  // which created rule confusion — a squad shouldn't be able to both hold the
+  // active quest cycle AND moonlight on grinds without explicitly clocking in.
+  // If a cycle squad wants grind eligibility, the user must clock them in via
+  // the Quest Map's Grind Missions card (➕ Add Squad).
   var eligibleSquadNames={};
-  var acName=activeCycleSquadName();
-  if(acName)eligibleSquadNames[acName]=true;
   grindSquadNames().forEach(function(n){if(n)eligibleSquadNames[n]=true;});
   var pool={};
-  // Add members of each eligible squad
+  // Add members of each clocked-in grind squad
   (S.squads||[]).forEach(function(sq){
     if(!sq||!sq.name||!eligibleSquadNames[sq.name])return;
     (sq.memberIdxs||[]).forEach(function(ci){if(S.party[ci])pool[ci]=true;});
   });
   // Add truly unassigned characters (no squad at all). A character whose
-  // only squad membership is in a non-active-cycle squad is NOT
-  // unassigned for this purpose — they stay excluded.
+  // only squad membership is in a non-grind squad is NOT unassigned for
+  // this purpose — they stay excluded until their squad clocks in.
   var allSquadMembers={};
   (S.squads||[]).forEach(function(sq){
     if(!sq||!sq.memberIdxs)return;
@@ -16894,13 +16895,38 @@ function saveActiveSetProgress(){
   var qs=S.questState;
   if(!qs||!qs.setId)return;
   if(!qs.setProgress)qs.setProgress={};
+  // v1.6946: monotonic merge. Previously this unconditionally overwrote the
+  // archive with live state, which destroyed completed-cycle progress when
+  // the live state was empty (e.g. user re-activated a completed cycle → live
+  // qs.done=[] got written to setProgress[setId] on next save, clobbering the
+  // [0..9] archive). Progress is semantically monotonic — you can't un-complete
+  // a quest — so we take the UNION of live and archived done indices, and
+  // preserve the higher repeatCount per quest idx.
+  var prior=qs.setProgress[qs.setId]||{};
+  var priorDone=(prior.done||[]);
+  var liveDone=(qs.done||[]);
+  var mergedDoneSet={};
+  priorDone.forEach(function(i){mergedDoneSet[i]=true;});
+  liveDone.forEach(function(i){mergedDoneSet[i]=true;});
+  var mergedDone=Object.keys(mergedDoneSet).map(function(k){return parseInt(k,10);}).filter(function(n){return !isNaN(n);});
+  var priorRC=prior.repeatCounts||{};
+  var liveRC=qs.repeatCounts||{};
+  var mergedRC={};
+  Object.keys(priorRC).forEach(function(k){mergedRC[k]=parseInt(priorRC[k],10)||0;});
+  Object.keys(liveRC).forEach(function(k){
+    var live=parseInt(liveRC[k],10)||0;
+    mergedRC[k]=Math.max(mergedRC[k]||0,live);
+  });
   qs.setProgress[qs.setId]={
+    // revealed/assigned/pending/grindPending are live working state that can
+    // legitimately shrink as the user reassigns/collects, so those still
+    // overwrite. Only done + repeatCounts are monotonic.
     revealed:(qs.revealed||[]).slice(),
-    done:(qs.done||[]).slice(),
+    done:mergedDone,
     assigned:Object.assign({},qs.assigned||{}),
     pending:(qs.pending||[]).slice(),
     grindPending:(qs.grindPending||[]).slice(),
-    repeatCounts:Object.assign({},qs.repeatCounts||{})
+    repeatCounts:mergedRC
   };
 }
 function loadSetProgress(setId){
@@ -19141,19 +19167,16 @@ function populateQuestSquadPicker(){
   var cur=sel.value||'';
   var opts=['<option value="">— Select squad —</option>'];
   // v1.6910: when in grind flow, offer clocked-in grind squads + Unassigned
-  // (ad-hoc) + the active-cycle squad if present. Otherwise, use the default
-  // quest-assignment squad list.
+  // (ad-hoc). Default is the default quest-assignment squad list.
+  // v1.6946: the active-cycle squad is no longer offered in the grind picker.
+  // Per the clarified rule (see computeGrindEligibility), squads on quest
+  // cycles must explicitly clock in via the Quest Map's Grind Missions card
+  // before any member is grind-eligible.
   if(P4&&P4.grind){
     var seen={};
     var grindSquads=(S.squads||[]).filter(function(sq){
       return sq&&sq.name&&isSquadClockedInToGrinds(sq.name);
     });
-    var activeSqName=activeCycleSquadName();
-    var activeSq=activeSqName?(S.squads||[]).filter(function(sq){return sq.name===activeSqName;})[0]:null;
-    if(activeSq){
-      opts.push('<option value="'+esc(activeSq.name)+'">'+esc('⚔ '+activeSq.name+' ('+((activeSq.memberIdxs||[]).length||0)+') · active cycle')+'</option>');
-      seen[activeSq.name]=true;
-    }
     grindSquads.forEach(function(sq){
       if(seen[sq.name])return;
       seen[sq.name]=true;
@@ -19164,7 +19187,6 @@ function populateQuestSquadPicker(){
     sel.innerHTML=opts.join('');
     // Prefer cur if still valid, else first real option, else unassigned
     if(cur&&(seen[cur]||cur==='__unassigned__'))sel.value=cur;
-    else if(activeSq)sel.value=activeSq.name;
     else if(grindSquads.length)sel.value=grindSquads[0].name;
     else sel.value='__unassigned__';
     return;
