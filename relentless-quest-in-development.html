@@ -4405,7 +4405,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6993</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6994</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5113,7 +5113,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6993
+      Version 1.6994
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -5138,6 +5138,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6994</strong> &mdash; Bag-of-Holding diagnostic build (temporary). <strong>User ask:</strong> build-in diagnostics to trace the "500gp squad enrollment awards Bag of Holding to franchise inventory instead of squad inventory" bug. <strong>Findings exposed by instrumentation:</strong> <strong>(1) Supabase push strips top-level flags.</strong> The <code>sbPush</code> party_assets path at line ~25495 only pushes <code>{user_id, sort_order, name, ic, type}</code>. Top-level <code>bagOfHolding</code> and <code>effect</code> fields are NOT included. After push+pull, the bag loses its recognition flags. <code>hasSquadFormationEffect()</code> then has to fall back to a GEAR-name lookup, which the v1.6893 changelog already identified as fragile (a homebrew Bag of Holding DB row can strip flags from the built-in). <strong>(2) sbPull reconstruction drops flags too.</strong> At line ~25872 the rebuild is <code>{_sbId, name, ic, type, meta}</code> only. Even if flags DID make it to Supabase, this line would drop them. <strong>(3) Reconciliation ordering bug.</strong> At line ~25900, bag <code>ownerRef</code> values are validated against <code>S.squads</code> — but <code>S.squads</code> is populated from the pull AFTER this check runs (squads loading starts at ~25911). So <code>_sqNames</code> is always empty during reconciliation, every squad-assigned bag fails validation, and every bag gets its <code>ownerType</code> cleared on every pull. This is very likely THE bug. The bag's <code>ownerRef</code> was correctly saved; the wipe happens during restoration. <strong>(4) Stale log message.</strong> The "ownerRef '...' no longer matches a squad" log line read <code>m.ownerRef</code> AFTER clearing it, so the message always said "ownerRef '' no longer matches" with an empty string. Fixed to capture the ref before clearing. <strong>What the diagnostic build adds:</strong> <code>window.RQ_DIAG</code> module with <code>log()</code>, <code>snapshot()</code>, <code>dump()</code>, <code>clear()</code>, <code>enabled</code> flag. Instruments: btn-sq-enroll click (before+after push), sqSave entry + migration loop + bagAsset filter + final assignment, applyDBItemsToArrays (flags DB "Bag of Holding" replacing built-in with a stripping warning), sbPush party_assets (logs pushed rows + warns about stripped fields), sbPull partyAssets consumption (logs raw rows + rebuilt state + warnings), sbPull safety-net recovery, sbPull ownerRef reconciliation (with explicit ORDERING-BUG flag when <code>_sqNames</code> is empty), and <code>hasSquadFormationEffect()</code> (every call logs which of its 6 check paths matched or missed). All entries pushed to <code>window.RQ_DIAG_LOG</code> (capped at 2000 entries) and logged to console via <code>console.groupCollapsed</code>. Boot message announces activation. Turn off with <code>RQ_DIAG.enabled = false</code>. <strong>How to use:</strong> open DevTools console before clicking the 500gp enrollment button; run through the flow; inspect collapsed log groups in real time; run <code>RQ_DIAG.dump()</code> to print the full sequence or <code>RQ_DIAG.snapshot()</code> for current state. <strong>This version contains no fixes — only instrumentation.</strong> The actual fixes (moving the ownerRef reconciliation AFTER squads load, OR pushing the top-level flags to Supabase, OR both) will ship as a separate version once we've confirmed the bug by observation. No SQL change in this build. No behaviour change in this build.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6993</strong> &mdash; Kudos capture extended to pinned-zone deletes. <strong>User report:</strong> "Items that are pinned, and then have their pointer-task-checkbox or pie completed and then are 'x' deleted from the pinned-task zone should still count for kudos." The v1.6991 capture points only covered the main-list sub-task delete (<code>stdl</code>) and the task done-modal (<code>ov-done-yes</code>). Items deleted via the ✕ button in the Pinned Tasks zone (different dispatcher actions: <code>subpindel</code> for pinned sub-tasks, <code>taskpindel</code> for pinned no-sub tasks) were slipping through without creating kudos entries. <strong>What landed:</strong> <strong>(1) subpindel now captures kudos.</strong> Same criterion as the main-list <code>stdl</code> (v1.6991): if <code>sub.done || sub.pct===6</code> at deletion time, push a kudos entry with the sub's name, computed <code>subGp = max(1, floor(parent.gp / subtasks.length))</code>, parent task name, and split-group title if nested. If the sub was incomplete at deletion, no kudos — destructive deletes don't qualify. <strong>(2) taskpindel now captures kudos.</strong> Pinned no-sub-task rows don't have a checkbox (per v1.6972 design — the Pinned zone for no-sub tasks is pie-only) so the only completion signal is <code>pct===6</code>. If the task was pie-full at deletion, push a kudos entry with the task's name, <code>gp</code>, and (defensively) split-group name if somehow set. If not pie-full, no kudos — matches the main-list <code>stdl</code> philosophy. <strong>(3) Symmetry with main-list paths.</strong> The four capture points are now: (a) <code>ov-done-yes</code> task done-modal → task kudos on either Archive or Delete branch; (b) <code>stdl</code> main-list sub-task delete → sub kudos iff done/pct-full; (c) <code>subpindel</code> pinned sub-task ✕ delete → sub kudos iff done/pct-full; (d) <code>taskpindel</code> pinned no-sub-task ✕ delete → task kudos iff pct-full. Together they cover every way a completed item can leave the active list via a user-triggered deletion. <strong>Scope note:</strong> the 📍 Unpin button (<code>tpin</code>/<code>stpin</code>) removes the pin but NOT the underlying task/sub-task, so no kudos is created — the item is still in the active list waiting to be worked. Only the ✕ Delete paths write to kudos. <strong>Not in scope:</strong> the v1.6991 follow-up question about whether completion-without-delete (just checking a sub or pie-fulling a task) should create kudos was left unresolved; current behaviour still requires deletion as the trigger regardless of where the completion happened. No SQL change. No data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6992</strong> &mdash; Kudos sidecar capped at 1 column; pinned tasks spread to fill remaining space. <strong>User ask (refinement of v1.6991):</strong> the kudos sidecar was claiming up to 2 sub-columns when pinned-span was small in cols-3 mode (e.g. 5 pins + kudos = pinned in col 1, kudos in cols 2-3). New rule: kudos never exceeds 1 column; pins absorb whatever extra width would otherwise have gone to kudos, spreading out even when their count is below the v1.6986 threshold for multi-column pinned. Explicit user note: "allow the pinned tasks to spread to column 2, even though it contradicts my earlier [v1.6986 1-5→1-col threshold] instructions." <strong>What landed:</strong> <strong>(1) New <code>_pinSpan</code> computation.</strong> When kudos has entries AND <code>_cn&gt;=2</code> AND <code>_pinSpanDesired &lt; _cn</code>: kudos reserves the rightmost column (<code>_sidecarSpan=1</code>), pins get <code>max(_pinSpanDesired, _cn-1)</code> columns — whichever is larger. Capped at <code>_pinCount</code> so 1 pin in cols-3 with kudos still gets <code>_pinSpan=1</code> (can't spread a single pin across multiple sub-columns). Example flows: (a) 5 pins / cols-3 / kudos-active: v1.6991 would give <code>_pinSpan=1, _sidecarSpan=2</code> → pins col 1, kudos cols 2-3. v1.6992 gives <code>_pinSpan=max(1,2)=2, _sidecarSpan=1</code> → pins cols 1-2 (3+2 vertical-fill), kudos col 3. Matches user's explicit screenshot expectation. (b) 2 pins / cols-3 / kudos-active: <code>_pinSpan=max(1,2)=2</code> capped at <code>_pinCount=2</code> → <code>_pinSpan=2</code>, each col gets 1 pin. Kudos col 3. (c) 1 pin / cols-3 / kudos-active: <code>_pinSpan=max(1,2)=2</code> capped at <code>_pinCount=1</code> → <code>_pinSpan=1</code>. Pin in col 1, kudos in col 3, col 2 empty whitespace. (d) 7 pins / cols-3 / kudos-active: <code>_pinSpanDesired=2, _pinSpan=max(2,2)=2, _sidecarSpan=1</code>. Same as v1.6991 for this count. (e) 11+ pins / cols-3: <code>_pinSpanDesired=3, 3 &lt; _cn(3)</code> is FALSE → kudos doesn't render, pins fill all 3 cols. Pin priority wins when space is truly contested. <strong>(2) No CSS changes.</strong> The <code>.pinned-band</code> grid and <code>.kudos-sidecar-span-N</code> rules stay put — the change is entirely in the JS computation of <code>_pinSpan</code> and the implicit computation of <code>_sidecarSpan</code>. Since <code>_sidecarSpan = _cn - _pinSpan</code> and the new <code>_pinSpan</code> is always <code>_cn-1</code> or less (when kudos renders), <code>_sidecarSpan</code> lands at 1 naturally. The existing guard (<code>_sidecarSpan&gt;=1 &amp;&amp; _kudosArr.length&gt;0 &amp;&amp; _cn&gt;=2</code>) still correctly gates sidecar rendering. <strong>(3) Visual consistency.</strong> The pinned banner now always occupies the "main area" of the zone with kudos as a consistent rightmost sliver, rather than varying between 1-col and 2-col sidecar widths based on pin count. Reads as a cleaner "pinned tasks | recent completions" side-by-side layout regardless of how many pins exist. <strong>Scope unchanged from v1.6991:</strong> sidecar still desktop-only, still requires multi-col, still requires kudos to have entries. No SQL change, no data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6991</strong> &mdash; Kudos: completed-task trophy log. <strong>User ask:</strong> chronological list of tasks and sub-tasks that have been checked/pie-pieced to completion and then deleted. Accessible via (a) a button in the Contracts header bar next to The Archive, and (b) a bonus in-band display that fills unused pinned-zone sub-columns when there aren't enough pinned tasks. <strong>What landed:</strong> <strong>(1) Data model.</strong> New <code>S.kudos</code> top-level array, newest-first, each entry <code>{id, ts, name, kind:'task'|'sub', gp, parent, groupName}</code>. Cap at 1000 entries with FIFO eviction; display 200 per page. Rides inside the existing <code>S</code> JSON blob — no SQL change. New helper <code>_pushKudos(entry)</code> handles field normalization + push + cap. <strong>(2) Capture points.</strong> Two sites write to kudos: (a) the <code>ov-done-yes</code> handler — the task claim/done modal. Both Archive and Delete branches push a kudos entry with the task's <code>gp</code> and (if applicable) split-group title. (b) the <code>stdl</code> sub-task delete handler — pushes a kudos entry ONLY when the sub was complete at deletion time (<code>sub.done || sub.pct===6</code>). Incomplete deletes are destructive and don't belong in a "trophy" log. Sub-task kudos capture the parent task name and group name (if nested in a group), and record <code>subGp = max(1, floor(parent.gp / subtasks.length))</code> matching the existing sub-task gold award formula. <strong>(3) Header button.</strong> New <code>#btn-kudos</code> in the Contracts header action row, next to The Archive. Label: ⭐ Kudos. Opens the <code>ov-kudos</code> modal. <strong>(4) Modal.</strong> Lists kudos entries paginated at 200 per page (user spec). Each row: ⭐ icon, task name, sub-parent/group subtext (if applicable), +N gp badge, relative-time (via existing <code>_undoRelTime</code>). Pager at the bottom shows "Page N of M · X entries" with \u2039 Prev / Next \u203A buttons. Clear-all button at footer-left requires confirmation. Close button at footer-right. <strong>(5) In-band sidecar.</strong> When pinned-span is less than <code>_colsN()</code> (v1.6986 banner layout) AND the user is in multi-col mode AND there's kudos data to show, the pinned zone is wrapped in a new <code>.pinned-band</code> grid layout that holds two children side-by-side: the <code>.pinned-section</code> occupying <code>pinned-span</code> columns on the left, and a new <code>.kudos-sidecar</code> occupying the remaining columns on the right. In cols-3 with pinned-span=1, the sidecar gets 2 sub-columns of kudos; with pinned-span=2, it gets 1 sub-column; etc. Sidecar shows newest first, vertically-filled across sub-columns, up to 15 entries per sub-column (so the band doesn't grow taller than needed). Each sidecar row uses a minimal layout: ⭐ star, name (truncating), +gp badge (when non-zero), relative-time. No borders, no heavy chrome — the sidecar is explicitly supplementary, not a primary interaction surface. <strong>(6) Scope.</strong> Sidecar is desktop-only (requires <code>_cn &gt;= 2</code>). 1-col users don't see it — the ⭐ Kudos button in the header is the only access path on mobile. When pinned-span equals <code>_colsN()</code> (full width), the band doesn't render — kudos only accessible via the modal. When kudos is empty, the sidecar doesn't render even if space is available. <strong>(7) Pagination state.</strong> <code>P.kudosPage</code> tracks the current page across modal opens. Clearing the log resets to page 0. The state is transient (not saved in <code>S</code>) since page position isn't meaningful to persist. No SQL change. No data-model change beyond the additive <code>S.kudos</code> array, which defaults to empty for any pre-existing user loaded from storage.</div>
@@ -8083,6 +8084,126 @@ try{
   // Fallback for any runtime that rejects defineProperty on window
   window.S=S;
 }
+
+/* ═══════════════ v1.6994: BAG-OF-HOLDING DIAGNOSTICS ═══════════════════════
+   Temporary instrumentation to trace the "500gp squad enrollment → Bag of
+   Holding lands in franchiseStorage instead of squad inventory" bug.
+
+   Covers five instrumentation points:
+     1. btn-sq-enroll click (BEFORE / AFTER the partyAssets.push)
+     2. sqSave entry (isNew path only — edit mode doesn't trigger bag logic)
+     3. sqSave franchiseStorage migration loop (each entry examined)
+     4. sqSave bagAsset search (each partyAssets entry, filter decision)
+     5. sqSave after assignment (which asset got it, final meta)
+   Plus:
+     6. applyDBItemsToArrays() — catches a DB-sourced "Bag of Holding" row
+        overriding the built-in one and stripping flags (the v1.6893 culprit)
+     7. hasSquadFormationEffect() — every call in the interesting path logs
+        WHICH of its 6 check paths matched/missed
+     8. Every save() call during the flow — logs the partyAssets snapshot
+        that's about to be persisted
+
+   All events are logged via console.group (collapsed) so the console doesn't
+   overwhelm. Also pushed to window.RQ_DIAG_LOG for after-the-fact inspection.
+
+   Usage:
+     - Open DevTools console BEFORE clicking the 500gp enrollment button
+     - Run through the flow (enrollment → name squad → select members → Save)
+     - Inspect the collapsed log groups in real time
+     - After completion, run window.RQ_DIAG.dump() to print the full sequence
+     - Run window.RQ_DIAG.snapshot() anytime for a clean current-state view
+     - Turn off with window.RQ_DIAG.enabled = false
+   ══════════════════════════════════════════════════════════════════════════ */
+window.RQ_DIAG_LOG = [];
+window.RQ_DIAG = (function(){
+  var api = {};
+  api.enabled = true;
+  api.log = function(label, data){
+    if(!api.enabled)return;
+    var ts = new Date().toISOString().slice(11,23); // HH:MM:SS.mmm
+    var entry = {ts:ts, label:label, data:data};
+    window.RQ_DIAG_LOG.push(entry);
+    // v1.6994 — cap log size to prevent memory bloat on long-running sessions
+    if(window.RQ_DIAG_LOG.length > 2000){
+      window.RQ_DIAG_LOG.splice(0, window.RQ_DIAG_LOG.length - 2000);
+    }
+    try{
+      console.groupCollapsed('%c[RQ_DIAG '+ts+'] %c'+label,
+        'color:#8b7a3a;font-weight:normal','color:#b8860b;font-weight:bold');
+      if(data!==undefined)console.log(data);
+      console.groupEnd();
+    }catch(e){}
+  };
+  // Produce a clean snapshot of the state that matters for this bug
+  api.snapshot = function(label){
+    var snap = {
+      partyAssets: ((S.partyAssets||[]).map(function(a){
+        return {
+          name: a.name,
+          type: a.type,
+          bagOfHolding: !!a.bagOfHolding,
+          effectSquadFormation: !!(a.effect && a.effect.squadFormation),
+          metaOwnerType: (a.meta && a.meta.ownerType) || '',
+          metaOwnerRef: (a.meta && a.meta.ownerRef) || '',
+          metaUid: (a.meta && a.meta.uid) || '',
+          hasSquadFormationEffect: (typeof hasSquadFormationEffect==='function'?hasSquadFormationEffect(a):'?')
+        };
+      })),
+      franchiseStorage: ((S.franchiseStorage||[]).map(function(e){
+        return typeof e === 'string' ? {name:e, kind:'string'} : {name:(e&&e.name), kind:'object', full:e};
+      })),
+      gear_BoH_entry: (function(){
+        var g = (typeof GEAR!=='undefined' && GEAR)
+          ? GEAR.filter(function(x){return x.name==='Bag of Holding';})[0] : null;
+        if(!g)return '(not in GEAR)';
+        return {
+          name:g.name, bagOfHolding:!!g.bagOfHolding,
+          effectSquadFormation:!!(g.effect && g.effect.squadFormation),
+          _dbId: g._dbId || '(built-in)',
+          fullEffect: g.effect
+        };
+      })(),
+      builtin_BoH_entry: (function(){
+        var g = (typeof BUILTIN_GEAR!=='undefined' && BUILTIN_GEAR)
+          ? BUILTIN_GEAR.filter(function(x){return x.name==='Bag of Holding';})[0] : null;
+        if(!g)return '(BUILTIN_GEAR not exposed or missing entry)';
+        return {
+          name:g.name, bagOfHolding:!!g.bagOfHolding,
+          effectSquadFormation:!!(g.effect && g.effect.squadFormation)
+        };
+      })(),
+      squads: ((S.squads||[]).map(function(s){
+        return {name:s&&s.name, id:s&&s.id, memberCount:(s&&s.memberIdxs||[]).length};
+      }))
+    };
+    if(label){
+      api.log('SNAPSHOT: '+label, snap);
+    }
+    return snap;
+  };
+  api.dump = function(){
+    console.log('%c=== RQ_DIAG full log ('+window.RQ_DIAG_LOG.length+' entries) ===',
+      'color:#b8860b;font-weight:bold;font-size:1.1em');
+    window.RQ_DIAG_LOG.forEach(function(e,i){
+      console.log('%c#'+i+' '+e.ts+' '+e.label,
+        'color:#b8860b;font-weight:bold', e.data);
+    });
+  };
+  api.clear = function(){
+    window.RQ_DIAG_LOG = [];
+    console.log('RQ_DIAG log cleared.');
+  };
+  return api;
+})();
+// Convenience: announce diagnostic readiness at boot so the user knows it's active
+setTimeout(function(){
+  if(window.RQ_DIAG && window.RQ_DIAG.enabled){
+    console.log('%c🐛 RQ_DIAG active. Run RQ_DIAG.dump() after the flow to see the full trace, '+
+      'or RQ_DIAG.snapshot() anytime for current state.',
+      'color:#b8860b;font-weight:bold;font-size:1.05em;padding:4px 8px;'+
+      'background:#2a1a0a;border-radius:4px');
+  }
+},500);
 
 function localSaveKey(){
   return 'acqv7:'+(uid()||'guest');
@@ -18088,6 +18209,11 @@ function sqGo(n){
 function sqSave(){
   // Name from correct card depending on mode
   var isNew=P3.sq===null;
+  // v1.6994 DIAG — capture sqSave entry state, especially for isNew path
+  if(window.RQ_DIAG){
+    RQ_DIAG.log('sqSave() called', {isNew:isNew, P3sq:P3.sq});
+    if(isNew)RQ_DIAG.snapshot('sqSave() isNew entry');
+  }
   // Both new and edit use ov-sq-name-new (card 1); ov-sq-name is only a display backup
   var nameEl=document.getElementById('ov-sq-name-new')||document.getElementById('ov-sq-name');
   var n=(nameEl?nameEl.value.trim():'');
@@ -18103,13 +18229,30 @@ function sqSave(){
   var newId=Date.now();
   if(isNew){
     S.squads.push({id:newId,name:n,emoji:selEmoji,color:selColor,memberIdxs:ms});
+    if(window.RQ_DIAG)RQ_DIAG.log('sqSave: squad pushed to S.squads', {name:n, id:newId, memberCount:ms.length});
     // Find a squad-formation item not already assigned to any squad
     if(!S.partyAssets)S.partyAssets=[];
     // Migrate any squad-formation items sitting in franchiseStorage into partyAssets
+    if(window.RQ_DIAG)RQ_DIAG.log('sqSave: starting franchiseStorage migration loop',
+      {entriesCount:(S.franchiseStorage||[]).length});
     (S.franchiseStorage||[]).slice().forEach(function(entry){
       var name=typeof entry==='string'?entry:(entry&&entry.name)||'';
-      if(!name)return;
+      if(!name){
+        if(window.RQ_DIAG)RQ_DIAG.log('sqSave migration: skip (no name)', {entry:entry});
+        return;
+      }
       var gearMatch=(GEAR||[]).filter(function(g){return g.name===name;})[0];
+      if(window.RQ_DIAG){
+        RQ_DIAG.log('sqSave migration: examining franchiseStorage entry', {
+          entryName:name,
+          gearMatchFound: !!gearMatch,
+          gearMatchHasSquadFormation: gearMatch ? hasSquadFormationEffect(gearMatch) : '(no gearMatch)',
+          gearMatchFlags: gearMatch ? {
+            bagOfHolding: !!gearMatch.bagOfHolding,
+            effectSquadFormation: !!(gearMatch.effect && gearMatch.effect.squadFormation)
+          } : null
+        });
+      }
       if(!gearMatch||!hasSquadFormationEffect(gearMatch))return;
       // Move to partyAssets
       var idx=(S.franchiseStorage||[]).indexOf(entry);
@@ -18118,14 +18261,38 @@ function sqSave(){
       if(gearMatch.effect)_mItem.effect=gearMatch.effect;
       if(gearMatch.bagOfHolding)_mItem.bagOfHolding=true;
       S.partyAssets.push(_mItem);
+      if(window.RQ_DIAG)RQ_DIAG.log('sqSave migration: moved entry from franchiseStorage to partyAssets',
+        {entryName:name, newAsset:_mItem});
     });
+    if(window.RQ_DIAG){
+      RQ_DIAG.log('sqSave: migration loop complete; about to search for unassigned squad-formation asset');
+      RQ_DIAG.snapshot('sqSave: just before bagAsset search');
+    }
     var bagAssigned=false;
+    // v1.6994 DIAG — instrument the filter predicate so we see every candidate's decision
+    var _diagCandidates = [];
     var bagAsset=(S.partyAssets||[]).filter(function(a){
-      if(!hasSquadFormationEffect(a))return false;
+      var _hasEffect = hasSquadFormationEffect(a);
+      if(!_hasEffect){
+        _diagCandidates.push({name:a.name, decision:'rejected (no squad-formation effect)',
+          metaOwnerType: (a.meta&&a.meta.ownerType)||'', hasSquadFormationEffect:false});
+        return false;
+      }
       var ot=(a.meta&&a.meta.ownerType)||'';
       // Only use items not already assigned to a different squad
-      return ot!=='squad';
+      var _keep = ot!=='squad';
+      _diagCandidates.push({name:a.name,
+        decision: _keep ? 'KEPT (eligible)' : 'rejected (already assigned to a squad)',
+        metaOwnerType: ot, hasSquadFormationEffect:true});
+      return _keep;
     })[0];
+    if(window.RQ_DIAG){
+      RQ_DIAG.log('sqSave: bagAsset filter results', {
+        allCandidates: _diagCandidates,
+        selectedBagAsset: bagAsset || '(none)',
+        partyAssetsLength: (S.partyAssets||[]).length
+      });
+    }
     if(bagAsset){
       if(!bagAsset.meta)bagAsset.meta={};
       bagAsset.meta.ownerType='squad';
@@ -18133,8 +18300,15 @@ function sqSave(){
       if(!bagAsset.meta.uid)bagAsset.meta.uid=newAssetUid();
       bagAssigned=true;
       logAdd('🎒 '+bagAsset.name+' assigned to squad "'+n+'"','hire');
+      if(window.RQ_DIAG)RQ_DIAG.log('sqSave: ASSIGNED bag to squad', {
+        assetName:bagAsset.name, ownerType:bagAsset.meta.ownerType,
+        ownerRef:bagAsset.meta.ownerRef, uid:bagAsset.meta.uid
+      });
+    } else {
+      if(window.RQ_DIAG)RQ_DIAG.log('sqSave: NO bag assigned — bagAsset was falsy');
     }
     logAdd('⚔ Squad "'+n+'" created'+(bagAssigned?'':' — no squad-formation item available'),'hire');
+    if(window.RQ_DIAG)RQ_DIAG.snapshot('sqSave: isNew completed');
   } else{
     var oldName=S.squads[P3.sq].name;
     // If cycle-locked, only allow name/emoji/color changes — preserve existing memberIdxs
@@ -18295,7 +18469,11 @@ document.getElementById('ov-sq-yes').addEventListener('click',sqSave);
 
 // Card navigation buttons
 document.getElementById('btn-sq-enroll').addEventListener('click',function(){
+  // v1.6994 DIAG — capture state before anything happens
+  if(window.RQ_DIAG)RQ_DIAG.snapshot('btn-sq-enroll CLICKED (before goldSpend)');
   if(!goldSpend(500,'Squad enrollment fee + Bag of Holding','buy'))return;
+  if(window.RQ_DIAG)RQ_DIAG.log('btn-sq-enroll goldSpend passed, about to push bag to partyAssets',
+    {currentPartyAssetsLength: (S.partyAssets||[]).length});
   // Add bag directly to partyAssets unassigned — sqSave will assign it to the squad
   if(!S.partyAssets)S.partyAssets=[];
   // Set the squad-formation flags directly on the asset so sqSave's
@@ -18304,9 +18482,14 @@ document.getElementById('btn-sq-enroll').addEventListener('click',function(){
   // one in GEAR (applyDB at line 19298 fully overrides by name), the built-in
   // effect:{squadFormation:true} / bagOfHolding:true flags would be lost,
   // and sqSave would fail to find an eligible squad-formation asset.
-  S.partyAssets.push({name:'Bag of Holding',ic:'👜',type:'magic',
+  var _diagBagPush = {name:'Bag of Holding',ic:'👜',type:'magic',
     bagOfHolding:true,effect:{squadFormation:true},
-    meta:{uid:newAssetUid(),ownerType:'',ownerRef:''}});
+    meta:{uid:newAssetUid(),ownerType:'',ownerRef:''}};
+  S.partyAssets.push(_diagBagPush);
+  if(window.RQ_DIAG){
+    RQ_DIAG.log('btn-sq-enroll pushed bag to partyAssets', {pushedAsset: _diagBagPush});
+    RQ_DIAG.snapshot('btn-sq-enroll AFTER push');
+  }
   save();
   sqGo(1);
 });
@@ -25313,11 +25496,28 @@ function sbPush(manual){
 
   ops.push(sbDel('party_assets','user_id=eq.'+encodeURIComponent(userId)).then(function(){
     if(!(S.partyAssets||[]).length)return true;
+    // v1.6994 DIAG — log what's being pushed vs. what's being stripped
+    if(window.RQ_DIAG){
+      var _pushRows = (S.partyAssets||[]).map(function(a,i){
+        assetMeta(a);
+        var row = {user_id:userId,sort_order:i,name:a.name,ic:a.ic||'',type:serializeAssetType(a)};
+        return {
+          pushed: row,
+          STRIPPED_in_push: {
+            bagOfHolding: !!a.bagOfHolding,
+            effect: a.effect || null,
+            NOTE: '⚠ Top-level bagOfHolding + effect fields are NOT pushed to Supabase. Only name, ic, and type (with meta encoded) travel. Recognition after pull relies on GEAR round-trip.'
+          }
+        };
+      });
+      RQ_DIAG.log('sbPush: party_assets delete+insert about to execute', {rowsCount:_pushRows.length, rows:_pushRows});
+    }
     return sbInsert('party_assets',(S.partyAssets||[]).map(function(a,i){
       assetMeta(a); return {user_id:userId,sort_order:i,name:a.name,ic:a.ic||'',type:serializeAssetType(a)};
     })).catch(function(e){
       // Insert failed after delete — log loudly so the issue is visible
       console.error('[sbPush] party_assets re-insert FAILED after delete:',e);
+      if(window.RQ_DIAG)RQ_DIAG.log('sbPush: party_assets INSERT FAILED', {error:e});
       logAdd('⚠️ Party assets push failed — your bags/mounts may need manual recovery. Check console.','task');
     });
   }));
@@ -25674,7 +25874,33 @@ function sbPull(manual){
       logAdd('Recovered archived tasks from local backup after empty cloud pull.','task');
     }
     if(assets&&assets.length){
+      // v1.6994 DIAG — log what came back from Supabase, and what we're
+      // building into S.partyAssets. This is the point where the bug becomes
+      // visible: Supabase rows only carry {name, ic, type-with-meta}; no
+      // bagOfHolding or effect flags survive.
+      if(window.RQ_DIAG){
+        RQ_DIAG.log('sbPull: partyAssets raw rows from Supabase', {
+          count: assets.length,
+          rows: assets.map(function(a){return {id:a.id, name:a.name, ic:a.ic, type:a.type};})
+        });
+      }
       S.partyAssets=assets.map(function(a){var pa=parseAssetType(a.type); return {_sbId:a.id,name:a.name,ic:a.ic,type:pa.baseType,meta:pa.meta||{}};}); ensureAssetMetas();
+      if(window.RQ_DIAG){
+        RQ_DIAG.log('sbPull: partyAssets rebuilt', {
+          count: S.partyAssets.length,
+          rebuilt: S.partyAssets.map(function(a){return {
+            name:a.name, type:a.type,
+            bagOfHolding: !!a.bagOfHolding,
+            effectSquadFormation: !!(a.effect && a.effect.squadFormation),
+            metaOwnerType: (a.meta && a.meta.ownerType) || '',
+            metaOwnerRef: (a.meta && a.meta.ownerRef) || '',
+            hasSquadFormationEffect: (typeof hasSquadFormationEffect==='function'?hasSquadFormationEffect(a):'?'),
+            WARNING: !(a.bagOfHolding || (a.effect && a.effect.squadFormation))
+              ? '⚠ Top-level recognition flags LOST in roundtrip — recognition now depends on GEAR lookup'
+              : undefined
+          };})
+        });
+      }
     } else if(backupPartyAssets&&backupPartyAssets.length){
       S.partyAssets=backupPartyAssets.map(function(a){
         var pa=parseAssetType(a.type);
@@ -25693,24 +25919,63 @@ function sbPull(manual){
       if(!_gearMatch||!hasSquadFormationEffect(_gearMatch))return;
       // Check if already in partyAssets
       var alreadyPresent=(S.partyAssets||[]).some(function(a){return hasSquadFormationEffect(a);});
+      if(window.RQ_DIAG){
+        RQ_DIAG.log('sbPull safety-net: checking franchiseStorage entry for bag recovery', {
+          bagName:bagName,
+          gearMatchFound:!!_gearMatch,
+          gearHasSquadFormation: _gearMatch ? hasSquadFormationEffect(_gearMatch) : false,
+          alreadyInPartyAssets:alreadyPresent,
+          willRecover: _gearMatch && hasSquadFormationEffect(_gearMatch) && !alreadyPresent
+        });
+      }
       if(!alreadyPresent){
         if(!S.partyAssets)S.partyAssets=[];
         S.partyAssets.push({name:bagName,ic:'🧳',type:'artifact',
           bagOfHolding:true,meta:{uid:'recovered-bag-'+Date.now(),ownerType:'',ownerRef:''}});
         logAdd('🛡 Bag of Holding ('+bagName+') recovered from franchiseStorage into partyAssets.','buy');
+        if(window.RQ_DIAG)RQ_DIAG.log('sbPull safety-net: RECOVERED bag into partyAssets (unassigned)', {
+          bagName:bagName,
+          NOTE: 'This recovery creates a bag with bagOfHolding:true but NO effect.squadFormation flag — minor inconsistency but recognition still works via the bagOfHolding flag.'
+        });
       }
     });
     // Reconcile bag ownerRefs: if a bag's ownerRef doesn't match any current squad name,
     // clear its ownerType so franchiseHasBagOfHolding recognizes it
     var _sqNames=(S.squads||[]).map(function(sq){return sq.name;});
+    // v1.6994 DIAG — the reconciliation below runs BEFORE S.squads is populated
+    // from the sbPull squads row, so _sqNames is empty here. Every squad-assigned
+    // bag will mismatch and get unassigned. This is almost certainly THE bug.
+    if(window.RQ_DIAG){
+      RQ_DIAG.log('sbPull reconcile: about to check bag ownerRefs against squad names', {
+        sqNamesAtThisPoint: _sqNames,
+        sqNamesLength: _sqNames.length,
+        squadsPullResultLength: (squads||[]).length,
+        CRITICAL: _sqNames.length===0 && (squads||[]).length>0
+          ? '🚨 ORDERING BUG: _sqNames is empty because S.squads has not been populated from the pull yet, even though the squads response IS populated. Every assigned bag WILL be unassigned below.'
+          : undefined
+      });
+    }
     (S.partyAssets||[]).forEach(function(a){
       if(!_isBagOfHolding(a))return;
       var m=assetMeta(a);
       if(m.ownerType==='squad'&&m.ownerRef&&_sqNames.indexOf(m.ownerRef)===-1){
-        // ownerRef points to a renamed/deleted squad — clear so bag is visible
+        // v1.6994 DIAG — this is a RED FLAG: a bag was assigned to a squad name
+        // that no longer exists in S.squads. The bag will be unassigned here,
+        // which effectively moves it "back" to the franchise inventory.
+        if(window.RQ_DIAG)RQ_DIAG.log('sbPull reconcile: UNASSIGNING bag whose ownerRef no-longer-exists', {
+          bagName:a.name,
+          staleOwnerRef:m.ownerRef,
+          currentSquadNames:_sqNames,
+          NOTE: '⚠ This could be the bug: if squads table returns empty OR is loaded AFTER partyAssets, all bags end up here with their ownerRef cleared, visually appearing in franchise inventory instead of a squad.'
+        });
+        // Capture the old ref BEFORE we clear it so the log message is accurate
+        var _staleRef=m.ownerRef;
         m.ownerType='';
         m.ownerRef='';
-        logAdd('\uD83D\uDCBC Bag ('+a.name+') ownerRef "'+m.ownerRef+'" no longer matches a squad \u2014 unassigned.','buy');
+        // v1.6994 — fixed log message bug: previously read m.ownerRef AFTER clearing,
+        // so the string always said "ownerRef '' no longer matches a squad". Now uses
+        // the captured pre-clear value.
+        logAdd('\uD83D\uDCBC Bag ('+a.name+') ownerRef "'+_staleRef+'" no longer matches a squad \u2014 unassigned.','buy');
       }
     });
     if(squads&&squads.length){
@@ -26345,13 +26610,28 @@ document.querySelectorAll('.ov').forEach(function(ov){
 // (either via .effect.squadFormation, .bagOfHolding flag, or DB item lookup)
 function hasSquadFormationEffect(a){
   if(!a)return false;
+  // v1.6994 DIAG — track which of the 6 check paths matched, for tracing
+  // recognition failures after round-trips that strip flags.
+  var _diag = window.RQ_DIAG && RQ_DIAG.enabled;
   // Direct flag on partyAsset (from built-in GEAR or capstone reward)
-  if(a.effect&&a.effect.squadFormation)return true;
-  if(a.bagOfHolding)return true;
+  if(a.effect&&a.effect.squadFormation){
+    if(_diag)RQ_DIAG.log('hasSquadFormationEffect: MATCH via a.effect.squadFormation', {assetName:a.name});
+    return true;
+  }
+  if(a.bagOfHolding){
+    if(_diag)RQ_DIAG.log('hasSquadFormationEffect: MATCH via a.bagOfHolding', {assetName:a.name});
+    return true;
+  }
   // Check DB-loaded GEAR items by name
   var gearItem=(GEAR||[]).filter(function(g){return g.name===a.name;})[0];
-  if(gearItem&&gearItem.effect&&gearItem.effect.squadFormation)return true;
-  if(gearItem&&gearItem.bagOfHolding)return true;
+  if(gearItem&&gearItem.effect&&gearItem.effect.squadFormation){
+    if(_diag)RQ_DIAG.log('hasSquadFormationEffect: MATCH via GEAR[name].effect.squadFormation', {assetName:a.name});
+    return true;
+  }
+  if(gearItem&&gearItem.bagOfHolding){
+    if(_diag)RQ_DIAG.log('hasSquadFormationEffect: MATCH via GEAR[name].bagOfHolding', {assetName:a.name});
+    return true;
+  }
   // Fallback: if the GEAR entry was replaced by a DB row that stripped the
   // effect/bagOfHolding flags (applyDB at line 19298 fully overrides by name),
   // also consult the untouched BUILTIN_GEAR. This prevents squad-formation
@@ -26359,9 +26639,23 @@ function hasSquadFormationEffect(a){
   // under the same name as a built-in bag.
   if(typeof BUILTIN_GEAR!=='undefined'){
     var builtinItem=(BUILTIN_GEAR||[]).filter(function(g){return g.name===a.name;})[0];
-    if(builtinItem&&builtinItem.effect&&builtinItem.effect.squadFormation)return true;
-    if(builtinItem&&builtinItem.bagOfHolding)return true;
+    if(builtinItem&&builtinItem.effect&&builtinItem.effect.squadFormation){
+      if(_diag)RQ_DIAG.log('hasSquadFormationEffect: MATCH via BUILTIN_GEAR[name].effect.squadFormation', {assetName:a.name});
+      return true;
+    }
+    if(builtinItem&&builtinItem.bagOfHolding){
+      if(_diag)RQ_DIAG.log('hasSquadFormationEffect: MATCH via BUILTIN_GEAR[name].bagOfHolding', {assetName:a.name});
+      return true;
+    }
   }
+  if(_diag)RQ_DIAG.log('hasSquadFormationEffect: NO MATCH — asset is not squad-formation-eligible', {
+    assetName:a.name,
+    hasDirectEffect: !!(a.effect&&a.effect.squadFormation),
+    hasDirectBagFlag: !!a.bagOfHolding,
+    gearItemFound: !!gearItem,
+    gearItemEffect: gearItem&&gearItem.effect,
+    gearItemBagFlag: !!(gearItem&&gearItem.bagOfHolding)
+  });
   return false;
 }
 
@@ -29062,6 +29356,30 @@ function applyDBItemsToArrays(){
     var result=builtins.slice();
     dbItems.forEach(function(dbItem){
       var idx=result.findIndex(function(b){return b.name===dbItem.name;});
+      // v1.6994 DIAG — flag the specific case that breaks the bag: a DB row
+      // with the same name as Bag of Holding that lacks bagOfHolding /
+      // effect.squadFormation flags would silently strip the built-in's
+      // squad-formation recognition.
+      if(window.RQ_DIAG && dbItem.name==='Bag of Holding'){
+        var builtinAt = idx>=0 ? result[idx] : null;
+        RQ_DIAG.log('applyDBItemsToArrays: DB row for "Bag of Holding" found', {
+          dbItem: {
+            name: dbItem.name,
+            bagOfHolding: !!dbItem.bagOfHolding,
+            effectSquadFormation: !!(dbItem.effect && dbItem.effect.squadFormation),
+            _dbId: dbItem._dbId,
+            fullEffect: dbItem.effect
+          },
+          builtinBeingReplaced: builtinAt ? {
+            bagOfHolding: !!builtinAt.bagOfHolding,
+            effectSquadFormation: !!(builtinAt.effect && builtinAt.effect.squadFormation)
+          } : '(no built-in at same name)',
+          WARNING: (builtinAt && (builtinAt.bagOfHolding || (builtinAt.effect && builtinAt.effect.squadFormation))
+            && !(dbItem.bagOfHolding || (dbItem.effect && dbItem.effect.squadFormation)))
+            ? '⚠ DB row STRIPPING squad-formation flags from built-in!'
+            : '(replacement seems safe)'
+        });
+      }
       if(idx>=0) result[idx]=dbItem;
       else result.push(dbItem);
     });
@@ -29078,6 +29396,16 @@ function applyDBItemsToArrays(){
     // Rebuild ITEM_WEIGHT
     var _all=[].concat(GEAR||[]);
     _all.forEach(function(g){if(g.name&&g.wt!==undefined)ITEM_WEIGHT[g.name]=g.wt;});
+    // v1.6994 DIAG — post-apply snapshot of the Bag of Holding GEAR entry
+    if(window.RQ_DIAG){
+      var _finalBoH = (GEAR||[]).filter(function(g){return g.name==='Bag of Holding';})[0];
+      RQ_DIAG.log('applyDBItemsToArrays: final GEAR["Bag of Holding"] state', _finalBoH ? {
+        bagOfHolding: !!_finalBoH.bagOfHolding,
+        effectSquadFormation: !!(_finalBoH.effect && _finalBoH.effect.squadFormation),
+        fullEffect: _finalBoH.effect,
+        _dbId: _finalBoH._dbId || '(built-in)'
+      } : '(not present in GEAR)');
+    }
   }
 }
 
