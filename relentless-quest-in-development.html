@@ -4405,7 +4405,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6994</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6995</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5113,7 +5113,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6994
+      Version 1.6995
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -5138,6 +5138,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6995</strong> &mdash; Bag of Holding: three fixes and a dedupe migration. <strong>Observed from v1.6994 diagnostic trace:</strong> user's console showed (a) four Longinus Carpetbag of Holding entries in <code>partyAssets</code> — duplicates accumulated from push/pull races; (b) every single <code>hasSquadFormationEffect()</code> call on those bags returned NO MATCH, meaning the recognition flags had been stripped on a previous round-trip; (c) <code>franchiseHasBagOfHolding()</code> returned <code>false</code> even though four bags existed, so the 50 gp re-registration path would have been unavailable; (d) every asset in partyAssets appeared exactly twice, including Riding Horses, Cats, and Ropes — systematic duplication, not a single-bag issue. <strong>Fix #1: sbPull reconciliation ordering (the main bug).</strong> Bag <code>ownerRef</code> validation was running BEFORE <code>S.squads</code> got populated from the pull response. <code>_sqNames</code> was always empty; every squad-assigned bag's ownerRef failed validation; every bag got <code>ownerType</code> cleared on every sync. The bag would correctly save as assigned but on the very next pull the assignment would be wiped. Moved the reconciliation block to AFTER the squads-load block, where <code>S.squads</code> is actually populated. <strong>Fix #2: push/pull flag preservation.</strong> The Supabase <code>party_assets</code> push path writes only <code>{name, ic, type}</code> — top-level <code>bagOfHolding</code> and <code>effect</code> fields get stripped. Enhanced <code>serializeAssetType</code> to pack recognition flags into the meta object under reserved keys <code>_boh</code> (bagOfHolding) and <code>_fx</code> (effect), which travel via the existing <code>type</code> column encoding (<code>basetype__meta__{json}</code>). Enhanced the pull-side rebuild at <code>sbPull</code> to unpack <code>_boh</code> and <code>_fx</code> back to top-level fields. Reserved key names starting with underscore don't collide with any existing meta fields. Backwards compatible: legacy rows without the reserved keys just rebuild without flags (same as before), then Fix #1 + the existing BUILTIN_GEAR fallback in <code>hasSquadFormationEffect</code> continue to catch them. Any save+push from this version forward upgrades the persisted data. No SQL change. <strong>Fix #3: dedupe migration.</strong> New <code>dedupePartyAssets()</code> helper keys entries by <code>(name, baseType, ownerType, ownerRef)</code> — the tuple that uniquely identifies an "owned instance" of an asset. Duplicates are collapsed, preferring entries with <code>_sbId</code> (Supabase-persisted) over entries without. Runs automatically: (a) after <code>migrateMisroutedAssets</code> in sbPull, (b) at the end of <code>load()</code> so a locally-saved state with duplicates also heals on boot. Logs an adventure-log entry "🧹 Cleaned N duplicate party asset(s)" when it removes anything, and a <code>RQ_DIAG</code> entry with the full list of what was removed. Safe to call repeatedly — idempotent on already-clean state. <strong>Intentionally NOT deduped:</strong> <code>franchiseStorage</code> string entries (a user can legitimately own two Crowbars), character <code>inv</code> arrays (same reason), or any other array. Only <code>partyAssets</code> has the uniqueness-by-owner-tuple property. <strong>Side fix:</strong> the old log message "ownerRef '...' no longer matches a squad" was reading <code>m.ownerRef</code> AFTER clearing it, so the string always printed as "ownerRef '' no longer matches". Fixed to capture the stale ref before clearing. <strong>Diagnostic cleanup:</strong> removed the noisy per-call <code>RQ_DIAG</code> logging inside <code>hasSquadFormationEffect</code> (was firing hundreds of times per render). The rest of the <code>RQ_DIAG</code> module (<code>log</code>, <code>snapshot</code>, <code>dump</code>, <code>clear</code>) stays in place and still instruments btn-sq-enroll, sqSave, applyDBItemsToArrays, sbPush party_assets, and the renamed post-squads sbPull reconciliation — useful for verifying that the fixes actually land without churn. Turn off with <code>RQ_DIAG.enabled = false</code> in the console. <strong>Expected behaviour:</strong> (i) first load after this version runs dedupe and reports a one-time "Cleaned N" message; N should match the duplicate count from the v1.6994 trace (5 for the test franchise). (ii) the 500 gp enrollment flow assigns the bag to the new squad, the assignment survives the next sbPull (no more reshuffle). (iii) existing bags in Supabase upgrade their encoding on the next save+push cycle (which happens automatically on any state mutation). <strong>Not addressed in this version:</strong> the double-invocation of <code>applyDBItemsToArrays</code> at boot — that's a separate investigation and doesn't block the bag fix. If your data still shows orphan bags after dedupe runs, that's a candidate for v1.6996.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6994</strong> &mdash; Bag-of-Holding diagnostic build (temporary). <strong>User ask:</strong> build-in diagnostics to trace the "500gp squad enrollment awards Bag of Holding to franchise inventory instead of squad inventory" bug. <strong>Findings exposed by instrumentation:</strong> <strong>(1) Supabase push strips top-level flags.</strong> The <code>sbPush</code> party_assets path at line ~25495 only pushes <code>{user_id, sort_order, name, ic, type}</code>. Top-level <code>bagOfHolding</code> and <code>effect</code> fields are NOT included. After push+pull, the bag loses its recognition flags. <code>hasSquadFormationEffect()</code> then has to fall back to a GEAR-name lookup, which the v1.6893 changelog already identified as fragile (a homebrew Bag of Holding DB row can strip flags from the built-in). <strong>(2) sbPull reconstruction drops flags too.</strong> At line ~25872 the rebuild is <code>{_sbId, name, ic, type, meta}</code> only. Even if flags DID make it to Supabase, this line would drop them. <strong>(3) Reconciliation ordering bug.</strong> At line ~25900, bag <code>ownerRef</code> values are validated against <code>S.squads</code> — but <code>S.squads</code> is populated from the pull AFTER this check runs (squads loading starts at ~25911). So <code>_sqNames</code> is always empty during reconciliation, every squad-assigned bag fails validation, and every bag gets its <code>ownerType</code> cleared on every pull. This is very likely THE bug. The bag's <code>ownerRef</code> was correctly saved; the wipe happens during restoration. <strong>(4) Stale log message.</strong> The "ownerRef '...' no longer matches a squad" log line read <code>m.ownerRef</code> AFTER clearing it, so the message always said "ownerRef '' no longer matches" with an empty string. Fixed to capture the ref before clearing. <strong>What the diagnostic build adds:</strong> <code>window.RQ_DIAG</code> module with <code>log()</code>, <code>snapshot()</code>, <code>dump()</code>, <code>clear()</code>, <code>enabled</code> flag. Instruments: btn-sq-enroll click (before+after push), sqSave entry + migration loop + bagAsset filter + final assignment, applyDBItemsToArrays (flags DB "Bag of Holding" replacing built-in with a stripping warning), sbPush party_assets (logs pushed rows + warns about stripped fields), sbPull partyAssets consumption (logs raw rows + rebuilt state + warnings), sbPull safety-net recovery, sbPull ownerRef reconciliation (with explicit ORDERING-BUG flag when <code>_sqNames</code> is empty), and <code>hasSquadFormationEffect()</code> (every call logs which of its 6 check paths matched or missed). All entries pushed to <code>window.RQ_DIAG_LOG</code> (capped at 2000 entries) and logged to console via <code>console.groupCollapsed</code>. Boot message announces activation. Turn off with <code>RQ_DIAG.enabled = false</code>. <strong>How to use:</strong> open DevTools console before clicking the 500gp enrollment button; run through the flow; inspect collapsed log groups in real time; run <code>RQ_DIAG.dump()</code> to print the full sequence or <code>RQ_DIAG.snapshot()</code> for current state. <strong>This version contains no fixes — only instrumentation.</strong> The actual fixes (moving the ownerRef reconciliation AFTER squads load, OR pushing the top-level flags to Supabase, OR both) will ship as a separate version once we've confirmed the bug by observation. No SQL change in this build. No behaviour change in this build.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6993</strong> &mdash; Kudos capture extended to pinned-zone deletes. <strong>User report:</strong> "Items that are pinned, and then have their pointer-task-checkbox or pie completed and then are 'x' deleted from the pinned-task zone should still count for kudos." The v1.6991 capture points only covered the main-list sub-task delete (<code>stdl</code>) and the task done-modal (<code>ov-done-yes</code>). Items deleted via the ✕ button in the Pinned Tasks zone (different dispatcher actions: <code>subpindel</code> for pinned sub-tasks, <code>taskpindel</code> for pinned no-sub tasks) were slipping through without creating kudos entries. <strong>What landed:</strong> <strong>(1) subpindel now captures kudos.</strong> Same criterion as the main-list <code>stdl</code> (v1.6991): if <code>sub.done || sub.pct===6</code> at deletion time, push a kudos entry with the sub's name, computed <code>subGp = max(1, floor(parent.gp / subtasks.length))</code>, parent task name, and split-group title if nested. If the sub was incomplete at deletion, no kudos — destructive deletes don't qualify. <strong>(2) taskpindel now captures kudos.</strong> Pinned no-sub-task rows don't have a checkbox (per v1.6972 design — the Pinned zone for no-sub tasks is pie-only) so the only completion signal is <code>pct===6</code>. If the task was pie-full at deletion, push a kudos entry with the task's name, <code>gp</code>, and (defensively) split-group name if somehow set. If not pie-full, no kudos — matches the main-list <code>stdl</code> philosophy. <strong>(3) Symmetry with main-list paths.</strong> The four capture points are now: (a) <code>ov-done-yes</code> task done-modal → task kudos on either Archive or Delete branch; (b) <code>stdl</code> main-list sub-task delete → sub kudos iff done/pct-full; (c) <code>subpindel</code> pinned sub-task ✕ delete → sub kudos iff done/pct-full; (d) <code>taskpindel</code> pinned no-sub-task ✕ delete → task kudos iff pct-full. Together they cover every way a completed item can leave the active list via a user-triggered deletion. <strong>Scope note:</strong> the 📍 Unpin button (<code>tpin</code>/<code>stpin</code>) removes the pin but NOT the underlying task/sub-task, so no kudos is created — the item is still in the active list waiting to be worked. Only the ✕ Delete paths write to kudos. <strong>Not in scope:</strong> the v1.6991 follow-up question about whether completion-without-delete (just checking a sub or pie-fulling a task) should create kudos was left unresolved; current behaviour still requires deletion as the trigger regardless of where the completion happened. No SQL change. No data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6992</strong> &mdash; Kudos sidecar capped at 1 column; pinned tasks spread to fill remaining space. <strong>User ask (refinement of v1.6991):</strong> the kudos sidecar was claiming up to 2 sub-columns when pinned-span was small in cols-3 mode (e.g. 5 pins + kudos = pinned in col 1, kudos in cols 2-3). New rule: kudos never exceeds 1 column; pins absorb whatever extra width would otherwise have gone to kudos, spreading out even when their count is below the v1.6986 threshold for multi-column pinned. Explicit user note: "allow the pinned tasks to spread to column 2, even though it contradicts my earlier [v1.6986 1-5→1-col threshold] instructions." <strong>What landed:</strong> <strong>(1) New <code>_pinSpan</code> computation.</strong> When kudos has entries AND <code>_cn&gt;=2</code> AND <code>_pinSpanDesired &lt; _cn</code>: kudos reserves the rightmost column (<code>_sidecarSpan=1</code>), pins get <code>max(_pinSpanDesired, _cn-1)</code> columns — whichever is larger. Capped at <code>_pinCount</code> so 1 pin in cols-3 with kudos still gets <code>_pinSpan=1</code> (can't spread a single pin across multiple sub-columns). Example flows: (a) 5 pins / cols-3 / kudos-active: v1.6991 would give <code>_pinSpan=1, _sidecarSpan=2</code> → pins col 1, kudos cols 2-3. v1.6992 gives <code>_pinSpan=max(1,2)=2, _sidecarSpan=1</code> → pins cols 1-2 (3+2 vertical-fill), kudos col 3. Matches user's explicit screenshot expectation. (b) 2 pins / cols-3 / kudos-active: <code>_pinSpan=max(1,2)=2</code> capped at <code>_pinCount=2</code> → <code>_pinSpan=2</code>, each col gets 1 pin. Kudos col 3. (c) 1 pin / cols-3 / kudos-active: <code>_pinSpan=max(1,2)=2</code> capped at <code>_pinCount=1</code> → <code>_pinSpan=1</code>. Pin in col 1, kudos in col 3, col 2 empty whitespace. (d) 7 pins / cols-3 / kudos-active: <code>_pinSpanDesired=2, _pinSpan=max(2,2)=2, _sidecarSpan=1</code>. Same as v1.6991 for this count. (e) 11+ pins / cols-3: <code>_pinSpanDesired=3, 3 &lt; _cn(3)</code> is FALSE → kudos doesn't render, pins fill all 3 cols. Pin priority wins when space is truly contested. <strong>(2) No CSS changes.</strong> The <code>.pinned-band</code> grid and <code>.kudos-sidecar-span-N</code> rules stay put — the change is entirely in the JS computation of <code>_pinSpan</code> and the implicit computation of <code>_sidecarSpan</code>. Since <code>_sidecarSpan = _cn - _pinSpan</code> and the new <code>_pinSpan</code> is always <code>_cn-1</code> or less (when kudos renders), <code>_sidecarSpan</code> lands at 1 naturally. The existing guard (<code>_sidecarSpan&gt;=1 &amp;&amp; _kudosArr.length&gt;0 &amp;&amp; _cn&gt;=2</code>) still correctly gates sidecar rendering. <strong>(3) Visual consistency.</strong> The pinned banner now always occupies the "main area" of the zone with kudos as a consistent rightmost sliver, rather than varying between 1-col and 2-col sidecar widths based on pin count. Reads as a cleaner "pinned tasks | recent completions" side-by-side layout regardless of how many pins exist. <strong>Scope unchanged from v1.6991:</strong> sidecar still desktop-only, still requires multi-col, still requires kudos to have entries. No SQL change, no data-model change.</div>
@@ -8233,6 +8234,10 @@ function load(){
   migrateArtificerToRunesmith();
   healOrphanedQuestState();
   healCompletedCycleArchives(); // v1.6948
+  // v1.6995 — dedupe partyAssets that may have accumulated from earlier races.
+  // Only runs if the function is already defined (it's defined much later in
+  // the file, so this guard handles the ordering during script parse).
+  if(typeof dedupePartyAssets==='function')dedupePartyAssets();
   (S.active||[]).forEach(function(t,i){
     if(!t._tid)t._tid='t'+Date.now().toString(36)+Math.random().toString(36).slice(2,8)+i;
   });
@@ -8298,7 +8303,25 @@ function assetMeta(a){
 function serializeAssetType(a){
   var base=assetBaseType(a)||'';
   var meta=assetMeta(a);
-  return Object.keys(meta).length?base+'__meta__'+JSON.stringify(meta):base;
+  // v1.6995 — The Supabase party_assets push path only writes {name, ic, type},
+  // so top-level fields like `bagOfHolding` and `effect` get stripped on every
+  // round-trip. Recognition after pull then depends on a GEAR-name lookup which
+  // is fragile (a homebrew DB gear row can replace the built-in and strip flags;
+  // see v1.6893 changelog). Fix: smuggle the recognition flags into the meta
+  // object under reserved keys `_boh` and `_fx` before serialization. The pull
+  // path copies them back to top-level fields during rebuild. Reserved key
+  // names starting with `_` are never set by the normal assetMeta flow so
+  // there's no collision risk with existing meta fields.
+  var packed;
+  if(a && (a.bagOfHolding || (a.effect && typeof a.effect==='object'))){
+    packed = {};
+    for(var k in meta){if(meta.hasOwnProperty(k))packed[k]=meta[k];}
+    if(a.bagOfHolding)packed._boh=1;
+    if(a.effect && typeof a.effect==='object')packed._fx=a.effect;
+  } else {
+    packed = meta;
+  }
+  return Object.keys(packed).length?base+'__meta__'+JSON.stringify(packed):base;
 }
 function isAnimalAsset(a){var t=assetBaseType(a);return t==='pet'||t==='mount';}
 function isBuildingAsset(a){return ['structure','income','workshop','utility','stronghold','building'].indexOf(assetBaseType(a))!==-1;}
@@ -25655,6 +25678,94 @@ function migrateMisroutedAssets(){
   if(toRemove.length)saveLocalState();
 }
 
+/* ═══════════════ v1.6995: DEDUPE partyAssets ════════════════════════════
+   Cleans up duplicate assets that may have accumulated across push/pull
+   cycles. A duplicate is any pair of entries sharing the same tuple:
+     (name, baseType, meta.ownerType, meta.ownerRef)
+   When duplicates exist, keep the one with the most-established provenance —
+   preferring (in order): has _sbId (came from Supabase, so persisted),
+   then has a uid, then earliest array position.
+
+   Runs automatically after sbPull partyAssets hydration and after load().
+   Safe to call repeatedly — idempotent on already-deduped state.
+
+   Why keying by (name, baseType, ownerType, ownerRef):
+     - A user can legitimately own 2 "Riding Horse" if assigned to different
+       characters (different ownerRef) — kept distinct.
+     - A user can legitimately have 2 bags assigned to 2 different squads —
+       kept distinct.
+     - But 2 bags BOTH assigned to "ownerRef:Solarians" can only be the
+       result of a push/pull duplication — one is dropped.
+
+   Does NOT dedupe franchiseStorage — a user can legitimately have 2
+   identical crowbars as string entries.
+   ══════════════════════════════════════════════════════════════════════ */
+function dedupePartyAssets(){
+  if(!S.partyAssets || !S.partyAssets.length)return {checked:0, removed:0};
+  var seen = {};
+  var keepIdx = {};
+  var dropIdxs = [];
+  S.partyAssets.forEach(function(a, i){
+    if(!a)return;
+    var baseType = assetBaseType(a) || '';
+    var meta = a.meta || {};
+    var ownerType = meta.ownerType || '';
+    var ownerRef = meta.ownerRef || '';
+    var key = (a.name||'') + '|' + baseType + '|' + ownerType + '|' + ownerRef;
+    if(seen[key]===undefined){
+      seen[key] = true;
+      keepIdx[i] = true;
+      return;
+    }
+    // Duplicate — decide whether to prefer the earlier or the current entry.
+    // Find the previous keeper with this key
+    var prevKeeper = null;
+    for(var pi in keepIdx){
+      if(!keepIdx.hasOwnProperty(pi))continue;
+      var pa = S.partyAssets[pi];
+      if(!pa)continue;
+      var pbt = assetBaseType(pa)||'';
+      var pm = pa.meta||{};
+      var pkey = (pa.name||'')+'|'+pbt+'|'+(pm.ownerType||'')+'|'+(pm.ownerRef||'');
+      if(pkey===key){prevKeeper=parseInt(pi,10);break;}
+    }
+    if(prevKeeper===null){
+      // Shouldn't happen given the seen map, but be defensive
+      keepIdx[i] = true;
+      return;
+    }
+    // Prefer the entry with _sbId (Supabase-persisted) over one without
+    var curHas = !!a._sbId;
+    var prevHas = !!(S.partyAssets[prevKeeper] && S.partyAssets[prevKeeper]._sbId);
+    if(curHas && !prevHas){
+      // Swap: drop previous, keep current
+      dropIdxs.push(prevKeeper);
+      delete keepIdx[prevKeeper];
+      keepIdx[i] = true;
+    } else {
+      dropIdxs.push(i);
+    }
+  });
+  if(!dropIdxs.length)return {checked:S.partyAssets.length, removed:0};
+  // Sort descending so splices don't shift later indices
+  dropIdxs.sort(function(a,b){return b-a;});
+  var removedDetails = [];
+  dropIdxs.forEach(function(i){
+    var a = S.partyAssets[i];
+    if(a)removedDetails.push({idx:i, name:a.name, type:a.type,
+      ownerType:(a.meta&&a.meta.ownerType)||'',
+      ownerRef:(a.meta&&a.meta.ownerRef)||''});
+    S.partyAssets.splice(i,1);
+  });
+  if(window.RQ_DIAG)RQ_DIAG.log('dedupePartyAssets: removed '+dropIdxs.length+' duplicate partyAssets', {
+    removed: removedDetails,
+    remainingCount: S.partyAssets.length
+  });
+  try{logAdd('🧹 Cleaned '+dropIdxs.length+' duplicate party asset'+(dropIdxs.length===1?'':'s')+'.','buy');}catch(e){}
+  saveLocalState();
+  return {checked:S.partyAssets.length+dropIdxs.length, removed:dropIdxs.length};
+}
+
 function sbPull(manual){
   if(!uid()){
     if(manual)syncStatus('Log in to pull from Supabase.','var(--crimson)');
@@ -25884,7 +25995,22 @@ function sbPull(manual){
           rows: assets.map(function(a){return {id:a.id, name:a.name, ic:a.ic, type:a.type};})
         });
       }
-      S.partyAssets=assets.map(function(a){var pa=parseAssetType(a.type); return {_sbId:a.id,name:a.name,ic:a.ic,type:pa.baseType,meta:pa.meta||{}};}); ensureAssetMetas();
+      S.partyAssets=assets.map(function(a){
+        var pa=parseAssetType(a.type);
+        var m=pa.meta||{};
+        // v1.6995 — Unpack reserved recognition flags smuggled into meta via
+        // serializeAssetType. _boh → bagOfHolding (top-level), _fx → effect
+        // (top-level). Strip the reserved keys from meta after unpacking so
+        // they don't pollute downstream code that iterates meta keys.
+        var obj={_sbId:a.id, name:a.name, ic:a.ic, type:pa.baseType, meta:{}};
+        if(m._boh)obj.bagOfHolding=true;
+        if(m._fx && typeof m._fx==='object')obj.effect=m._fx;
+        for(var k in m){
+          if(m.hasOwnProperty(k) && k!=='_boh' && k!=='_fx')obj.meta[k]=m[k];
+        }
+        return obj;
+      });
+      ensureAssetMetas();
       if(window.RQ_DIAG){
         RQ_DIAG.log('sbPull: partyAssets rebuilt', {
           count: S.partyAssets.length,
@@ -25939,45 +26065,14 @@ function sbPull(manual){
         });
       }
     });
-    // Reconcile bag ownerRefs: if a bag's ownerRef doesn't match any current squad name,
-    // clear its ownerType so franchiseHasBagOfHolding recognizes it
-    var _sqNames=(S.squads||[]).map(function(sq){return sq.name;});
-    // v1.6994 DIAG — the reconciliation below runs BEFORE S.squads is populated
-    // from the sbPull squads row, so _sqNames is empty here. Every squad-assigned
-    // bag will mismatch and get unassigned. This is almost certainly THE bug.
-    if(window.RQ_DIAG){
-      RQ_DIAG.log('sbPull reconcile: about to check bag ownerRefs against squad names', {
-        sqNamesAtThisPoint: _sqNames,
-        sqNamesLength: _sqNames.length,
-        squadsPullResultLength: (squads||[]).length,
-        CRITICAL: _sqNames.length===0 && (squads||[]).length>0
-          ? '🚨 ORDERING BUG: _sqNames is empty because S.squads has not been populated from the pull yet, even though the squads response IS populated. Every assigned bag WILL be unassigned below.'
-          : undefined
-      });
-    }
-    (S.partyAssets||[]).forEach(function(a){
-      if(!_isBagOfHolding(a))return;
-      var m=assetMeta(a);
-      if(m.ownerType==='squad'&&m.ownerRef&&_sqNames.indexOf(m.ownerRef)===-1){
-        // v1.6994 DIAG — this is a RED FLAG: a bag was assigned to a squad name
-        // that no longer exists in S.squads. The bag will be unassigned here,
-        // which effectively moves it "back" to the franchise inventory.
-        if(window.RQ_DIAG)RQ_DIAG.log('sbPull reconcile: UNASSIGNING bag whose ownerRef no-longer-exists', {
-          bagName:a.name,
-          staleOwnerRef:m.ownerRef,
-          currentSquadNames:_sqNames,
-          NOTE: '⚠ This could be the bug: if squads table returns empty OR is loaded AFTER partyAssets, all bags end up here with their ownerRef cleared, visually appearing in franchise inventory instead of a squad.'
-        });
-        // Capture the old ref BEFORE we clear it so the log message is accurate
-        var _staleRef=m.ownerRef;
-        m.ownerType='';
-        m.ownerRef='';
-        // v1.6994 — fixed log message bug: previously read m.ownerRef AFTER clearing,
-        // so the string always said "ownerRef '' no longer matches a squad". Now uses
-        // the captured pre-clear value.
-        logAdd('\uD83D\uDCBC Bag ('+a.name+') ownerRef "'+_staleRef+'" no longer matches a squad \u2014 unassigned.','buy');
-      }
-    });
+    // v1.6995 — The bag ownerRef reconciliation USED to live here, but it was
+    // reading S.squads BEFORE squads got populated from the pull response.
+    // That meant _sqNames was always empty, every squad-assigned bag failed
+    // validation, and every bag got its ownerType cleared on every pull —
+    // the bag would appear "unassigned" in the franchise inventory after
+    // each sync. Moved the reconciliation to AFTER the squads-load block
+    // below, where S.squads is actually populated. See v1.6994 diagnostic
+    // build for the trace that confirmed this ordering bug.
     if(squads&&squads.length){
       S.squads=squads.map(function(sq){
         // Block 3: read proper columns first, fall back to packed name for legacy rows
@@ -26008,6 +26103,31 @@ function sbPull(manual){
         return {_sbId:sq.id,name:sqName,emoji:sqEmoji,color:sqColor,memberIdxs:memberIdxs,collapsed:false};
       });
     }
+    // v1.6995 — Bag ownerRef reconciliation (moved from before squads-load
+    // where it was running against an empty S.squads). Now that S.squads has
+    // been populated from the pull response, _sqNames is accurate and we can
+    // safely clear ownerRefs that truly point to deleted/renamed squads
+    // without wiping every bag.
+    var _sqNames=(S.squads||[]).map(function(sq){return sq.name;});
+    if(window.RQ_DIAG){
+      RQ_DIAG.log('sbPull reconcile (v1.6995, post-squads): checking bag ownerRefs', {
+        sqNames:_sqNames,
+        sqNamesLength:_sqNames.length
+      });
+    }
+    (S.partyAssets||[]).forEach(function(a){
+      if(!_isBagOfHolding(a))return;
+      var m=assetMeta(a);
+      if(m.ownerType==='squad'&&m.ownerRef&&_sqNames.indexOf(m.ownerRef)===-1){
+        if(window.RQ_DIAG)RQ_DIAG.log('sbPull reconcile: UNASSIGNING bag (truly orphan)', {
+          bagName:a.name, staleOwnerRef:m.ownerRef, currentSquadNames:_sqNames
+        });
+        var _staleRef=m.ownerRef;
+        m.ownerType='';
+        m.ownerRef='';
+        logAdd('\uD83D\uDCBC Bag ('+a.name+') ownerRef "'+_staleRef+'" no longer matches a squad \u2014 unassigned.','buy');
+      }
+    });
     if(questCycles&&questCycles[0]){
       console.log('[QuestPull] raw row:',JSON.stringify(questCycles[0]));
       var qc=questCycles[0];
@@ -26610,28 +26730,13 @@ document.querySelectorAll('.ov').forEach(function(ov){
 // (either via .effect.squadFormation, .bagOfHolding flag, or DB item lookup)
 function hasSquadFormationEffect(a){
   if(!a)return false;
-  // v1.6994 DIAG — track which of the 6 check paths matched, for tracing
-  // recognition failures after round-trips that strip flags.
-  var _diag = window.RQ_DIAG && RQ_DIAG.enabled;
   // Direct flag on partyAsset (from built-in GEAR or capstone reward)
-  if(a.effect&&a.effect.squadFormation){
-    if(_diag)RQ_DIAG.log('hasSquadFormationEffect: MATCH via a.effect.squadFormation', {assetName:a.name});
-    return true;
-  }
-  if(a.bagOfHolding){
-    if(_diag)RQ_DIAG.log('hasSquadFormationEffect: MATCH via a.bagOfHolding', {assetName:a.name});
-    return true;
-  }
+  if(a.effect&&a.effect.squadFormation)return true;
+  if(a.bagOfHolding)return true;
   // Check DB-loaded GEAR items by name
   var gearItem=(GEAR||[]).filter(function(g){return g.name===a.name;})[0];
-  if(gearItem&&gearItem.effect&&gearItem.effect.squadFormation){
-    if(_diag)RQ_DIAG.log('hasSquadFormationEffect: MATCH via GEAR[name].effect.squadFormation', {assetName:a.name});
-    return true;
-  }
-  if(gearItem&&gearItem.bagOfHolding){
-    if(_diag)RQ_DIAG.log('hasSquadFormationEffect: MATCH via GEAR[name].bagOfHolding', {assetName:a.name});
-    return true;
-  }
+  if(gearItem&&gearItem.effect&&gearItem.effect.squadFormation)return true;
+  if(gearItem&&gearItem.bagOfHolding)return true;
   // Fallback: if the GEAR entry was replaced by a DB row that stripped the
   // effect/bagOfHolding flags (applyDB at line 19298 fully overrides by name),
   // also consult the untouched BUILTIN_GEAR. This prevents squad-formation
@@ -26639,23 +26744,9 @@ function hasSquadFormationEffect(a){
   // under the same name as a built-in bag.
   if(typeof BUILTIN_GEAR!=='undefined'){
     var builtinItem=(BUILTIN_GEAR||[]).filter(function(g){return g.name===a.name;})[0];
-    if(builtinItem&&builtinItem.effect&&builtinItem.effect.squadFormation){
-      if(_diag)RQ_DIAG.log('hasSquadFormationEffect: MATCH via BUILTIN_GEAR[name].effect.squadFormation', {assetName:a.name});
-      return true;
-    }
-    if(builtinItem&&builtinItem.bagOfHolding){
-      if(_diag)RQ_DIAG.log('hasSquadFormationEffect: MATCH via BUILTIN_GEAR[name].bagOfHolding', {assetName:a.name});
-      return true;
-    }
+    if(builtinItem&&builtinItem.effect&&builtinItem.effect.squadFormation)return true;
+    if(builtinItem&&builtinItem.bagOfHolding)return true;
   }
-  if(_diag)RQ_DIAG.log('hasSquadFormationEffect: NO MATCH — asset is not squad-formation-eligible', {
-    assetName:a.name,
-    hasDirectEffect: !!(a.effect&&a.effect.squadFormation),
-    hasDirectBagFlag: !!a.bagOfHolding,
-    gearItemFound: !!gearItem,
-    gearItemEffect: gearItem&&gearItem.effect,
-    gearItemBagFlag: !!(gearItem&&gearItem.bagOfHolding)
-  });
   return false;
 }
 
@@ -28558,6 +28649,10 @@ function initSession(pullFromCloud){
         if((!S.questState.grindPending||!S.questState.grindPending.length)&&localGrind.length)S.questState.grindPending=localGrind;
       }
       migrateMisroutedAssets();
+      // v1.6995 — run dedupe after migrations. This cleans up duplicate
+      // partyAssets that may have accumulated from earlier push/pull races
+      // or from buggy code paths that have since been fixed.
+      if(typeof dedupePartyAssets==='function')dedupePartyAssets();
       // v1.6901 — backfill ownedItems on existing NPC contacts so their gear
       // shows as 🔒 personal in the char modal Gear tab (matching the rule
       // that new capstone-reward contacts get personal-marked inventory).
