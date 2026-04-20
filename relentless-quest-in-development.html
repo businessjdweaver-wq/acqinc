@@ -1080,20 +1080,19 @@ button,select,input,textarea{
   #tlist.cols-3 > .card,
   #tlist.cols-3 > .split-group{break-inside:avoid;page-break-inside:avoid;display:inline-block;width:100%;margin-bottom:10px;}
 
-  /* ── Always-visible sub-row drawers on wide+multi-col (v1.6978, grid layout in v1.6979) ──
+  /* ── Always-visible sub-row drawers on wide+multi-col (v1.6978/6979, drag
+     handles returned in v1.6980) ──
      Normally .strow-del (left) and .strow-actions (right) are hidden behind
      .strow-main at rest, revealed via swipe. In multi-col mode they become
-     static so the ✕ delete, ↑↓ reorder, ⇈ supup, ⇄ move, 📌 pin buttons are
-     directly tappable without a swipe.
+     static so the visible actions are directly tappable without a swipe.
 
-     v1.6979 — user reported that on a ~500px-wide column the 5-button right
-     drawer (⇈ ↑ ↓ ⇄ 📌) + 1-button left drawer (✕) in a flat row was eating
-     so much horizontal space that sub-task names collapsed to ~4 characters
-     wide (stacking like "Rebu ild lanya rd badg e conn ector hole"). Fix:
-     reshape the right drawer from flex-row into a 3×2 grid (3 cols × 2 rows),
-     cutting its footprint from ~180px to ~108px per row and giving names
-     ~25% more room without widening the screen. The left drawer (single ✕)
-     stays as-is. Button glyphs stay the same so muscle memory survives.
+     v1.6980 — drag handles (⋮⋮) return for desktop-only reorder, replacing
+     the ⇈ super-up, ↑ up, ↓ down buttons. Drag is gated on .cols-2/.cols-3
+     (desktop multi-col) so touch devices in 1-col mode still get the swipe
+     drawer with all explicit buttons. Final inline button set in multi-col:
+     [✕] ← main row contents + drag handle → [⇄ 📌]. Drag covers neighbour
+     reorder (same parent), cross-task sub-task move (drop into another task's
+     card), and whole-task reorder via the card-level ⋮⋮ handle.
 
      The swipe handler's translate classes are neutralized with transform:none
      so a stray touchscreen gesture on a laptop doesn't visually shift
@@ -1104,21 +1103,23 @@ button,select,input,textarea{
   #tlist.cols-3 .strow-main{transform:none !important;flex:1;min-width:0;}
   #tlist.cols-2 .strow-del,
   #tlist.cols-3 .strow-del{position:static;background:transparent;padding:0;flex-shrink:0;opacity:1 !important;}
-  /* Right drawer — 3×2 grid (3 cols × 2 rows). 5 buttons fill cells 1-5;
-     cell 6 stays empty (visually a gap). For pinned rows the 6 cells are
-     ⇈ ↑ ↓ + any meta labels that still render. The grid-auto-flow:row
-     default fills left-to-right, top-to-bottom which matches reading order
-     for the primary actions (⇈ first, ↑ ↓ reorder second/third, ⇄ move
-     fourth, 📌 pin fifth). */
+  /* Right drawer — now holds only ⇄ 📌 in multi-col (supup/up/down removed,
+     replaced by drag). Narrow flex-row layout suffices again. */
   #tlist.cols-2 .strow-actions,
   #tlist.cols-3 .strow-actions{
     position:static;background:transparent;padding:0;flex-shrink:0;opacity:1 !important;
-    display:grid;grid-template-columns:repeat(3,minmax(0,32px));grid-auto-rows:22px;gap:1px;align-content:center;
+    display:flex;flex-direction:row;align-items:center;gap:0;
   }
+  /* Hide the reorder buttons that drag now replaces. Kept in DOM so 1-col
+     mode still shows them in the swipe drawer — this rule only scopes to
+     multi-col. */
+  #tlist.cols-2 .strow-drawer-btn.sd-supup,
+  #tlist.cols-3 .strow-drawer-btn.sd-supup,
+  #tlist.cols-2 .strow-drawer-btn.sd-reord,
+  #tlist.cols-3 .strow-drawer-btn.sd-reord{display:none;}
   /* Hide meta labels (+gp, from: parent) in the right drawer when multi-col
-     is active — they compete with the grid cells for space. The info is
-     still visible in 1-col mode where the drawer opens on swipe with full
-     labels intact. */
+     is active — they compete with the visible button space. The info is
+     still visible in 1-col mode where the drawer opens on swipe. */
   #tlist.cols-2 .strow-meta-gp,
   #tlist.cols-3 .strow-meta-gp,
   #tlist.cols-2 .strow-meta-from,
@@ -1126,18 +1127,69 @@ button,select,input,textarea{
   /* Hide the ⋯ tap-to-open button on wide — the drawer is already visible. */
   #tlist.cols-2 .strow-dot,
   #tlist.cols-3 .strow-dot{display:none;}
-  /* Compact grid buttons. Two rows of 22px ≈ 44px total drawer height,
-     which matches the baseline touch-target minimum. Each cell is ~32px
-     wide, so the grid drawer is ~96-100px wide — vs ~180px in v1.6978
-     for the same buttons in a single row. */
+  /* Compact the remaining drawer buttons. */
   #tlist.cols-2 .strow-drawer-btn,
-  #tlist.cols-3 .strow-drawer-btn{min-width:0;min-height:0;width:100%;height:22px;padding:0 2px;font-size:.95em;line-height:1;}
-  #tlist.cols-2 .strow-drawer-btn.sd-reord,
-  #tlist.cols-3 .strow-drawer-btn.sd-reord{min-width:0;padding:0 2px;}
-  /* Left drawer ✕ button — give it slightly more breathing room since it's
-     alone in its drawer and doesn't need to squeeze. */
+  #tlist.cols-3 .strow-drawer-btn{min-width:32px;min-height:36px;padding:0 6px;font-size:1em;line-height:1;}
+  /* Left drawer ✕ button — give it slightly more breathing room. */
   #tlist.cols-2 .strow-del .strow-drawer-btn,
-  #tlist.cols-3 .strow-del .strow-drawer-btn{min-width:32px;height:auto;min-height:44px;padding:0 6px;}
+  #tlist.cols-3 .strow-del .strow-drawer-btn{min-width:32px;min-height:44px;padding:0 6px;}
+
+  /* ── Drag handle (⋮⋮) — visible only in multi-col mode on desktop ── */
+  .strow-draghandle{
+    display:none; /* base: hidden. Shown via the cols-2/cols-3 rules below. */
+    align-items:center;justify-content:center;
+    width:24px;min-height:36px;
+    flex-shrink:0;
+    cursor:grab;
+    color:var(--parchment-deep);
+    font-size:1.1em;line-height:1;
+    letter-spacing:-2px; /* tighten the two dots of ⋮⋮ */
+    user-select:none;-webkit-user-select:none;
+    touch-action:none;
+    opacity:.6;
+    transition:color .15s,opacity .15s,transform .15s;
+  }
+  .strow-draghandle:hover{color:var(--gold-dark);opacity:1;}
+  .strow-draghandle:active,.strow-draghandle.dragging{cursor:grabbing;color:var(--gold-dark);opacity:1;transform:scale(1.1);}
+  #tlist.cols-2 .strow-draghandle,
+  #tlist.cols-3 .strow-draghandle{display:flex;}
+
+  /* Task-card drag handle — appears in the card header. Same glyph, slightly
+     different positioning (sits before the pie/title, left of all content). */
+  .card-draghandle{
+    display:none;
+    align-items:center;justify-content:center;
+    width:26px;min-height:32px;
+    flex-shrink:0;
+    cursor:grab;
+    color:var(--parchment-deep);
+    font-size:1.15em;line-height:1;
+    letter-spacing:-2px;
+    user-select:none;-webkit-user-select:none;
+    touch-action:none;
+    opacity:.55;
+    margin-right:4px;
+    transition:color .15s,opacity .15s,transform .15s;
+  }
+  .card-draghandle:hover{color:var(--gold-dark);opacity:1;}
+  .card-draghandle:active,.card-draghandle.dragging{cursor:grabbing;color:var(--gold-dark);opacity:1;transform:scale(1.1);}
+  #tlist.cols-2 .card-draghandle,
+  #tlist.cols-3 .card-draghandle{display:flex;}
+
+  /* ── Drop-indicator: shift rows/cards out of the way via translateY ──
+     While dragging, JS adds .drag-shift-down / .drag-shift-up to neighbour
+     rows to give a live preview of where the dropped item will land. The
+     row being dragged gets .drag-source (faded out). Uses transforms rather
+     than layout changes so animation is GPU-friendly and doesn't trigger
+     reflow — important for smooth 60fps drag on lists of 20+ rows. */
+  .strow.drag-source,
+  .card.drag-source{opacity:.35;filter:saturate(.5);}
+  .strow.drag-shift-down{transform:translateY(var(--drag-shift-dy, 44px));transition:transform .12s ease;}
+  .strow.drag-shift-up{transform:translateY(calc(-1 * var(--drag-shift-dy, 44px)));transition:transform .12s ease;}
+  .card.drag-shift-down{transform:translateY(var(--drag-shift-dy, 60px));transition:transform .12s ease;}
+  .card.drag-shift-up{transform:translateY(calc(-1 * var(--drag-shift-dy, 60px)));transition:transform .12s ease;}
+  /* Card being hovered as a cross-task drop target (receive a sub-task) */
+  .card.drag-target-card{outline:2px dashed var(--teal);outline-offset:-2px;background:rgba(60,150,140,.07) !important;}
 }
 /* ══════════════════════════════════════════════════════════════════════ */
 
@@ -2932,20 +2984,19 @@ button,select,input,textarea{
   #tlist.cols-3 > .card,
   #tlist.cols-3 > .split-group{break-inside:avoid;page-break-inside:avoid;display:inline-block;width:100%;margin-bottom:10px;}
 
-  /* ── Always-visible sub-row drawers on wide+multi-col (v1.6978, grid layout in v1.6979) ──
+  /* ── Always-visible sub-row drawers on wide+multi-col (v1.6978/6979, drag
+     handles returned in v1.6980) ──
      Normally .strow-del (left) and .strow-actions (right) are hidden behind
      .strow-main at rest, revealed via swipe. In multi-col mode they become
-     static so the ✕ delete, ↑↓ reorder, ⇈ supup, ⇄ move, 📌 pin buttons are
-     directly tappable without a swipe.
+     static so the visible actions are directly tappable without a swipe.
 
-     v1.6979 — user reported that on a ~500px-wide column the 5-button right
-     drawer (⇈ ↑ ↓ ⇄ 📌) + 1-button left drawer (✕) in a flat row was eating
-     so much horizontal space that sub-task names collapsed to ~4 characters
-     wide (stacking like "Rebu ild lanya rd badg e conn ector hole"). Fix:
-     reshape the right drawer from flex-row into a 3×2 grid (3 cols × 2 rows),
-     cutting its footprint from ~180px to ~108px per row and giving names
-     ~25% more room without widening the screen. The left drawer (single ✕)
-     stays as-is. Button glyphs stay the same so muscle memory survives.
+     v1.6980 — drag handles (⋮⋮) return for desktop-only reorder, replacing
+     the ⇈ super-up, ↑ up, ↓ down buttons. Drag is gated on .cols-2/.cols-3
+     (desktop multi-col) so touch devices in 1-col mode still get the swipe
+     drawer with all explicit buttons. Final inline button set in multi-col:
+     [✕] ← main row contents + drag handle → [⇄ 📌]. Drag covers neighbour
+     reorder (same parent), cross-task sub-task move (drop into another task's
+     card), and whole-task reorder via the card-level ⋮⋮ handle.
 
      The swipe handler's translate classes are neutralized with transform:none
      so a stray touchscreen gesture on a laptop doesn't visually shift
@@ -2956,21 +3007,23 @@ button,select,input,textarea{
   #tlist.cols-3 .strow-main{transform:none !important;flex:1;min-width:0;}
   #tlist.cols-2 .strow-del,
   #tlist.cols-3 .strow-del{position:static;background:transparent;padding:0;flex-shrink:0;opacity:1 !important;}
-  /* Right drawer — 3×2 grid (3 cols × 2 rows). 5 buttons fill cells 1-5;
-     cell 6 stays empty (visually a gap). For pinned rows the 6 cells are
-     ⇈ ↑ ↓ + any meta labels that still render. The grid-auto-flow:row
-     default fills left-to-right, top-to-bottom which matches reading order
-     for the primary actions (⇈ first, ↑ ↓ reorder second/third, ⇄ move
-     fourth, 📌 pin fifth). */
+  /* Right drawer — now holds only ⇄ 📌 in multi-col (supup/up/down removed,
+     replaced by drag). Narrow flex-row layout suffices again. */
   #tlist.cols-2 .strow-actions,
   #tlist.cols-3 .strow-actions{
     position:static;background:transparent;padding:0;flex-shrink:0;opacity:1 !important;
-    display:grid;grid-template-columns:repeat(3,minmax(0,32px));grid-auto-rows:22px;gap:1px;align-content:center;
+    display:flex;flex-direction:row;align-items:center;gap:0;
   }
+  /* Hide the reorder buttons that drag now replaces. Kept in DOM so 1-col
+     mode still shows them in the swipe drawer — this rule only scopes to
+     multi-col. */
+  #tlist.cols-2 .strow-drawer-btn.sd-supup,
+  #tlist.cols-3 .strow-drawer-btn.sd-supup,
+  #tlist.cols-2 .strow-drawer-btn.sd-reord,
+  #tlist.cols-3 .strow-drawer-btn.sd-reord{display:none;}
   /* Hide meta labels (+gp, from: parent) in the right drawer when multi-col
-     is active — they compete with the grid cells for space. The info is
-     still visible in 1-col mode where the drawer opens on swipe with full
-     labels intact. */
+     is active — they compete with the visible button space. The info is
+     still visible in 1-col mode where the drawer opens on swipe. */
   #tlist.cols-2 .strow-meta-gp,
   #tlist.cols-3 .strow-meta-gp,
   #tlist.cols-2 .strow-meta-from,
@@ -2978,18 +3031,69 @@ button,select,input,textarea{
   /* Hide the ⋯ tap-to-open button on wide — the drawer is already visible. */
   #tlist.cols-2 .strow-dot,
   #tlist.cols-3 .strow-dot{display:none;}
-  /* Compact grid buttons. Two rows of 22px ≈ 44px total drawer height,
-     which matches the baseline touch-target minimum. Each cell is ~32px
-     wide, so the grid drawer is ~96-100px wide — vs ~180px in v1.6978
-     for the same buttons in a single row. */
+  /* Compact the remaining drawer buttons. */
   #tlist.cols-2 .strow-drawer-btn,
-  #tlist.cols-3 .strow-drawer-btn{min-width:0;min-height:0;width:100%;height:22px;padding:0 2px;font-size:.95em;line-height:1;}
-  #tlist.cols-2 .strow-drawer-btn.sd-reord,
-  #tlist.cols-3 .strow-drawer-btn.sd-reord{min-width:0;padding:0 2px;}
-  /* Left drawer ✕ button — give it slightly more breathing room since it's
-     alone in its drawer and doesn't need to squeeze. */
+  #tlist.cols-3 .strow-drawer-btn{min-width:32px;min-height:36px;padding:0 6px;font-size:1em;line-height:1;}
+  /* Left drawer ✕ button — give it slightly more breathing room. */
   #tlist.cols-2 .strow-del .strow-drawer-btn,
-  #tlist.cols-3 .strow-del .strow-drawer-btn{min-width:32px;height:auto;min-height:44px;padding:0 6px;}
+  #tlist.cols-3 .strow-del .strow-drawer-btn{min-width:32px;min-height:44px;padding:0 6px;}
+
+  /* ── Drag handle (⋮⋮) — visible only in multi-col mode on desktop ── */
+  .strow-draghandle{
+    display:none; /* base: hidden. Shown via the cols-2/cols-3 rules below. */
+    align-items:center;justify-content:center;
+    width:24px;min-height:36px;
+    flex-shrink:0;
+    cursor:grab;
+    color:var(--parchment-deep);
+    font-size:1.1em;line-height:1;
+    letter-spacing:-2px; /* tighten the two dots of ⋮⋮ */
+    user-select:none;-webkit-user-select:none;
+    touch-action:none;
+    opacity:.6;
+    transition:color .15s,opacity .15s,transform .15s;
+  }
+  .strow-draghandle:hover{color:var(--gold-dark);opacity:1;}
+  .strow-draghandle:active,.strow-draghandle.dragging{cursor:grabbing;color:var(--gold-dark);opacity:1;transform:scale(1.1);}
+  #tlist.cols-2 .strow-draghandle,
+  #tlist.cols-3 .strow-draghandle{display:flex;}
+
+  /* Task-card drag handle — appears in the card header. Same glyph, slightly
+     different positioning (sits before the pie/title, left of all content). */
+  .card-draghandle{
+    display:none;
+    align-items:center;justify-content:center;
+    width:26px;min-height:32px;
+    flex-shrink:0;
+    cursor:grab;
+    color:var(--parchment-deep);
+    font-size:1.15em;line-height:1;
+    letter-spacing:-2px;
+    user-select:none;-webkit-user-select:none;
+    touch-action:none;
+    opacity:.55;
+    margin-right:4px;
+    transition:color .15s,opacity .15s,transform .15s;
+  }
+  .card-draghandle:hover{color:var(--gold-dark);opacity:1;}
+  .card-draghandle:active,.card-draghandle.dragging{cursor:grabbing;color:var(--gold-dark);opacity:1;transform:scale(1.1);}
+  #tlist.cols-2 .card-draghandle,
+  #tlist.cols-3 .card-draghandle{display:flex;}
+
+  /* ── Drop-indicator: shift rows/cards out of the way via translateY ──
+     While dragging, JS adds .drag-shift-down / .drag-shift-up to neighbour
+     rows to give a live preview of where the dropped item will land. The
+     row being dragged gets .drag-source (faded out). Uses transforms rather
+     than layout changes so animation is GPU-friendly and doesn't trigger
+     reflow — important for smooth 60fps drag on lists of 20+ rows. */
+  .strow.drag-source,
+  .card.drag-source{opacity:.35;filter:saturate(.5);}
+  .strow.drag-shift-down{transform:translateY(var(--drag-shift-dy, 44px));transition:transform .12s ease;}
+  .strow.drag-shift-up{transform:translateY(calc(-1 * var(--drag-shift-dy, 44px)));transition:transform .12s ease;}
+  .card.drag-shift-down{transform:translateY(var(--drag-shift-dy, 60px));transition:transform .12s ease;}
+  .card.drag-shift-up{transform:translateY(calc(-1 * var(--drag-shift-dy, 60px)));transition:transform .12s ease;}
+  /* Card being hovered as a cross-task drop target (receive a sub-task) */
+  .card.drag-target-card{outline:2px dashed var(--teal);outline-offset:-2px;background:rgba(60,150,140,.07) !important;}
 }
 /* ══════════════════════════════════════════════════════════════════════ */
 
@@ -4073,7 +4177,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6979</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6980</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4763,7 +4867,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6979
+      Version 1.6980
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4788,6 +4892,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6980</strong> &mdash; Drag-and-drop returns for desktop multi-col. <strong>User ask:</strong> give back the drag handles we killed in v1.6967, but only on desktop multi-column mode; the handle can then replace the ⇈ ↑ ↓ (super-up / up / down) buttons, freeing significant inline space and simplifying the right drawer. The ⇄ (cross-task move) stays — the user accepted the redundancy with cross-task drag because the modal is sometimes faster than scroll-and-drop for long-distance moves. <strong>What landed:</strong> <strong>(1) HTML5 native drag, mouse-only.</strong> No touch long-press hybrid — the v1.6967 post-mortem flagged that hybrid as the flaky part, and this implementation avoids it by gating all drag behaviour on <code>#tlist.cols-2</code> / <code>#tlist.cols-3</code> (desktop multi-col only). Below 1024px or in 1-col mode, drag is inert and the classic swipe drawers with explicit ⇈ ↑ ↓ buttons are the reorder path. <strong>(2) Drag handle glyph: ⋮⋮ (U+22EE × 2).</strong> Visible only in multi-col via <code>.strow-draghandle</code> (sub-rows) and <code>.card-draghandle</code> (task cards). Hover state brightens to gold and boosts opacity to 1.0; active/dragging state adds a subtle scale(1.1). <code>letter-spacing:-2px</code> tightens the two dots so they read as a unit rather than spaced puncts. <strong>(3) Three drag kinds.</strong> <em>(a) Sub-task neighbour reorder</em> — grab the sub-row's ⋮⋮, drag above or below another sub-row in the same parent, drop. Splices within <code>subtasks[]</code>. <em>(b) Sub-task cross-task move</em> — grab a sub-row, drag onto a different task's card (or a sub-row inside a different card), drop. The sub moves into the target task's <code>subtasks[]</code>; redundant with the ⇄ modal but more discoverable for visible targets. If dropped on the card body itself (outside any sub-row), the sub appends to the end of that card's sub-list. If dropped between two sub-rows of another card, it inserts at that position. <em>(c) Task-card reorder</em> — grab the card-header ⋮⋮, drag above or below another card in the grid, drop. Splices within <code>S.active</code>. <em>(d) Pinned-row reorder</em> — grab a pinned sub-row's ⋮⋮, drag to another position inside the Pinned Tasks section, drop. Splices within <code>S.pinned</code>. Pinned rows can only reorder among each other (the ⋮⋮ on a pinned row isn't a valid drop target for main-list sub-rows and vice versa, by scope of the <code>.strow-pin</code> check). <strong>(4) "Rows shift out of the way" drop preview.</strong> On every <code>dragover</code>, the nearest drop target gets a <code>.drag-shift-up</code> or <code>.drag-shift-down</code> class which applies a <code>transform:translateY</code> of ~36px (sub-rows) or ~30px (cards) via a CSS variable <code>--drag-shift-dy</code>. Transition is 0.12s ease so the movement reads as smooth live-preview rather than a snap. Cross-task drop onto a card body uses <code>.drag-target-card</code> instead — teal dashed outline + subtle background tint, signalling "drop here to append" rather than "insert at this position". The dragged element gets <code>.drag-source</code> (opacity .35, desaturated) so the user can see what they're moving. <strong>(5) Arm-via-handle pattern.</strong> Rather than <code>draggable="true"</code> in the static HTML (which would allow dragging on any part of a row or card, including from text selection), the handle's <code>mousedown</code> sets <code>draggable</code> on its closest <code>.strow</code> / <code>.card</code> parent just-in-time, and <code>mouseup</code> clears it. This way a user who clicks a sub-task name to select text, then drags to select more, doesn't accidentally start a reorder operation — they have to grab the ⋮⋮ specifically. A <code>_rqDragArmed</code> sentinel on the source element is the handshake. <strong>(6) Undo integration.</strong> Three new <code>undoApply</code> cases: <code>dragSub</code> re-homes the sub-task back to its source parent + original index (resolves by <code>_sid</code> not position, so siblings shifting in the interim doesn't orphan the undo); <code>dragTask</code> restores the task to its original <code>S.active</code> index (resolves by <code>_tid</code>); <code>dragPin</code> restores the full <code>S.pinned</code> snapshot (simplest since the whole array is ≤20 entries). All three push standard undo log entries with descriptive labels. <strong>(7) Icon cuts.</strong> The <code>⇈</code> super-up, <code>↑</code> up, <code>↓</code> down buttons are <code>display:none</code>'d via CSS in multi-col mode — they stay in the HTML so 1-col mode still renders them for touch users. Net right-drawer contents in multi-col: <code>⇄ 📌</code>. Net left-drawer: <code>✕</code>. Plus the <code>⋮⋮</code> handle on the main row itself. On long sub-task names this is a dramatic improvement over v1.6979's 3×2 grid which was ~100px wide; the flex-row layout with 2 buttons is ~68px. <strong>Scope boundaries:</strong> (i) Drag fires only when <code>#tlist</code> has <code>.cols-2</code> or <code>.cols-3</code>. Below 1024px the toggle is hidden and the class is never applied, so touch devices never see drag at all — v1.6967's rationale for killing the hybrid is preserved. (ii) Nested <code>.card</code> elements (character cards, split-group member cards) are not draggable — the <code>dragstart</code> handler checks <code>src.parentElement===#tlist</code> to only arm top-level cards. Split-group members can be reordered via the existing group reorder modal. (iii) Keyboard accessibility not included — users who can't mouse-drag can switch to 1-col via the cols toggle and use the ↑ ↓ buttons. Future enhancement if requested. <strong>What's dead-code now:</strong> the v1.6967-era <code>.st-drag-handle</code> CSS class (lines 165-167, 2029-2031, 3985) and its two <code>closest('.st-drag-handle')</code> guards in the swipe handler are still harmless — they never match anything in the current DOM. Leaving them in place rather than cleaning up because the cleanup is zero-benefit and adds merge noise to a later consolidation pass. No SQL change. No data-model change. <code>S.pinned</code> and <code>subtasks[]</code> mutation is in-place, rides in the existing <code>active_tasks</code> JSON blob.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6979</strong> &mdash; Multi-column sub-row drawer: 3×2 grid layout. <strong>User report (follow-up to v1.6978):</strong> on a 3-column Contracts layout at typical desktop widths (~1600px viewport), each column ended up ~500px wide. The v1.6978 always-visible drawer rendered its 5 right-side buttons (⇈ ↑ ↓ ⇄ 📌) + 1 left-side button (✕) in a flat row totalling ~220px of drawer width, leaving only ~280px for the sub-task name. Names with long words collapsed to ~4 characters wide and wrapped vertically — e.g. "Rebuild lanyard badge connector hole" stacked as "Rebu / ild / lanya / rd / badg / e / conn / ector / hole" in a tall vertical stack. Functionally it worked but the screen was hard to scan. <strong>Fix:</strong> reshape the right drawer from a single-row flexbox into a <strong>3×2 CSS grid</strong> (3 cols × 2 rows) using <code>display:grid;grid-template-columns:repeat(3,minmax(0,32px));grid-auto-rows:22px</code>. The 5 right-drawer buttons fill cells 1-5 with reading order preserved (⇈ ↑ ↓ on top row, ⇄ 📌 on bottom row with one empty cell); cell 6 renders empty. Two rows of 22px ≈ 44px total drawer height, matching the baseline touch-target minimum. Each cell is ~32px wide so the full grid is ~96-100px — vs ~180px in v1.6978 for the same buttons in a flat row. <strong>Net width reclaimed:</strong> ~80px per sub-row, giving the name column ~25-30% more room on a 500px column without widening the screen. <strong>Button glyphs and data-a actions unchanged</strong> — muscle memory from v1.6978 carries over, only the layout reflows. The left drawer (single ✕) stays as-is since it doesn't need compression. <strong>Meta labels hidden in multi-col:</strong> on pinned rows the right drawer normally shows <code>+N gp</code> and a <code>from: parent</code> button alongside the reorder buttons. Those labels compete with the grid cells for space, so they're hidden via <code>display:none</code> on <code>.strow-meta-gp</code> / <code>.strow-meta-from</code> when multi-col is active. The info is still available in 1-col mode where the drawer slides open on swipe with full labels intact — a deliberate tradeoff that keeps the multi-col grid clean. <strong>Button sizing inside the grid:</strong> <code>.strow-drawer-btn</code> in multi-col gets <code>min-width:0;min-height:0;width:100%;height:22px;padding:0 2px;font-size:.95em</code> so the buttons fill their grid cells tightly without overflowing. The narrow-by-default <code>.sd-reord</code> (↑ ↓) keeps its compact padding, already appropriate. <strong>Left drawer ✕ gets a small breathing-room boost:</strong> <code>min-width:32px;min-height:44px;padding:0 6px</code> — alone in its drawer, it doesn't need to pack. <strong>Scope:</strong> the grid layout fires only inside <code>#tlist.cols-2</code> / <code>#tlist.cols-3</code>, which fire only at viewports ≥1024px. At 1-col or below 1024px, the existing swipe drawer + single-row flex layout is unchanged. No JS change, no data-model change, no SQL change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6978</strong> &mdash; Contracts screen desktop refinements. <strong>User ask:</strong> on wide browser windows, let task cards flow into a second / third column, and stop hiding the ✕ / 📌 / ↑↓ icons behind the swipe drawer — there's plenty of room to show them inline. <strong>What landed:</strong> <strong>(1) Column-count toggle.</strong> A 1/2/3 segmented control added to the right-aligned action row (same row as ⟲ Undo and The Archive). Persists to new <code>S.settings.contractsColumns</code> field (default 1; normalized to <code>1|2|3</code> in <code>normalizeSettings</code>). Toggle is hidden below 1024px viewport via <code>#cols-toggle-wrap{display:none}</code> in the base CSS, shown via <code>display:inline-flex !important</code> inside the <code>@media (min-width:1024px)</code> block — so tablet and mobile users never see it. <strong>(2) #app widening.</strong> At 1024px+, <code>body.cols-2 #app</code> bumps max-width from the default 760px to 1200px; <code>body.cols-3 #app</code> bumps to 1600px. <code>#nav</code> widens in lockstep so the nav bar tracks the screen width. At 1-col the classic 760px cap still applies, matching how every other screen in the app reads. <strong>(3) Multi-column task flow.</strong> <code>#tlist.cols-2</code> applies <code>column-count:2;column-gap:16px</code>; <code>cols-3</code> applies <code>column-count:3;column-gap:14px</code>. Task cards (<code>.card</code>) and split-group wrappers (<code>.split-group</code>) get <code>break-inside:avoid</code> + <code>display:inline-block;width:100%</code> so they flow as intact units without mid-card column breaks. The Pinned Tasks section gets <code>column-span:all</code>, pinning it as a full-width band at the top regardless of column count — pins are the focus area and splitting them across columns would fragment attention. <strong>(4) Always-visible sub-row drawers on wide+multi-col.</strong> Previously <code>.strow-del</code> (left drawer: ✕) and <code>.strow-actions</code> (right drawer: ⇈ ↑ ↓ ⇄ 📌, or for pinned rows: +gp · from · ⇈ ↑ ↓ + 📍 unpin / ✕ delete) were absolutely-positioned behind <code>.strow-main</code> at rest, revealed via swipe. In multi-col mode the CSS flips <code>.strow</code> from its absolute-overflow-hidden layout to a horizontal flexbox (<code>display:flex;overflow:visible</code>); drawers become <code>position:static;background:transparent</code> and sit inline alongside the main content. Drawer buttons are compacted to <code>min-width:36px</code> (30px for the narrow <code>.sd-reord</code> ↑↓ buttons) so they don't eat excessive row space. The <code>⋯</code> tap-to-open dot is hidden — the drawer is already visible. Swipe-class translations (<code>.strow-show-actions</code>, <code>.strow-show-del</code>) are neutralized with <code>transform:none !important</code> so a stray laptop-touchscreen gesture doesn't visually shift anything. The JS swipe handler and every <code>data-a</code> action remain untouched — same buttons, same dispatcher, just rendered inline instead of behind a gesture. <strong>(5) New functions.</strong> <code>applyContractsColumns()</code> reads the setting, toggles <code>body.cols-2</code> / <code>body.cols-3</code> classes, toggles <code>#tlist.cols-2</code> / <code>cols-3</code>, and reflects the <code>.on</code> state on the segmented buttons. Called at boot (alongside <code>applyAccessibilitySettings</code>, two sites: main <code>applyWelcomeState</code> path and the test-mode <code>bootApp</code> path) and at the end of <code>renderTasks</code> (defensive — innerHTML rewrites children, not the <code>#tlist</code> element itself, but future refactors could change that). <code>bindContractsColumnsToggle()</code> wires one delegated click listener on <code>#cols-toggle</code> that reads <code>data-cols</code>, validates <code>1|2|3</code>, writes <code>S.settings.contractsColumns</code>, applies, and saves. Idempotent via <code>dataset.bound</code> sentinel. <strong>Deliberate scope:</strong> applies only to the Contracts screen; no other screens inherit the <code>body.cols-N</code>-driven <code>#app</code> widening because the selectors are scoped through <code>body.cols-N #app</code> combined with the Contracts-specific toggle that's the only thing that sets the class. Below 1024px the toggle is hidden AND the <code>@media</code> gate means none of the layout rules fire even if a stale <code>contractsColumns:3</code> is loaded — a user on their phone sees the classic single-column layout. <strong>Not in scope:</strong> the Pinned Tasks section stays single-column by design. Split groups stay intact units (they're already visually bounded, splitting them would look wrong). Drawers stay swipe-activated on narrow viewports (where they earn their keep) — the always-visible treatment fires only when multi-col is active AND viewport ≥1024px. The ⋯ dot is preserved on single-column for touch users. No data-model change, no SQL change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6977</strong> &mdash; Grind-assignment default: "All eligible" is now the initial picker selection. <strong>User report (follow-up to v1.6976):</strong> the grind-assignment modal now correctly showed 10 Stellani members, but not the 10 Terrans or the 9 truly-unassigned characters. <strong>Root cause:</strong> <code>populateQuestSquadPicker</code>'s grind branch defaulted the <code>ov-q-squad</code> dropdown to <code>grindSquads[0].name</code> — the first clocked-in squad in alphabetical/insertion order. With Stellani first, my v1.6974 filter's "selected squad narrowing" correctly scoped <code>partyEntries</code> down to Stellani's 10 members. The filter behavior was correct for "you picked this squad, show its members" — but the user's mental model is "by default, let me see everyone who can possibly grind," not "let me see whichever squad happened to be alphabetically first." <strong>Fix:</strong> renamed the existing <code>__unassigned__</code> option from "🧭 Unassigned (ad-hoc)" to "⭐ All eligible (N)" where N is the full eligibility pool count (via <code>computeGrindEligibility().pool</code>), and changed the default from first-squad to <code>__unassigned__</code>. The sentinel value is unchanged so every downstream handler (<code>applyQuestSquadSelection</code>'s "peg slots stay free" branch, <code>confirmQuestAssignment</code>'s squadName coercion to '', both v1.6974 and v1.6976 filter sites) continues to work without modification. Selected-squad narrowing still works if the user wants to scope to one clocked-in squad — they just have to pick it from the dropdown instead of getting it by default. Carousel label for this option changed from "Eligible Adventurers" to "All Eligible" to match the dropdown's new user-facing name. The "All eligible" option now sorts to the top of the picker ahead of the clocked-in squad options, making it the visually natural default. <strong>User's now-correct starting state on a fresh modal open:</strong> picker shows "⭐ All eligible (29)"; carousel shows all 29 grind-eligible characters (both clocked-in squads + truly-unassigned), sorted by how well they cover the grind's peg slots; support slots naturally find takers among the broader pool; hireling-recruit cards only appear if no one in the full 29 can cover a specific prereq. <strong>Deferred:</strong> the "ad-hoc" connotation was preserved in the internal sentinel name (<code>__unassigned__</code>) to avoid a refactor across 12+ call sites; the user-facing label in this one picker is now descriptive of behavior rather than data-model. No SQL change. No data-model change.</div>
@@ -9613,6 +9718,46 @@ function undoApply(entry){
       r7.task.name=entry.prevName||'';
       return true;
     }
+    // v1.6980 — drag-reorder undo cases.
+    if(entry.kind==='dragSub'){
+      // Reverse a sub-task drag. Snapshot kept both the source parent+index
+      // and destination parent+index; we move the sub back by sid lookup
+      // rather than trusting indices, since surrounding siblings may have
+      // shifted since the drag.
+      var dstTask=_findTaskByTid(entry.dstTid);if(!dstTask)return false;
+      var srcTask=_findTaskByTid(entry.srcTid);if(!srcTask)return false;
+      // Pull the sub from wherever it is now (should be in dstTask)
+      var subIdx=-1;
+      for(var _di=0;_di<(dstTask.task.subtasks||[]).length;_di++){
+        if(dstTask.task.subtasks[_di]&&dstTask.task.subtasks[_di]._sid===entry.sid){subIdx=_di;break;}
+      }
+      if(subIdx<0)return false;
+      var sub=dstTask.task.subtasks.splice(subIdx,1)[0];
+      if(!srcTask.task.subtasks)srcTask.task.subtasks=[];
+      var at=Math.max(0,Math.min(entry.srcIdx|0,srcTask.task.subtasks.length));
+      srcTask.task.subtasks.splice(at,0,sub);
+      return true;
+    }
+    if(entry.kind==='dragTask'){
+      // Reverse a task-card drag within S.active.
+      if(!S.active)S.active=[];
+      // Find the task by tid (it's still in S.active somewhere)
+      var cur=-1;
+      for(var _ci=0;_ci<S.active.length;_ci++){
+        if(S.active[_ci]&&S.active[_ci]._tid===entry.tid){cur=_ci;break;}
+      }
+      if(cur<0)return false;
+      var task=S.active.splice(cur,1)[0];
+      var atT=Math.max(0,Math.min(entry.srcIdx|0,S.active.length));
+      S.active.splice(atT,0,task);
+      return true;
+    }
+    if(entry.kind==='dragPin'){
+      // Reverse a pinned-row drag. We stored the full S.pinned snapshot.
+      if(!entry.prevPinned)return false;
+      S.pinned=clone(entry.prevPinned);
+      return true;
+    }
   }catch(err){
     return false;
   }
@@ -9871,7 +10016,7 @@ function taskCardHtml(t,showArrows,nbIdxs,pinnedView,inSplitGroup){
         '<span class="stgp"'+(budgetExhausted?' style="text-decoration:line-through;opacity:.55" title="Daily task gold budget reached"':'')+'>+'+subGp+' gp</span>';
       var _stUpDisabled = (si===0);
       var _stDownDisabled = (si>=subs.length-1);
-      return '<div class="strow" data-task-i="'+i+'" data-sub-si="'+si+'" data-sid="'+esc(s._sid||'')+'">'+
+      return '<div class="strow" data-task-i="'+i+'" data-sub-si="'+si+'" data-sid="'+esc(s._sid||'')+'" data-tid="'+esc(t._tid||'')+'">'+
         // ── Left drawer (destructive): ✕
         '<div class="strow-del">'+
         '<button type="button" class="strow-drawer-btn sd-del" data-a="stdl" data-i="'+i+'" data-si="'+si+'" title="Delete sub-task" aria-label="Delete sub-task">\u2715</button>'+
@@ -9879,6 +10024,7 @@ function taskCardHtml(t,showArrows,nbIdxs,pinnedView,inSplitGroup){
         // ── Right drawer (actions): ⇈ super-up · ↑ up · ↓ down · ⇄ move · 📌 pin
         // v1.6940: added ⇈ super-up (move sub-task to top of its parent task's list)
         // v1.6967: drag-to-reorder removed; ↑ / ↓ buttons added for neighbour swap
+        // v1.6980: drag handle returned for desktop multi-col; ⇈ ↑ ↓ hidden via CSS
         '<div class="strow-actions">'+
         '<button type="button" class="strow-drawer-btn sd-supup" data-a="stsupup" data-i="'+i+'" data-si="'+si+'" title="Move sub-task to top of list"'+(_stUpDisabled?' disabled':'')+' aria-label="Move sub-task to top">\u21C8</button>'+
         '<button type="button" class="strow-drawer-btn sd-reord" data-a="stup" data-i="'+i+'" data-si="'+si+'" title="Move up"'+(_stUpDisabled?' disabled':'')+' aria-label="Move up">\u2191</button>'+
@@ -9886,8 +10032,10 @@ function taskCardHtml(t,showArrows,nbIdxs,pinnedView,inSplitGroup){
         '<button type="button" class="strow-drawer-btn sd-move" data-a="stmv" data-i="'+i+'" data-si="'+si+'" title="Move to different task" aria-label="Move to different task">\u21C4</button>'+
         '<button type="button" class="strow-drawer-btn sd-pin" data-a="stpin" data-i="'+i+'" data-si="'+si+'" title="'+(isSubPinned(t._tid,s._sid)?'Unpin sub-task':'Pin sub-task to Pinned Tasks')+'" aria-label="Pin sub-task">'+(isSubPinned(t._tid,s._sid)?'\uD83D\uDCCD':'\uD83D\uDCCC')+'</button>'+
         '</div>'+
-        // ── Main content row
+        // ── Main content row. v1.6980: drag handle (⋮⋮) rendered first; hidden
+        // via CSS unless multi-col is active (#tlist.cols-2 / #tlist.cols-3).
         '<div class="strow-main">'+
+        '<span class="strow-draghandle" data-draghandle="sub" title="Drag to reorder or move between tasks" aria-label="Drag handle">\u22EE\u22EE</span>'+
         '<button type="button" class="pct-tog" data-a="stpct" data-i="'+i+'" data-si="'+si+'" data-step="'+(s.pct||0)+'" title="'+Math.round((s.pct||0)/6*100)+'% complete — click to advance (3 clicks = full)">'+pctTogSvg(s.pct||0)+'</button>'+
         '<label for="'+cbId+'">'+
         // v1.6972 — When this sub-task is pinned, replace its done-checkbox
@@ -9951,10 +10099,11 @@ function taskCardHtml(t,showArrows,nbIdxs,pinnedView,inSplitGroup){
     _gridCols = 6;
   }
   var noteHtml=t.note?('<div class="cmeta">📝 '+esc(t.note)+'</div>'):'';
-  return '<div class="card'+(onBurner?' dim':'')+'">'+
+  return '<div class="card'+(onBurner?' dim':'')+'" data-tid="'+esc(t._tid||'')+'" data-i="'+i+'">'+
     '<div class="trow">'+
     '<div class="tinfo">'+
     '<div class="tname" style="display:flex;align-items:center;gap:4px;flex-wrap:nowrap">'+
+    '<span class="card-draghandle" data-draghandle="task" title="Drag to reorder this task" aria-label="Drag handle">\u22EE\u22EE</span>'+
     '<button type="button" class="pct-tog" data-a="tpct" data-i="'+i+'" data-step="'+(t.pct||0)+'" title="'+Math.round((t.pct||0)/6*100)+'% complete — click to advance (3 clicks = full)">'+pctTogSvg(t.pct||0)+'</button>'+
     '<button class="tname-main" data-a="'+( subs.length ? 'col' : 'noop' )+'" data-i="'+i+'" type="button" style="background:none;border:none;padding:0;margin:0;color:inherit;font:inherit;text-align:left;'+(subs.length?'cursor:pointer':'cursor:default')+';flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(subs.length?(t.collapsed?'Expand':'Collapse sub-tasks'):'')+'">'+(subs.length?(t.collapsed?'\u25B6\uFE0E ':'\u25BC\uFE0E '):'')+esc(t.name)+'</button>'+
     (t.desc?'<button type="button" data-a="tinfo" data-i="'+i+'" style="background:none;border:none;padding:0 2px;cursor:pointer;font-size:.82em;color:var(--gold-dark);opacity:.7;line-height:1;flex-shrink:0" title="Contract details">ℹ</button>':'')+
@@ -10017,6 +10166,7 @@ function renderPinnedSubRow(t, s, budgetExhausted, subGp, pi, pinTotal){
     '</div>'+
     // ── Main content (visible row)
     '<div class="strow-main">'+
+    '<span class="strow-draghandle" data-draghandle="pinned" title="Drag to reorder pinned items" aria-label="Drag handle">\u22EE\u22EE</span>'+
     '<button type="button" class="pct-tog" data-a="stpct" data-i="'+i+'" data-si="'+si+'" data-step="'+(s.pct||0)+'" title="'+Math.round((s.pct||0)/6*100)+'% complete — click to advance">'+pctTogSvg(s.pct||0)+'</button>'+
     '<label for="'+cbId+'" style="flex:1;display:flex;align-items:center;gap:8px;padding:8px 4px;cursor:pointer;min-height:44px;min-width:0">'+
     '<input type="checkbox" id="'+cbId+'" data-a="stck" data-i="'+i+'" data-si="'+si+'"'+(s.done?' checked':'')+' style="width:1.6em;height:1.6em;flex-shrink:0;accent-color:var(--crimson)">'+
@@ -10102,6 +10252,7 @@ function renderPinnedTaskAsSubRow(t, pi, pinTotal){
     '</div>'+
     // ── Main content (visible row): pie + name + ⋯ (NO checkbox per Q2b)
     '<div class="strow-main">'+
+    '<span class="strow-draghandle" data-draghandle="pinned" title="Drag to reorder pinned items" aria-label="Drag handle">\u22EE\u22EE</span>'+
     '<button type="button" class="pct-tog" data-a="tpct" data-i="'+i+'" data-step="'+(t.pct||0)+'" title="'+Math.round((t.pct||0)/6*100)+'% complete — click to advance">'+pctTogSvg(t.pct||0)+'</button>'+
     '<label style="flex:1;display:flex;align-items:center;gap:8px;padding:8px 4px;min-height:44px;min-width:0">'+
     '<span class="stname" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.name||'')+'</span>'+
@@ -11231,6 +11382,347 @@ document.getElementById('ov-pspc-done').addEventListener('click',function(){clos
       r.classList.remove('strow-show-actions');
       r.classList.remove('strow-show-del');
     });
+  });
+})();
+
+/* ═══════════════ v1.6980: DESKTOP DRAG-AND-DROP REORDER ═══════════════
+   Returns drag functionality killed in v1.6967, but scoped to desktop
+   multi-col mode only (#tlist.cols-2 / #tlist.cols-3). HTML5 native drag
+   on mouse only — no touch long-press hybrid, which is what made v1.6967
+   flaky on mobile. The drag handle is a ⋮⋮ glyph (.strow-draghandle on
+   sub-rows, .card-draghandle on task cards), visible only in multi-col.
+
+   Three kinds of drag:
+     (A) sub-task → same parent (neighbour reorder)
+     (B) sub-task → different parent (cross-task move; drop zones: another
+         card's sub-list or the card wrapper itself)
+     (C) task card → another position in S.active
+
+   Pinned-row drag (D) reorders within S.pinned[] — simpler since all pinned
+   entries share the one list.
+
+   Drop-indicator: shift-rows-out-of-the-way via translateY applied to
+   neighbours. The dragged element gets opacity .35. Shift classes are
+   applied on dragover and cleared on dragleave/dragend.
+
+   Only HTML5 dragstart/dragover/drop are used — no touch events touched
+   here, so the existing swipe handler (which has its own touch bindings)
+   stays untouched.
+   ══════════════════════════════════════════════════════════════════════ */
+(function(){
+  // Module-scoped drag state. Set on dragstart, cleared on dragend.
+  var _dragKind=null;   // 'sub' | 'task' | 'pinned'
+  var _dragSrcTid=null; // task _tid (source)
+  var _dragSrcSid=null; // sub _sid (source, only for 'sub')
+  var _dragSrcIdx=-1;   // original index in parent array (for undo)
+  var _dragSrcPinIdx=-1;// original pin index (for 'pinned')
+  var _dragEl=null;     // the DOM element being dragged
+
+  function clearShifts(){
+    var list=document.getElementById('tlist');
+    if(!list)return;
+    list.querySelectorAll('.drag-shift-up,.drag-shift-down').forEach(function(el){
+      el.classList.remove('drag-shift-up','drag-shift-down');
+    });
+    list.querySelectorAll('.drag-target-card').forEach(function(el){
+      el.classList.remove('drag-target-card');
+    });
+  }
+  function resetDragState(){
+    _dragKind=null;_dragSrcTid=null;_dragSrcSid=null;
+    _dragSrcIdx=-1;_dragSrcPinIdx=-1;_dragEl=null;
+    var list=document.getElementById('tlist');
+    if(list){
+      list.querySelectorAll('.drag-source').forEach(function(el){
+        el.classList.remove('drag-source');
+      });
+    }
+    clearShifts();
+  }
+
+  // Only let drag fire when the user grabs the ⋮⋮ handle specifically, not
+  // when they start a drag on any part of the row/card. We achieve this by
+  // setting draggable=true on handle mousedown and clearing on mouseup.
+  // The native dragstart will then target the closest draggable ancestor,
+  // which is the .strow or .card (since we set draggable on them via the
+  // handle's mousedown, not statically in HTML).
+  document.addEventListener('mousedown',function(e){
+    var handle=e.target.closest('.strow-draghandle,.card-draghandle');
+    if(!handle)return;
+    // Only in multi-col mode
+    var list=document.getElementById('tlist');
+    if(!list||!(list.classList.contains('cols-2')||list.classList.contains('cols-3')))return;
+    var kind=handle.getAttribute('data-draghandle');
+    var sourceEl;
+    if(kind==='task'){
+      sourceEl=handle.closest('.card');
+    } else if(kind==='sub'||kind==='pinned'){
+      sourceEl=handle.closest('.strow');
+    }
+    if(sourceEl){
+      sourceEl.setAttribute('draggable','true');
+      sourceEl._rqDragArmed=true; // sentinel so dragstart knows this is a real drag
+    }
+  });
+  document.addEventListener('mouseup',function(){
+    // Clear any draggable sentinels so stray clicks don't start a drag
+    var list=document.getElementById('tlist');
+    if(!list)return;
+    setTimeout(function(){
+      list.querySelectorAll('[draggable="true"]').forEach(function(el){
+        if(!el._rqDragInProgress){
+          el.removeAttribute('draggable');
+          el._rqDragArmed=false;
+        }
+      });
+    },0);
+  });
+
+  var tlist=document.getElementById('tlist');
+  if(!tlist)return;
+
+  // ── dragstart ──────────────────────────────────────────────────────
+  tlist.addEventListener('dragstart',function(e){
+    var list=document.getElementById('tlist');
+    if(!list||!(list.classList.contains('cols-2')||list.classList.contains('cols-3'))){
+      e.preventDefault();return;
+    }
+    // Source can be either a .strow (sub-row drag) or a .card (task drag).
+    // Must have been armed by the handle's mousedown; otherwise stray drags
+    // from text selection etc. are ignored.
+    var src=e.target.closest('.strow,.card');
+    if(!src||!src._rqDragArmed){e.preventDefault();return;}
+    src._rqDragInProgress=true;
+
+    if(src.classList.contains('strow')){
+      // Pinned or main-list sub-row?
+      if(src.classList.contains('strow-pin')){
+        _dragKind='pinned';
+        _dragSrcPinIdx=parseInt(src.getAttribute('data-pin-idx'),10);
+        if(isNaN(_dragSrcPinIdx))_dragSrcPinIdx=-1;
+      } else {
+        _dragKind='sub';
+        _dragSrcTid=src.getAttribute('data-tid')||null;
+        _dragSrcSid=src.getAttribute('data-sid')||null;
+        _dragSrcIdx=parseInt(src.getAttribute('data-sub-si'),10);
+        if(isNaN(_dragSrcIdx))_dragSrcIdx=-1;
+      }
+    } else if(src.classList.contains('card')){
+      // Only top-level .card children of #tlist are draggable (not nested
+      // cards like character cards). Guard against inner cards by checking
+      // parent is #tlist directly.
+      if(src.parentElement!==list){e.preventDefault();return;}
+      _dragKind='task';
+      _dragSrcTid=src.getAttribute('data-tid')||null;
+      _dragSrcIdx=parseInt(src.getAttribute('data-i'),10);
+      if(isNaN(_dragSrcIdx))_dragSrcIdx=-1;
+    } else {
+      e.preventDefault();return;
+    }
+
+    _dragEl=src;
+    src.classList.add('drag-source');
+    // Set transfer data (some browsers require this for drag to work)
+    if(e.dataTransfer){
+      try{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain','rq-drag');}catch(_){/* ignore */}
+    }
+  });
+
+  // ── dragover ───────────────────────────────────────────────────────
+  // Compute the hover target and apply shift classes to give a live preview
+  // of where the dropped item will land.
+  tlist.addEventListener('dragover',function(e){
+    if(!_dragKind)return;
+    e.preventDefault(); // required to allow drop
+    if(e.dataTransfer)e.dataTransfer.dropEffect='move';
+
+    // Clear previous shifts before applying new ones
+    clearShifts();
+
+    var list=document.getElementById('tlist');
+    if(!list)return;
+
+    if(_dragKind==='task'){
+      // Task-drag: find nearest top-level .card (not the source itself)
+      var target=e.target.closest('.card');
+      if(!target||target===_dragEl||target.parentElement!==list)return;
+      var rect=target.getBoundingClientRect();
+      var midY=rect.top+rect.height/2;
+      var insertBefore=e.clientY<midY;
+      // Shift neighbours: everything from target onwards shifts down if
+      // inserting before target; target shifts up if inserting after.
+      // Simpler visual: just shift the single target element.
+      target.classList.add(insertBefore?'drag-shift-down':'drag-shift-up');
+      target.style.setProperty('--drag-shift-dy','30px');
+      target._rqDropBefore=insertBefore;
+      target._rqDropTarget=true;
+    } else if(_dragKind==='sub'){
+      // Sub-drag: prefer a .strow target within some task's .stlist. If
+      // hovering on a .card outside any .strow, treat as "drop onto this
+      // card's sub-list" (cross-task move to end of that task's subs).
+      var rowTarget=e.target.closest('.strow');
+      var cardTarget=e.target.closest('.card');
+      if(rowTarget&&rowTarget!==_dragEl&&!rowTarget.classList.contains('strow-pin')){
+        var rRect=rowTarget.getBoundingClientRect();
+        var rMid=rRect.top+rRect.height/2;
+        var rBefore=e.clientY<rMid;
+        rowTarget.classList.add(rBefore?'drag-shift-down':'drag-shift-up');
+        rowTarget.style.setProperty('--drag-shift-dy','36px');
+        rowTarget._rqDropBefore=rBefore;
+        rowTarget._rqDropTarget=true;
+      } else if(cardTarget&&cardTarget.parentElement===list){
+        // Hovering on a card body (outside any of its sub-rows) → drop
+        // onto that card's subtask list (cross-task move to end)
+        cardTarget.classList.add('drag-target-card');
+        cardTarget._rqDropTarget=true;
+        cardTarget._rqDropAsCardBody=true;
+      }
+    } else if(_dragKind==='pinned'){
+      // Pinned-drag: only accept other pinned rows as targets
+      var pinTarget=e.target.closest('.strow.strow-pin');
+      if(!pinTarget||pinTarget===_dragEl)return;
+      var pRect=pinTarget.getBoundingClientRect();
+      var pMid=pRect.top+pRect.height/2;
+      var pBefore=e.clientY<pMid;
+      pinTarget.classList.add(pBefore?'drag-shift-down':'drag-shift-up');
+      pinTarget.style.setProperty('--drag-shift-dy','36px');
+      pinTarget._rqDropBefore=pBefore;
+      pinTarget._rqDropTarget=true;
+    }
+  });
+
+  // ── drop ───────────────────────────────────────────────────────────
+  tlist.addEventListener('drop',function(e){
+    if(!_dragKind)return;
+    e.preventDefault();
+    var list=document.getElementById('tlist');
+    if(!list){resetDragState();return;}
+
+    // Find the element marked as drop target during the last dragover
+    var tgtEl=list.querySelector('.drag-shift-up,.drag-shift-down,.drag-target-card');
+
+    try{
+      if(_dragKind==='task'){
+        if(!tgtEl||!tgtEl._rqDropTarget||!tgtEl.classList.contains('card')){
+          resetDragState();return;
+        }
+        var dstTid=tgtEl.getAttribute('data-tid');
+        if(!dstTid||dstTid===_dragSrcTid){resetDragState();return;}
+        // Find both indices in S.active
+        var srcIdx=-1,dstIdx=-1;
+        for(var _ti=0;_ti<(S.active||[]).length;_ti++){
+          if(S.active[_ti]._tid===_dragSrcTid)srcIdx=_ti;
+          if(S.active[_ti]._tid===dstTid)dstIdx=_ti;
+        }
+        if(srcIdx<0||dstIdx<0){resetDragState();return;}
+        var insertBefore=!!tgtEl._rqDropBefore;
+        // Snapshot before mutating
+        var srcTask=S.active.splice(srcIdx,1)[0];
+        // Re-find dstIdx after splice
+        var newDstIdx=S.active.findIndex(function(x){return x._tid===dstTid;});
+        if(newDstIdx<0)newDstIdx=S.active.length;
+        var insAt=insertBefore?newDstIdx:newDstIdx+1;
+        S.active.splice(insAt,0,srcTask);
+        _pushUndo({kind:'dragTask',tid:_dragSrcTid,srcIdx:srcIdx,
+          label:'Reordered task "'+(srcTask.name||'')+'"'});
+        logAdd('Reordered contract: '+(srcTask.name||''),'task');
+        save();renderTasks();
+      } else if(_dragKind==='sub'){
+        if(!tgtEl||!tgtEl._rqDropTarget){resetDragState();return;}
+        var srcTaskRes=_findTaskByTid(_dragSrcTid);
+        if(!srcTaskRes){resetDragState();return;}
+        var srcSubIdx=-1;
+        for(var _si=0;_si<(srcTaskRes.task.subtasks||[]).length;_si++){
+          if(srcTaskRes.task.subtasks[_si]&&srcTaskRes.task.subtasks[_si]._sid===_dragSrcSid){
+            srcSubIdx=_si;break;
+          }
+        }
+        if(srcSubIdx<0){resetDragState();return;}
+        var theSub=srcTaskRes.task.subtasks.splice(srcSubIdx,1)[0];
+
+        var dstTaskTid,dstInsertIdx;
+        if(tgtEl.classList.contains('strow')&&!tgtEl.classList.contains('strow-pin')){
+          // Target is another sub-row → drop before/after it
+          dstTaskTid=tgtEl.getAttribute('data-tid');
+          var dstTaskRes=_findTaskByTid(dstTaskTid);
+          if(!dstTaskRes){
+            // Restore source before bailing
+            srcTaskRes.task.subtasks.splice(srcSubIdx,0,theSub);
+            resetDragState();return;
+          }
+          var tgtSid=tgtEl.getAttribute('data-sid');
+          var tgtSubIdx=-1;
+          for(var _tsi=0;_tsi<(dstTaskRes.task.subtasks||[]).length;_tsi++){
+            if(dstTaskRes.task.subtasks[_tsi]&&dstTaskRes.task.subtasks[_tsi]._sid===tgtSid){
+              tgtSubIdx=_tsi;break;
+            }
+          }
+          if(tgtSubIdx<0)tgtSubIdx=dstTaskRes.task.subtasks.length;
+          var sBefore=!!tgtEl._rqDropBefore;
+          dstInsertIdx=sBefore?tgtSubIdx:tgtSubIdx+1;
+          if(!dstTaskRes.task.subtasks)dstTaskRes.task.subtasks=[];
+          dstTaskRes.task.subtasks.splice(dstInsertIdx,0,theSub);
+        } else if(tgtEl.classList.contains('card')&&tgtEl._rqDropAsCardBody){
+          // Dropped onto a card body → append to that card's subtasks
+          dstTaskTid=tgtEl.getAttribute('data-tid');
+          var dstTaskRes2=_findTaskByTid(dstTaskTid);
+          if(!dstTaskRes2){
+            srcTaskRes.task.subtasks.splice(srcSubIdx,0,theSub);
+            resetDragState();return;
+          }
+          if(!dstTaskRes2.task.subtasks)dstTaskRes2.task.subtasks=[];
+          dstTaskRes2.task.subtasks.push(theSub);
+          dstInsertIdx=dstTaskRes2.task.subtasks.length-1;
+        } else {
+          // Unknown target — restore and bail
+          srcTaskRes.task.subtasks.splice(srcSubIdx,0,theSub);
+          resetDragState();return;
+        }
+
+        var crossTask=(dstTaskTid!==_dragSrcTid);
+        _pushUndo({kind:'dragSub',sid:_dragSrcSid,
+          srcTid:_dragSrcTid,srcIdx:srcSubIdx,
+          dstTid:dstTaskTid,dstIdx:dstInsertIdx,
+          label:(crossTask?'Moved sub-task "'+(theSub.name||'')+'" to different contract':'Reordered sub-task "'+(theSub.name||'')+'"')});
+        logAdd((crossTask?'Moved sub-task: ':'Reordered sub-task: ')+(theSub.name||''),'task');
+        save();renderTasks();
+      } else if(_dragKind==='pinned'){
+        if(!tgtEl||!tgtEl._rqDropTarget||!tgtEl.classList.contains('strow-pin')){
+          resetDragState();return;
+        }
+        var tgtPinIdx=parseInt(tgtEl.getAttribute('data-pin-idx'),10);
+        if(isNaN(tgtPinIdx)||_dragSrcPinIdx<0){resetDragState();return;}
+        var pBefore2=!!tgtEl._rqDropBefore;
+        var prev=clone(S.pinned||[]);
+        var moved=S.pinned.splice(_dragSrcPinIdx,1)[0];
+        // Re-resolve target index after splice
+        var adjTgt=tgtPinIdx>_dragSrcPinIdx?tgtPinIdx-1:tgtPinIdx;
+        var pinInsAt=pBefore2?adjTgt:adjTgt+1;
+        pinInsAt=Math.max(0,Math.min(pinInsAt,S.pinned.length));
+        S.pinned.splice(pinInsAt,0,moved);
+        _pushUndo({kind:'dragPin',prevPinned:prev,label:'Reordered pinned item'});
+        logAdd('Reordered pinned item','task');
+        save();renderTasks();
+      }
+    }catch(err){
+      console.error('[drag] drop handler error',err);
+    }
+    resetDragState();
+  });
+
+  // ── dragend ────────────────────────────────────────────────────────
+  // Fires regardless of drop success; always clean up state.
+  tlist.addEventListener('dragend',function(){
+    resetDragState();
+  });
+
+  // ── dragleave ──────────────────────────────────────────────────────
+  // When leaving #tlist entirely, clear shift previews. Individual-element
+  // dragleaves fire too often during hover inside the list, so we only
+  // respond to the top-level list leaving. clientX/Y of 0 means outside.
+  tlist.addEventListener('dragleave',function(e){
+    if(e.relatedTarget && tlist.contains(e.relatedTarget))return;
+    clearShifts();
   });
 })();
 
