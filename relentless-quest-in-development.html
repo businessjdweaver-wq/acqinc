@@ -3791,10 +3791,23 @@ body.dev-active #app{margin-top:36px;}
    children. Padding-top values are tuned so the handle, pie, and checkbox
    sit on the first line of text. */
 .strow-main > .st-drag-handle{align-self:flex-start;padding-top:10px;min-height:0;}
-.strow-main > .pct-tog{align-self:flex-start;padding-top:10px;}
+.strow-main > .pct-tog{align-self:flex-start;padding-top:10px;padding-left:6px;}
+/* v1.6972 — pie padding-left:6px gives main-list sub-row pies breathing room
+   from the left edge of the row (previously flush). Matches the pinned-row
+   pie treatment from v1.6964. The pinned-section already has a 10px row margin
+   so the net padding there reads as 16px from the gold stripe, which is fine. */
 .strow-main > .strow-dot{align-self:flex-start;padding-top:8px;min-height:0;}
 .strow-main > label{align-items:flex-start;}
 .strow-main > label > .stgp{margin-top:2px;flex-shrink:0;}
+/* v1.6972 — When a sub-task is pinned, its done-checkbox in the main-list
+   `.stlist` is replaced with a 📌 pin icon that scrolls to the Pinned Tasks
+   section. Style it like a checkbox slot for visual consistency. */
+.strow-main .pinscroll-btn{width:1.6em;height:1.6em;flex-shrink:0;cursor:pointer;background:none;border:none;padding:0;margin:0;font-size:1.1em;color:var(--gold-dark);display:inline-flex;align-items:center;justify-content:center;line-height:1;}
+.strow-main .pinscroll-btn:hover,.strow-main .pinscroll-btn:active{color:var(--crimson);transform:scale(1.05);}
+/* v1.6972 — Pinned no-sub task rendered as a sub-row. Differs from a pinned
+   sub-task row only in: (a) no checkbox column (name stretches left), (b)
+   the ✕ delete in the left drawer does a task-level delete not a sub delete. */
+.strow.strow-pin.strow-pin-task .strow-main > label{padding-left:4px;}
 /* v1.6967 — drawer translation widened from -148px to -220px to fit 5
    buttons (⇈ super-up · ↑ up · ↓ down · ⇄ move · 📌 pin) after the
    drag-to-reorder mechanism was replaced with explicit ↑ / ↓ controls.
@@ -3862,7 +3875,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6971</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6972</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4540,7 +4553,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6971
+      Version 1.6972
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -4565,6 +4578,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6972</strong> &mdash; Contracts screen: Pinned Tasks redesign + main-list pie/pin/checkbox adjustments. <strong>Scope:</strong> six coordinated changes with a silent data migration. <strong>(1) Pin scope narrowed.</strong> Only sub-tasks and tasks WITHOUT sub-tasks are pinnable now. The 📌 button is removed from the action row of tasks with sub-tasks (<code>subs.length &gt; 0</code>) — grid shrinks from 7 to 6 columns in that case. The <code>sgpin</code> button (📌 Pin / 📍 Pinned) is stripped from the split-group footer entirely. Existing <code>kind:'splitGroup'</code> and <code>kind:'task'</code> pins whose target has grown sub-tasks are dropped silently by <code>ensureTaskIds</code> on next render — no user-facing tip, no confirmation. Rationale: users who want a whole cluster pinned can pin its sub-tasks individually; users who want a task-with-subs at the top can use the reorder modal's super-up button. <strong>(2) Pinned no-sub tasks render as sub-rows.</strong> New helper <code>renderPinnedTaskAsSubRow(t, pi, pinTotal)</code> emits a <code>.strow.strow-pin.strow-pin-task</code> swipe row with the same geometry as a pinned sub-row but without a checkbox column (per Q2b: the Pinned zone is read-only for progress on no-sub tasks except via the pie). Left drawer: 📍 Unpin + ✕ Delete. Right drawer: gp meta + ⇈/↑/↓ reorder. The pinned zone renderer's <code>p.kind==='task'</code> branch now calls this helper instead of <code>taskCardHtml(…, pinnedView=true)</code>, so the whole Pinned zone is a uniform list of slim swipe rows. <strong>(3) ✕ Delete in pinned-row left drawers.</strong> Two new dispatcher actions: <code>subpindel</code> (sub-task row) splices the sub-task from its parent AND removes the matching pin entry; <code>taskpindel</code> (no-sub task row) splices the task from <code>S.active</code> AND removes the matching pin entry. Both actions log their own undo kinds. <strong>(4) Compound undo.</strong> Two new undo kinds — <code>subpindel</code> snapshots <code>{tid, subIdx, sub, prevPinned}</code> so revert re-inserts the sub-task at its original index AND restores <code>S.pinned</code>; <code>taskpindel</code> snapshots <code>{tid, activeIdx, taskSnapshot, prevPinned}</code> so revert re-inserts the task at its original active index AND restores <code>S.pinned</code>. Both guard against double-revert via _tid/_sid dedup checks. <strong>(5) Main-list checkbox-to-pin swap on pinned sub-tasks.</strong> When <code>isSubPinned(tid, sid)</code> is true, the <code>&lt;input type="checkbox"&gt;</code> in the main-list <code>.stlist</code> sub-row is replaced with a <code>&lt;button data-a="pinscroll"&gt;📌&lt;/button&gt;</code> that smooth-scrolls <code>.pinned-section</code> into view. The pie stays put so progress is still visible in the main list. Progress and checking-off now happen exclusively from the Pinned Tasks section — a deliberate tradeoff that makes the Pinned zone a real primary surface rather than a mirror. <strong>(6) Pie padding.</strong> Added <code>padding-left: 6px</code> to <code>.strow-main &gt; .pct-tog</code> so sub-row pies get breathing room from the left edge of their row. Previously the pie sat flush; visual reported as "feels cramped" on dense sub-task lists. Pinned-section rows already had their own 10px row margin from v1.6963 so the net visual there is 16px from the gold stripe — consistent, not cramped. <strong>(7) Q10 auto-unpin + super-up.</strong> When a user adds the first sub-task to a currently-pinned no-sub task, the task is silently unpinned (it no longer qualifies for the narrowed pin scope) AND moved to position 0 in <code>S.active</code> via a splice+unshift, preserving the "this matters to me" signal the pin previously carried. Log line announces both actions. The <code>ensureTaskIds</code> filter would have dropped the pin on next render anyway; doing it inline lets us tack on the super-up. <strong>Deliberately not changed:</strong> the existing <code>tpin</code>/<code>stpin</code> (toggle pin) handlers are untouched — they still just toggle; users discover the new pin scope because the buttons are gone from disallowed contexts, not via validation at click time. No SQL change. No data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6971</strong> &mdash; Grinds list context preserved across the grind-assignment modal. <strong>User report:</strong> now that grinds are only reachable via Quest Map → Open Grinds (v1.6913), the v1.6970 z-index fix — which closed <code>ov-grinds-list</code> before opening <code>ov-quest</code> to avoid stacking beneath it — dumped the user to the main screen on cancel, forcing them to re-navigate Quest Map → Open Grinds to try a different grind. <strong>Fix:</strong> three coordinated changes. <strong>(1) <code>questModalAbandon()</code> now captures <code>P4.grind</code> before clearing it</strong>, and if the modal was opened from the grind flow, calls <code>openGrindsList()</code> after <code>closeOv('ov-quest')</code>. Triggered by the ✕ Cancel button (<code>ov-q-no</code>) and by the tap-outside-modal backdrop handler — both cancel paths route through <code>questModalAbandon()</code>. <strong>(2) Successful grind-start path (line ~20867)</strong> now also calls <code>openGrindsList()</code> after the close, so the user sees the just-started mission transition into the In Progress section without navigating back through the Quest Map. The existing <code>renderGrindsList()</code> refresh is kept as a defensive fallback for environments where <code>openGrindsList</code> is somehow unavailable. <strong>(3) Collateral fix: v1.6970 used raw <code>closeOv('ov-grinds-list')</code></strong> when opening <code>ov-quest</code> from the grind flow, which bypassed <code>stopGrindsCountdown()</code> and leaked the 1-second <code>setInterval</code> that powers the "ready / countdown" timer on each grind card. Switched to <code>closeGrindsList()</code> (the paired helper that stops the timer). This was latent behavior — the interval would keep firing against a hidden modal, making a no-op <code>renderGrindsList()</code> call every second until the user either reopened and properly closed the modal or left the page. Not observable as a bug, but burning a recurring main-thread cycle for no reason. <strong>What this doesn't change:</strong> the auto-re-open only fires when <code>P4.grind</code> was set (i.e. modal opened from grind flow). Regular quest-assignment cancels — from cycle map quest cards — still close cleanly without reopening anything, matching their existing behavior. The check is wrapped in <code>typeof openGrindsList==='function'</code> so the handler stays robust if the helper is ever renamed or moved. No SQL change. No data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6970</strong> &mdash; Two-part package: JSON export/import gating relaxed + grind-assignment modal z-index fix. <strong>(1) JSON save-game export/import now available to all users.</strong> Previously <code>applyDevModeAccess</code> called <code>setSectionVisibility('settings-data-sec', true)</code> which hid the entire Data section (View Ledger, Export Save, Import Save, import status) whenever dev mode was inactive. The underlying handlers at <code>btn-export</code> (line ~22346) and <code>btn-import-trigger</code> / <code>import-file-input</code> (lines ~22354–22375) contain zero dev-mode checks — <code>btn-export</code> is a plain <code>JSON.stringify(S)</code> with a Blob download, and import is a plain <code>JSON.parse</code> + <code>for(k in d)S[k]=d[k]</code> merge — so the gate was pure UI paternalism with no safety justification. <strong>Fix:</strong> removed the <code>setSectionVisibility('settings-data-sec', true)</code> line from <code>applyDevModeAccess</code>. The section now stays visible to everyone. View Ledger is already user-facing (reachable from the Contracts screen via the 📖 Log button), so there was never a reason to gate it either. <strong>Rationale:</strong> save portability is a core user need (backups before risky operations, moving between devices, recovering from cloud-sync issues). Power users have been able to access this via URL-parameter dev mode or by editing settings state; making it a first-class user feature is overdue. <strong>Individual dev-only buttons below this section</strong> (Content Editor, Milestone Loader, Set Morning, Test Mode, d20 Animation, Edit Gold) remain individually gated via their own <code>setSectionVisibility</code> calls or runtime <code>isDevModeActive()</code> guards. <strong>(2) Grind-assignment modal stacking fix.</strong> User reported that clicking "Assign &amp; Send" on a grind card inside the Grind Missions modal (<code>ov-grinds-list</code>, z:510) opened the grind-assignment modal beneath the still-visible grinds list. <strong>Root cause:</strong> the grind-assignment modal is actually the repurposed quest-assignment modal (<code>ov-quest</code>, opened at line 19518 with <code>P4.grind</code> set instead of <code>P4.quest</code>). <code>ov-quest</code> carries no explicit z-index, so it inherits the base <code>.ov</code> stacking context of <code>z:500</code> — lower than <code>ov-grinds-list</code>'s <code>z:510</code> (bumped in v1.6945 to stack above the Quest Map). <strong>Why not just bump <code>ov-quest</code> to z:520?</strong> Because <code>ov-contact-warn</code> (z:510) and <code>ov-dt-forfeit</code> (implicit z:500) are child modals opened <em>from</em> the quest-assignment flow and would then render beneath the bumped parent. Cascading z-index bumps across a chain of 4+ modals is fragile and future-hostile. <strong>Fix:</strong> call <code>closeOv('ov-grinds-list')</code> immediately before <code>openOv('ov-quest')</code> in the <code>gassign</code> handler. Matches the v1.6913 Cycle-Map → Grinds handoff pattern: closing the parent modal before opening a child avoids the stacking problem entirely. User returns to the main screen when <code>ov-quest</code> closes; they can re-enter Grinds via the Quest Map's Grind Missions tile (this also matches how the Quest Map → Grinds flow already works). Child modals of <code>ov-quest</code> continue to stack correctly at their existing z-indexes because <code>ov-quest</code>'s z:500 is no longer below anything else. No SQL change. No data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6969</strong> &mdash; Quest-map cycle visibility fix for capstone completions + latent <code>renderCycleMap()</code> typo. <strong>Bug reported:</strong> after completing Rune Routers' capstone quest, the downstream Sanguine Caravan cycle (gated on <code>requiredCycleSetId:'rune-routers'</code>) was invisible on the Quest Map until the user closed and reopened the app. <strong>Root cause:</strong> <code>renderCycleMapCards()</code> was never invoked from the quest-completion or capstone-award flow. All 9 call sites were tied to user-initiated Quest Map interactions (opening the modal, toggling cards, activating/abandoning, buying real estate). When a capstone completion flipped <code>isSetCompleted(currentSetId)</code> from false to true, nothing forced the map to re-evaluate <code>cycleGateStatus</code> on the dependent cycles — so newly-unlocked cycles stayed hidden. The <code>healCompletedCycleArchives()</code> self-heal (v1.6948) that runs at every load path is what made the problem appear to fix itself on reload. <strong>Fix:</strong> three call sites now call <code>healCompletedCycleArchives()</code> followed by <code>renderCycleMapCards()</code> after <code>saveActiveSetProgress()</code>: (a) <code>collectQuest</code> — the real quest-completion path, covering both <code>autoCollectExpired</code> and the manual <code>data-a="qcollect"</code> button since both delegate to <code>collectQuest</code>; (b) <code>devMarkQuestComplete</code> — dev-mode per-quest completion; (c) the multi-collect handler at what used to be line 19180. <strong>Guards:</strong> each call is wrapped in <code>typeof fn==='function'</code> so the handlers remain robust if either helper is ever renamed or IIFE'd. <strong>Perf:</strong> <code>healCompletedCycleArchives</code> is O(cycles × history) with a no-write guard when <code>spDoneCount</code> already matches <code>totalQuests</code>, so post-completion invocation is essentially free; <code>renderCycleMapCards</code> is a lightweight DOM rebuild of a modal that is often not even open. <strong>Latent bug surfaced during investigation:</strong> the multi-collect handler called <code>renderCycleMap()</code> (no trailing "Cards"), which is a function that does not exist anywhere in the codebase. Any user who used the "collect all ready quests" path would have triggered a <code>ReferenceError</code>, silently killing the handler after the first error. Corrected to <code>renderCycleMapCards()</code>. <strong>Symptom reported by user was not reproducible post-patch:</strong> the completed-cycle archive and setProgress for Rune Routers were both intact in the diagnostic dump, so a subtle timing or ordering issue in the pre-reload session may still exist — but the added <code>healCompletedCycleArchives</code> call at completion time papers over any such residual inconsistency immediately rather than waiting for a reload. <strong>Deliberately not changed:</strong> <code>autoCollectExpired</code> already inherits the fix via its inner <code>collectQuest</code> loop; worst-case it triggers N redundant renders during a burst collect, but correctness trumps this minor inefficiency. No SQL change. No data-model change.</div>
@@ -9225,6 +9239,38 @@ function undoApply(entry){
       r3.task.subtasks.splice(at,0,entry.sub);
       return true;
     }
+    if(entry.kind==='subpindel'){
+      // v1.6972 — Reverse compound: restore S.pinned AND re-insert the
+      // deleted sub-task at its original index in its parent.
+      var r3b=_findTaskByTid(entry.tid);if(!r3b)return false;
+      if(!r3b.task.subtasks)r3b.task.subtasks=[];
+      var dup3b=r3b.task.subtasks.some(function(s){return s&&s._sid===(entry.sub&&entry.sub._sid);});
+      if(!dup3b){
+        var at3b=Math.max(0,Math.min(entry.subIdx|0,r3b.task.subtasks.length));
+        r3b.task.subtasks.splice(at3b,0,entry.sub);
+      }
+      if(Array.isArray(entry.prevPinned)){
+        S.pinned=entry.prevPinned.map(function(p){return clone(p);});
+      }
+      return true;
+    }
+    if(entry.kind==='taskpindel'){
+      // v1.6972 — Reverse compound: restore S.pinned AND re-insert the
+      // deleted task at its original index in S.active. Mirrors the tarch
+      // restoration pattern but for the ✕-from-pinned-zone delete path.
+      if(!entry.taskSnapshot)return false;
+      // Guard against duplicate re-insert (revert twice)
+      var dupT=(S.active||[]).some(function(x){return x && x._tid===entry.taskSnapshot._tid;});
+      if(!dupT){
+        if(!S.active)S.active=[];
+        var atT=Math.max(0,Math.min(entry.activeIdx|0,S.active.length));
+        S.active.splice(atT,0,clone(entry.taskSnapshot));
+      }
+      if(Array.isArray(entry.prevPinned)){
+        S.pinned=entry.prevPinned.map(function(p){return clone(p);});
+      }
+      return true;
+    }
     if(entry.kind==='tbrn'){
       // Reverse: restore prior burnerUntil value on the task.
       var r4=_findTaskByTid(entry.tid);if(!r4)return false;
@@ -9397,19 +9443,26 @@ function ensureTaskIds(){
   // v1.6924: drop orphan pins whose tid/sid no longer resolves.
   // v1.6932: also handle kind:'splitGroup' — keep iff the gid is still live
   // (has meta entry AND at least 2 live members).
+  // v1.6972 MIGRATION: pin scope narrowed. Only sub-tasks and tasks WITHOUT
+  // sub-tasks are pinnable now. Any pre-existing kind:'splitGroup' entries
+  // are dropped silently, and kind:'task' entries whose target has gained
+  // sub-tasks are also dropped. The pin buttons were removed from both the
+  // split-group footer and the with-subs task action row, so these legacy
+  // pins had no UI path to be removed otherwise.
   S.pinned=S.pinned.filter(function(p){
     if(!p)return false;
     if(p.kind==='splitGroup'){
-      if(!p.gid)return false;
-      if(!S.splitGroupMeta||!S.splitGroupMeta[p.gid])return false;
-      var nMembers=(S.active||[]).filter(function(x){return x._splitGroup===p.gid;}).length;
-      return nMembers>=2;
+      return false; // v1.6972: no longer pinnable
     }
     if(!p.tid)return false;
     var t=(S.active||[]).filter(function(x){return x._tid===p.tid;})[0];
     if(!t)return false;
     if(p.kind==='sub')return (t.subtasks||[]).some(function(s){return s._sid===p.sid;});
-    return p.kind==='task';
+    if(p.kind==='task'){
+      // v1.6972: a pinned task is only valid if it has zero sub-tasks
+      return (t.subtasks||[]).length===0;
+    }
+    return false;
   });
 }
 function normalizeTaskGroups(){
@@ -9562,7 +9615,14 @@ function taskCardHtml(t,showArrows,nbIdxs,pinnedView,inSplitGroup){
         '<div class="strow-main">'+
         '<button type="button" class="pct-tog" data-a="stpct" data-i="'+i+'" data-si="'+si+'" data-step="'+(s.pct||0)+'" title="'+Math.round((s.pct||0)/6*100)+'% complete — click to advance (3 clicks = full)">'+pctTogSvg(s.pct||0)+'</button>'+
         '<label for="'+cbId+'">'+
-        '<input type="checkbox" id="'+cbId+'" data-a="stck" data-i="'+i+'" data-si="'+si+'"'+(s.done?' checked':'')+'>'+
+        // v1.6972 — When this sub-task is pinned, replace its done-checkbox
+        // with a 📌 pin icon that scrolls the viewport to the Pinned Tasks
+        // section. The user checks off this sub-task from the Pinned zone
+        // from now on. Pie (progress) stays put so the main-list still
+        // visually reflects progress.
+        (isSubPinned(t._tid,s._sid)
+          ? '<button type="button" class="pinscroll-btn" data-a="pinscroll" title="Jump to Pinned Tasks" aria-label="Jump to Pinned Tasks">\uD83D\uDCCC</button>'
+          : '<input type="checkbox" id="'+cbId+'" data-a="stck" data-i="'+i+'" data-si="'+si+'"'+(s.done?' checked':'')+'>')+
         '<span class="stname'+(s.done?' stdone':'')+'"'+(isExp?' style="white-space:normal;word-break:break-word"':'')+'>'+nameHtml+'</span>'+
         _gpInline+
         '</label>'+
@@ -9596,14 +9656,24 @@ function taskCardHtml(t,showArrows,nbIdxs,pinnedView,inSplitGroup){
   var _btnArchive = '<button class="btn archive-a sm" data-a="done" data-i="'+i+'" title="Archive contract" aria-label="Archive contract">🗂</button>';
   var _btnTick = '<button class="btn bg sm" data-a="tick" data-i="'+i+'"'+(budgetExhausted?' disabled':'')+' title="'+(budgetExhausted?'Daily task gold budget reached':('Claim +'+t.gp+' gp'))+'" aria-label="'+(budgetExhausted?'Daily task gold budget reached':('Claim +'+t.gp+' gp'))+'">💰</button>';
   var actions, _gridCols;
+  // v1.6972 — Only tasks WITHOUT sub-tasks can be pinned. A task with sub-tasks
+  // no longer shows the 📌 button in its action row; users who want a whole
+  // cluster pinned can pin the individual sub-tasks, or use the reorder
+  // super-up mechanism to lift the whole card to the top of the main list.
+  var _showPinBtn = subs.length === 0;
   if(inSplitGroup){
     // 5-button row: reorder, split, merge, archive, collect
     actions = _btnReorder + _btnSplit + _btnMerge + _btnArchive + _btnTick;
     _gridCols = 5;
-  } else {
+  } else if(_showPinBtn){
     // 7-button row: reorder, defer, split, merge, pin, archive, collect
     actions = _btnReorder + _btnDefer + _btnSplit + _btnMerge + _btnPin + _btnArchive + _btnTick;
     _gridCols = 7;
+  } else {
+    // v1.6972 — 6-button row: reorder, defer, split, merge, archive, collect
+    // (pin removed when subs.length > 0)
+    actions = _btnReorder + _btnDefer + _btnSplit + _btnMerge + _btnArchive + _btnTick;
+    _gridCols = 6;
   }
   var noteHtml=t.note?('<div class="cmeta">📝 '+esc(t.note)+'</div>'):'';
   return '<div class="card'+(onBurner?' dim':'')+'">'+
@@ -9654,9 +9724,13 @@ function renderPinnedSubRow(t, s, budgetExhausted, subGp, pi, pinTotal){
   var upDisabled = (pi<=0);
   var downDisabled = (pi>=pinTotal-1);
   return '<div class="strow strow-pin" data-pin-idx="'+pi+'">'+
-    // ── Left drawer (Unpin)
+    // ── Left drawer (Unpin + Delete)
     '<div class="strow-del" style="background:rgba(201,146,42,.12)">'+
     '<button type="button" class="strow-drawer-btn sd-unpin" data-a="stpin" data-i="'+i+'" data-si="'+si+'" title="Unpin sub-task" aria-label="Unpin sub-task">\uD83D\uDCCD</button>'+
+    // v1.6972 — ✕ Delete: removes the sub-task from its parent AND unpins it.
+    // Compound undo kind 'subpindel' snapshots both S.pinned and the sub + subIdx
+    // so Revert restores everything.
+    '<button type="button" class="strow-drawer-btn sd-del" data-a="subpindel" data-i="'+i+'" data-si="'+si+'" title="Delete sub-task" aria-label="Delete sub-task" style="color:var(--crimson)">\u2715</button>'+
     '</div>'+
     // ── Right drawer (info meta + reorder)
     '<div class="strow-actions">'+
@@ -9702,10 +9776,11 @@ function renderSplitGroupHtml(gid, members, isManual, nbIdxs){
       ? '<button class="btn bpur sg-foot-btn" data-a="sgunbrn" data-sg="'+esc(gid)+'" title="Return group from back burner">🔥 Return</button>'
       : '<button class="btn bpur sg-foot-btn" data-a="sgbrn" data-sg="'+esc(gid)+'" title="Defer whole group to back burner">🕒 Defer</button>'
     )+
-    '<button class="btn bink sg-foot-btn" data-a="sgreorder" data-sg="'+esc(gid)+'" title="Reorder this group in the list">\u2195 Reorder</button>'+
-    '<button class="btn bink sg-foot-btn" data-a="sgpin" data-sg="'+esc(gid)+'" title="'+(groupPinned?'Unpin group from Pinned Tasks':'Pin group to Pinned Tasks')+'">'+
-    (groupPinned?'\uD83D\uDCCD Pinned':'\uD83D\uDCCC Pin')+
-    '</button>';
+    '<button class="btn bink sg-foot-btn" data-a="sgreorder" data-sg="'+esc(gid)+'" title="Reorder this group in the list">\u2195 Reorder</button>';
+    // v1.6972 — Split-group pin button removed. Only tasks without sub-tasks
+    // and individual sub-tasks can be pinned; split-groups no longer qualify.
+    // Any pre-existing splitGroup entries in S.pinned[] are stripped silently
+    // in ensureTaskIds on next render, per the migration decision.
   return '<div class="split-group" data-sg="'+esc(gid)+'" style="--sg-color:'+gColor+';--sg-tint:'+gColor+'14">'+
     '<div class="split-group-header-row">'+
     '<button type="button" class="split-group-icon-btn" data-a="sgpick" data-sg="'+esc(gid)+'" title="Change icon / colour / title">'+
@@ -9719,6 +9794,45 @@ function renderSplitGroupHtml(gid, members, isManual, nbIdxs){
     '</div>'+
     members.map(function(m){return taskCardHtml(m,isManual,nbIdxs,false,true);}).join('')+
     '<div class="split-group-footer">'+footerBtns+'</div>'+
+    '</div>';
+}
+
+// v1.6972 — Pinned no-sub TASK rendered as a sub-row in the Pinned Tasks zone.
+// Mirrors renderPinnedSubRow shape (pie + name + ⋯ + swipe drawers) but
+// targets a top-level task that has zero sub-tasks. The migration in
+// ensureTaskIds ensures only no-sub tasks reach this renderer; if somehow a
+// task with subs slipped through, we return '' so nothing visible breaks.
+// No checkbox (per Q2b — the task is read-only from the Pinned zone for
+// progress except via the pie). Left drawer has 📍 Unpin + ✕ Delete
+// (data-a="taskpindel" — splices from S.pinned AND from S.active, undoable).
+function renderPinnedTaskAsSubRow(t, pi, pinTotal){
+  if(!t)return '';
+  if((t.subtasks||[]).length>0)return ''; // defense-in-depth
+  var i = t._i;
+  var upDisabled = (pi<=0);
+  var downDisabled = (pi>=pinTotal-1);
+  var taskGp = t.gp||0;
+  return '<div class="strow strow-pin strow-pin-task" data-pin-idx="'+pi+'">'+
+    // ── Left drawer (Unpin + Delete)
+    '<div class="strow-del" style="background:rgba(201,146,42,.12)">'+
+    '<button type="button" class="strow-drawer-btn sd-unpin" data-a="tpin" data-i="'+i+'" title="Unpin task" aria-label="Unpin task">\uD83D\uDCCD</button>'+
+    '<button type="button" class="strow-drawer-btn sd-del" data-a="taskpindel" data-i="'+i+'" title="Delete task" aria-label="Delete task" style="color:var(--crimson)">\u2715</button>'+
+    '</div>'+
+    // ── Right drawer (info meta + reorder)
+    '<div class="strow-actions">'+
+    '<span class="strow-meta-gp">+'+taskGp+' gp</span>'+
+    '<button type="button" class="strow-drawer-btn sd-supup" data-a="pinsupup" data-pi="'+pi+'" title="Move to top of Pinned Tasks" aria-label="Move to top of pinned"'+(upDisabled?' disabled':'')+'>\u21C8</button>'+
+    '<button type="button" class="strow-drawer-btn sd-reord" data-a="pinup" data-pi="'+pi+'" title="Move up in Pinned Tasks" aria-label="Move up"'+(upDisabled?' disabled':'')+'>\u2191</button>'+
+    '<button type="button" class="strow-drawer-btn sd-reord" data-a="pindn" data-pi="'+pi+'" title="Move down in Pinned Tasks" aria-label="Move down"'+(downDisabled?' disabled':'')+'>\u2193</button>'+
+    '</div>'+
+    // ── Main content (visible row): pie + name + ⋯ (NO checkbox per Q2b)
+    '<div class="strow-main">'+
+    '<button type="button" class="pct-tog" data-a="tpct" data-i="'+i+'" data-step="'+(t.pct||0)+'" title="'+Math.round((t.pct||0)/6*100)+'% complete — click to advance">'+pctTogSvg(t.pct||0)+'</button>'+
+    '<label style="flex:1;display:flex;align-items:center;gap:8px;padding:8px 4px;min-height:44px;min-width:0">'+
+    '<span class="stname" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.name||'')+'</span>'+
+    '</label>'+
+    '<button type="button" class="strow-dot" data-a="sttoggle-task" data-i="'+i+'" aria-label="Show actions" title="Show actions">\u22EF</button>'+
+    '</div>'+
     '</div>';
 }
 
@@ -9740,31 +9854,21 @@ function renderTasks(){
   var budgetExhausted=taskBudgetRemaining()<=0;
 
   // ── Section 1: Pinned Tasks (v1.6957: renamed from Pinned Spotlight) ───
+  // v1.6972 — Only sub-tasks and no-sub tasks are pinnable now (splitGroup pins
+  // were dropped in ensureTaskIds; task-with-subs pins likewise). Both kinds
+  // render as .strow.strow-pin swipe rows in one flat list, pin-order preserved.
   var pinnedHtml='';
   if((S.pinned||[]).length){
     var _pinTotal=(S.pinned||[]).length;
     var pinRows=(S.pinned||[]).map(function(p, pi){
-      // v1.6932: splitGroup pin renders the full group wrapper in Spotlight.
-      // Orphan handling: if the group no longer has 2+ members, skip silently
-      // — ensureTaskIds will clean up on next load.
-      if(p.kind==='splitGroup'){
-        if(!p.gid)return '';
-        var sgMembers=(S.active||[]).filter(function(x){return x._splitGroup===p.gid;});
-        if(sgMembers.length<2)return '';
-        // Order by position in `sorted` so Spotlight matches main-list order
-        sgMembers.sort(function(a,b){
-          return sorted.indexOf(a)-sorted.indexOf(b);
-        });
-        return renderSplitGroupHtml(p.gid, sgMembers, isManual, nbIdxs);
-      }
+      if(!p||!p.tid)return '';
       var src=S.active.filter(function(x){return x._tid===p.tid;})[0];
       if(!src)return '';
       if(p.kind==='task'){
-        // Live re-render of the source task card. Don't pass pinnedView because
-        // we want the full action row (user should be able to un-pin, merge,
-        // etc. from Spotlight too); the pin button's icon already reflects
-        // state via isTaskPinned().
-        return taskCardHtml(src,isManual,nbIdxs,true);
+        // v1.6972 — pinned no-sub task now renders as a sub-row, NOT a card.
+        // Defense-in-depth: if somehow subs.length>0 slipped past ensureTaskIds,
+        // the helper returns '' so nothing breaks visually.
+        return renderPinnedTaskAsSubRow(src,pi,_pinTotal);
       } else if(p.kind==='sub'){
         var s=(src.subtasks||[]).filter(function(x){return x._sid===p.sid;})[0];
         if(!s)return '';
@@ -11165,6 +11269,81 @@ document.getElementById('tlist').addEventListener('click',function(e){
       save();renderTasks();
     }
     return;
+  } else if(a==='pinscroll'){
+    // v1.6972 — The checkbox-replaced-with-📌 button on pinned sub-task rows
+    // in the main list. Clicking scrolls the viewport to the Pinned Tasks
+    // section smoothly. The pinned section is guaranteed to exist because a
+    // pin is what caused this button to render in the first place.
+    e.preventDefault();
+    e.stopPropagation();
+    var _pinSec=document.querySelector('.pinned-section');
+    if(_pinSec&&typeof _pinSec.scrollIntoView==='function'){
+      _pinSec.scrollIntoView({behavior:'smooth',block:'start'});
+    } else {
+      window.scrollTo({top:0,behavior:'smooth'});
+    }
+    return;
+  } else if(a==='subpindel'){
+    // v1.6972 — ✕ Delete button in the pinned sub-row's left drawer. Removes
+    // the sub-task from its parent task AND unpins it. Compound undo snapshots
+    // both S.pinned and the sub + its subIdx so Revert restores both.
+    var _sdi=parseInt(b.getAttribute('data-i'));
+    var _sdsi=parseInt(b.getAttribute('data-si'));
+    var _sdt=S.active[_sdi];
+    if(!_sdt||!_sdt.subtasks||!_sdt.subtasks[_sdsi])return;
+    var _sdSub=clone(_sdt.subtasks[_sdsi]);
+    var _sdName=_sdSub.name||'';
+    var _sdPrevPinned=(S.pinned||[]).map(function(p){return clone(p);});
+    // Splice the sub-task from its parent
+    _sdt.subtasks.splice(_sdsi,1);
+    // Remove the matching pin entry (kind:'sub', matching tid + sid)
+    S.pinned=(S.pinned||[]).filter(function(p){
+      return !(p.kind==='sub' && p.tid===_sdt._tid && p.sid===_sdSub._sid);
+    });
+    _pushUndo({kind:'subpindel',tid:_sdt._tid,subIdx:_sdsi,sub:_sdSub,
+      prevPinned:_sdPrevPinned,label:'Deleted pinned sub-task "'+_sdName+'"'});
+    logAdd('Deleted pinned sub-task "'+_sdName+'"','task');
+    save();renderTasks();
+    return;
+  } else if(a==='taskpindel'){
+    // v1.6972 — ✕ Delete button in the pinned no-sub-task row's left drawer.
+    // Removes the task from S.active entirely AND unpins it. Compound undo
+    // snapshots both S.pinned and the full task + its activeIdx.
+    var _tdi=parseInt(b.getAttribute('data-i'));
+    var _tdt=S.active[_tdi];
+    if(!_tdt)return;
+    var _tdName=_tdt.name||'Unnamed contract';
+    var _tdSnapshot=clone(_tdt);
+    var _tdPrevPinned=(S.pinned||[]).map(function(p){return clone(p);});
+    // Remove the task from S.active
+    S.active.splice(_tdi,1);
+    // Remove the matching pin entry (kind:'task', matching tid)
+    S.pinned=(S.pinned||[]).filter(function(p){
+      return !(p.kind==='task' && p.tid===_tdSnapshot._tid);
+    });
+    _pushUndo({kind:'taskpindel',tid:_tdSnapshot._tid,activeIdx:_tdi,
+      taskSnapshot:_tdSnapshot,prevPinned:_tdPrevPinned,
+      label:'Deleted pinned task "'+_tdName+'"'});
+    logAdd('Deleted pinned task "'+_tdName+'"','task');
+    save();renderTasks();
+    return;
+  } else if(a==='sttoggle-task'){
+    // v1.6972 — The ⋯ action-toggle on a pinned no-sub-task row (rendered
+    // as a sub-row via renderPinnedTaskAsSubRow). Shares swipe-drawer
+    // behavior with sub-row's sttoggle — open the right-drawer.
+    // The existing swipe-gesture handler toggles via .strow-show-actions.
+    // For the button click path we mirror that state explicitly.
+    var _sttRow=b.closest('.strow');
+    if(_sttRow){
+      // Close any other open drawers first, then toggle this row
+      document.querySelectorAll('.strow.strow-show-actions, .strow.strow-show-del').forEach(function(r){
+        if(r!==_sttRow){r.classList.remove('strow-show-actions');r.classList.remove('strow-show-del');}
+      });
+      var _sttOpen=_sttRow.classList.contains('strow-show-actions');
+      _sttRow.classList.toggle('strow-show-actions', !_sttOpen);
+      if(_sttOpen===false)_sttRow.classList.remove('strow-show-del');
+    }
+    return;
   } else if(a==='sgpick'){
     // v1.6928: Tap on a split-group header icon opens the colour/icon picker.
     e.preventDefault();
@@ -11283,6 +11462,25 @@ document.getElementById('tlist').addEventListener('click',function(e){
     var sn=inp?inp.value.trim():'';
     if(!sn)return;
     if(!S.active[i].subtasks)S.active[i].subtasks=[];
+    // v1.6972 — Q10: if this task is currently pinned AND had zero sub-tasks
+    // before this one, it was valid as a pinned no-sub task. Adding a sub-task
+    // disqualifies it from the pinned zone (only no-sub tasks and sub-tasks
+    // can be pinned per v1.6972 design). We silently unpin it and super-up
+    // it to the top of the main list so the user doesn't lose their "this
+    // matters" signal. The ensureTaskIds filter on next render would have
+    // dropped the pin anyway; doing it here lets us tack on the super-up.
+    var _wasPinnedNoSubs = S.active[i].subtasks.length===0 && isTaskPinned(S.active[i]._tid);
+    if(_wasPinnedNoSubs){
+      var _unpinIdx=S.pinned.findIndex(function(p){return p.kind==='task'&&p.tid===S.active[i]._tid;});
+      if(_unpinIdx>=0)S.pinned.splice(_unpinIdx,1);
+      // Super-up: move this task to position 0 in S.active
+      if(i>0){
+        var _supedTask=S.active.splice(i,1)[0];
+        S.active.unshift(_supedTask);
+        i=0; // rewrite our index since we just moved the task
+      }
+      logAdd('Auto-unpinned "'+(S.active[i].name||'')+'" (gained a sub-task) and moved to top','task');
+    }
     // New subtasks go to the top (v1.6901)
     S.active[i].subtasks.unshift({name:sn,done:false});
     var _stIdx=0;
