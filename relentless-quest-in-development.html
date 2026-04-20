@@ -4343,7 +4343,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6986</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.6987</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5036,7 +5036,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.6986
+      Version 1.6987
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -5061,6 +5061,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.6987</strong> &mdash; Device-transition reshuffles. <strong>User ask:</strong> when switching between desktop (multi-col) and mobile (1-col) view, the task arrangement should follow sensibly. Desktop→mobile: row-walk across columns so column 0's top task reads first, then column 1's top, then column 2's top, then column 0's second, etc. Mobile→desktop: round-robin by position so items the user put higher in the list spread across the tops of the columns. <strong>What landed:</strong> <strong>(1) Two reshuffle algorithms, mathematical inverses.</strong> <code>_reshuffleDesktopToMobile(fromN)</code> partitions top-level units into N column-buckets by <code>_col</code>, then row-walks: output position 0 = col 0 row 0, output position 1 = col 1 row 0, ..., output position N = col 0 row 1, etc. Burners get the same row-walk treatment but are appended AFTER all non-burners (preserving the existing sort-to-bottom behaviour). _col cleared to 0 on every task since 1-col mode ignores it — keeps data clean for the next round-trip. <code>_reshuffleMobileToDesktop(targetN)</code> walks <code>S.active</code> in order, assigning <code>_col = unitIndex mod targetN</code>. Non-burners and burners are indexed separately (so a small number of burners don't all pile up in column N-1). <code>S.active</code> order is preserved; only <code>_col</code> values change. <strong>(2) Split groups travel as single units.</strong> Both algorithms use <code>_collectUnitsAll()</code> which treats split groups as one positional item with an <code>idxs</code> array of member positions. On desktop→mobile, group members stay adjacent in the flat output (at the group's row-walk position). On mobile→desktop, all group members share the same computed <code>_col</code>. The existing <code>_normalizeTaskCols()</code> would have corrected the latter anyway via first-member inheritance, but explicit is better. <strong>(3) Toggle-click wiring.</strong> The 1/2/3 segmented control now calls <code>_applyDeviceTransitionReshuffle(prev, next)</code> on every click instead of the v1.6982 <code>_downgradeCols</code> branch (which was narrower — only handled 3→2 / 3→1 / 2→1). The new function handles every combination: N→1 (desktop→mobile via toggle), 1→N (mobile→desktop via toggle), and N→M for multi-col-to-different-multi-col (2→3 or 3→2, which flattens then redistributes). <strong>(4) Viewport-resize wiring.</strong> New <code>bindDeviceTransitionListener()</code> uses <code>window.matchMedia('(min-width: 1024px)')</code> with a <code>change</code> event handler to detect crossings of the 1024px breakpoint. On crossing, computes old and new <em>effective</em> column count via <code>_effectiveCols()</code> (which returns 1 below 1024px regardless of stored <code>contractsColumns</code> setting) and fires the appropriate reshuffle. Listener is bound once at boot via a sentinel on <code>window._rqDeviceListenerBound</code> so a repeat boot (e.g. after Supabase auth refresh) doesn't stack multiple listeners. Uses the modern <code>addEventListener('change', ...)</code> with a deprecated <code>.addListener</code> fallback for older browsers. <strong>(5) Undo coverage.</strong> Every reshuffle — whether triggered by toggle click or viewport resize — snapshots the full <code>S.active</code> array BEFORE mutation and pushes a single <code>deviceReshuffle</code> undo entry with that snapshot. The undoApply case restores the snapshot wholesale via <code>S.active=clone(entry.prevActive)</code>. This is the heaviest revert in the system (full array replacement) but the simplest correctness-wise: no incremental replay, no risk of <code>_col</code> drift. Labels read "Reshuffled (3→1 col)" etc. so the user knows what they're reverting. If a user's window gets resized by accident (e.g. laptop opened from one monitor arrangement to another), one Undo restores their original layout. <strong>(6) Mathematical-inverse property.</strong> For evenly-distributed layouts, <code>_reshuffleDesktopToMobile</code> followed immediately by <code>_reshuffleMobileToDesktop(sameN)</code> returns the original arrangement exactly — proven by construction since row-walk and modular round-robin are inverse permutations when distribution is even. For manually-unbalanced layouts the inverse property doesn't hold (e.g. col 0 with 3 items + col 1 with 2 + col 2 with 1, round-tripped, balances to 2+2+2). The user's undo log captures the "before" state for these cases. <strong>(7) Split-group edge case.</strong> When a group's 4 members live in column 1 and the user goes desktop→mobile, the group emits once at its row-walk position (determined by column 1's first-unit row). On mobile→desktop with target N=3, the group is one unit in the round-robin and gets <code>_col = groupUnitIndex mod 3</code>; all 4 members share that value. Groups never fragment across columns through any reshuffle. <strong>Scope boundaries:</strong> (i) Does not fire if S.active is empty — no work to do. (ii) Does not fire for no-op transitions (fromN===toN). (iii) The matchMedia listener only cares about the 1024px boundary; a resize from 1200px → 1400px within the desktop range is a no-op. (iv) Touch devices (always below 1024px at mobile sizes) effectively never trigger the listener; they're permanently at <code>_effectiveCols()===1</code>. (v) On initial boot, <code>_lastEffectiveCols</code> is captured by the listener binder — no reshuffle fires at boot just because the listener is being attached. No SQL change. No data-model change beyond the transient use of existing <code>_col</code> and <code>S.active</code>.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6986</strong> &mdash; Pinned Tasks as an expanding banner. <strong>User ask:</strong> the pinned section currently always spans the full width of <code>#tlist</code>, even when it contains only a couple items — wasteful vertical space on wide screens. Make it expand to match its content: narrow for a few items, wider for many, full-width for a lot. <strong>What landed:</strong> <strong>(1) Banner-style expanding width.</strong> Three breakpoints based on pin count (sub-task pins + task-as-row pins each count as one): 1–5 items → <code>.pinned-span-1</code> (pinned occupies one main-column's width), 6–10 → <code>.pinned-span-2</code> (two main-columns' width), 11+ → <code>.pinned-span-3</code> (full width, unchanged from current). The span is capped at <code>_colsN()</code> — in 1-col mode, the span is always 1 (same as today); in 2-col mode, span caps at 2; in 3-col mode, can reach 3. The pinned wrapper always sits at the TOP of <code>#tlist</code> as a sibling of the <code>.tcols</code> main-grid wrapper — NOT as a sidebar beside the columns. When pinned-span is less than the main column count, the pinned wrapper is left-aligned with empty space to its right, and the main task columns start BELOW the pinned band. Widths pull from CSS variables with <code>calc()</code> math that matches the main grid's gap spacing exactly: <code>cols-2 + span-1 = 50% - 8px</code> (matches one column of the 2-col main grid with its 16px gap); <code>cols-3 + span-1 = 33.333% - 9.33px</code>; <code>cols-3 + span-2 = 66.667% - 4.67px</code>. Span values that equal the full column count (span-2 in cols-2, span-3 in cols-3) need no max-width rule — default is the full <code>#tlist</code> width. <strong>(2) Vertical-fill sub-columns.</strong> Inside the pinned wrapper, when span ≥ 2, rows get distributed into N sub-columns (<code>.pinned-subcol</code>) wrapped in a <code>.pinned-body.pinned-sub-span-N</code> grid container. Distribution is vertical-fill: <code>Math.ceil(count/span)</code> items in the leftmost sub-column, then the next sub-column, then the last (e.g. 11 items in 3 sub-cols = 4+4+3, not 5+5+1; 7 items in 2 sub-cols = 4+3, not 5+2). JS computes the partition before rendering and emits explicit sub-column divs, not CSS <code>column-count</code> — avoids the same teleport problem we fixed in the main grid with v1.6982. Each sub-column is a vertical flex stack with a 2px gap between rows to keep things tight. <strong>(3) Header spans full pinned width.</strong> The pinned header (📌 icon + "Pinned Tasks" title + ✎ pencil + Unpin all button) remains a single flex row inside <code>.pinned-section</code> and naturally spans whatever width the wrapper has — so the coloured header bar always reads as a unified "this is the pinned band" regardless of whether pinned is 1, 2, or 3 sub-columns wide. <strong>(4) Swipe drawers unchanged.</strong> Row-level swipe gestures (swipe-left reveals ⇄/📌/other action buttons, swipe-right reveals 📍 unpin) still work — the gesture handler operates on <code>.strow-pin</code> rows, and the sub-column wrapping doesn't change the row structure itself. On mobile (1-col mode), the span is always 1 and the layout is identical to before v1.6986. <strong>(5) Scope.</strong> Fires only in multi-col (cols-2 or cols-3). 1-col users see no change. The pinned-row internal structure (which drawer shows what, the strow-main visible content, etc.) is untouched. No data-model change — the span is computed at render time from <code>S.pinned.length</code>, not stored. No SQL change. <strong>Known minor: </strong> when the pinned wrapper is span-1 in cols-3 mode, the header might feel slightly crowded with all four elements (icon + title + pencil + Unpin-all button) on a narrow bar; if this reads poorly at lighter palette colours let me know and I'll tighten the header padding or move Unpin-all into a dropdown.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6985</strong> &mdash; Header coloring + burner tinting. Two visual clarifications on top of v1.6984's Archive-style palette rework. <strong>(1) Split-group and Pinned Tasks headers now fill with the user-chosen colour.</strong> <code>.split-group-header-row</code> gets <code>background:var(--sg-color)</code>; <code>.pinned-section-header</code> gets <code>background:var(--ps-color)</code>. All text and icons inside the header — <code>.split-group-chev</code> (chevron), <code>.split-group-title</code>, <code>.split-group-pencil</code>, <code>.pinned-section-title</code>, <code>.pinned-section-edit</code>, and the group's drag handle (<code>.split-group-header-row .card-draghandle</code>) — switched from <code>var(--sg-color)</code> / <code>var(--ink-light)</code> to <code>#fff</code>. The chevron and title previously used the group colour as their text colour, which would have been invisible against the new colour-filled bar; now they read clearly as white Cinzel-cased type on saturated background. Press-state feedback darkened from <code>rgba(0,0,0,.04)</code> to <code>rgba(0,0,0,.15)</code> to remain visible on saturated backgrounds. The <code>sg-icon-default</code> placeholder opacity bumped from 0.55 to 0.8 since the coloured backdrop no longer gives it as much contrast. Implication: the PROJ_COLORS palette is jewel-toned (deep green, navy, burgundy, teal, purple, olive, brown, gold) so white text has good contrast on every choice — if a user picks a lighter colour via the picker modal's swatch grid, they'd get a legibility hit, but the palette as-shipped doesn't include pastels. <strong>(2) Burner tinted background restored + extended to split-groups.</strong> User wanted back the "this is dimmed / deferred" visual treatment that existed before the Archive-style coloring rework. <code>.card.dim</code> (already applied by <code>taskCardHtml</code> when <code>burnerUntil &gt; now</code>) now has <code>background:rgba(100,90,80,.09)</code> — a subtle warm-grey over parchment that reads as "on the back burner, not part of the active flow". Opacity bumped from 0.6 to 0.7 so the tinted body remains slightly more legible than the previous opacity-only treatment. New matching <code>.split-group.dim</code> rule gives the same treatment to whole groups when every member is on burner. <code>renderSplitGroupHtml</code> updated to emit <code>class="split-group dim"</code> when <code>groupOnBurner</code> (existing variable). The dim group's header bar additionally switches to solid <code>#999</code> grey (overriding the user's colour) so the group reads "dimmed everywhere" rather than "colourful header on a grey body" — a unified dimmed-grey aesthetic for deferred groups. <strong>Scope:</strong> Individual sub-task rows don't have their own burner state (burner is a task-level property in the data model, sub-tasks inherit their parent's state). So when a task is on burner, all its sub-rows sit inside the dim card wrapper and get the parent's dimmed appearance naturally — no per-sub-row rule needed. <strong>What's NOT changed:</strong> regular task cards (non-burner) still use the Archive-matching <code>rgba(255,255,255,.52)</code> parchment body from v1.6984 — the full-colour header treatment is strictly for group/pinned containers. The base <code>.card</code> rule is untouched. No SQL change, no data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.6984</strong> &mdash; Multi-col polish pass: four user-reported fixes. <strong>(1) Column drop-zone now extends all the way down.</strong> The <code>.tcols</code> grid was using <code>align-items:start</code>, which meant each <code>.tcol</code> was only as tall as its content — drop-zone below the last card in a short column was limited to the pseudo-element's 60px fallback, which still left a large unreachable void when one column had many cards and another had few. Changed to <code>align-items:stretch</code>; each column now grows to match the tallest sibling, and the <code>::after</code> pseudo-element's <code>flex:1</code> fills the remainder cleanly. Screenshot test: scroll far down with a long column 0 and a short column 1, the whole visible height of column 1 is now a valid drop target. <strong>(2) Archive-style coloring for split groups and Pinned Tasks.</strong> Per user spec, the coloured <em>body tint</em> on <code>.split-group</code> (<code>--sg-tint</code>) and <code>.pinned-section</code> (<code>--ps-tint</code>) was visually overwhelming when stacked alongside regular task cards — the whole Contracts screen turned into a patchwork of coloured rectangles. Now both containers use <code>background:transparent</code>, matching the Archive page's approach: the coloured border, 5px left stripe, and header-row border-bottom remain as the grouping signal, but the interior is the same neutral parchment as unhoused task cards. The <code>--sg-tint</code> and <code>--ps-tint</code> CSS variables are still assigned inline on the wrappers via the picker-driven <code>style=""</code> attribute (so they persist across re-saves), but no CSS rule reads them anymore — harmless dead data, left in place to avoid merge noise with the picker modals that set them. <strong>(3) Auto-balance columns on first desktop launch.</strong> New boolean flag <code>S.settings.contractsColsAutoBalanced</code> (default <code>false</code>) added to <code>DEFAULT_SETTINGS</code> and coerced to boolean in <code>normalizeSettings</code>. New helper <code>autoBalanceContractsColsOnFirstLaunch()</code> checks the flag at boot — if false AND <code>contractsColumns >= 2</code>, calls <code>_rebalanceCols(n)</code>, sets the flag true, saves. Wired at both boot sites (main boot path and the test-mode <code>bootApp</code> path) right after <code>applyContractsColumns()</code>. Handles two upgrade paths: (a) users who set multi-col pre-v1.6982 (column-count era) now have every task with <code>_col:0</code> after the v1.6982 migration — their first desktop load after upgrading distributes tasks across columns automatically. (b) Users who first enable multi-col later (e.g. on a new laptop) get an even distribution immediately rather than having to manually drag every task or click Rebalance. Deliberately placed OUTSIDE <code>applyContractsColumns()</code> itself — because <code>renderTasks</code> calls that function as a defensive reapply, placing the auto-balance inside would trigger spurious rebalances post-render; keeping it at boot only is cleaner. After the flag flips to true once, the user's manual arrangement is never touched again by this logic. <strong>(4) Rebalance button unicode fix.</strong> The v1.6982 ↻ glyph was written as <code>\\u21BB</code> inside an HTML attribute context (button innerHTML). Unlike JavaScript, HTML doesn't process <code>\\u</code> escape sequences — they render as the literal 6-character string <code>\\u21BB</code>. Replaced with the actual <code>↻</code> character (U+21BB). Same class of bug as the v1.6933 fix (emoji in attribute strings need to be the actual codepoint, not a JS-style escape). No SQL change. No data-model change beyond the additive boolean flag, which defaults cleanly to false for any pre-existing user loaded from storage — they'll get the auto-balance on their next desktop load as intended.</div>
@@ -7526,14 +7527,13 @@ function bindContractsColumnsToggle(){
       var n=parseInt(btn.getAttribute('data-cols'),10);
       if(!(n===1||n===2||n===3))return;
       if(!S.settings)S.settings={};
-      var prev=_colsN();
+      // v1.6987 — The toggle changes S.settings.contractsColumns. Since
+      // the toggle is only visible at >=1024px, the "effective" column
+      // count (what's actually rendered) equals the setting both before
+      // and after the toggle click. So we can pass prev/n directly.
+      var prev=_effectiveCols();
       S.settings.contractsColumns=n;
-      // v1.6982 — When downgrading column count, reassign tasks living in
-      // columns that no longer exist. Going UP (e.g. 2→3) leaves tasks put;
-      // column 2 just starts empty until the user drags something in.
-      if(n<prev){
-        _downgradeCols(prev, n);
-      }
+      _applyDeviceTransitionReshuffle(prev, n);
       applyContractsColumns();
       save();
       if(typeof renderTasks==='function')renderTasks();
@@ -7565,6 +7565,16 @@ function _colsN(){
   var n=parseInt((S.settings&&S.settings.contractsColumns),10);
   if(!(n===1||n===2||n===3))return 1;
   return n;
+}
+/* v1.6987 — "Effective" column count is what's visually rendered right now.
+   Below 1024px viewport, always 1 regardless of S.settings.contractsColumns.
+   At or above 1024px, matches _colsN(). Used by the device-transition
+   reshuffle so we react to the real visual state, not the stored setting. */
+function _effectiveCols(){
+  if(typeof window==='undefined')return _colsN();
+  var w=window.innerWidth||document.documentElement.clientWidth||0;
+  if(w<1024)return 1;
+  return _colsN();
 }
 function _normalizeTaskCols(){
   // Clamp every task's _col to [0, N-1] where N is current column count.
@@ -7650,6 +7660,237 @@ function _rebalanceCols(n){
     u.tasks.forEach(function(t){t._col=col;});
   });
   _normalizeTaskCols();
+}
+
+/* ═══════════════ v1.6987: DEVICE-TRANSITION RESHUFFLES ═══════════════
+   When the user moves between desktop (multi-col) and mobile (1-col) —
+   either by toggling the 1/2/3 control or by crossing the 1024px viewport
+   boundary — tasks get reorganized so the layout reads sensibly in the
+   target mode.
+
+   Desktop → Mobile: row-walk across columns. If cols had
+     col 0: A,B,C   col 1: D,E   col 2: F
+   the resulting 1-col order is A,D,F,B,E,C (row 0 left-to-right, then
+   row 1, etc.). Non-burner units first, then burner units using the
+   same row-walk. _col cleared to 0 on every task.
+
+   Mobile → Desktop (target N): round-robin through S.active. Unit at
+   position i lands in column (i mod N). High-priority (top-of-list)
+   items spread across column tops.
+
+   Split groups are treated as single positional units — members travel
+   together, never split across columns. A group's _col is written to
+   every member for consistency with _normalizeTaskCols.
+
+   Every reshuffle pushes a single undo entry with a pre-change snapshot
+   of S.active so the user can ⟲ Undo if the result isn't what they
+   wanted. Reshuffles fired by viewport resize also push undo entries
+   (they're user-perceived changes even if not user-initiated).
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Build an ordered array of top-level "units" — each is either a standalone
+   task or a split group treated as one positional item. Includes BURNERS
+   (unlike getTopLevelItems which excludes them). Each unit has:
+     kind: 'task'|'group'
+     idxs: [positions in S.active] — single-element for tasks, N-element
+           for groups preserving member order
+     col:  current _col assignment (from first task in idxs)
+     burner: bool — unit is considered a burner iff first task is on burner
+   Used as the working set for reshuffles. */
+function _collectUnitsAll(){
+  var now=Date.now();
+  var seenGroups={};
+  var units=[];
+  (S.active||[]).forEach(function(t,idx){
+    if(!t)return;
+    if(t._splitGroup){
+      if(seenGroups[t._splitGroup])return;
+      seenGroups[t._splitGroup]=true;
+      var mIdxs=[];
+      (S.active||[]).forEach(function(m,j){
+        if(m&&m._splitGroup===t._splitGroup)mIdxs.push(j);
+      });
+      if(!mIdxs.length)return;
+      var first=S.active[mIdxs[0]];
+      units.push({
+        kind:'group',
+        idxs:mIdxs,
+        col:parseInt(first._col,10)||0,
+        burner:!!(first.burnerUntil&&first.burnerUntil>now)
+      });
+    } else {
+      units.push({
+        kind:'task',
+        idxs:[idx],
+        col:parseInt(t._col,10)||0,
+        burner:!!(t.burnerUntil&&t.burnerUntil>now)
+      });
+    }
+  });
+  return units;
+}
+
+/* Rebuild S.active from an ordered list of units. For each unit, splice
+   its tasks (in their original member order) into the new array. Burners
+   in the units list are emitted AFTER non-burners regardless of their
+   position in the units input — matches existing sortedActive behavior
+   where burner tasks sink to the bottom of the flat list.
+   Returns the new S.active array but does NOT assign it — caller does. */
+function _unitsToActive(units){
+  var oldActive=S.active||[];
+  var nb=[]; // non-burner unit outputs (preserves units input order)
+  var br=[]; // burner unit outputs (preserves units input order)
+  units.forEach(function(u){
+    var bucket=u.burner?br:nb;
+    u.idxs.forEach(function(i){
+      if(oldActive[i])bucket.push(oldActive[i]);
+    });
+  });
+  return nb.concat(br);
+}
+
+/* Desktop → Mobile reshuffle: row-walk across columns. Writes a new
+   S.active order and clears _col to 0 on every task.
+   Returns true if any change was made (for undo-push decisions). */
+function _reshuffleDesktopToMobile(fromN){
+  if(!S.active||!S.active.length)return false;
+  if(fromN<2)return false;
+  var unitsAll=_collectUnitsAll();
+  if(!unitsAll.length)return false;
+  // Partition units by column, preserving in-column order, split by burner flag
+  var nbCols=[], brCols=[];
+  for(var i=0;i<fromN;i++){nbCols.push([]);brCols.push([]);}
+  unitsAll.forEach(function(u){
+    var c=u.col;
+    if(c<0)c=0;
+    if(c>=fromN)c=fromN-1;
+    (u.burner?brCols:nbCols)[c].push(u);
+  });
+  // Row-walk: for each row r, pull from col 0, col 1, ..., col N-1
+  function rowWalk(cols){
+    var out=[];
+    var maxLen=0;
+    cols.forEach(function(col){if(col.length>maxLen)maxLen=col.length;});
+    for(var r=0;r<maxLen;r++){
+      for(var c=0;c<cols.length;c++){
+        if(cols[c][r])out.push(cols[c][r]);
+      }
+    }
+    return out;
+  }
+  var orderedUnits=rowWalk(nbCols).concat(rowWalk(brCols));
+  var newActive=_unitsToActive(orderedUnits);
+  // Clear _col on every task — 1-col mode ignores it but cleaner for data
+  newActive.forEach(function(t){if(t)t._col=0;});
+  S.active=newActive;
+  return true;
+}
+
+/* Mobile → Desktop reshuffle: walk S.active in current order, assigning
+   _col = unitIndex mod targetN. Split groups use the group's first-encounter
+   index so all members share _col. S.active ORDER is preserved; only _col
+   values change. Returns true if any _col was updated. */
+function _reshuffleMobileToDesktop(targetN){
+  if(!S.active||!S.active.length)return false;
+  if(targetN<2)return false;
+  var unitsAll=_collectUnitsAll();
+  if(!unitsAll.length)return false;
+  var changed=false;
+  // Walk non-burner units and burner units separately so each group's
+  // round-robin starts fresh — burner distribution is independent of
+  // non-burner distribution and prevents pathological "all burners end
+  // up in column N-1" when burner count is small.
+  var nbUnits=unitsAll.filter(function(u){return !u.burner;});
+  var brUnits=unitsAll.filter(function(u){return  u.burner;});
+  function assign(arr){
+    arr.forEach(function(u,idx){
+      var col=idx%targetN;
+      u.idxs.forEach(function(i){
+        if(S.active[i] && S.active[i]._col!==col){
+          S.active[i]._col=col;
+          changed=true;
+        }
+      });
+    });
+  }
+  assign(nbUnits);
+  assign(brUnits);
+  return changed;
+}
+
+/* Umbrella entry point called by toggle clicks and viewport crossings.
+   Takes the PREVIOUS effective column count and the NEW effective column
+   count. Fires the appropriate reshuffle, pushes a single undo entry with
+   a pre-change snapshot of S.active so the user can revert, saves.
+   "Effective" column count is what's visible — below 1024px it's always 1,
+   regardless of S.settings.contractsColumns. Caller must pass effective
+   values, not raw settings.
+   Returns true if a reshuffle ran (for logging). */
+function _applyDeviceTransitionReshuffle(fromN, toN){
+  if(fromN===toN)return false;
+  if(!S.active||!S.active.length)return false;
+  // Snapshot BEFORE mutation so undo can restore the full arrangement
+  var snapshot=clone(S.active);
+  var ran=false;
+  if(fromN>=2 && toN===1){
+    ran=_reshuffleDesktopToMobile(fromN);
+  } else if(fromN===1 && toN>=2){
+    ran=_reshuffleMobileToDesktop(toN);
+  } else if(fromN>=2 && toN>=2 && fromN!==toN){
+    // Multi-col to different multi-col (e.g. 2→3 or 3→2). Not explicitly
+    // in the user ask, but the transition is a natural extension: row-walk
+    // to flatten, then round-robin into the target column count.
+    _reshuffleDesktopToMobile(fromN);
+    ran=_reshuffleMobileToDesktop(toN);
+  }
+  if(!ran)return false;
+  if(typeof _pushUndo==='function'){
+    _pushUndo({
+      kind:'deviceReshuffle',
+      prevActive:snapshot,
+      label:'Reshuffled ('+fromN+'→'+toN+' col)'
+    });
+  }
+  _normalizeTaskCols();
+  if(typeof save==='function')save();
+  return true;
+}
+
+/* Bind a matchMedia listener for the 1024px breakpoint so crossings — either
+   direction — trigger a reshuffle. Tracks the last-known effective column
+   count on a module-scoped var so the reshuffle knows which direction the
+   crossing went. Idempotent via a sentinel on window so reconnecting (e.g.
+   after Supabase auth round-trip) doesn't re-bind. */
+var _lastEffectiveCols=null;
+function bindDeviceTransitionListener(){
+  if(typeof window==='undefined')return;
+  if(window._rqDeviceListenerBound)return;
+  window._rqDeviceListenerBound=true;
+  _lastEffectiveCols=_effectiveCols();
+  var mq;
+  try{
+    mq=window.matchMedia('(min-width: 1024px)');
+  }catch(_){return;} // matchMedia not supported → no-op, mobile-only anyway
+  function handleChange(){
+    // Don't react during the contracts screen render itself; just compute
+    // from and to, reshuffle if needed, and re-render.
+    var prev=_lastEffectiveCols;
+    var now=_effectiveCols();
+    _lastEffectiveCols=now;
+    if(prev===now)return;
+    var ran=_applyDeviceTransitionReshuffle(prev, now);
+    if(ran){
+      logAdd('Layout reshuffled: '+prev+'-col → '+now+'-col (viewport change)','task');
+    }
+    if(typeof applyContractsColumns==='function')applyContractsColumns();
+    if(typeof renderTasks==='function')renderTasks();
+  }
+  // addEventListener is modern; .addListener is the deprecated fallback
+  if(mq.addEventListener){
+    mq.addEventListener('change',handleChange);
+  } else if(mq.addListener){
+    mq.addListener(handleChange);
+  }
 }
 
 function bindAccessibilityControls(){
@@ -10108,6 +10349,17 @@ function undoApply(entry){
         var at=Math.max(0,Math.min(sortedOrig[_ui]|0, S.active.length));
         S.active.splice(at,0,moving[_ui]);
       }
+      return true;
+    }
+    if(entry.kind==='deviceReshuffle'){
+      // v1.6987 — reverse a device-transition reshuffle by restoring the
+      // full S.active snapshot taken before the reshuffle. This is the
+      // heaviest revert in the system but the simplest correctness-wise:
+      // no incremental replay, no risk of _col drift, just a wholesale
+      // restore. _col values ride inside each task in the snapshot, so
+      // both order AND column assignments come back.
+      if(!entry.prevActive)return false;
+      S.active=clone(entry.prevActive);
       return true;
     }
   }catch(err){
@@ -23813,6 +24065,7 @@ function applySettings(){
   applyAccessibilitySettings();
   /* v1.6978 */ bindContractsColumnsToggle(); applyContractsColumns();
   /* v1.6984 */ autoBalanceContractsColsOnFirstLaunch();
+  /* v1.6987 */ bindDeviceTransitionListener();
 }
 
 function updateDevBar(){
@@ -24079,6 +24332,7 @@ bindAccessibilityControls();
 applyAccessibilitySettings();
 /* v1.6978 */ bindContractsColumnsToggle(); applyContractsColumns();
 /* v1.6984 */ autoBalanceContractsColsOnFirstLaunch();
+/* v1.6987 */ bindDeviceTransitionListener();
     return;
   }
   if(!confirm('Log out of the current cloud account?'))return;
