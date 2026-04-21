@@ -4112,6 +4112,24 @@ body.dev-active #app{margin-top:36px;}
   100%{box-shadow:0 0 0 0 rgba(201,146,42,0);background-color:transparent;}
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   v1.7003 — Cap the kudos sidecar to the pinned-section's height.
+   The sidecar lives inside .pinned-band next to .pinned-section; with
+   align-items:start the grid row lets each child take its natural height,
+   which makes kudos grow much taller than pinned when there are many
+   recent completions. The JS sync helper _syncKudosSidecarHeight()
+   measures .pinned-section.offsetHeight on every renderTasks and sets a
+   matching max-height as an inline style on the sidecar; a ResizeObserver
+   watches the pinned section so the two stay locked as pinned expands or
+   collapses (e.g. when a user pins/unpins a task without a full re-render).
+   The overflow:hidden below is the static safety net: until the JS runs
+   (or if it fails entirely) we'd rather clip than let kudos dominate the
+   layout. The ⭐ Kudos header button is the full-list access path, so
+   clipping never loses access to older entries.
+   ────────────────────────────────────────────────────────────────────── */
+.pinned-band .kudos-sidecar{overflow:hidden;min-height:0;}
+.pinned-band .kudos-sidecar-col{min-height:0;}
+
 /* ── Tutorial Checklist Panel ─────────────────────────────── */
 /* Full-height sheet approach: slides up from bottom, covers 66vh */
 #tut-sheet-overlay{
@@ -4492,7 +4510,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7002</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7003</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5271,7 +5289,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7002
+      Version 1.7003
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -5296,6 +5314,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7003</strong> &mdash; Kudos sidecar now matches the pinned-section's height. <strong>User report:</strong> with many recent completions and few pinned tasks, the kudos sidecar rendered much taller than the pinned section next to it &mdash; extending past where the main task cards begin and visually dominating the zone. <strong>Root cause:</strong> <code>.pinned-band</code> uses <code>display:grid</code> with <code>align-items:start</code>, which lets each grid child take its natural content height. The pinned-section renders as tall as its pin rows; the sidecar renders as tall as its kudos rows (capped at 15 per sub-column); whichever is taller drove the visual stacking order, and kudos dominated whenever the user had more than 5 or so recent completions. <strong>Fix:</strong> new <code>_syncKudosSidecarHeight()</code> helper measures <code>.pinned-section.offsetHeight</code> post-render and applies it as inline <code>maxHeight</code> on the sibling <code>.kudos-sidecar</code>. CSS rule <code>.pinned-band .kudos-sidecar{overflow:hidden;min-height:0;}</code> clips overflow cleanly so the sidecar never exceeds the pinned height. <strong>Reactive to later changes:</strong> a <code>ResizeObserver</code> on the pinned section watches for size changes after the initial render &mdash; catches pin/unpin without a full <code>renderTasks()</code>, font loads, accessibility text-size bumps, and viewport reflow across the 1024px breakpoint. The observer is torn down and reattached on every <code>renderTasks()</code> because <code>#tlist.innerHTML</code> is replaced wholesale, making the previously-watched DOM node stale. <strong>Scheduling:</strong> helper is called via <code>requestAnimationFrame</code> at the end of <code>renderTasks()</code> so layout has settled before we measure. <strong>Self-gating:</strong> no-op if <code>.pinned-band</code> isn't present (1-col mode, no kudos data, or pinned-span equals column count). <strong>Access to clipped entries:</strong> older kudos remain fully available via the existing ⭐ Kudos header button, which opens the paginated full-list modal &mdash; clipping in the sidecar is purely visual. No SQL change, no data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7002</strong> &mdash; Contracts screen search. <strong>User ask:</strong> a search function on the Contracts page, placed beneath the daily task budget and above (or to the left of) Undo, that shows the top five results by task/sub-task text and &mdash; on selection &mdash; scrolls the target into view with a flash animation. <strong>What landed:</strong> <strong>(1) UI shell.</strong> A new <code>#contract-search-wrap</code> row with a 🔍 icon, <code>#contract-search-input</code> (full-width, "Search contracts…" placeholder), an inline ✕ clear button (<code>#contract-search-clear</code>, hidden until the field has content), and a dropdown panel <code>#contract-search-results</code> that absolute-positions below the input with <code>max-height:320px</code> and a gold-toned box-shadow. Sits between the task-budget readout and the right-aligned action row (Undo / Archive / Kudos) on every viewport. <strong>(2) Search logic (<code>_runContractSearch</code>).</strong> Walks <code>S.active</code> once, collecting task-name matches and sub-task text matches in a single pass. Three-tier ranking: tier 0 = haystack starts with the query (exact-prefix), tier 1 = query appears at a word boundary, tier 2 = query appears anywhere as a substring. Ties broken by (a) position in <code>S.active</code> (earlier first &mdash; respects user's manual ordering), (b) sub-tasks after their parent's own name match. Top 5 returned. Skips the legacy <code>__proj_meta__</code> sentinel rows and the <code>__meta</code> sub-task sentinel. The query is regex-escaped before being used in the word-boundary test so punctuation in the search string can't blow up the match. <strong>(3) Result rendering (<code>_renderContractSearchResults</code>).</strong> Each row shows a Cinzel label ("Contract" or "Sub-task"), the match text with every case-insensitive occurrence of the query wrapped in <code>&lt;mark&gt;</code>, and for sub-task results a parent-context line ("in: Parent Task Name" or "in: Parent Task Name · collapsed" if the parent is collapsed). Active row highlights via <code>.csr-row-active</code> (same gold-toned tint as hover). Empty result set shows "No matching contracts or sub-tasks." The highlight path HTML-escapes first and then inserts the <code>&lt;mark&gt;</code> wrappers, so user text with angle brackets or quotes can't break the rendered dropdown. <strong>(4) Navigation (<code>_navigateToContractResult</code>).</strong> On selection: if the target is a sub-task inside a collapsed parent, the parent's <code>collapsed</code> flag is set to false, <code>save()</code> is called, and <code>renderTasks()</code> fires &mdash; so the sub-row is in the DOM by the time we go to scroll to it. Target lookup uses <code>querySelectorAll</code> + filter rather than a single selector, with a <code>CSS.escape</code>'d attribute selector scoped to <code>#tlist</code>, and prefers elements that are NOT inside <code>.pinned-section</code> (the main-list copy of a pinned task wins over the Pinned Spotlight copy &mdash; the Spotlight is a re-render of the same source and scrolling to it would land the user at the top of the screen instead of the actual position of the task in the list). Then: <code>scrollIntoView({behavior:'smooth',block:'center'})</code>, followed 180ms later by the flash animation &mdash; that delay lets the smooth-scroll begin so the pulse reads as "arrival" rather than "something flashed and then the page moved". The <code>.task-search-flash</code> class is removed-then-re-added with an intervening <code>void el.offsetWidth;</code> reflow so consecutive clicks on the same result re-trigger the animation cleanly. Self-cleans on <code>animationend</code>. <strong>(5) Flash animation.</strong> 1.6s gold pulse via <code>@keyframes task-search-flash</code> that rings the target with a 4-6px box-shadow and tints its background rgba(201,146,42,.18) at peak, fading back to transparent. Applies to either <code>.card</code> (task) or <code>.strow</code> (sub-row) &mdash; same keyframe, same class, works for both because both elements accept box-shadow. <strong>(6) Event wiring (<code>bindContractSearch</code>).</strong> Input event is debounced at 120ms so fast typing doesn't thrash the search loop. Focus with existing query re-opens the dropdown (natural for "I typed something, clicked away, now want to see results again"). Keyboard: ArrowDown/Up cycle through results with active-row scrolling into the dropdown's own overflow, Enter picks the active result, Escape clears and blurs. Click on any <code>.csr-row</code> picks that result. Click anywhere outside <code>#contract-search-wrap</code> closes the dropdown. The ✕ clear button empties the input, hides the dropdown, and refocuses the input for immediate re-entry. Idempotent via <code>dataset.bound</code> sentinel so repeat boot calls (e.g. post-auth refresh) don't stack listeners. <strong>(7) Boot wiring.</strong> Called from both boot paths alongside <code>bindContractsColumnsToggle()</code> &mdash; the main <code>applySettings</code> site and the test-mode path. <strong>Scope boundaries:</strong> (i) Searches only task names and sub-task text &mdash; not task notes/desc, not archived tasks, not sub-task completion state. Notes/desc inclusion is a reasonable future extension if users ask, but would need a UI cue that the match was in the hidden note rather than the visible title. (ii) Archived tasks have their own screen with its own controls; mixing them in would confuse the "I know this is in my active list" mental model. (iii) Split-group members are treated as regular tasks &mdash; they each have a unique <code>_tid</code>, and the DOM navigation targets <code>#tlist .card[data-tid=...]</code> which matches whether the card sits inside a <code>.split-group</code> wrapper or not. (iv) Pinned duplicates: the same task/sub-task can exist twice in the DOM (once in <code>.pinned-section</code>, once in the main list). The navigator picks the main-list copy so scrolling goes to the card's real position. (v) Debounce and animation timers are stored in the module-scoped <code>_rqSearchState</code> and survive across renders &mdash; re-rendering <code>#tlist</code> doesn't drop any in-flight search because the input element itself lives outside <code>#tlist</code>. <strong>No SQL change. No data-model change. No persistence.</strong> Search state is transient per-session; the input is always empty on page load.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7001</strong> &mdash; Contracts column layout now survives refresh. <strong>User report:</strong> on desktop, after setting the Contracts screen to 2 or 3 columns and arranging tasks across them, hitting refresh caused every task to collapse into column 1 (leftmost) &mdash; the multi-col layout was preserved but the task distribution was gone. <strong>Diagnosis:</strong> on refresh, localStorage renders correctly for about a second (correct <code>_col</code> values), then <code>sbPull</code> completes and rebuilds <code>S.active</code> from Supabase rows. The rebuild at line ~26463 read <code>_splitGroup</code> from the <code>split_group</code> column but never read <code>_col</code> from anywhere &mdash; because the matching push at line ~25957 never sent it. Every task came back with <code>_col=undefined</code>; <code>_normalizeTaskCols()</code> (run via <code>ensureTaskIds()</code> on the next render) clamped each undefined to 0; all cards landed in column 0. Same class of round-trip-strip bug as v1.6995's bagOfHolding/effect flags and v1.6930's split_group/pinned/splitGroupMeta. <strong>The v1.6982 changelog's claim that <code>_col</code> "rides inside existing active_tasks JSON blob &mdash; no SQL change" was never actually implemented</strong> &mdash; the data-model docstring was written but the push/pull plumbing was skipped. <strong>Fix:</strong> piggyback <code>_col</code> on the existing <code>__meta</code> sentinel subtask, which already carries <code>_tid</code>, <code>note</code>, and <code>desc</code> through the <code>subtasks</code> JSONB column. One-line addition to the push packer: <code>_col:(typeof t._col==='number'?t._col:0)</code> appended to the <code>__meta</code> object. One-line addition to the pull rebuilder: <code>_col:(typeof meta._col==='number'?meta._col:0)</code> restored onto the reconstructed task. <strong>Back-compat:</strong> rows pushed before this version have no <code>meta._col</code> &mdash; fallback returns 0, same behaviour as today's bug. First save+push from this version upgrades each task; first pull after that restores the stored columns. No SQL change. No schema change. No data-model change beyond the existing <code>__meta</code> pattern. <strong>Deliberately NOT changed:</strong> the code-session path (<code>login_codes.player_data</code> blob save at line ~25847) already serialized <code>S.active</code> in full via the <code>_keys</code> array, so <code>_col</code> survived that path naturally for class-code students &mdash; no code-session fix required. Only the Supabase <code>active_tasks</code> table path needed the repair. <strong>Also intentionally not added:</strong> a dedicated <code>_col</code> column on <code>active_tasks</code>. The precedent from v1.6995 was: additional per-task metadata piggybacks on the existing <code>__meta</code> channel; new columns (like <code>split_group</code> in v1.6930) are reserved for data that's queried directly. <code>_col</code> is never filtered on server-side &mdash; only read client-side during render &mdash; so the JSON-blob approach fits. <strong>Lesson:</strong> whenever a feature adds a per-task field with the comment "rides inside existing JSON, no SQL change", the push and pull paths must be explicitly updated at the same commit; writing the data-model docstring alone leaves a field that appears to persist (survives save() to localStorage) but silently resets on every Supabase round-trip. Third occurrence of this pattern (<em>pct</em> v1.543, <em>bagOfHolding/effect</em> v1.6995, <em>_col</em> v1.7001) &mdash; worth a future grep audit of every <code>_tid</code>, <code>_splitGroup</code>, <code>_col</code>-style underscore-prefixed field against both sbPush paths to catch any other silent-strip cases.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7000</strong> &mdash; Quest modal compact mode for long quest titles on mobile. <strong>User report:</strong> on a narrow phone viewport, quests whose titles wrap to two lines in the details summary (e.g. "Okaeri (Welcome Home)" with the <code>flex:1</code> title span squeezed by the "▾ details" chevron) pushed the SOLARIANS MEMBERS character cards below the visible area. The modal is locked at <code>max-height:92vh</code> with <code>.quest-modal-scroll</code> at <code>overflow-y:hidden</code>, so the sticky footer stayed glued but the character cards between got clipped. <strong>Fix:</strong> new <code>_adjustQuestModalCompact()</code> helper measures the modal post-layout and toggles a <code>.quest-compact</code> class on <code>.quest-modal</code> based on two independent signals &mdash; (1) title rendered on 2+ lines (computed via <code>boundingRect.height / line-height &ge; 1.6</code>); (2) scroll viewport is overflowing (<code>scrollHeight &gt; clientHeight + 2</code>). Either signal engages compact mode. The compact CSS block tightens ~13 rules: title font-size down to .9em with line-height 1.18, details summary padding reduced, peg-slot cells (<code>.nonchar-hole</code> and <code>.qhole</code>) go from <code>min-height:52px</code> to 40&ndash;42px with reduced padding and gaps, labels shrink from .72&ndash;.75em to .66&ndash;.68em, the peg-slot grid gap and page padding halve, and character-peg cards (<code>.qpeg</code>) drop from 72px to 58px min-height. <strong>Self-gating:</strong> helper bails when <code>modal.offsetHeight === 0</code>, so it's safe to call from any state-change site without stale measurements. <strong>Scheduling:</strong> called via <code>requestAnimationFrame</code> at the top of <code>updateQuestModal()</code> &mdash; rAF fires after the current sync frame (including any <code>openOv('ov-quest')</code> that follows the update call), so the modal is visible and laid out by the time the measurement runs. Placed at the top rather than end so every early-return path (grind branch, no-quest branch) still schedules the check. <strong>Rotation:</strong> a window <code>resize</code> listener re-runs the check when the modal is open. <strong>Fallback safety net:</strong> the second trigger (scroll overflow) catches cases beyond title-wrap &mdash; expanded unmet-warnings rows, accessibility font-size bumps via <code>--fs</code>, many peg slots on a single carousel page. If content fits naturally, no compact class is applied and the modal renders at normal density. No JS behavior change, no data-model change, no SQL.</div>
@@ -8066,6 +8085,65 @@ function bindContractSearch(){
       box.innerHTML='';
       input.focus();
     });
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   v1.7003 — Kudos sidecar height sync.
+
+   Problem: with .pinned-band using grid align-items:start, the sidecar
+   takes its natural height independent of the pinned-section. When the
+   user has many recent completions but few pinned tasks, the sidecar
+   dominates the vertical layout — visibly overflowing the pinned zone
+   and pushing the task cards down the screen.
+
+   Fix: treat pinned-section as the authoritative height source. On every
+   render — and on any subsequent resize of the pinned section (font
+   load, pinned row count change without a full re-render, accessibility
+   text-size bumps) — copy the pinned-section's offsetHeight onto the
+   sidecar as maxHeight. Paired with the static overflow:hidden rule on
+   .pinned-band .kudos-sidecar, this clips overflow cleanly.
+
+   Mechanism: ResizeObserver on .pinned-section, callback applies the new
+   height to the sibling .kudos-sidecar. Because renderTasks() replaces
+   #tlist.innerHTML wholesale (which destroys the observed DOM node),
+   _syncKudosSidecarHeight() is called at the end of renderTasks — it
+   tears down the previous observer and reattaches to the fresh pinned
+   section node. Also runs an immediate sync so the initial render
+   doesn't show the wrong height for one frame.
+
+   Scope: no-op if .pinned-band isn't rendered (1-col mode, or no kudos
+   data, or pinned full-width) — the helper just finds nothing and bails.
+   ═══════════════════════════════════════════════════════════════════════ */
+var _rqKudosResizeObserver=null;
+function _syncKudosSidecarHeight(){
+  // Tear down previous observer — its watched node is stale after every
+  // renderTasks() innerHTML rewrite.
+  if(_rqKudosResizeObserver){
+    try{_rqKudosResizeObserver.disconnect();}catch(_){}
+    _rqKudosResizeObserver=null;
+  }
+  var band=document.querySelector('#tlist .pinned-band');
+  if(!band)return;
+  var pinned=band.querySelector(':scope > .pinned-section');
+  var sidecar=band.querySelector(':scope > .kudos-sidecar');
+  if(!pinned||!sidecar)return;
+  function _apply(){
+    var h=pinned.offsetHeight;
+    if(h>0){
+      sidecar.style.maxHeight=h+'px';
+    } else {
+      sidecar.style.maxHeight='';
+    }
+  }
+  // Immediate pass so first frame is correct
+  _apply();
+  // Attach observer for future size changes
+  if(typeof ResizeObserver==='function'){
+    try{
+      _rqKudosResizeObserver=new ResizeObserver(function(){_apply();});
+      _rqKudosResizeObserver.observe(pinned);
+    }catch(_){ _rqKudosResizeObserver=null; }
   }
 }
 
@@ -11828,6 +11906,15 @@ function renderTasks(){
   // rebuild. innerHTML only rewrites children; classes on #tlist itself survive,
   // but we call it defensively in case a future refactor changes that.
   if(typeof applyContractsColumns==='function')applyContractsColumns();
+
+  // v1.7003 — Sync the kudos sidecar's max-height to the pinned section's
+  // rendered height. Deferred via rAF so layout has fully settled (fonts
+  // and borders committed) before we measure. Self-gates when the band
+  // isn't present (1-col, no kudos, or pinned full-width).
+  if(typeof _syncKudosSidecarHeight==='function'){
+    if(typeof requestAnimationFrame==='function')requestAnimationFrame(_syncKudosSidecarHeight);
+    else setTimeout(_syncKudosSidecarHeight,0);
+  }
 
   // v1.6967 — Sub-task drag-and-drop reordering was removed in favour of
   // explicit ↑ / ↓ / ⇈ buttons in the swipe-action drawer. Reasons: (a) users
