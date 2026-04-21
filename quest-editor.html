@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Quest Editor</title>
+<title>Quest Editor v1.690</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -386,7 +386,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 <body>
 <div id="login-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--parch);border:2px solid var(--gold);border-radius:10px;padding:24px;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.5)">
-    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login</h2>
+    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.690</span></h2>
     <div style="margin-bottom:12px">
       <label style="display:block;font-size:.8em;color:var(--ink2);margin-bottom:4px">Email</label>
       <input type="text" id="email" autocomplete="email" style="width:100%;padding:8px;border:1px solid var(--gold);border-radius:5px;background:var(--parch);font-size:.9em;box-sizing:border-box">
@@ -402,7 +402,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 
 <div id="app">
   <div id="hdr">
-    <h1>⚔ Quest Editor</h1>
+    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.690</span></h1>
     <div id="login-area">
       <span id="user-email"></span>
       <button class="hbtn" id="btn-push" style="display:none" title="Push all local changes to Supabase">☁ Push</button>
@@ -620,7 +620,14 @@ function prereqRowsToFormValues(rows, q) {
     // Blob fallback — already handled by the form defaults
     return;
   }
-  var skills = [], tools = [], langs = [], items = [], rel = [],
+  // v1.690 — `pets` is populated from its own 'pet' prereq rows. Previously
+  // no handler existed for prereq_type==='pet', so pet rows were silently
+  // dropped on load; the async DB fetch would then wipe the blob-seeded
+  // qf-pets selection and a subsequent save persisted an empty pet list,
+  // effectively losing pet prerequisites on every form round-trip.
+  // We also still merge any pet names that happen to arrive as 'item' rows
+  // (legacy blob-round-tripped data) so older quests migrate cleanly.
+  var skills = [], tools = [], langs = [], items = [], pets = [], rel = [],
       gold = 0, minLv = 0, vrName = '', vrDesc = '', brName = '', brDesc = '';
   rows.forEach(function(r) {
     if (r.prereq_type === 'skill')    skills.push(r.value);
@@ -629,6 +636,7 @@ function prereqRowsToFormValues(rows, q) {
     else if (r.prereq_type === 'rel')     { if (!Array.isArray(rel)) rel = []; if (r.value) rel.push(r.value); }
     else if (r.prereq_type === 'gold')    gold = r.quantity || 0;
     else if (r.prereq_type === 'level')   minLv = r.min_level || 0;
+    else if (r.prereq_type === 'pet')     { if (r.value) pets.push(r.value); }
     else if (r.prereq_type === 'item')    items.push(r.value);
     else if (r.prereq_type === 'vehicle' && r.bonus_only) { vrName = r.value || ''; vrDesc = r.bonus_note || ''; }
     else if (r.prereq_type === 'building' && r.bonus_only) { brName = r.value || ''; brDesc = r.bonus_note || ''; }
@@ -640,11 +648,18 @@ function prereqRowsToFormValues(rows, q) {
   }
   setMulti('qf-skills', skills); setMulti('qf-tools', tools); setMulti('qf-lang', langs);
   setMulti('qf-rel', Array.isArray(rel) ? rel : (rel ? [rel] : []));
-  setMulti('qf-pets', items.filter(function(x){ return PET_NAMES.indexOf(x) !== -1; }));
+  // v1.690 — union 'pet'-typed rows with any pet names that leaked into 'item' rows
+  var legacyPetsFromItems = items.filter(function(x){ return PET_NAMES.indexOf(x) !== -1; });
+  legacyPetsFromItems.forEach(function(p){ if (pets.indexOf(p) === -1) pets.push(p); });
+  setMulti('qf-pets', pets);
   items = items.filter(function(x){ return PET_NAMES.indexOf(x) === -1; }); // gear only
   var goldEl = document.getElementById('qf-gold'); if (goldEl) goldEl.value = gold;
   var lvEl = document.getElementById('qf-min-level'); if (lvEl) lvEl.value = minLv;
-  var itemsEl = document.getElementById('qf-items'); if (itemsEl) itemsEl.value = items.join('\n');
+  // v1.690 — qf-items is a <select multiple>; setting .value on such an element
+  // is a no-op, so prior loads silently cleared the gear prereqs whenever a
+  // DB fetch returned rows. Use the same setMulti helper used for the other
+  // multi-select fields.
+  setMulti('qf-items', items);
   var vrEl = document.getElementById('qf-vrq-name'); if (vrEl) vrEl.value = vrName;
   var vrDEl = document.getElementById('qf-vrq-desc'); if (vrDEl) vrDEl.value = vrDesc;
   var brEl = document.getElementById('qf-brq-name'); if (brEl) brEl.value = brName;
