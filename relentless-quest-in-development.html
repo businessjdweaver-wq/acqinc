@@ -4562,7 +4562,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7018</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7019</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5361,7 +5361,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7018
+      Version 1.7019
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -5386,6 +5386,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7019</strong> &mdash; Inbox button render fix + recurring contracts feature. <strong>(A) Inbox Collect All label fix.</strong> The v1.7018 button label was written as the escape sequence <code>\\u2713</code> inside a static HTML string literal — JS escape processing only happens inside JS source, not in HTML attributes/text, so the literal backslash-u-2-7-1-3 rendered in the DOM. Replaced with the actual ✓ character. <strong>(B) Recurring contracts.</strong> <strong>User ask:</strong> when a contract (or all its subtasks) has been completed, prompt to delete OR recur with cadence options — "tomorrow," "daily," "every other day," "every N days," "weekly on [weekday]" — and route the recurring choice to the archive so the existing morning-reset loop reactivates it at the scheduled time. <strong>What landed:</strong> <strong>(1) Done modal expanded.</strong> The <code>ov-done</code> modal's Action select now has three options: Archive (one-shot, default), Recur…, Delete. Choosing Recur reveals a sub-panel with a Schedule select and two conditional sub-fields: an N-days input (shown only for "Every N days") and a Weekday select (shown only for "Weekly on"). Toggle logic lives in <code>_syncDoneRecurUI()</code> wired to the change events of both selects. <strong>(2) Recurrence cadence engine extended.</strong> <code>checkFavourites</code> (the morning-reset loop that reactivates archived tasks) already supported <code>daily</code>, <code>weekly</code>, <code>monthly</code>, <code>yearly</code>. Added a new sub-mode inside the existing <code>custom</code> freq: when an archive entry has both <code>autoIntervalDays</code> (integer ≥ 1) and <code>autoIntervalAnchor</code> (<code>yyyy-mm-dd</code>), the task reactivates when (today − anchor) is a positive multiple of the interval. Powers "every other day" (interval=2), "every N days" (interval=N), and "tomorrow only" (interval=1 with one-shot). Legacy custom-freq tasks (no interval fields) fall back to the pre-existing fav-driven behavior. <strong>(3) Tomorrow is one-shot.</strong> Marked via <code>_oneShot:true</code> on the archive entry. When the reactivation loop activates a one-shot, it then clears <code>fav</code>/<code>autoIntervalDays</code>/<code>autoIntervalAnchor</code>/<code>_oneShot</code> so the entry becomes a plain archived task — fires once, done. <strong>(4) Auto-prompt on subtask completion.</strong> The subtask checkbox change handler now detects the transition from "not all done" → "all done" and opens the Done modal with a pre-filled message ("All sub-tasks of 'X' are complete..."). Gated three ways: (a) only fires when a box just went unchecked→checked (so the automatic trigger is tied to a deliberate user action), (b) requires every subtask to be done, (c) suppresses re-prompts within 30 seconds (<code>window._lastAutoCompletePrompt</code>) so check/uncheck thrash doesn't re-surface the modal. The manual "Done" button path still works unchanged; this is a convenience layer. <strong>(5) Recurrence metadata preserved across reactivation.</strong> When <code>checkFavourites</code> pushes a task from <code>S.archived</code> into <code>S.active</code>, the live task now carries the recurrence fields forward — so when the user completes it AGAIN, they can archive/recur with the original cadence visible in the UI (the Done modal resets to "Archive" default each time; the fields remain on the record for re-selection via the form). <strong>(6) Supabase persistence.</strong> <code>sbPush</code> now writes five new columns on <code>archived_tasks</code>: <code>auto_interval_days</code>, <code>auto_interval_anchor</code>, <code>auto_weekday</code>, <code>auto_monthday</code>, <code>auto_yearly_date</code>, plus a boolean <code>one_shot</code>. <code>sbPull</code> reads them back with nullable-safe fallbacks (<code>typeof…==='number'?…:null</code>) so pre-migration rows coming back as missing-column nulls don't crash the hydrator. Code-session accounts (which save the whole <code>archived</code> array as a JSON blob) pick up the new fields for free — no separate code path needed. Local <code>localStorage</code> save is <code>JSON.stringify(S)</code> whole, same story. <strong>SQL migration required before deploying (safe to run ahead of time; columns are additive and nullable):</strong><br><br><code>ALTER TABLE archived_tasks ADD COLUMN IF NOT EXISTS auto_interval_days integer;</code><br><code>ALTER TABLE archived_tasks ADD COLUMN IF NOT EXISTS auto_interval_anchor text;</code><br><code>ALTER TABLE archived_tasks ADD COLUMN IF NOT EXISTS auto_weekday integer;</code><br><code>ALTER TABLE archived_tasks ADD COLUMN IF NOT EXISTS auto_monthday integer;</code><br><code>ALTER TABLE archived_tasks ADD COLUMN IF NOT EXISTS auto_yearly_date text;</code><br><code>ALTER TABLE archived_tasks ADD COLUMN IF NOT EXISTS one_shot boolean DEFAULT false;</code><br><br><strong>Deployment order:</strong> run the SQL first, then deploy the HTML. The hydrator tolerates missing columns (returns <code>null</code>) so the app works either way, but for actual recurrence you want the writes to stick. <strong>Log messages:</strong> choosing Recur logs "🔁 Contract 'X' set to recur (cadence summary)" to the adventure log. <strong>Not in scope:</strong> editing recurrence on an already-archived task from the Archive screen (would need a recurrence-editor modal on the archive row), pause/resume of recurrence, recurrence on groups/split-groups (groups archive as individual members — if you want group-level recurrence, let me know; the scoping decision is nontrivial). <strong>Undo:</strong> the existing <code>tarch</code> undo entry covers recur-to-archive exactly the same as plain archive — undo restores the task to <code>S.active</code> and removes the archive entry. <strong>No data-model change for active tasks</strong> — recurrence fields only live on archive entries; active tasks carry them forward on reactivation for informational/UI purposes but never actually use them while active.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7018</strong> &mdash; Three cosmetic polish items. <strong>(1) Inbox: Collect All button.</strong> The <code>ov-inbox</code> modal grows a new <code>\u2713 Collect All</code> action that auto-collects every ready quest and every ready grind in one click. Implementation: calls the existing <code>autoCollectExpired()</code> for quests (batch path already present), then for each <code>qs.grindPending</code> entry with <code>doneAt &le; now</code> synthesizes a hidden <code>&lt;button data-a="gcollect" data-gid="..."&gt;</code>, appends it to the DOM, dispatches a real click (so the existing document-level click handler on line 23619 runs the full reward-distribution/log/badge-clear path), then removes the button. No duplicate logic. Downtime pending rolls are deliberately skipped because those need the d20 reveal modal (<code>openDowntimePendingModal</code>) to show the player what they got; the button tooltip explains this and the summary log entry reports any downtime rolls that were left pending. Visibility: the button only shows when at least one quest or grind row is actionable in the current inbox contents, computed in <code>openInboxModal()</code> before the empty-state gate. After clicking, <code>openInboxModal()</code> is called again so the user sees the updated (often empty) state — they can then close manually. Logs "\u2709 Inbox: auto-collected N quests + M grinds" to the adventure log so the batch action is auditable. <strong>(2) Party screen: collapse/expand all squads.</strong> New button in the <code>#party-tagbar</code> row next to <code>\u2694 Manage Squads</code>. Label is dynamic: "\u25b4 Collapse all" when ANY panel is currently open, "\u25be Expand all" when every panel is currently collapsed — so the action the button will perform reads correctly at a glance. Scope includes every real squad name plus every per-territory unassigned bucket (<code>__unassigned__::&lt;territory&gt;</code>, v1.7006). Click handler in the <code>#party-tagbar</code> delegator reads the <code>data-open</code> attribute (pre-computed by the emit code to reflect what the button SHOULD DO on click), walks the full panel-key list, and either sets or deletes <code>S.squadCollapsed[key]</code> for each — matching the v1.7011 persistence pattern so the state sticks across <code>renderParty()</code> redraws and Supabase syncs. Button is suppressed entirely when there are no panels to toggle (empty franchise). <strong>(3) Rename "Unassigned" to "Headquarters" (or local HQ building name).</strong> The virtual unassigned bucket's display name on the Party screen is now derived from a new <code>territoryHQName(territory)</code> helper. For the origin territory (the territory the franchise started in — no building was required to unlock it), the name is always <strong>"Headquarters"</strong> — no real estate needed to earn the label. For any later-unlocked territory, <code>territoryHQName</code> walks <code>S.partyAssets</code> in ownership order and returns the first qualifying building's name (either the player's custom <code>meta.name</code> if they named it at purchase, or the base <code>BUILDINGS[*].name</code>). "Qualifying" means <code>price &ge; TERRITORY_UNLOCK_BUILDING_MIN_GP</code> (1000 gp, the same threshold that triggered the territory unlock in v1.7006) and <code>ownerType==='cycle'</code> owned by a cycle whose <code>territory</code> field matches. Since later territories were unlocked BY building such a building, there's always a qualifying asset available (monotonic unlock rule means even if the building is later sold, the territory stays unlocked — in that unusual case the helper falls back to generic "Headquarters"). The panel display name reads "Headquarters · Minsaka" (or "The Crossroads Safe House · Gojimura" if the player named their Gojimura-territory Safe House "The Crossroads"), keeping the territory suffix as a locator. The 🧭 icon remains on the panel header since that glyph is used consistently across the codebase (char-peek unassigned chip, swap modal, grind ad-hoc picker) as the "not in a real squad" signifier — changing it here would create visual drift across three other surfaces. Internal name (<code>'__unassigned__::&lt;territory&gt;'</code>) unchanged — the panel key is still the data-model sentinel that every downstream consumer (<code>S.squadCollapsed</code>, event handlers, swap modal) depends on. <strong>No SQL change. No data-model change.</strong> The new <code>territoryHQName</code> helper reads existing fields on existing state.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7017</strong> &mdash; Grind eligibility: busy-filter scope fix + stale-archive cleanup migration. <strong>Diagnosis from user's <code>rqGrindDiag('Minsaka')</code> output:</strong> pool size 34, busy count 38, avail 0. Three squads correctly clocked in, their 27 members correctly pooled, plus 7 unassigned Minsaka chars → 34 in the pool. But busy contained 38 character indices (more than the pool itself), all coming from a combination of (a) duplicate entries in <code>qs.grindPending</code> where the same grind id ran multiple concurrent instances with different char sets, and (b) <code>setProgress[*].grindPending</code> archives that mirrored those same entries as stale copies. Every character in the pool was marked busy by at least one of those stale/duplicate entries, so the available count collapsed to zero even though no live grind was actually running for them. <strong>Root cause — busy filter:</strong> <code>computeGrindEligibility</code> walked <code>qs.grindPending</code> without gating on <code>doneAt &gt; now</code>, and ALSO walked every <code>setProgress[sid].grindPending</code> archive regardless of whether that cycle was currently active. Ready-to-collect grinds (past their <code>doneAt</code>) kept their chars busy forever; completed-cycle archive pendings pinned chars busy indefinitely. <strong>Root cause — archive pollution:</strong> <code>saveActiveSetProgress</code> has historically overwritten <code>setProgress[qs.setId].grindPending</code> with the live list on every save, with no dedup. If the live list grew duplicates (a bug in <code>confirmQuestAssignment</code> or the auto-assign path sometime prior), the archive mirror grew along with it. The diagnostic showed identical 22-entry lists in both live and archive for the <code>custom-1776809681966</code> cycle. <strong>Fix #1 (runtime):</strong> the live <code>qs.grindPending</code> busy branch now gates on <code>(gp.doneAt||0)&gt;now</code>, matching the guard already used for <code>qs.pending</code>. A grind past its ready time no longer ties up its characters. <strong>Fix #2 (runtime):</strong> the <code>setProgress[*].grindPending</code> walk is removed entirely. Archives are a record of past/paused cycles; they shouldn't contribute to live busy state. The active cycle's grindPending lives on <code>qs.grindPending</code> (covered by Fix #1); any legitimate paused-cycle work sits in <code>qs.pending</code> which is unchanged. <strong>Fix #3 (migration):</strong> <code>migrateGrindPendingDedupV1_7017()</code> runs on every load path and does two cleanups. (a) <strong>Dedup live qs.grindPending.</strong> Entries are keyed by (<code>id</code>, <code>territory</code>, <code>doneAt</code>, sorted <code>chars</code>) and the first occurrence of each key wins; subsequent duplicates are dropped. (b) <strong>Shake grindPending off non-active archives.</strong> For every <code>setProgress[sid]</code> where <code>sid !== qs.setId</code>, <code>grindPending</code> is set to <code>[]</code>. Those archives hold completion history (<code>done</code>, <code>repeatCounts</code>) that's intentionally preserved; the in-progress list is not meant to live there. The active cycle's archive is left alone as a conservative measure. If the helper removes anything, it logs "🧹 Cleaned N stale grind entries (archive dedup)" to the adventure log. Idempotent. No-op on fresh saves. <strong>Expected user impact on first load after deploy:</strong> the adventure log will show a one-time cleanup message with the count of stale entries removed (in the diagnostic case, ~22 duplicates + ~22 archive mirrors = ~44). The Grinds modal's summary band should then show accurate eligible-character counts that match the in-progress list. Auto-assign should pool characters correctly. <strong>Supabase sync:</strong> the cleanup mutates <code>S.questState</code> in-place; the next <code>save()</code> and debounced <code>sbPush</code> will persist the cleaned state. If the session ends before push completes, the cleanup just runs again on next load — it's idempotent. No SQL change. No data-model change beyond the shape cleanup. <strong>Still in v1.7016's diagnostic toolkit:</strong> <code>window.rqGrindDiag(territory?)</code> remains available for any follow-up investigation. After first load on v1.7017, re-running it should show busy count dropping from 38 to something &lt;= the number of currently-running (unready) grinds across active cycle + downtime jobs.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7016</strong> &mdash; Fix: <code>clockInSquadToGrinds</code> threw <code>TypeError: Cannot read properties of undefined (reading 'push')</code> when clocking any squad into a territory whose grind slot was empty. <strong>User report:</strong> after clocking three squads out of Minsaka to reset state, trying to clock them back in crashed with the TypeError at line 9844. Also explains why v1.7015's "pool shows 0" fix seemed to have no effect — any clock-in attempted at any point since v1.7013 would have silently failed through the same race if the destination slot was empty, so the live state genuinely had zero clocked-in squads to count. <strong>Root cause:</strong> race between two helpers that both mutate <code>S.questCycleSquads</code>. <code>clockInSquadToGrinds</code> ran in this order: (1) call <code>cycleSquadMap()</code> to get a reference to <code>S.questCycleSquads</code>, (2) assign <code>map[key]=[]</code> to normalize the slot to an empty array, (3) call <code>squadIsLockedByActiveCycle(squadName)</code> as a guard, (4) call <code>squadGrindTerritory(squadName)</code> as another guard, (5) <code>map[key].push(squadName)</code>. Steps 3 and 4 both internally call <code>cycleSquadMap()</code>, which runs a stale-cleanup pass that DELETES any grind-key slot whose array is empty (v1.7013 feature to avoid accumulating empty territory keys). So step 2 created an empty array, step 3 or 4 triggered cleanup that deleted it, and step 5 tried to push onto the now-undefined slot. Only manifested when the destination slot was empty (new franchise on that territory, or freshly cleared by clock-outs) because cleanup only fires for length-zero arrays. <strong>Fix:</strong> restructure <code>clockInSquadToGrinds</code> so ALL guard checks (active-cycle lock, already-clocked-in-this-territory, clocked-in-different-territory) run BEFORE any state mutation. Only after guards pass does the function acquire the map, ensure the slot exists as an array, and push. No helper call happens between the array creation and the <code>.push</code>, so the race is eliminated. Also tightened the "already in" guard — now checks <code>squadGrindTerritory</code> explicitly instead of reading <code>map[key].indexOf</code>, which is semantically cleaner (one squad can't be in two slots, so the grind-territory value IS the answer to the question). <strong>Verified via local simulation:</strong> three consecutive clock-ins into a fresh territory now succeed and end-to-end <code>computeGrindEligibility('Minsaka')</code> returns all 9 members across the three squads. No SQL change. No data-model change. Existing v1.7015 <code>rqGrindDiag(territory?)</code> console helper remains available for any follow-up diagnosis.</div>
@@ -6012,14 +6013,47 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS qp_price INT DEFAULT 0;</code><strong
 </div></div>
 
 <div class="ov" id="ov-done"><div class="modal">
-  <h3>🗂 Archive or Delete Contract</h3>
+  <h3>🗂 Archive, Delete, or Recur</h3>
   <p id="ov-done-msg"></p>
-  <div class="set-row" style="margin:10px 0 12px;align-items:center">
+  <div class="set-row" style="margin:10px 0 8px;align-items:center">
     <label class="lbl" for="ov-done-action">Action</label>
     <select id="ov-done-action" style="flex:1">
-      <option value="archive" selected>Archive it</option>
-      <option value="delete">Delete it</option>
+      <option value="archive" selected>📦 Archive (one-shot)</option>
+      <option value="recur">🔁 Recur…</option>
+      <option value="delete">🗑 Delete</option>
     </select>
+  </div>
+  <!-- v1.7019 — recurrence options panel, shown when action="recur" -->
+  <div id="ov-done-recur-wrap" style="display:none;margin:4px 0 12px;padding:8px 10px;background:rgba(201,146,42,.06);border:1px solid rgba(201,146,42,.25);border-radius:6px">
+    <div class="set-row" style="align-items:center;margin-bottom:6px">
+      <label class="lbl" for="ov-done-recur-kind">Schedule</label>
+      <select id="ov-done-recur-kind" style="flex:1">
+        <option value="tomorrow">Tomorrow only (one-shot)</option>
+        <option value="daily">Every day</option>
+        <option value="everyOther">Every other day</option>
+        <option value="everyN">Every N days…</option>
+        <option value="weekly">Weekly on…</option>
+      </select>
+    </div>
+    <div class="set-row" id="ov-done-recur-n-wrap" style="display:none;align-items:center;margin-bottom:6px">
+      <label class="lbl" for="ov-done-recur-n">N</label>
+      <input id="ov-done-recur-n" type="number" min="2" max="365" step="1" value="3" style="flex:1">
+    </div>
+    <div class="set-row" id="ov-done-recur-wd-wrap" style="display:none;align-items:center;margin-bottom:0">
+      <label class="lbl" for="ov-done-recur-wd">Day</label>
+      <select id="ov-done-recur-wd" style="flex:1">
+        <option value="0">Sunday</option>
+        <option value="1" selected>Monday</option>
+        <option value="2">Tuesday</option>
+        <option value="3">Wednesday</option>
+        <option value="4">Thursday</option>
+        <option value="5">Friday</option>
+        <option value="6">Saturday</option>
+      </select>
+    </div>
+    <div class="hint" style="margin-top:4px;font-size:.78em;color:var(--ink-light)">
+      Recurring contracts are sent to the Archive and auto-reactivated at the daily reset time.
+    </div>
   </div>
   <div class="mbtns">
     <button class="btn bink" id="ov-done-no">Cancel</button>
@@ -6146,7 +6180,7 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS qp_price INT DEFAULT 0;</code><strong
     border:1px solid var(--parchment-deep);border-radius:6px;background:rgba(201,146,42,.04);"></div>
   <div class="mbtns" style="gap:8px;flex-wrap:wrap">
     <button class="btn bink" type="button" id="ov-inbox-close">Close</button>
-    <button class="btn bpur" type="button" id="ov-inbox-clear-all" title="Auto-collect every ready quest and grind. Downtime rolls still need the d20 reveal and will stay pending.">\u2713 Collect All</button>
+    <button class="btn bpur" type="button" id="ov-inbox-clear-all" title="Auto-collect every ready quest and grind. Downtime rolls still need the d20 reveal and will stay pending.">✓ Collect All</button>
   </div>
 </div></div>
 <div class="ov" id="ov-dt-forfeit" style="z-index:510"><div class="modal" style="max-width:420px">
@@ -14815,6 +14849,9 @@ document.getElementById('tlist').addEventListener('click',function(e){
       'Choose what to do with "'+S.active[i].name+'".'+(sc.length?' Sub-tasks ('+sc.length+') will follow the selected action.':'');
     var doneSel=document.getElementById('ov-done-action');
     if(doneSel)doneSel.value='archive';
+    // v1.7019 — ensure the recur sub-panel is hidden when we open with
+    // the default 'archive' action, and reset the kind/N/weekday fields.
+    if(typeof window._syncDoneRecurUI==='function')window._syncDoneRecurUI();
     openOv('ov-done');
   } else if(a==='unbrn'){
     S.active[i].burnerUntil=null;
@@ -14987,6 +15024,41 @@ document.getElementById('tlist').addEventListener('change',function(e){
       var doneSubs=S.active[i].subtasks.filter(function(s){return s.done;}).length;
       S.active[i].pct=Math.min(6,Math.round(doneSubs/S.active[i].subtasks.length*6));
     }
+    // v1.7019 — auto-prompt: if this click transitioned the task from
+    // "not all done" to "all done", open the done modal so the user can
+    // decide whether to archive / delete / recur it. Gated on:
+    //   - the box just went from unchecked → checked (cb.checked && !_stckPrev)
+    //   - every subtask is now done
+    //   - it's been >30s since we last auto-prompted (so check/uncheck
+    //     thrash doesn't re-fire the modal)
+    // The manual "Done" button path (data-a="done" at line 14811) always
+    // fires; this is a convenience layer on top.
+    if(cb.checked && !_stckPrev && S.active[i].subtasks.length>0){
+      var _allDoneNow=S.active[i].subtasks.every(function(s){return !!s.done;});
+      if(_allDoneNow){
+        var _nowMs=Date.now();
+        var _lastPrompt=window._lastAutoCompletePrompt||0;
+        if((_nowMs-_lastPrompt)>30000){
+          window._lastAutoCompletePrompt=_nowMs;
+          // Defer so save() + renderTasks() below run first, otherwise
+          // P.done would index into S.active while the view is mid-update.
+          (function(taskIdx){
+            setTimeout(function(){
+              if(!S.active[taskIdx])return; // task was removed mid-tick
+              P.done=taskIdx;
+              var _sc=S.active[taskIdx].subtasks||[];
+              document.getElementById('ov-done-msg').textContent=
+                'All sub-tasks of "'+S.active[taskIdx].name+'" are complete. Choose what to do next.'+
+                (_sc.length?' Sub-tasks ('+_sc.length+') will follow the selected action.':'');
+              var _doneSel=document.getElementById('ov-done-action');
+              if(_doneSel)_doneSel.value='archive';
+              if(typeof window._syncDoneRecurUI==='function')window._syncDoneRecurUI();
+              openOv('ov-done');
+            },60);
+          })(i);
+        }
+      }
+    }
     // v1.6957 — record undo entry
     _pushUndo({kind:'stck',tid:_stckTid,sid:_stckSid,prevDone:_stckPrev,
       label:(cb.checked?'Checked':'Unchecked')+' "'+_stckName+'"'});
@@ -15115,6 +15187,62 @@ document.getElementById('ov-done-yes').addEventListener('click',function(){
   if(action==='delete'){
     logAdd('Deleted contract: '+(t.name||'Unnamed contract'),'task');
     S.active.splice(P.done,1);
+  }else if(action==='recur'){
+    // v1.7019 — recur: archive with recurrence metadata. The morning reset
+    // loop in checkFavourites reactivates based on these fields.
+    var kindSel=document.getElementById('ov-done-recur-kind');
+    var kind=kindSel?kindSel.value:'daily';
+    var todayYmd=(new Date()).getFullYear()+'-'+pad2((new Date()).getMonth()+1)+'-'+pad2((new Date()).getDate());
+    var archEntry={
+      name:t.name,gp:t.gp,cat:'custom',count:0,
+      subtasks:(t.subtasks||[]).map(function(s){return {name:s.name,done:false};}),
+      fav:true,
+      _tid:t._tid||null
+    };
+    var recurSummary='';
+    if(kind==='tomorrow'){
+      archEntry.freq='custom';
+      archEntry.autoIntervalDays=1;
+      archEntry.autoIntervalAnchor=todayYmd;
+      archEntry._oneShot=true;
+      recurSummary='tomorrow only';
+    } else if(kind==='daily'){
+      archEntry.freq='daily';
+      recurSummary='daily';
+    } else if(kind==='everyOther'){
+      archEntry.freq='custom';
+      archEntry.autoIntervalDays=2;
+      archEntry.autoIntervalAnchor=todayYmd;
+      recurSummary='every other day';
+    } else if(kind==='everyN'){
+      var nInp=document.getElementById('ov-done-recur-n');
+      var nVal=nInp?parseInt(nInp.value,10):3;
+      if(!(nVal>=2))nVal=2;
+      if(nVal>365)nVal=365;
+      archEntry.freq='custom';
+      archEntry.autoIntervalDays=nVal;
+      archEntry.autoIntervalAnchor=todayYmd;
+      recurSummary='every '+nVal+' days';
+    } else if(kind==='weekly'){
+      var wdSel=document.getElementById('ov-done-recur-wd');
+      var wd=wdSel?parseInt(wdSel.value,10):1;
+      archEntry.freq='weekly';
+      archEntry.autoWeekday=wd;
+      var wdNames=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+      recurSummary='weekly on '+wdNames[wd];
+    } else {
+      // unknown kind — fall back to plain archive
+      archEntry.freq='custom';
+      archEntry.fav=false;
+      recurSummary='(no recurrence)';
+    }
+    var _archSnapshot2=clone(t);
+    var _archIdx2=P.done;
+    S.archived.unshift(archEntry);
+    _pushUndo({kind:'tarch',tid:t._tid,activeIdx:_archIdx2,archSnapshot:_archSnapshot2,
+      label:'Archived "'+(t.name||'Unnamed contract')+'" (recurring '+recurSummary+')'});
+    S.active.splice(P.done,1);
+    logAdd('🔁 Contract "'+(t.name||'Unnamed contract')+'" set to recur '+recurSummary,'task');
   }else{
     // v1.6957 — snapshot full task before archiving so undo can restore it.
     // We also attach _tid to the archived record so undoApply('tarch') can
@@ -15135,6 +15263,29 @@ document.getElementById('ov-done-yes').addEventListener('click',function(){
   closeOv('ov-done');
   save();renderTasks();renderArchive();
 });
+
+// v1.7019 — when the user switches the action select or the recurrence
+// kind, toggle the relevant sub-panels so only the fields that matter
+// for the current choice are visible.
+(function _wireDoneRecurToggles(){
+  function _sync(){
+    var actionSel=document.getElementById('ov-done-action');
+    var recurWrap=document.getElementById('ov-done-recur-wrap');
+    if(!actionSel||!recurWrap)return;
+    recurWrap.style.display=(actionSel.value==='recur')?'':'none';
+    var kindSel=document.getElementById('ov-done-recur-kind');
+    var nWrap=document.getElementById('ov-done-recur-n-wrap');
+    var wdWrap=document.getElementById('ov-done-recur-wd-wrap');
+    if(kindSel&&nWrap)nWrap.style.display=(kindSel.value==='everyN')?'':'none';
+    if(kindSel&&wdWrap)wdWrap.style.display=(kindSel.value==='weekly')?'':'none';
+  }
+  var a=document.getElementById('ov-done-action');
+  if(a)a.addEventListener('change',_sync);
+  var k=document.getElementById('ov-done-recur-kind');
+  if(k)k.addEventListener('change',_sync);
+  // Expose so the done-trigger site can call it after resetting the select.
+  window._syncDoneRecurUI=_sync;
+}());
 
 // Burner modal
 
@@ -27770,7 +27921,15 @@ function sbPush(manual){
     if(!(S.archived||[]).length)return true;
     return sbInsert('archived_tasks',S.archived.map(function(t,i){
       return {user_id:userId,sort_order:i,name:t.name,gp:t.gp||5,freq:t.freq||'custom',
-        cat:t.cat||null,fav:!!t.fav,subtasks:t.subtasks||[],arch_group:t.archGroup||t.freq||'custom'};
+        cat:t.cat||null,fav:!!t.fav,subtasks:t.subtasks||[],arch_group:t.archGroup||t.freq||'custom',
+        // v1.7019 — recurrence fields. All nullable; old rows without the
+        // columns come back as null and the hydrator treats them as absent.
+        auto_interval_days:(typeof t.autoIntervalDays==='number'?t.autoIntervalDays:null),
+        auto_interval_anchor:t.autoIntervalAnchor||null,
+        auto_weekday:(t.autoWeekday!==undefined&&t.autoWeekday!==null?parseInt(t.autoWeekday,10):null),
+        auto_monthday:(t.autoMonthday!==undefined&&t.autoMonthday!==null?parseInt(t.autoMonthday,10):null),
+        auto_yearly_date:t.autoYearlyDate||null,
+        one_shot:!!t._oneShot};
     }));
   }));
 
@@ -28241,7 +28400,16 @@ function sbPull(manual){
     if(archived&&archived.length){
       S.archived=archived.map(function(t){
         return {_sbId:t.id,name:t.name,gp:t.gp,freq:t.freq,cat:t.cat,
-          fav:t.fav,subtasks:t.subtasks||[],archGroup:t.arch_group};
+          fav:t.fav,subtasks:t.subtasks||[],archGroup:t.arch_group,
+          // v1.7019 — recurrence fields. Columns may not exist on older DBs
+          // (pre-migration); all reads are nullable-safe and default to
+          // null/false when absent.
+          autoIntervalDays:(typeof t.auto_interval_days==='number'?t.auto_interval_days:null),
+          autoIntervalAnchor:t.auto_interval_anchor||null,
+          autoWeekday:(t.auto_weekday!==undefined&&t.auto_weekday!==null?t.auto_weekday:null),
+          autoMonthday:(t.auto_monthday!==undefined&&t.auto_monthday!==null?t.auto_monthday:null),
+          autoYearlyDate:t.auto_yearly_date||null,
+          _oneShot:!!t.one_shot};
       });
     } else if(backupArchived&&backupArchived.length){
       S.archived=backupArchived.map(function(t){
@@ -28579,11 +28747,31 @@ function checkFavourites(now){
   var n=0;
   var changed=false;
 
-  S.archived.forEach(function(t){
+  S.archived.forEach(function(t,tIdx){
     var freq=(t.freq||'custom');
     var shouldActivate=false;
-    if(freq==='daily' || freq==='custom'){
+    if(freq==='daily'){
       shouldActivate=!!t.fav;
+    } else if(freq==='custom'){
+      // v1.7019 — 'custom' now supports two sub-modes:
+      //  (a) t.autoIntervalDays set (>=1) + t.autoIntervalAnchor (yyyy-mm-dd):
+      //      activate when (today - anchor) is a positive multiple of interval.
+      //      Used by "every N days" recurrence and by "tomorrow" (N=1, one-shot).
+      //  (b) no interval set: legacy behavior — activate if fav is true.
+      if(t.autoIntervalDays && t.autoIntervalAnchor){
+        var _intvl=parseInt(t.autoIntervalDays,10)||0;
+        if(_intvl>=1){
+          var _anch=new Date(t.autoIntervalAnchor+'T00:00:00');
+          if(!isNaN(_anch.getTime())){
+            var _todayMid=new Date(dueAt.getFullYear(),dueAt.getMonth(),dueAt.getDate());
+            var _diffMs=_todayMid.getTime()-_anch.getTime();
+            var _diffDays=Math.round(_diffMs/(24*3600*1000));
+            shouldActivate=(_diffDays>0 && _diffDays%_intvl===0);
+          }
+        }
+      } else {
+        shouldActivate=!!t.fav;
+      }
     } else if(freq==='weekly'){
       shouldActivate=String(t.autoWeekday||'')!=='' && dueAt.getDay()===parseInt(t.autoWeekday,10);
     } else if(freq==='monthly'){
@@ -28596,9 +28784,26 @@ function checkFavourites(now){
     }
     if(!shouldActivate)return;
     if(S.active.some(function(a){return a.name===t.name;}))return;
+    // v1.7019 — preserve recurrence fields when re-activating so later
+    // completions continue to cycle through the same cadence.
     S.active.push({name:t.name,gp:t.gp,count:0,freq:t.freq,cat:t.cat,
       subtasks:(t.subtasks||[]).map(function(s){return{name:s.name,done:false};}),
-      collapsed:false,fav:!!t.fav});
+      collapsed:false,fav:!!t.fav,
+      autoIntervalDays:t.autoIntervalDays||null,
+      autoIntervalAnchor:t.autoIntervalAnchor||null,
+      autoWeekday:t.autoWeekday!==undefined?t.autoWeekday:null,
+      autoMonthday:t.autoMonthday!==undefined?t.autoMonthday:null,
+      autoYearlyDate:t.autoYearlyDate||null});
+    // v1.7019 — one-shot "tomorrow" recurrences burn themselves on
+    // reactivation. Flag _oneShot on the archive entry; here we honor it
+    // by clearing fav and interval fields so the archive entry remains
+    // (for undo / history) but won't re-activate again.
+    if(t._oneShot){
+      t.fav=false;
+      t.autoIntervalDays=null;
+      t.autoIntervalAnchor=null;
+      t._oneShot=false;
+    }
     n++;
     changed=true;
   });
