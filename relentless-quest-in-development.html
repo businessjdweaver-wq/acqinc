@@ -4562,7 +4562,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7012</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7013</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5350,7 +5350,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7012
+      Version 1.7013
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -5375,6 +5375,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7013</strong> &mdash; Per-territory grind shifts. The global Grind Missions card is retired; grinds are now scoped per territory with separate clock-in, separate in-progress tracking, and a grind sub-card surfaced inside each territory's panel on the Quest Map. <strong>User rationale:</strong> territory expansion should feel like it <em>magnifies</em> franchise output, not just widens squad-slot inventory. Letting squads stay productive in regions the main storyline has moved past — Minsaka still generating GP while Gojimura hosts the active cycle — ties passive income to how many territories the franchise operates in. <strong>Data model:</strong> <code>cycleSquadMap()['__grind__']</code> (a single flat array of all clocked-in squad names, v1.6910) is superseded by territory-prefixed keys <code>'__grind__::&lt;territoryName&gt;'</code>, each holding its own array. The bare key prefix is preserved and parsed by a new <code>_isGrindKey(k)</code> helper; territory is extracted via <code>_grindKeyTerritory(k)</code>. <code>grindPending</code> entries gain a <code>.territory</code> field so the same grind template (e.g. <code>g0</code> Patrol the District) can run concurrently in Minsaka and Gojimura as independent missions. <code>GRIND[]</code> itself is untouched — grind templates remain universal. <strong>Rule: one territory per squad.</strong> A squad can be clocked in to exactly one territory's shift. <code>clockInSquadToGrinds(squadName, territory)</code> refuses if the squad is already on a different territory's shift. The territory argument defaults to the squad's <code>homeTerritory</code> (v1.7006) when omitted, so ambiguity doesn't need explicit UI every time. <strong>New helper:</strong> <code>squadGrindTerritory(squadName)</code> returns which territory a squad is currently clocked into, or <code>''</code>. <strong>Helpers made territory-aware:</strong> <code>grindSquadNames(territory)</code> scopes the returned list (omit for all-territories union); <code>availableSquadsForGrindClockIn(territory)</code> filters to squads whose <code>homeTerritory</code> matches; <code>computeGrindEligibility(territory)</code> restricts the character pool to members of squads clocked into THIS territory plus unassigned characters whose <code>homeTerritory</code> matches (unassigned Gojimura-based chars don't leak into Minsaka's shift). Back-compat: all three helpers still work when called without an argument, returning franchise-wide data for legacy callers. <strong>Migration:</strong> <code>migrateGrindToTerritoriesV1_7013()</code> runs in all three load paths (<code>load()</code>, code-login, <code>sbPull</code>) after <code>migrateToTerritoryV1_7006</code> has set <code>S.originTerritory</code>. Any pre-v1.7013 flat grind clock-ins under the bare <code>__grind__</code> key get moved under the origin territory's key (typically <code>__grind__::Minsaka</code>). Existing <code>grindPending</code> entries without a <code>.territory</code> field get stamped with the origin territory so the Grinds modal's territory filter doesn't hide legitimate in-progress missions. Idempotent — rerunning on already-migrated state is a no-op. The legacy bare key is deleted on migration to keep state clean. <strong>Quest Map UI change:</strong> the old global Grind Missions card between incomplete cycles and the territory panels is removed entirely. In its place, each territory panel (which always renders now for every unlocked territory, even without completed cycles) opens with a green-tinted "⚙ Grind Missions" sub-card showing this territory's clocked-in squads with ✕ clock-out chips, an "➕ Add Squad" button, and an "⚡ Open Grinds" button. Both buttons carry <code>data-terr</code> attributes and route through territory-aware click handlers. The territory panel then shows completed cycles (if any) inside the v1.7011 nested "✓ Completed" <code>&lt;details&gt;</code> as before. <strong>Grinds modal scoping:</strong> <code>openGrindsList(territory)</code> stores the argument in a module-scope <code>_grindsListTerritory</code>; <code>renderGrindsList</code> reads it to scope the eligibility pool, filter the in-progress list to <code>gp.territory===scope</code>, and emit a territory header above the summary band ("🗺 Minsaka · Grind Shift"). Three reentry sites updated to preserve scope across modal round-trips: the successful-grind-start path (<code>if(grindObj2)...</code>), <code>questModalAbandon()</code>, and the party character-peek Grind button (which passes <code>charHomeTerritory</code> for natural scoping). <strong>Clock-in picker:</strong> <code>openGrindClockInPicker(territory)</code> uses <code>_grindClockInTerritory</code> as the commit-time handoff. The picker header message updates dynamically to name the territory being clocked into so there's no surprise. <strong>Confirm flow:</strong> <code>confirmQuestAssignment</code>'s grind branch stamps <code>territory:_commitTerr</code> on every new <code>grindPending</code> entry. The error-path alert includes the territory name. <strong>Auto-assign:</strong> the <code>grind-auto</code> handler reads <code>_grindsListTerritory</code>, scopes its eligibility pool to that territory, and stamps <code>territory</code> on every pending entry it creates. Since the same grind template can now run concurrently across territories, the "already-in-progress" skip checks both <code>gp.id</code> AND <code>gp.territory</code>, so one territory running Patrol the District doesn't block another from running it too. <strong>Supabase sync:</strong> <code>questCycleSquads</code> is part of the state blob that <code>sbPush</code> serializes, so the new territory-prefixed keys round-trip cleanly via the existing sync path. No SQL change. <strong>Deferred:</strong> the v1.7007-committed squad-relocation flow (paid move between territories) should, when it ships, auto-clock-out a relocated squad from its current territory's grind shift before updating <code>homeTerritory</code> — otherwise a Minsaka squad moved to Gojimura would still appear on Minsaka's shift. Comment flagged inside <code>clockOutSquadFromGrinds</code>. <strong>Deliberately not addressed:</strong> no cross-territory grind clock-in (e.g. "clock into both Minsaka and Gojimura for 50 QP/day"); authoring system stayed universal (GRIND templates aren't tagged with a territory — every territory can run all templates). Both are reasonable future extensions but weren't part of this design brief.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7012</strong> &mdash; Quest Map "🪄 Arcane Offerings" rack: daily-rotated, territory-filtered, QP-priced magic items that unlock hidden cycles on purchase. Quest Editor v1.691 required for authoring. <strong>SQL MIGRATION REQUIRED</strong> before deploying this version — run both statements in the Supabase SQL editor:<br><code style="display:block;background:rgba(26,107,138,.08);padding:6px 10px;margin:6px 0;border-radius:4px;font-size:.85em;white-space:pre-wrap">ALTER TABLE items ADD COLUMN IF NOT EXISTS qm_rack BOOLEAN DEFAULT FALSE;
 ALTER TABLE items ADD COLUMN IF NOT EXISTS qp_price INT DEFAULT 0;</code><strong>User ask:</strong> add a rotating 3-slot rack of magic items to the Quest Map that costs QP instead of GP, and where buying each item unlocks a quest cycle authored specifically for that item. Example: a Ring of Animal Friendship on the rack that unlocks "Storm on Menagerie Isle" when purchased. <strong>How unlocking works:</strong> the Quest Editor's existing <code>requiredAsset</code> gate (v1.548) on a cycle's <code>cycleGate</code> already handles item-based visibility — if the franchise owns the named item, the cycle un-obscures. Rack purchases drop the item into <code>franchiseStorage</code>, which is one of the three locations <code>cycleGateStatus</code> scans, so ownership and gate satisfaction align without new gate types or new state fields. <strong>Rack eligibility:</strong> an item is rack-eligible only if (a) it has <code>qmRack:true</code> set in the Quest Editor, AND (b) at least one cycle whose <code>cycleGate.requiredAsset</code> matches the item's name lives in a territory the franchise has unlocked. Items tied to locked-territory cycles don't surface until the territory is unlocked (via the v1.7006 building-purchase system), keeping the rack's offerings relevant to the player's current frontier. <strong>Rotation:</strong> three slots, seeded by <code>todayStr()</code> + the current set of unlocked territories. Stable for 24 hours within a stable unlocks set; re-seeds when a new territory unlocks so expansion feels rewarded immediately. Fewer than three eligible → empty-slot placeholders render alongside whatever is available. Zero eligible → the card still renders (if the franchise has any unlocked territories at all) with a "Expand your franchise into new territories" nudge, so the feature is discoverable from franchise start. <strong>Purchase flow:</strong> click a slot → <code>confirm()</code> dialog showing item name, QP cost, and the cycle that will unlock → <code>qpSpend</code> for the cost → push the item into <code>franchiseStorage</code> → adventure-log entry naming both item and unlocked cycle → call <code>healCompletedCycleArchives()</code> + <code>renderCycleMapCards()</code> so the new cycle surfaces and the rack slot flips to "Owned." Matches the v1.6910 real-estate purchase UX pattern. <strong>"Owned" state:</strong> after purchase the slot stays visible until next rotation but the buy button is replaced with a forest-green "✓ Owned" label. The ownership check reuses the same three-location scan as <code>cycleGateStatus</code> so the slot consistently reflects gate satisfaction. <strong>Regular-store exclusion:</strong> <code>qmRack:true</code> items are filtered out of every regular-store path — the Magic tab (both dev-mode and live-stock branches), the Adventuring tab (if type matches), the search-all branch. <code>buildStock()</code> also excludes them from the rotating magic inventory. <strong>New helpers:</strong> <code>_qmRackPrng(seed)</code> deterministic xorshift-based PRNG for daily rack shuffling (adequate for UI determinism, not cryptographic); <code>_qmRackEligibleItems()</code> filtered+sorted pool; <code>_qmRackToday()</code> returns today's three-slot array including nulls; <code>_qmRackOwns(name)</code> three-location ownership check; <code>_qmRackBuy(name)</code> purchase handler. Constants: <code>QM_RACK_SIZE=3</code>. <strong>Schema additions:</strong> two new columns on the <code>items</code> table — <code>qm_rack</code> boolean and <code>qp_price</code> integer. Existing rows default to <code>false</code>/<code>0</code>, so pre-v1.7012 items continue to live on the regular store unchanged. The Quest Editor item-save path was widened in parallel (QE v1.691) to emit both columns on every save; items edited in QE v1.690 or earlier will keep their defaults until re-saved. <strong>loadItemsFromDB</strong> reads <code>row.qm_rack</code> and <code>row.qp_price</code>, assigning to the live item's <code>qmRack</code> and <code>qpPrice</code> fields. <strong>Placement:</strong> rack card sits between the Grind Missions card and the territory-grouped completed-cycles section per design. Incomplete cycles remain above Grind. <strong>Authoring workflow:</strong> in Quest Editor, (1) author the magic item with Sell on Quest Map checked and a QP price set, (2) author the quest cycle with <code>cycleGate.requiredAsset</code> naming the exact item string and <code>cycleGate.visibility:'obscured'</code> so it's hidden until unlocked, (3) place the cycle in an unlocked territory. The rack wiring is automatic from there. <strong>Not addressed:</strong> no explicit "refresh the rack now for QP" action like the store's daily refresh — the rack auto-rotates at <code>todayStr()</code> rollover (roughly midnight local, per <code>normalizeResetTime</code>) which felt appropriate for a curated-feel rack rather than a churn-through-rolls economy. Could add a manual reroll in a future version if players want it. No change to the existing <code>requiredAsset</code> gate mechanism — the whole integration composes with the machinery already in place.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7011</strong> &mdash; Two UX improvements. <strong>(1) Quest Map: completed cycles collapse inside their territory panel.</strong> Each territory panel still renders open by default (the v1.7010 change), but the completed cycles inside it are now nested inside a closed-by-default "✓ Completed (N) · Tap to view" row. Rationale: a territory with a dozen completed cycles pushed the actionable incomplete cycles and Grind Missions card out of first-scroll view. Incomplete cycles still live above the Grind Missions card — this change only affects the already-finished stack. Per-cycle card bodies remain individually expandable via the existing cycle-toggle behaviour. <strong>Future consideration:</strong> if a territory panel ever contains a mix of active and completed cycles, the same nesting pattern could split them into "⚔ Active" and "✓ Completed" sub-panels; not needed today since incomplete cycles aren't territory-grouped. <strong>(2) Party screen: squad panel open/collapse state now persists across renders.</strong> <strong>Observed bug:</strong> user reported opening a squad panel, clicking "free" on a member to open the free-choice modal (v1.6912), picking Downtime, confirming the downtime job — and returning to the Party page with the squad panel collapsed. Reopening it to send another member on downtime felt repetitive. <strong>Root cause:</strong> squad panels were <code>&lt;details&gt;</code> elements with no explicit <code>open</code> attribute, so each <code>renderParty()</code> call wrote them back in their default (closed) state regardless of what the user had opened. An S.squadCollapsed field was present in the state schema (line 8645) and in the sbPull sanitizer, but nothing wrote to or read from it — it was dead state. <strong>Fix:</strong> (a) emit <code>open</code> on the <code>&lt;details&gt;</code> tag unless <code>S.squadCollapsed[panelKey]</code> is explicitly set — default behaviour is OPEN, matching the pre-v1.7011 UX for anyone who never touched a panel. (b) attach a <code>toggle</code> event listener to each panel that writes the inverse state to <code>S.squadCollapsed</code> and calls <code>save()</code>. Collapsing a panel sets the flag; expanding clears it. Panel key is <code>sq.name</code> for real squads and <code>'__unassigned__::&lt;territory&gt;'</code> for each per-territory unassigned bucket (the sq.name already used for those in the v1.7006 bucketing). <strong>Why a per-panel listener instead of delegated on #plist:</strong> the native <code>toggle</code> event does not bubble, so document-scoped delegation doesn't work; must be attached to each <code>&lt;details&gt;</code> individually. Attached right after <code>el.innerHTML=html</code>, scanning only the newly-rendered panels (no stale listeners). <strong>Result:</strong> expand a squad, send a member to downtime or grind, return to Party — the squad stays open. Send another member. And another. The panel only closes when the user explicitly taps the header. <strong>Supabase sync:</strong> <code>save()</code> schedules a debounced push on each change so multi-device franchises keep their expansion state in sync. <strong>Unchanged:</strong> territory zone wrappers (v1.7006) don't persist state — they're always open by default. The v1.7011 data-panel-key attribute is only on squad panels inside the territory zones, not the zones themselves. No SQL change. No data-model change (the S.squadCollapsed field was already present, just unused).</div>
@@ -6701,7 +6702,7 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS qp_price INT DEFAULT 0;</code><strong
 <!-- v1.6910: GRIND CLOCK-IN PICKER — add a squad to the grind shift -->
 <div class="ov" id="ov-grind-clockin"><div class="modal" style="max-width:420px">
   <h3>⚙ Clock In to Grind Missions</h3>
-  <p class="hint" style="margin-bottom:8px">Choose a squad to send to the grind shift. Multiple squads can be on shift simultaneously. A squad cannot be on both a quest cycle and grinds.</p>
+  <p class="hint" id="ov-grind-clockin-msg" style="margin-bottom:8px">Choose a squad to send to the grind shift. Multiple squads can be on shift simultaneously. A squad cannot be on both a quest cycle and grinds.</p>
   <div class="frow" style="margin-bottom:8px">
     <label class="lbl" for="ov-grind-clockin-sel">Squad</label>
     <select id="ov-grind-clockin-sel">
@@ -8855,6 +8856,9 @@ function load(){
   // because the migration helper lives much later in the file (function
   // declarations are hoisted, but we still defend against future re-ordering).
   if(typeof migrateToTerritoryV1_7006==='function')migrateToTerritoryV1_7006();
+  // v1.7013 — Move legacy flat grind clock-ins into origin-territory keys.
+  // MUST run after migrateToTerritoryV1_7006 so S.originTerritory is set.
+  if(typeof migrateGrindToTerritoriesV1_7013==='function')migrateGrindToTerritoriesV1_7013();
   // v1.6995 — dedupe partyAssets that may have accumulated from earlier races.
   // Only runs if the function is already defined (it's defined much later in
   // the file, so this guard handles the ordering during script parse).
@@ -9699,17 +9703,41 @@ function activateQuestCycleSet(setId){
 // an ARRAY of squad names (multi-squad clock-in for Grind Missions). All other
 // keys remain setId -> single squad name string. Helpers below treat the two
 // shapes transparently.
+// v1.7013: grinds are now scoped per territory. The single '__grind__' key has
+// been superseded by territory-prefixed keys '__grind__::<territoryName>', e.g.
+// '__grind__::Minsaka'. Each territory carries its own array of clocked-in
+// squad names. The bare GRIND_CYCLE_KEY is preserved as a string prefix — the
+// helper _isGrindKey detects any key beginning with it, and _grindKeyTerritory
+// parses the territory out. Back-compat: pre-v1.7013 saves had the bare
+// '__grind__' key as a flat array; migrateGrindToTerritoriesV1_7013() moves
+// those entries into '__grind__::<originTerritory>' on first load.
 var GRIND_CYCLE_KEY='__grind__';
+var GRIND_CYCLE_SEP='::';
+function _isGrindKey(k){return typeof k==='string'&&(k===GRIND_CYCLE_KEY||k.indexOf(GRIND_CYCLE_KEY+GRIND_CYCLE_SEP)===0);}
+function _grindKeyTerritory(k){
+  if(k===GRIND_CYCLE_KEY)return ''; // legacy bare key — no territory
+  if(typeof k!=='string')return '';
+  var p=k.indexOf(GRIND_CYCLE_SEP);
+  if(p===-1)return '';
+  return k.slice(p+GRIND_CYCLE_SEP.length);
+}
+function _grindKeyForTerritory(territory){
+  // Canonical key for per-territory grind storage. Empty territory resolves
+  // to the legacy bare key to keep the no-territory edge case working.
+  if(!territory)return GRIND_CYCLE_KEY;
+  return GRIND_CYCLE_KEY+GRIND_CYCLE_SEP+territory;
+}
+
 function cycleSquadMap(){
   if(!S.questCycleSquads||typeof S.questCycleSquads!=='object')S.questCycleSquads={};
   // Remove stale entries where the squad no longer exists
   var squadNames=(S.squads||[]).map(function(sq){return sq.name;});
   Object.keys(S.questCycleSquads).forEach(function(k){
     var v=S.questCycleSquads[k];
-    if(k===GRIND_CYCLE_KEY){
-      // Grind slot: array of squad names
+    if(_isGrindKey(k)){
+      // Grind slot: array of squad names (per-territory in v1.7013+, flat
+      // at the bare legacy key for unmigrated saves).
       if(!Array.isArray(v)){
-        // Migrate any stray non-array value to []
         S.questCycleSquads[k]=[];
         return;
       }
@@ -9720,6 +9748,10 @@ function cycleSquadMap(){
         if(!n||seen[n]||squadNames.indexOf(n)===-1)return false;
         seen[n]=true;return true;
       });
+      // Clean up empty array entries so we don't accumulate empty keys
+      if(S.questCycleSquads[k].length===0&&k!==GRIND_CYCLE_KEY){
+        delete S.questCycleSquads[k];
+      }
       return;
     }
     var name=(v||'').trim();
@@ -9729,36 +9761,136 @@ function cycleSquadMap(){
   });
   return S.questCycleSquads;
 }
-function grindSquadNames(){
+
+// Returns all clocked-in grind squad names across ALL territories, OR scoped
+// to a specific territory when one is passed. Empty territory returns the
+// legacy bare key's contents (for any still-unmigrated state).
+function grindSquadNames(territory){
   var map=cycleSquadMap();
-  var arr=map[GRIND_CYCLE_KEY];
+  if(arguments.length===0){
+    // All-territories view — union every grind key's squads.
+    var out=[];
+    var seen={};
+    Object.keys(map).forEach(function(k){
+      if(!_isGrindKey(k))return;
+      var arr=map[k];
+      if(!Array.isArray(arr))return;
+      arr.forEach(function(n){if(n&&!seen[n]){seen[n]=true;out.push(n);}});
+    });
+    return out;
+  }
+  var arr=map[_grindKeyForTerritory(territory)];
   return Array.isArray(arr)?arr.slice():[];
 }
+
+// Returns the territory a squad is currently clocked into, or '' if none.
+// Per v1.7013 rule: a squad is in at most one territory's grind shift.
+function squadGrindTerritory(squadName){
+  if(!squadName)return '';
+  var map=cycleSquadMap();
+  var found='';
+  Object.keys(map).some(function(k){
+    if(!_isGrindKey(k))return false;
+    var arr=map[k];
+    if(Array.isArray(arr)&&arr.indexOf(squadName)!==-1){
+      found=_grindKeyTerritory(k)||'';
+      return true;
+    }
+    return false;
+  });
+  return found;
+}
+
 function isSquadClockedInToGrinds(squadName){
   if(!squadName)return false;
   return grindSquadNames().indexOf(squadName)!==-1;
 }
-function clockInSquadToGrinds(squadName){
+
+// Clock a squad into a specific territory's grind shift. Refuses if:
+// - squad is already on an active quest cycle
+// - squad is already clocked into a DIFFERENT territory's grinds (per
+//   v1.7013 one-territory-only rule)
+// - squad is already clocked in here (no-op, returns false)
+// The territory argument defaults to the squad's homeTerritory when omitted,
+// so older callers that don't yet pass territory still work sensibly.
+function clockInSquadToGrinds(squadName,territory){
   if(!squadName)return false;
+  // Resolve territory — explicit arg wins; else use the squad's home.
+  if(!territory){
+    var sq=(S.squads||[]).filter(function(s){return s&&s.name===squadName;})[0];
+    territory=(sq&&sq.homeTerritory)||S.originTerritory||'';
+  }
   var map=cycleSquadMap();
-  if(!Array.isArray(map[GRIND_CYCLE_KEY]))map[GRIND_CYCLE_KEY]=[];
-  if(map[GRIND_CYCLE_KEY].indexOf(squadName)!==-1)return false;
-  // Cannot clock in if already assigned to an active cycle
+  var key=_grindKeyForTerritory(territory);
+  if(!Array.isArray(map[key]))map[key]=[];
+  if(map[key].indexOf(squadName)!==-1)return false;
   if(squadIsLockedByActiveCycle(squadName))return false;
-  map[GRIND_CYCLE_KEY].push(squadName);
+  // v1.7013: refuse if the squad is already clocked into a DIFFERENT territory.
+  var currentTerr=squadGrindTerritory(squadName);
+  if(currentTerr&&currentTerr!==territory)return false;
+  map[key].push(squadName);
   return true;
 }
+
+// Clock a squad out. Finds whichever territory holds them and removes.
 function clockOutSquadFromGrinds(squadName){
   if(!squadName)return false;
   var map=cycleSquadMap();
-  if(!Array.isArray(map[GRIND_CYCLE_KEY]))return false;
-  var i=map[GRIND_CYCLE_KEY].indexOf(squadName);
-  if(i===-1)return false;
-  map[GRIND_CYCLE_KEY].splice(i,1);
-  return true;
+  var removedFrom='';
+  Object.keys(map).some(function(k){
+    if(!_isGrindKey(k))return false;
+    var arr=map[k];
+    if(!Array.isArray(arr))return false;
+    var i=arr.indexOf(squadName);
+    if(i===-1)return false;
+    arr.splice(i,1);
+    removedFrom=k;
+    // Clean up empty non-bare keys so we don't accumulate
+    if(arr.length===0&&k!==GRIND_CYCLE_KEY)delete map[k];
+    return true;
+  });
+  return !!removedFrom;
 }
+
+// One-time migration: move legacy bare-key grind clock-ins under the
+// origin territory's key. Pre-v1.7013 saves used map['__grind__'] as a
+// flat list; v1.7013+ uses map['__grind__::<territory>']. Idempotent —
+// if the bare key is empty or absent, this is a no-op.
+function migrateGrindToTerritoriesV1_7013(){
+  if(!S.questCycleSquads)return;
+  var map=S.questCycleSquads;
+  var legacy=map[GRIND_CYCLE_KEY];
+  if(!Array.isArray(legacy)||!legacy.length)return;
+  var origin=S.originTerritory||'';
+  // If we can't resolve an origin territory yet, punt — the territory
+  // migration (v1.7006) runs before this one in every load path, so this
+  // should already be set. Defensive fallback: leave the legacy key alone.
+  if(!origin)return;
+  var destKey=_grindKeyForTerritory(origin);
+  if(!Array.isArray(map[destKey]))map[destKey]=[];
+  legacy.forEach(function(n){
+    if(n&&map[destKey].indexOf(n)===-1)map[destKey].push(n);
+  });
+  // Also migrate any grindPending entries without a territory field —
+  // stamp them with the origin territory so UI filters work.
+  var qs=S.questState||{};
+  (qs.grindPending||[]).forEach(function(gp){
+    if(gp&&!gp.territory)gp.territory=origin;
+  });
+  if(qs.setProgress){
+    Object.keys(qs.setProgress).forEach(function(sid){
+      var sp=qs.setProgress[sid];
+      (sp&&sp.grindPending||[]).forEach(function(gp){
+        if(gp&&!gp.territory)gp.territory=origin;
+      });
+    });
+  }
+  // Clear the legacy key so we don't re-migrate on next load.
+  delete map[GRIND_CYCLE_KEY];
+}
+
 function assignedSquadForSet(setId){
-  if(setId===GRIND_CYCLE_KEY)return '';
+  if(_isGrindKey(setId))return '';
   var v=cycleSquadMap()[setId];
   if(Array.isArray(v))return '';
   return (v||'').trim();
@@ -9774,7 +9906,7 @@ function squadIsLockedByActiveCycle(squadName){
   if(!squadName)return false;
   var map=cycleSquadMap();
   return Object.keys(map).some(function(k){
-    if(k===GRIND_CYCLE_KEY)return false;
+    if(_isGrindKey(k))return false;
     return (map[k]||'').trim()===squadName;
   });
 }
@@ -9783,11 +9915,11 @@ function squadsAssignedToOtherCycles(setId){
   var map=cycleSquadMap();
   Object.keys(map).forEach(function(k){
     if(k===setId)return;
-    if(k===GRIND_CYCLE_KEY)return; // grind locks handled separately
+    if(_isGrindKey(k))return; // grind locks handled separately
     var nm=(map[k]||'').trim();
     if(nm)used[nm]=true;
   });
-  // A squad clocked into grinds is also unavailable for cycle activation
+  // A squad clocked into any territory's grinds is also unavailable for cycle activation
   grindSquadNames().forEach(function(nm){if(nm)used[nm]=true;});
   return used;
 }
@@ -9802,42 +9934,43 @@ function availableSquadsForCycleActivation(setId){
   var used=squadsAssignedToOtherCycles(setId);
   return (S.squads||[]).filter(function(sq){return sq&&sq.name&&!used[sq.name];});
 }
-// v1.6923: Canonical grind-eligibility pool. Enforces the rule:
-//   "A squad can only be assigned to one quest-cycle at a time. A
-//    character is eligible for a grind only if (a) their squad is on
-//    the active cycle, OR (b) their squad is clocked in to grinds, OR
-//    (c) they belong to no squad at all. Characters currently on a live
-//    pending quest/grind or in downtime are filtered out."
-// Fixes a bug where the old pool also pulled in members of squads
-// committed to non-active cycles — those chars must NOT grind because
-// their squad is on loan to a cycle that's merely paused, not released.
-// Returns a { pool:{ci:true}, busy:{ci:true}, avail:[ci,...] } object.
-function computeGrindEligibility(){
+// v1.6923: Canonical grind-eligibility pool.
+// v1.7013: now territory-scoped. Called with a territory argument, the pool
+// is restricted to (a) members of squads clocked into THIS territory's grind
+// shift, plus (b) unassigned characters whose homeTerritory matches. Called
+// without a territory argument (back-compat), returns the full franchise-
+// wide pool as before — used by legacy callers that predate v1.7013.
+function computeGrindEligibility(territory){
   var qs=S.questState||{};
   var now=Date.now();
-  // Busy: anyone on a live pending quest, live pending grind, or active
-  // downtime is excluded regardless of squad membership.
   var busy={};
   (qs.pending||[]).forEach(function(pq){if((pq.doneAt||0)>now)(pq.chars||[]).forEach(function(ci){busy[ci]=true;});});
   (qs.grindPending||[]).forEach(function(gp){(gp.chars||[]).forEach(function(ci){busy[ci]=true;});});
+  // Also include non-active cycles' pending/grindPending in the busy set so
+  // chars on paused cycles' in-progress work aren't double-assigned.
+  if(qs.setProgress){
+    Object.keys(qs.setProgress).forEach(function(sid){
+      var sp=qs.setProgress[sid];
+      (sp&&sp.pending||[]).forEach(function(pq){if((pq.doneAt||0)>now)(pq.chars||[]).forEach(function(ci){busy[ci]=true;});});
+      (sp&&sp.grindPending||[]).forEach(function(gp){(gp.chars||[]).forEach(function(ci){busy[ci]=true;});});
+    });
+  }
   (S.downtimeJobs||[]).forEach(function(j){if(j&&j.ci!==undefined&&(j.endsAt||0)>now)busy[j.ci]=true;});
-  // v1.6946: pool is now STRICTLY squads-clocked-into-grinds + unassigned
-  // characters. Previously (v1.6923) we also included the active-cycle squad
-  // which created rule confusion — a squad shouldn't be able to both hold the
-  // active quest cycle AND moonlight on grinds without explicitly clocking in.
-  // If a cycle squad wants grind eligibility, the user must clock them in via
-  // the Quest Map's Grind Missions card (➕ Add Squad).
+  // v1.7013 territory scoping
+  var _scopeTerr=(arguments.length>0)?(territory||''):null; // null = all-territories
   var eligibleSquadNames={};
-  grindSquadNames().forEach(function(n){if(n)eligibleSquadNames[n]=true;});
+  if(_scopeTerr===null){
+    grindSquadNames().forEach(function(n){if(n)eligibleSquadNames[n]=true;});
+  } else {
+    grindSquadNames(_scopeTerr).forEach(function(n){if(n)eligibleSquadNames[n]=true;});
+  }
   var pool={};
-  // Add members of each clocked-in grind squad
   (S.squads||[]).forEach(function(sq){
     if(!sq||!sq.name||!eligibleSquadNames[sq.name])return;
     (sq.memberIdxs||[]).forEach(function(ci){if(S.party[ci])pool[ci]=true;});
   });
-  // Add truly unassigned characters (no squad at all). A character whose
-  // only squad membership is in a non-grind squad is NOT unassigned for
-  // this purpose — they stay excluded until their squad clocks in.
+  // Truly-unassigned characters. When scoped to a territory, only include
+  // unassigned chars whose homeTerritory matches. When unscoped, include all.
   var allSquadMembers={};
   (S.squads||[]).forEach(function(sq){
     if(!sq||!sq.memberIdxs)return;
@@ -9845,20 +9978,39 @@ function computeGrindEligibility(){
   });
   (S.party||[]).forEach(function(c,ci){
     if(!c)return;
-    if(!allSquadMembers[ci])pool[ci]=true;
+    if(allSquadMembers[ci])return;
+    if(_scopeTerr!==null){
+      var ht=charHomeTerritory(c,ci);
+      if(ht!==_scopeTerr)return;
+    }
+    pool[ci]=true;
   });
   var avail=Object.keys(pool).map(function(ci){return parseInt(ci,10);})
     .filter(function(ci){return S.party[ci]&&!busy[ci];});
   return {pool:pool,busy:busy,avail:avail};
 }
 
-function availableSquadsForGrindClockIn(){
-  // A squad can clock in to grinds if it's not assigned to any ACTIVE cycle
-  // and not already clocked in to grinds.
-  var grindSet={};
-  grindSquadNames().forEach(function(n){grindSet[n]=true;});
+// Squads eligible to clock in to a specific territory's grind shift.
+// v1.7013: requires the squad's homeTerritory to match the target territory
+// (a Minsaka squad can't clock into Gojimura grinds without relocating
+// first — same semantic as the v1.7007-deferred relocation cost would
+// enforce for cycle assignment). Territory defaults to the squad's home
+// when omitted (back-compat).
+// v1.7013 safety: if a squad's homeTerritory is unset (a squad that
+// slipped through the v1.7006 backfill or was created by a code path
+// that didn't stamp it), fall back to the origin territory rather than
+// leaving the squad unclockable anywhere. This mirrors how computeOrigin
+// handles the same missing-field case.
+function availableSquadsForGrindClockIn(territory){
   return (S.squads||[]).filter(function(sq){
-    return sq&&sq.name&&!squadIsLockedByActiveCycle(sq.name)&&!grindSet[sq.name];
+    if(!sq||!sq.name)return false;
+    if(squadIsLockedByActiveCycle(sq.name))return false;
+    if(isSquadClockedInToGrinds(sq.name))return false;
+    if(territory){
+      var sqTerr=sq.homeTerritory||S.originTerritory||'';
+      if(sqTerr!==territory)return false;
+    }
+    return true;
   });
 }
 // v1.6910: Grind Missions gate. Grinds unlock as soon as the first cycle
@@ -9957,13 +10109,34 @@ function openCycleSquadPicker(setId){
 // ═════════════════════════════════════════════════════════════════════════
 // v1.6910: GRIND CLOCK-IN PICKER — pick a squad to clock in to grind shift
 // ═════════════════════════════════════════════════════════════════════════
-function openGrindClockInPicker(){
+// v1.7013 — module-scoped territory context for grind clock-in picker. Set
+// by openGrindClockInPicker(terr) before opening the modal, consumed by
+// ov-grind-clockin-yes when committing.
+var _grindClockInTerritory='';
+
+function openGrindClockInPicker(territory){
+  _grindClockInTerritory=territory||'';
   var sel=document.getElementById('ov-grind-clockin-sel');
   if(!sel)return;
-  var av=availableSquadsForGrindClockIn();
+  // v1.7013 — scope available squads to the target territory's home squads
+  // only, so a Minsaka-based squad isn't offered for Gojimura's grind shift.
+  var av=availableSquadsForGrindClockIn(_grindClockInTerritory);
   if(!av.length){
-    alert('No squads are available to clock in. Every squad is either on an active quest cycle or already on the grind shift.');
+    var _msg='No squads are available to clock in';
+    if(_grindClockInTerritory){
+      _msg+=' in '+_grindClockInTerritory+'. Every squad based here is either on an active cycle or already on the grind shift';
+    } else {
+      _msg+='. Every squad is either on an active quest cycle or already on the grind shift';
+    }
+    alert(_msg+'.');
     return;
+  }
+  // Update header message to make the territory scope visible to the user.
+  var msgEl=document.getElementById('ov-grind-clockin-msg');
+  if(msgEl){
+    msgEl.textContent=_grindClockInTerritory
+      ?('Clock a squad in to '+_grindClockInTerritory+' grind shift. Only squads based in '+_grindClockInTerritory+' can clock in here.')
+      :'Clock a squad in to the grind shift.';
   }
   var opts=['<option value="">\u2014 Select squad \u2014</option>'];
   av.forEach(function(sq){
@@ -10482,9 +10655,15 @@ function finishRealEstateNaming(saveName){
 // Unified Grind Missions view — replaces the old per-cycle adventure-screen
 // grind section. Reached via Quest Map → Grind Missions card → Open Grinds.
 // Owns its own countdown tick while visible.
+// v1.7013: scoped per-territory. The module-scope _grindsListTerritory is
+// set on open and read by renderGrindsList; summary band, eligibility pool,
+// and in-progress filter all honour it. Empty string = all-territories
+// (used by any legacy callers; current UI always passes a territory).
 // ═════════════════════════════════════════════════════════════════════════
 var grindsCountdownTimer=null;
-function openGrindsList(){
+var _grindsListTerritory='';
+function openGrindsList(territory){
+  _grindsListTerritory=territory||'';
   renderGrindsList();
   openOv('ov-grinds-list');
   startGrindsCountdown();
@@ -10522,13 +10701,22 @@ function renderGrindsList(){
   var host=document.getElementById('ov-grinds-body');
   if(!host)return;
   var qs=S.questState||{};
+  // v1.7013 — read territory scope set by openGrindsList. Empty string =
+  // all-territories (legacy); current Quest Map UI always passes a
+  // territory. The in-progress list filters to grindPending entries whose
+  // .territory matches (with the migration having already stamped legacy
+  // entries with the origin territory, this is stable).
+  var _scopeTerr=_grindsListTerritory||'';
   var gByIdx={};
-  (qs.grindPending||[]).forEach(function(gp){gByIdx[gp.id]=gp;});
+  (qs.grindPending||[]).forEach(function(gp){
+    if(_scopeTerr&&(gp.territory||'')!==_scopeTerr)return;
+    gByIdx[gp.id]=gp;
+  });
 
-  // v1.6923: use canonical eligibility helper. Previously this site
-  // duplicated the pool logic, and a widened pool in v1.6913 leaked
-  // non-active-cycle squad members. Fix centralizes the rule.
-  var _elig=computeGrindEligibility();
+  // v1.6923 / v1.7013: eligibility helper is now territory-aware. Call
+  // without an arg to preserve all-territories behaviour for a legacy
+  // empty-territory scope; otherwise pass the explicit territory.
+  var _elig=_scopeTerr?computeGrindEligibility(_scopeTerr):computeGrindEligibility();
   var _grindBusy=_elig.busy;
   var _grindPool=_elig.pool;
   var _grindAvail=_elig.avail;
@@ -10539,12 +10727,21 @@ function renderGrindsList(){
   var now=Date.now();
   var html='';
 
-  // Summary band — clocked-in squads + pool size
-  var clockedIn=grindSquadNames();
+  // v1.7013 — territory header line so the user always knows which shift
+  // they're looking at. Renders above the summary band when scoped.
+  if(_scopeTerr){
+    html+='<div style="padding:6px 10px;margin-bottom:8px;border-left:3px solid var(--gold);background:rgba(201,146,42,.04);font-family:\'Cinzel\',serif;font-size:.82em;color:var(--gold-dark);letter-spacing:.03em">'+
+      '\uD83D\uDDFA '+esc(_scopeTerr)+' \u00b7 Grind Shift'+
+    '</div>';
+  }
+
+  // Summary band — clocked-in squads + pool size. Scoped to the current
+  // territory when one is set; otherwise all-territories view.
+  var clockedIn=_scopeTerr?grindSquadNames(_scopeTerr):grindSquadNames();
   var summaryParts=[];
   if(clockedIn.length)summaryParts.push('<strong>'+clockedIn.length+'</strong> squad'+(clockedIn.length===1?'':'s')+' on shift');
   summaryParts.push('<strong>'+_grindAvail.length+'</strong> eligible character'+(_grindAvail.length===1?'':'s'));
-  var inProgCount=(qs.grindPending||[]).length;
+  var inProgCount=Object.keys(gByIdx).length;
   if(inProgCount)summaryParts.push('<strong>'+inProgCount+'</strong> in progress');
   html+='<div style="padding:8px 10px;background:rgba(201,146,42,.08);border:1px solid rgba(201,146,42,.3);border-radius:6px;margin-bottom:12px;font-size:.82em;color:var(--ink)">'+
     summaryParts.join(' \u00b7 ')+
@@ -10917,58 +11114,11 @@ function renderCycleMapCards(){
     }
     else{incompleteCards.push(card);}
   });
-  // ── Grind Missions card (v1.6910 multi-squad) ──────────────────────────
-  var grindExp=!!_cycleMapExpanded['__grind__'];
-  var grindOpen=grindsUnlocked();
-  var clockedSquads=grindSquadNames();
-  var grindBadge=clockedSquads.length?
-    '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(31,111,31,.12);border:1px solid var(--forest);color:var(--forest);border-radius:4px;padding:1px 6px;font-size:.68em">\u2694\uFE0F '+clockedSquads.length+' squad'+(clockedSquads.length===1?'':'s')+'</span>':
-    '<span style="font-size:.68em;color:var(--ink-light)">'+(grindOpen?'Open for clock-in':'Locked')+'</span>';
-  var grindBodyHtml='';
-  if(grindExp){
-    if(!grindOpen){
-      grindBodyHtml='<p class="edesc" style="padding-top:8px">Repeatable franchise jobs for common rewards and roster training.</p>'+
-        '<div style="font-size:.78em;color:var(--ink-light);padding:4px 0">\uD83D\uDD12 Complete the Root &amp; Branch cycle to unlock Grind Missions.</div>';
-    } else {
-      grindBodyHtml='<p class="edesc" style="padding-top:8px;margin-bottom:8px">Repeatable franchise jobs. Multiple squads may clock in; unassigned characters can also pick up a grind.</p>';
-      // Clocked-in squad chips
-      if(clockedSquads.length){
-        grindBodyHtml+='<div style="margin-bottom:8px"><div style="font-family:\'Cinzel\',serif;font-size:.72em;color:var(--forest);margin-bottom:4px">On shift</div>'+
-          '<div style="display:flex;flex-wrap:wrap;gap:5px">'+
-          clockedSquads.map(function(n){
-            var sq=(S.squads||[]).filter(function(s){return s.name===n;})[0];
-            var sz=sq&&sq.memberIdxs?sq.memberIdxs.length:0;
-            return '<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(31,111,31,.1);border:1px solid var(--forest);color:var(--forest);border-radius:4px;padding:2px 6px;font-size:.75em">'+
-              '\u2694\uFE0F '+esc(n)+' ('+sz+')'+
-              '<button class="btn-grind-clockout" data-sqname="'+esc(n)+'" style="background:none;border:none;color:var(--crimson);cursor:pointer;font-size:.9em;padding:0 2px;line-height:1" title="Clock out">\u2715</button>'+
-            '</span>';
-          }).join('')+
-          '</div></div>';
-      } else {
-        grindBodyHtml+='<div style="margin-bottom:8px;font-size:.78em;color:var(--ink-light);font-style:italic">No squads on shift yet.</div>';
-      }
-      // Actions
-      var canAddSquad=availableSquadsForGrindClockIn().length>0;
-      grindBodyHtml+='<div style="display:flex;gap:8px;flex-wrap:wrap">'+
-        (canAddSquad?
-          '<button class="btn bg sm" id="btn-grind-clockin-open">\u2795 Add Squad</button>'
-        :'<button class="btn bink sm" disabled title="No free squads — all are on a cycle or already on shift" style="opacity:.55;cursor:not-allowed">\u2795 Add Squad</button>')+
-        '<button class="btn bpur sm" id="btn-grind-open-adv">\u26A1 Open Grinds</button>'+
-      '</div>';
-    }
-  }
-  var grindCard=
-    '<div class="enc-card" style="border-color:'+(clockedSquads.length?'var(--forest)':'var(--parchment-deep)')+';padding:0;overflow:hidden;">'+
-      '<div style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px 12px;user-select:none" data-cycle-toggle="__grind__">'+
-        '<span style="font-size:1.1em;flex-shrink:0">\u2699\uFE0F</span>'+
-        '<div style="flex:1;min-width:0">'+
-          '<div style="font-family:\'Cinzel\',serif;font-size:.88em;font-weight:700">Grind Missions</div>'+
-          '<div style="display:flex;align-items:center;gap:5px;margin-top:2px;flex-wrap:wrap">'+grindBadge+'</div>'+
-        '</div>'+
-        '<span style="font-size:.85em;color:var(--ink-light)">'+(grindExp?'\u25b4':'\u25be')+'</span>'+
-      '</div>'+
-      (grindExp?'<div style="padding:0 12px 12px;border-top:1px solid var(--parchment-deep)">'+grindBodyHtml+'</div>':'')+
-    '</div>';
+  // v1.7013 — the global Grind Missions card is gone. Per-territory grind
+  // sub-cards are emitted inside each territory panel below, so players
+  // see a grind option paired with the cycles that territory contains.
+  // The helper block that used to compute grindCard/grindBodyHtml lives
+  // inside the completedBody emit loop now, parameterized by territory.
   // v1.6922: emit in final order — incomplete cycles, then Grind, then
   // completed cycles. An optional sub-header labels the completed section
   // when there's anything in it, so the reorder reads as intentional.
@@ -10976,10 +11126,13 @@ function renderCycleMapCards(){
   // <details> panels. When every completed cycle shares a single territory
   // (typical early franchise), we skip the wrapper and emit flat so small
   // states don't show unnecessary nesting.
-  var completedHeader=completedCards.length?
-    '<div style="padding:8px 4px 2px;font-family:\'Cinzel\',serif;font-size:.7em;color:var(--ink-light);text-transform:uppercase;letter-spacing:.05em">\u2713 Completed Cycles</div>':'';
+  // v1.7013 — completedHeader removed (each territory panel has its own
+  // "✓ Completed" sub-label inside it, so a global section header is
+  // redundant). Emit gate widened to also fire when there are any unlocked
+  // territories, so the per-territory grind card surfaces even in regions
+  // that have no completed cycles yet.
   var completedBody='';
-  if(completedCards.length){
+  if(completedCards.length||(S.unlockedTerritories||[]).length){
     // Build emit order: unlocked territories first (origin, then unlocks in
     // S.unlockedTerritories order), followed by any territories found in
     // completed cycles but not in unlockedTerritories (defensive — e.g. a
@@ -11008,28 +11161,97 @@ function renderCycleMapCards(){
     // vertical scroll space by default; tapping the inner "✓ Completed"
     // row reveals the stack. Per-cycle cards inside remain collapsible
     // individually via their existing toggle behaviour.
+    // v1.7013 — Each territory panel now opens with a per-territory grind
+    // sub-card (when grinds are unlocked). The old global Grind Missions
+    // card is gone; grinds are scoped to the territory the squad is
+    // stationed in. A territory panel renders even when it has zero
+    // completed cycles, as long as the territory is in S.unlockedTerritories
+    // (so the grind card is always visible in unlocked regions).
+    var _grindOpen=grindsUnlocked();
+    // Union unlocked territories into the emit order even if they have no
+    // completed cycles yet — we still want the territory panel to surface
+    // its grind card.
+    (S.unlockedTerritories||[]).forEach(function(t){
+      if(t&&!_seen[t]){_emitOrder.push(t);_seen[t]=true;}
+    });
     completedBody=_emitOrder.map(function(_terr){
       var _cards=completedByTerritory[_terr]||[];
-      if(!_cards.length)return '';
+      var _isReal=_terr&&_terr!=='Unspecified';
+      // Skip Unspecified bucket when empty; keep real territories even empty.
+      if(!_cards.length&&!_isReal)return '';
       var _labelColor=_terr==='Unspecified'?'var(--ink-light)':'var(--gold-dark)';
+      var _cyclesCountText=_cards.length?(_cards.length+' cycle'+(_cards.length===1?'':'s')):'';
       var _label=esc(_terr)+
-        ' <span style="font-size:.78em;font-weight:400;color:rgba(44,26,14,.55);margin-left:6px">'+
-        _cards.length+' cycle'+(_cards.length===1?'':'s')+
-        '</span>';
-      var _completedSubpanel=
-        '<details class="cycle-map-territory-completed" style="margin-top:4px;border-top:1px solid rgba(44,26,14,.12)">'+
-          '<summary style="padding:6px 2px 6px;cursor:pointer;list-style:none;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--ink-light);text-transform:uppercase;letter-spacing:.04em;display:flex;align-items:center;gap:6px">'+
-            '<span style="font-size:.9em">\u2713</span>'+
-            '<span>Completed</span>'+
-            '<span style="font-weight:400;opacity:.7">('+_cards.length+')</span>'+
-            '<span style="margin-left:auto;opacity:.5;font-size:.9em">Tap to view</span>'+
-          '</summary>'+
-          '<div style="display:flex;flex-direction:column;gap:8px;padding-top:8px">'+_cards.join('')+'</div>'+
-        '</details>';
+        (_cyclesCountText?(' <span style="font-size:.78em;font-weight:400;color:rgba(44,26,14,.55);margin-left:6px">'+_cyclesCountText+'</span>'):'');
+
+      // ── Per-territory grind sub-card ────────────────────────────────
+      // v1.7013: only emit for real unlocked territories (not for the
+      // catch-all 'Unspecified' bucket, which shouldn't have grinds).
+      var _grindSub='';
+      if(_isReal){
+        var _clocked=grindSquadNames(_terr);
+        var _canAdd=availableSquadsForGrindClockIn(_terr).length>0;
+        // Badge summarizing the territory's grind state
+        var _grindBadge=_clocked.length?
+          '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(31,111,31,.12);border:1px solid var(--forest);color:var(--forest);border-radius:4px;padding:1px 6px;font-size:.68em">\u2694\uFE0F '+_clocked.length+' squad'+(_clocked.length===1?'':'s')+'</span>':
+          '<span style="font-size:.68em;color:var(--ink-light)">'+(_grindOpen?'Open for clock-in':'Locked')+'</span>';
+        var _grindBody='';
+        if(!_grindOpen){
+          _grindBody='<div style="font-size:.74em;color:var(--ink-light);padding:2px 0">\uD83D\uDD12 Complete Root &amp; Branch to unlock Grind Missions.</div>';
+        } else {
+          // Clocked-in chips (this territory only)
+          if(_clocked.length){
+            _grindBody+='<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">'+
+              _clocked.map(function(n){
+                var sq=(S.squads||[]).filter(function(s){return s.name===n;})[0];
+                var sz=sq&&sq.memberIdxs?sq.memberIdxs.length:0;
+                return '<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(31,111,31,.1);border:1px solid var(--forest);color:var(--forest);border-radius:4px;padding:2px 6px;font-size:.72em">'+
+                  '\u2694\uFE0F '+esc(n)+' ('+sz+')'+
+                  '<button class="btn-grind-clockout" data-sqname="'+esc(n)+'" style="background:none;border:none;color:var(--crimson);cursor:pointer;font-size:.9em;padding:0 2px;line-height:1" title="Clock out">\u2715</button>'+
+                '</span>';
+              }).join('')+
+            '</div>';
+          } else {
+            _grindBody+='<div style="font-size:.72em;color:var(--ink-light);font-style:italic;margin-bottom:6px">No squads on shift in '+esc(_terr)+'.</div>';
+          }
+          _grindBody+='<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+            (_canAdd?
+              '<button class="btn bg sm" data-a="grind-clockin-terr" data-terr="'+esc(_terr)+'" style="font-size:.72em;padding:3px 8px">\u2795 Add Squad</button>'
+            :'<button class="btn bink sm" disabled title="No '+esc(_terr)+'-based squads are free to clock in" style="opacity:.55;cursor:not-allowed;font-size:.72em;padding:3px 8px">\u2795 Add Squad</button>')+
+            '<button class="btn bpur sm" data-a="grind-open-terr" data-terr="'+esc(_terr)+'" style="font-size:.72em;padding:3px 8px">\u26A1 Open Grinds</button>'+
+          '</div>';
+        }
+        _grindSub=
+          '<div style="margin:4px 0 8px;padding:8px 10px;background:rgba(31,111,31,.04);border:1px solid rgba(31,111,31,.22);border-radius:6px">'+
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'+
+              '<span style="font-size:.98em">\u2699\uFE0F</span>'+
+              '<span style="font-family:\'Cinzel\',serif;font-size:.78em;font-weight:700;color:var(--forest)">Grind Missions</span>'+
+              '<span style="margin-left:auto">'+_grindBadge+'</span>'+
+            '</div>'+
+            _grindBody+
+          '</div>';
+      }
+
+      // ── Completed-cycles sub-panel (only emitted when non-empty) ────
+      var _completedSubpanel='';
+      if(_cards.length){
+        _completedSubpanel=
+          '<details class="cycle-map-territory-completed" style="margin-top:4px;border-top:1px solid rgba(44,26,14,.12)">'+
+            '<summary style="padding:6px 2px 6px;cursor:pointer;list-style:none;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--ink-light);text-transform:uppercase;letter-spacing:.04em;display:flex;align-items:center;gap:6px">'+
+              '<span style="font-size:.9em">\u2713</span>'+
+              '<span>Completed</span>'+
+              '<span style="font-weight:400;opacity:.7">('+_cards.length+')</span>'+
+              '<span style="margin-left:auto;opacity:.5;font-size:.9em">Tap to view</span>'+
+            '</summary>'+
+            '<div style="display:flex;flex-direction:column;gap:8px;padding-top:8px">'+_cards.join('')+'</div>'+
+          '</details>';
+      }
+
       return '<details class="cycle-map-territory" open style="margin:4px 0 10px;border:1px dashed rgba(44,26,14,.22);border-radius:10px;padding:6px 8px 4px;background:rgba(201,146,42,.04)">'+
         '<summary style="padding:4px 4px 6px;cursor:pointer;list-style:none;font-family:\'Cinzel\',serif;font-size:.78em;color:'+_labelColor+';text-transform:uppercase;letter-spacing:.04em;display:flex;align-items:center;gap:8px">'+
         '<span style="font-size:1em">\uD83D\uDDFA</span>'+_label+
         '</summary>'+
+        _grindSub+
         _completedSubpanel+
         '</details>';
     }).join('');
@@ -11089,7 +11311,7 @@ function renderCycleMapCards(){
       (!_rackHasAny?'<div style="font-size:.7em;color:var(--ink-light);font-style:italic;padding:6px 0 0;text-align:center">Expand your franchise into new territories to unlock offerings here.</div>':'')+
     '</div>';
   }
-  host.innerHTML=incompleteCards.join('')+grindCard+_rackCard+completedHeader+completedBody;
+  host.innerHTML=incompleteCards.join('')+_rackCard+completedBody;
 }
 function getQuestSortMode(){
   return (S.settings&&S.settings.questSort)||'sequence';
@@ -19102,8 +19324,11 @@ document.getElementById('ov-free-choice-grind').addEventListener('click',functio
   }
   // v1.6913: Open the dedicated Grinds modal instead of navigating to the
   // Adventure screen — the old grind section there no longer exists.
+  // v1.7013: scope the modal to the character's home territory so the
+  // pool they see is consistent with where they actually are.
   closeOv('ov-charpeek');
-  openGrindsList();
+  var _cTerr=(typeof charHomeTerritory==='function')?charHomeTerritory(S.party[ci],ci):'';
+  openGrindsList(_cTerr);
 });
 // Character peek: tab clicks
 (function(){
@@ -22919,9 +23144,16 @@ document.getElementById('ov-cycle-map-cards').addEventListener('click',function(
     if(_rbName)_qmRackBuy(_rbName);
     return;
   }
-  // v1.6910: grind clock-in "Add Squad" button
-  if(e.target.closest('#btn-grind-clockin-open')){
-    openGrindClockInPicker();
+  // v1.7013: per-territory grind clock-in "Add Squad" button. Reads the
+  // territory off the button's data-terr attribute (set by renderCycleMapCards
+  // when emitting the grind sub-card inside each territory panel). Passes
+  // the territory through to openGrindClockInPicker so the picker filters
+  // to squads based in this territory and the confirm handler clocks the
+  // squad into the correct per-territory grind key.
+  var clkTerrBtn=e.target.closest('[data-a="grind-clockin-terr"]');
+  if(clkTerrBtn){
+    var _clkTerr=clkTerrBtn.getAttribute('data-terr')||'';
+    openGrindClockInPicker(_clkTerr);
     return;
   }
   // v1.6910: grind clock-out chip (remove squad from shift)
@@ -22935,12 +23167,13 @@ document.getElementById('ov-cycle-map-cards').addEventListener('click',function(
     }
     return;
   }
-  // v1.6913: "Open Grinds" now opens the dedicated Grinds modal instead of
-  // navigating to the Adventure screen. The old grind section on the adv
-  // screen was removed in v1.6913; the scroll-target no longer exists.
-  if(e.target.closest('#btn-grind-open-adv')){
+  // v1.7013: per-territory "Open Grinds" button. Closes the Quest Map and
+  // opens the Grinds modal scoped to this territory's shift.
+  var openTerrBtn=e.target.closest('[data-a="grind-open-terr"]');
+  if(openTerrBtn){
+    var _openTerr=openTerrBtn.getAttribute('data-terr')||'';
     closeOv('ov-cycle-map');
-    openGrindsList();
+    openGrindsList(_openTerr);
     return;
   }
   // Collapsible toggle
@@ -23116,8 +23349,9 @@ document.getElementById('ov-grind-clockin-no').addEventListener('click',function
 document.getElementById('ov-grind-clockin-yes').addEventListener('click',function(){
   var sel=(document.getElementById('ov-grind-clockin-sel').value||'').trim();
   if(!sel){alert('Select a squad to clock in.');return;}
-  if(!clockInSquadToGrinds(sel)){
-    alert('Could not clock in '+sel+' — it may already be on a cycle or already on shift.');
+  // v1.7013 — route through the per-territory scope set by the picker
+  if(!clockInSquadToGrinds(sel,_grindClockInTerritory)){
+    alert('Could not clock in '+sel+' \u2014 it may already be on a cycle, on a different territory\u2019s shift, or already on this shift.');
     return;
   }
   save();
@@ -23146,7 +23380,12 @@ document.addEventListener('click',function(e){
     // v1.6923: canonical eligibility helper. Previously this handler
     // duplicated the pool logic and leaked members of squads committed
     // to non-active cycles.
-    var _e2=computeGrindEligibility();
+    // v1.7013: scope to whichever territory the Grinds modal is currently
+    // showing. _grindsListTerritory is set by openGrindsList and is '' when
+    // opened without a territory — in that case pass no arg to keep the
+    // legacy all-territories behaviour.
+    var _autoTerr=_grindsListTerritory||'';
+    var _e2=_autoTerr?computeGrindEligibility(_autoTerr):computeGrindEligibility();
     var _busy2=_e2.busy;
     var _avail2=_e2.avail.slice();
     var _now2=Date.now();
@@ -23154,7 +23393,9 @@ document.addEventListener('click',function(e){
     if(!_qs2.grindPending)_qs2.grindPending=[];
     (GRIND||[]).forEach(function(g){
       if(_avail2.length<1)return;
-      if((_qs2.grindPending||[]).some(function(gp){return gp.id===g.id;}))return;
+      // v1.7013: only skip if ALREADY in-progress in this same territory.
+      // A territory can have its own instance of the same grind template.
+      if((_qs2.grindPending||[]).some(function(gp){return gp.id===g.id&&(gp.territory||'')===_autoTerr;}))return;
       var roster=grindRosterStatus(_avail2,g);
       if(!roster.ok)return;
       var missing=questPrereqCheck(g,_avail2);
@@ -23166,7 +23407,9 @@ document.addEventListener('click',function(e){
       else if(_hire.length>=2)_toAssign=[_hire[0],_hire[1]];
       else return;
       var _reward=grindCalcReward(g);
-      _qs2.grindPending.push({id:g.id,title:g.title,chars:_toAssign,squadName:'',reward:_reward,doneAt:_now2+questDuration(g)});
+      // v1.7013: stamp territory on the pending entry so the Grinds modal
+      // can filter in-progress entries to the current territory's view.
+      _qs2.grindPending.push({id:g.id,title:g.title,chars:_toAssign,squadName:'',reward:_reward,territory:_autoTerr,doneAt:_now2+questDuration(g)});
       _toAssign.forEach(function(ci){_avail2=_avail2.filter(function(x){return x!==ci;});_busy2[ci]=true;});
       logAdd('⚡ Auto-grind: "'+g.title+'" started — '+_toAssign.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', '),'adv');
       _assigned++;
@@ -24670,11 +24913,16 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit,skipContactWarn){
     // filters out ineligible chars, but if any slipped through (stale
     // modal state, direct DOM manipulation, a bug elsewhere) we hard-
     // reject here so the squad-commitment rule is never violated.
-    var _eligCommit=computeGrindEligibility().pool;
+    // v1.7013: scope eligibility to the territory the grinds modal is showing.
+    // If _grindsListTerritory is '' we fall back to the legacy all-territories
+    // pool (e.g. a legacy caller that opened the modal without scope).
+    var _commitTerr=_grindsListTerritory||'';
+    var _eligCommit=(_commitTerr?computeGrindEligibility(_commitTerr):computeGrindEligibility()).pool;
     var _ineligible=chars.filter(function(ci){return !_eligCommit[ci];});
     if(_ineligible.length){
       var _names=_ineligible.map(function(ci){return (S.party[ci]||{}).name||'?';}).join(', ');
-      alert('Cannot start grind: '+_names+(_ineligible.length===1?' is':' are')+' committed to another cycle\'s squad. Only active-cycle squad members, clocked-in grind squad members, or truly unassigned characters can grind.');
+      var _scopeSuffix=_commitTerr?(' for '+_commitTerr+'\u2019s grind shift'):'';
+      alert('Cannot start grind'+_scopeSuffix+': '+_names+(_ineligible.length===1?' is':' are')+' not eligible. Only members of squads clocked into this territory, or unassigned characters based here, can grind here.');
       return;
     }
     var roster2=grindRosterStatus(chars);
@@ -24685,7 +24933,9 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit,skipContactWarn){
     var _grSqSel=(document.getElementById('ov-q-squad')||{}).value||'';
     var _grSquadName=_grSqSel==='__unassigned__'?'':_grSqSel;
     if(!S.questState.grindPending)S.questState.grindPending=[];
-    S.questState.grindPending.push({id:gObj2.id,title:gObj2.title,chars:chars,squadName:_grSquadName,reward:reward2,doneAt:Date.now()+questDuration(gObj2)});
+    // v1.7013: stamp territory on the pending entry so Grinds-modal filters
+    // and completion flows remain territory-accurate.
+    S.questState.grindPending.push({id:gObj2.id,title:gObj2.title,chars:chars,squadName:_grSquadName,reward:reward2,territory:_commitTerr,doneAt:Date.now()+questDuration(gObj2)});
     var cn2=chars.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', ')||'unassigned';
     logAdd('Grind: "'+gObj2.title+'" started ('+cn2+') — '+reward2+' gp in '+questDurationLabel(gObj2),'adv');
     saveActiveSetProgress();
@@ -24696,7 +24946,11 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit,skipContactWarn){
     // the user sees the new in-progress mission and can queue another
     // without navigating back through the Quest Map. openGrindsList()
     // renders + opens + restarts the 1s countdown timer in one call.
-    if(typeof openGrindsList==='function')openGrindsList();
+    // v1.7013: preserve the territory context set by the originating
+    // openGrindsList call — the module-scope _grindsListTerritory still
+    // holds whatever we opened with, so passing it explicitly keeps the
+    // user anchored in the same territory's shift after the round-trip.
+    if(typeof openGrindsList==='function')openGrindsList(_grindsListTerritory||'');
     else if(typeof renderGrindsList==='function'&&document.getElementById('ov-grinds-list')&&document.getElementById('ov-grinds-list').classList.contains('on'))renderGrindsList();
     return;
   }
@@ -27475,6 +27729,7 @@ function sbPull(manual){
           healOrphanedQuestState();
           healCompletedCycleArchives(); // v1.6948
           if(typeof migrateToTerritoryV1_7006==='function')migrateToTerritoryV1_7006(); // v1.7006
+          if(typeof migrateGrindToTerritoriesV1_7013==='function')migrateGrindToTerritoriesV1_7013(); // v1.7013
           setGold();applySettings();renderTasks();renderSettings();renderAdv();
           renderParty();renderArchive();renderLog();updateQpDisplay();
           syncStatus('☁ Loaded','var(--ink-light)');
@@ -30298,7 +30553,9 @@ function questModalAbandon(){
   // v1.6971 — restore the Grinds list (with render + countdown restart) so
   // the user can pick a different grind or just see the same list again.
   // openGrindsList() handles the render + startGrindsCountdown internally.
-  if(_fromGrindFlow&&typeof openGrindsList==='function')openGrindsList();
+  // v1.7013: pass through the last territory context so we return to the
+  // correct territory's shift rather than an all-territories view.
+  if(_fromGrindFlow&&typeof openGrindsList==='function')openGrindsList(_grindsListTerritory||'');
 }
 
 // Auto-assign with QP cost: fill slots, animate, then auto-submit if QP was spent
@@ -30433,6 +30690,8 @@ function initSession(pullFromCloud){
       // run AFTER migrateMisroutedAssets so partyAssets ownership has stabilized
       // (unlock scan reads ownerType:'cycle' entries).
       if(typeof migrateToTerritoryV1_7006==='function')migrateToTerritoryV1_7006();
+      // v1.7013 — Move legacy flat grind clock-ins into origin-territory keys.
+      if(typeof migrateGrindToTerritoriesV1_7013==='function')migrateGrindToTerritoriesV1_7013();
       // v1.6901 — backfill ownedItems on existing NPC contacts so their gear
       // shows as 🔒 personal in the char modal Gear tab (matching the rule
       // that new capstone-reward contacts get personal-marked inventory).
