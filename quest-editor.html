@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Quest Editor v1.690</title>
+<title>Quest Editor v1.691</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -386,7 +386,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 <body>
 <div id="login-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--parch);border:2px solid var(--gold);border-radius:10px;padding:24px;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.5)">
-    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.690</span></h2>
+    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.691</span></h2>
     <div style="margin-bottom:12px">
       <label style="display:block;font-size:.8em;color:var(--ink2);margin-bottom:4px">Email</label>
       <input type="text" id="email" autocomplete="email" style="width:100%;padding:8px;border:1px solid var(--gold);border-radius:5px;background:var(--parch);font-size:.9em;box-sizing:border-box">
@@ -402,7 +402,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 
 <div id="app">
   <div id="hdr">
-    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.690</span></h1>
+    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.691</span></h1>
     <div id="login-area">
       <span id="user-email"></span>
       <button class="hbtn" id="btn-push" style="display:none" title="Push all local changes to Supabase">☁ Push</button>
@@ -1306,6 +1306,8 @@ function pullData() {
           type:row.type||'gear', rar:row.rar||'common', price:row.price||0,
           weight:row.weight||0, published:!!row.published, sort_order:row.sort_order||0,
           effect_ids: fxMap[row.id] || [],
+          qm_rack:!!row.qm_rack,  // v1.691 — Quest Map rack flag
+          qp_price:row.qp_price||0, // v1.691 — Quest Map rack QP cost
           _dbId:row.id };
       });
 
@@ -1867,10 +1869,16 @@ function renderItemList() {
       var pubBadge = item.published
         ? '<span class="qbadge" style="border-color:var(--forest);color:var(--forest)">pub</span>'
         : '<span class="qbadge">draft</span>';
+      // v1.691 — rack badge. Shows up next to the pub/draft chip when the
+      // item has qm_rack set. Author scan signal: these items live on the
+      // Quest Map rack, not the regular store.
+      var rackBadge = item.qm_rack
+        ? '<span class="qbadge" style="border-color:var(--gold);color:var(--gold);margin-right:4px" title="Sold on Quest Map rack">\uD83E\uDE84 ' + (item.qp_price||0) + 'QP</span>'
+        : '';
       html += '<div class="quest-row ' + (isSel ? 'sel' : '') + '" data-sel-item="' + esc(item.id) + '">' +
         '<span style="margin-right:4px">' + (item.ic || '📦') + '</span>' +
         '<span class="quest-row-title">' + esc(item.name) + '</span>' +
-        pubBadge + '</div>';
+        rackBadge + pubBadge + '</div>';
     });
   });
 
@@ -1896,7 +1904,13 @@ function saveItemRow(item) {
     price:       item.price || 0,
     weight:      item.weight || 0,
     published:   !!item.published,
-    sort_order:  item.sort_order || 0
+    sort_order:  item.sort_order || 0,
+    // v1.691 — Quest Map rack columns (SQL migration required on the server;
+    // see the main app's v1.7012 changelog for the ALTER TABLE statements).
+    // Always writes both — default false/0 matches server-side defaults, so
+    // items not flagged as rack-eligible round-trip cleanly.
+    qm_rack:     !!item.qm_rack,
+    qp_price:    item.qp_price || 0
   });
   if (!item._dbId) {
     return sbFetch(SB_URL + '/rest/v1/items', {
@@ -2065,7 +2079,26 @@ function showItemForm(id) {
     '<div class="fgrid c2" style="margin-top:10px">' +
     frow('Price (gp)', '<input type="number" id="if-price" min="0" value="' + (item ? item.price : 0) + '">') +
     frow('Weight (lbs)', '<input type="number" id="if-weight" min="0" value="' + (item ? item.weight : 0) + '">') +
-    '</div></div>' +
+    '</div>' +
+    // v1.691 — Quest Map "🪄 Arcane Offerings" rack controls. When "Sell on
+    // Quest Map" is checked, the item is EXCLUDED from the regular store
+    // and instead appears on the Quest Map's rotating rack of 3 items,
+    // priced in QP. Pair the item with a quest cycle whose cycleGate has
+    // requiredAsset set to this item's exact name — purchase unlocks the
+    // cycle automatically because the item lands in franchiseStorage.
+    '<div style="margin-top:14px;padding:10px 12px;background:rgba(201,146,42,.06);border:1px solid var(--border2);border-radius:6px">' +
+    '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.9em;font-weight:600">' +
+      '<input type="checkbox" id="if-qmrack"' + (item && item.qm_rack ? ' checked' : '') + ' style="margin:0">' +
+      '🪄 Sell on Quest Map (Arcane Offerings rack)' +
+    '</label>' +
+    '<div style="font-size:.78em;color:var(--ink2);margin-top:4px;margin-left:24px;font-style:italic">' +
+      'Item will be hidden from the regular store and appear on the Quest Map rack (3-slot daily rotation, QP priced). Pair with a quest cycle using <code>cycleGate.requiredAsset</code> set to this item name to make the purchase unlock that cycle.' +
+    '</div>' +
+    '<div id="if-qmrack-price-row" style="margin-top:10px;' + (item && item.qm_rack ? '' : 'display:none') + '">' +
+      frow('QP Price *', '<input type="number" id="if-qpprice" min="1" value="' + (item && item.qp_price ? item.qp_price : '') + '" placeholder="Required when rack is enabled">') +
+    '</div>' +
+    '</div>' +
+    '</div>' +
 
     // ── Effects ──
     '<div class="fsec">' +
@@ -2099,11 +2132,34 @@ function showItemForm(id) {
   var _ifTraits = Array.isArray(item && item.traits) ? item.traits.slice() : [];
   renderTraitChipPanel('if-traits', _ifTraits, true);
 
+  // v1.691 — Toggle the QP Price row visibility based on the rack checkbox.
+  // Keep the value intact when unchecking so a user can toggle back without
+  // retyping. Save path clears qp_price to 0 when rack is off, regardless.
+  var _qmChk = document.getElementById('if-qmrack');
+  var _qmPriceRow = document.getElementById('if-qmrack-price-row');
+  if (_qmChk && _qmPriceRow) {
+    _qmChk.addEventListener('change', function() {
+      _qmPriceRow.style.display = _qmChk.checked ? '' : 'none';
+    });
+  }
+
   // ── Save handler ─────────────────────────────────────────────
   document.getElementById('if-save').onclick = function() {
     var nm   = (document.getElementById('if-name').value || '').trim();
     var desc = (document.getElementById('if-desc').value || '').trim();
     if (!nm || !desc) { alert('Name and description are required.'); return; }
+    // v1.691 — Rack validation. If the author has ticked "Sell on Quest Map,"
+    // qpPrice MUST be set to a positive integer. Otherwise the rack renderer
+    // would show a slot with an unset cost and silently refuse to sell.
+    var qmRack = !!(document.getElementById('if-qmrack') && document.getElementById('if-qmrack').checked);
+    var qpPrice = 0;
+    if (qmRack) {
+      qpPrice = parseInt((document.getElementById('if-qpprice') || {}).value, 10) || 0;
+      if (qpPrice <= 0) {
+        alert('QP Price is required and must be at least 1 when "Sell on Quest Map" is checked.');
+        return;
+      }
+    }
     var newItem = {
       name:      nm,
       ic:        (document.getElementById('if-ic').value || '').trim() || '📦',
@@ -2113,6 +2169,8 @@ function showItemForm(id) {
       price:     Math.max(0, parseInt(document.getElementById('if-price').value) || 0),
       weight:    Math.max(0, parseInt(document.getElementById('if-weight').value) || 0),
       traits:    _ifTraits.slice(),     // v1.685
+      qm_rack:   qmRack,                // v1.691 — Quest Map rack flag
+      qp_price:  qpPrice,               // v1.691 — Quest Map rack QP cost
       published: document.getElementById('pub-chk').checked,
       sort_order: item ? (item.sort_order || 0) : items.length,
       effect_ids: item ? (item.effect_ids || []) : [],
