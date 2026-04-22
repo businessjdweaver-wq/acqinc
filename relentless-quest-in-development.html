@@ -4562,7 +4562,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7020</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7022</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5361,7 +5361,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7020
+      Version 1.7022
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, Content Editor, version number, and Exit Dev Mode.
@@ -5395,6 +5395,8 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7022</strong> &mdash; Inbox three-button footer: Close / Clear Inbox / Collect All. <strong>(1) Close</strong> unchanged — just dismisses the modal. <strong>(2) Clear Inbox</strong> (new): marks every ready quest and ready grind entry with a non-persistent-but-synced <code>_inboxDismissed:true</code> flag. <code>_collectInboxItems</code> filters these out, so the inbox list empties and the red badge dot goes dark. <strong>The rewards remain in state</strong> — the user can still collect them via the Quest Map's Collect All or by tapping individual grind cards in the Grinds list. This answers the user's ask of "let them clear the inbox without collecting." Downtime rolls are deliberately not dismissible — they carry game-state side effects (d20 stat math) that shouldn't be buried. Logs "✉ Inbox cleared: N notification(s) hidden. Rewards are unclaimed — collect via the Quest Map when you're ready." so the action is reversible-looking even though the flag isn't exposed for manual re-lighting (the user would just wait for the next new return to re-light the badge naturally). <strong>(3) Collect All</strong> now mirrors the Quest Map's Fast-Forward semantics exactly: same QP cost via <code>qpCfg().costFastForward</code> (default 50), same confirmation dialog, same inline reward-distribution logic copied from the qmap fast-forward handler. <strong>No more fake-click dispatch</strong> — the v1.7021 workaround (splice-siblings-then-click) is replaced with a direct implementation that resolves each grindPending entry by object reference via <code>indexOf(entry)</code>, sidestepping v1.7013's same-id-collision entirely. The button label now reads "✓ Collect All (50 QP)" when QP mode is enabled and the user isn't in dev mode, or plain "✓ Collect All" otherwise. Disabled with 50% opacity and a tooltip when the user can't afford the cost. <strong>Visibility:</strong> both action buttons (Clear Inbox + Collect All) are hidden when the only inbox contents are downtime rolls — dismissing them isn't supported and collecting them can't happen via this path (the downtime d20 flow is the single legal route). Close remains visible in all states. <strong>Persistence:</strong> <code>_inboxDismissed</code> lives on the <code>pq</code>/<code>gp</code> objects inside <code>S.questState</code>. That state rides as a blob inside the <code>franchise</code> row's settings jsonb (main auth) or the <code>login_codes.player_data</code> blob (code-login), both of which serialize objects whole — so the flag round-trips across devices without any schema change. When the entry is eventually collected, it's spliced out of the array entirely; the flag goes with it. No SQL change. No data-model change.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7021</strong> &mdash; Inbox "Collect All" fix: same-id collision with v1.7013's per-territory grinds. <strong>User report:</strong> three ready items in the inbox, Collect All yields a "Not ready yet!" alert and doesn't clear them. <strong>Root cause:</strong> the batch handler dispatches one hidden click per ready grind, carrying <code>data-gid="&lt;id&gt;"</code>. The document-level <code>gcollect</code> handler resolves the click by walking <code>qs.grindPending</code> with <code>forEach</code> and assigning <code>gpIdx</code> every time <code>gp.id===gid</code> matches — so <code>gpIdx</code> ends up pointing at the LAST matching entry, regardless of its readiness. With v1.7013's per-territory grinds, the same template id can appear in multiple concurrent instances (three different char sets on "g0 Patrol the District," say). If the last-indexed sibling is still running (<code>doneAt &gt; now</code>), the handler alerts "Not ready yet!" and returns without touching the actually-ready earlier entry. The batch loop then moves to the next iteration, repeats, and the user sees three misleading alerts while their ready rewards remain uncollected. <strong>Fix:</strong> before each dispatched click, temporarily splice out all non-ready siblings sharing the target <code>id</code> so the handler's last-match-wins lookup finds only the ready entry. Siblings are sorted by descending index (so earlier splices don't shift the indices we care about) and are pushed back to <code>qs.grindPending</code> after the click completes. Ordering within <code>grindPending</code> isn't load-bearing elsewhere in the codebase — the runtime scans the array in every call site — so restoring via <code>push</code> rather than <code>splice</code> at the original position is fine. <strong>Empty-action feedback.</strong> When a user clicks Collect All but only downtime rolls were in the inbox (which this path deliberately skips — they need the d20 reveal modal), the adventure log now reports "✉ Inbox: N downtime roll(s) pending — tap the row to reveal the d20." rather than going silent. Pre-fix the user would click the button, see no change, and have no feedback about why. <strong>Not changed:</strong> the handler's resolution strategy is unchanged — we work around it from the batch caller. Re-architecting the handler to resolve by a compound key (id + doneAt + chars) would be cleaner but would require touching every <code>data-gid</code> emit site (currently only the single one inside the Grinds list per-card render) and would be a broader refactor than warranted for this fix. The localized workaround captures the correctness without rippling. <strong>Design question for follow-up:</strong> whether "Collect All" should dismiss the inbox notification without collecting rewards — i.e. let the user clear the visual badge while leaving the pending rewards in place for later manual collection. Current behaviour (and v1.7021) keeps the inbox as a derived view of the reward backlog: if you don't want to see the dot, you collect. Decided to keep this semantic for now since an explicit dismiss layer would risk users losing track of owed rewards; we can revisit if the collect path continues to feel cumbersome. No SQL change. No data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7020</strong> &mdash; Auto-prompt toggle for contract completion. <strong>User ask:</strong> after shipping v1.7019's auto-prompt (Done modal opens automatically when every sub-task is checked), surface a "don't ask me again" checkbox inside the modal itself, with a reminder that the preference can be flipped back on from Settings. <strong>What landed:</strong> <strong>(1) Settings field.</strong> New boolean <code>S.settings.autoPromptSubtaskComplete</code> in <code>DEFAULT_SETTINGS</code> (default <code>true</code>) plus a coercion line in <code>normalizeSettings</code> so existing saves without the field get the default on load. <strong>(2) Settings UI.</strong> A new "Contract Preferences" section placed right after "Daily Reset" holds a single labelled checkbox ("Auto-prompt on completion") with a hint line explaining what it controls. Populated on <code>applySettings</code>; change handler wired once via a <code>_wired</code> sentinel so repeat boot (post-auth refresh) doesn't stack listeners. Writes <code>S.settings.autoPromptSubtaskComplete</code> and calls <code>save()</code> on every flip — no explicit save button needed, consistent with the theme/access toggles elsewhere. <strong>(3) Auto-prompt gate.</strong> The subtask-toggle auto-open path from v1.7019 now reads the setting via <code>(!S.settings || S.settings.autoPromptSubtaskComplete!==false)</code> — turning the checkbox off silently suppresses the modal. The manual "Done" button path is unchanged (it always opens the modal). <strong>(4) In-modal checkbox.</strong> A new dashed-top-border section appended to the Done modal: "Don't auto-open this when I finish all sub-tasks" with a smaller hint "You can turn it back on in Settings → Contract Preferences." Section is <code>display:none</code> by default and revealed only when the modal was auto-opened. A new module flag <code>window._doneModalAutoOpened</code> distinguishes the two entry paths: the subtask-toggle handler sets it to <code>true</code> and shows the section; the manual Done-button handler sets it to <code>false</code> and hides the section. <strong>(5) Apply-on-dismiss helper.</strong> New <code>_applyDoneDontAskIfChecked()</code> reads both the flag and the checkbox on exit; when both are truthy it writes <code>S.settings.autoPromptSubtaskComplete=false</code>, calls <code>save()</code>, and logs "⚙ Auto-prompt on contract completion turned off. Re-enable in Settings → Contract Preferences." to the adventure log (so the change is discoverable and the log entry itself tells the user where to find the reversal control). Called from both the OK button handler (top of function, before any other work) and the Cancel button handler. The flag is cleared after each apply so the next modal open starts fresh. <strong>Why a flag instead of checking the checkbox's visibility directly:</strong> CSS display state isn't a reliable signal for "was this auto-opened" — a future refactor could reveal the section for other reasons, and the intent of the toggle is specifically "I saw this appear without my asking." A boolean state flag captures that intent cleanly. <strong>Persistence:</strong> the field lives in <code>S.settings</code> which rides inside the existing <code>franchise</code> row's settings jsonb — no new column needed, no SQL migration. Code-session accounts (which save the whole <code>S</code> blob to <code>login_codes.player_data</code>) pick up the field for free. <strong>Not in scope:</strong> a granular preference for "ask me but only for tasks with N+ sub-tasks" or "ask once per task per day rather than once per 30 seconds" — the current 30-second anti-thrash window is fine for the primary use case, and users who find the automatic trigger too eager can turn it off entirely and use the manual Done button as the single opt-in path. No SQL change. No data-model change beyond the additive settings field.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7019</strong> &mdash; Inbox button render fix + recurring contracts feature. <strong>(A) Inbox Collect All label fix.</strong> The v1.7018 button label was written as the escape sequence <code>\\u2713</code> inside a static HTML string literal — JS escape processing only happens inside JS source, not in HTML attributes/text, so the literal backslash-u-2-7-1-3 rendered in the DOM. Replaced with the actual ✓ character. <strong>(B) Recurring contracts.</strong> <strong>User ask:</strong> when a contract (or all its subtasks) has been completed, prompt to delete OR recur with cadence options — "tomorrow," "daily," "every other day," "every N days," "weekly on [weekday]" — and route the recurring choice to the archive so the existing morning-reset loop reactivates it at the scheduled time. <strong>What landed:</strong> <strong>(1) Done modal expanded.</strong> The <code>ov-done</code> modal's Action select now has three options: Archive (one-shot, default), Recur…, Delete. Choosing Recur reveals a sub-panel with a Schedule select and two conditional sub-fields: an N-days input (shown only for "Every N days") and a Weekday select (shown only for "Weekly on"). Toggle logic lives in <code>_syncDoneRecurUI()</code> wired to the change events of both selects. <strong>(2) Recurrence cadence engine extended.</strong> <code>checkFavourites</code> (the morning-reset loop that reactivates archived tasks) already supported <code>daily</code>, <code>weekly</code>, <code>monthly</code>, <code>yearly</code>. Added a new sub-mode inside the existing <code>custom</code> freq: when an archive entry has both <code>autoIntervalDays</code> (integer ≥ 1) and <code>autoIntervalAnchor</code> (<code>yyyy-mm-dd</code>), the task reactivates when (today − anchor) is a positive multiple of the interval. Powers "every other day" (interval=2), "every N days" (interval=N), and "tomorrow only" (interval=1 with one-shot). Legacy custom-freq tasks (no interval fields) fall back to the pre-existing fav-driven behavior. <strong>(3) Tomorrow is one-shot.</strong> Marked via <code>_oneShot:true</code> on the archive entry. When the reactivation loop activates a one-shot, it then clears <code>fav</code>/<code>autoIntervalDays</code>/<code>autoIntervalAnchor</code>/<code>_oneShot</code> so the entry becomes a plain archived task — fires once, done. <strong>(4) Auto-prompt on subtask completion.</strong> The subtask checkbox change handler now detects the transition from "not all done" → "all done" and opens the Done modal with a pre-filled message ("All sub-tasks of 'X' are complete..."). Gated three ways: (a) only fires when a box just went unchecked→checked (so the automatic trigger is tied to a deliberate user action), (b) requires every subtask to be done, (c) suppresses re-prompts within 30 seconds (<code>window._lastAutoCompletePrompt</code>) so check/uncheck thrash doesn't re-surface the modal. The manual "Done" button path still works unchanged; this is a convenience layer. <strong>(5) Recurrence metadata preserved across reactivation.</strong> When <code>checkFavourites</code> pushes a task from <code>S.archived</code> into <code>S.active</code>, the live task now carries the recurrence fields forward — so when the user completes it AGAIN, they can archive/recur with the original cadence visible in the UI (the Done modal resets to "Archive" default each time; the fields remain on the record for re-selection via the form). <strong>(6) Supabase persistence.</strong> <code>sbPush</code> now writes five new columns on <code>archived_tasks</code>: <code>auto_interval_days</code>, <code>auto_interval_anchor</code>, <code>auto_weekday</code>, <code>auto_monthday</code>, <code>auto_yearly_date</code>, plus a boolean <code>one_shot</code>. <code>sbPull</code> reads them back with nullable-safe fallbacks (<code>typeof…==='number'?…:null</code>) so pre-migration rows coming back as missing-column nulls don't crash the hydrator. Code-session accounts (which save the whole <code>archived</code> array as a JSON blob) pick up the new fields for free — no separate code path needed. Local <code>localStorage</code> save is <code>JSON.stringify(S)</code> whole, same story. <strong>SQL migration required before deploying (safe to run ahead of time; columns are additive and nullable):</strong><br><br><code>ALTER TABLE archived_tasks ADD COLUMN IF NOT EXISTS auto_interval_days integer;</code><br><code>ALTER TABLE archived_tasks ADD COLUMN IF NOT EXISTS auto_interval_anchor text;</code><br><code>ALTER TABLE archived_tasks ADD COLUMN IF NOT EXISTS auto_weekday integer;</code><br><code>ALTER TABLE archived_tasks ADD COLUMN IF NOT EXISTS auto_monthday integer;</code><br><code>ALTER TABLE archived_tasks ADD COLUMN IF NOT EXISTS auto_yearly_date text;</code><br><code>ALTER TABLE archived_tasks ADD COLUMN IF NOT EXISTS one_shot boolean DEFAULT false;</code><br><br><strong>Deployment order:</strong> run the SQL first, then deploy the HTML. The hydrator tolerates missing columns (returns <code>null</code>) so the app works either way, but for actual recurrence you want the writes to stick. <strong>Log messages:</strong> choosing Recur logs "🔁 Contract 'X' set to recur (cadence summary)" to the adventure log. <strong>Not in scope:</strong> editing recurrence on an already-archived task from the Archive screen (would need a recurrence-editor modal on the archive row), pause/resume of recurrence, recurrence on groups/split-groups (groups archive as individual members — if you want group-level recurrence, let me know; the scoping decision is nontrivial). <strong>Undo:</strong> the existing <code>tarch</code> undo entry covers recur-to-archive exactly the same as plain archive — undo restores the task to <code>S.active</code> and removes the archive entry. <strong>No data-model change for active tasks</strong> — recurrence fields only live on archive entries; active tasks carry them forward on reactivation for informational/UI purposes but never actually use them while active.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7018</strong> &mdash; Three cosmetic polish items. <strong>(1) Inbox: Collect All button.</strong> The <code>ov-inbox</code> modal grows a new <code>\u2713 Collect All</code> action that auto-collects every ready quest and every ready grind in one click. Implementation: calls the existing <code>autoCollectExpired()</code> for quests (batch path already present), then for each <code>qs.grindPending</code> entry with <code>doneAt &le; now</code> synthesizes a hidden <code>&lt;button data-a="gcollect" data-gid="..."&gt;</code>, appends it to the DOM, dispatches a real click (so the existing document-level click handler on line 23619 runs the full reward-distribution/log/badge-clear path), then removes the button. No duplicate logic. Downtime pending rolls are deliberately skipped because those need the d20 reveal modal (<code>openDowntimePendingModal</code>) to show the player what they got; the button tooltip explains this and the summary log entry reports any downtime rolls that were left pending. Visibility: the button only shows when at least one quest or grind row is actionable in the current inbox contents, computed in <code>openInboxModal()</code> before the empty-state gate. After clicking, <code>openInboxModal()</code> is called again so the user sees the updated (often empty) state — they can then close manually. Logs "\u2709 Inbox: auto-collected N quests + M grinds" to the adventure log so the batch action is auditable. <strong>(2) Party screen: collapse/expand all squads.</strong> New button in the <code>#party-tagbar</code> row next to <code>\u2694 Manage Squads</code>. Label is dynamic: "\u25b4 Collapse all" when ANY panel is currently open, "\u25be Expand all" when every panel is currently collapsed — so the action the button will perform reads correctly at a glance. Scope includes every real squad name plus every per-territory unassigned bucket (<code>__unassigned__::&lt;territory&gt;</code>, v1.7006). Click handler in the <code>#party-tagbar</code> delegator reads the <code>data-open</code> attribute (pre-computed by the emit code to reflect what the button SHOULD DO on click), walks the full panel-key list, and either sets or deletes <code>S.squadCollapsed[key]</code> for each — matching the v1.7011 persistence pattern so the state sticks across <code>renderParty()</code> redraws and Supabase syncs. Button is suppressed entirely when there are no panels to toggle (empty franchise). <strong>(3) Rename "Unassigned" to "Headquarters" (or local HQ building name).</strong> The virtual unassigned bucket's display name on the Party screen is now derived from a new <code>territoryHQName(territory)</code> helper. For the origin territory (the territory the franchise started in — no building was required to unlock it), the name is always <strong>"Headquarters"</strong> — no real estate needed to earn the label. For any later-unlocked territory, <code>territoryHQName</code> walks <code>S.partyAssets</code> in ownership order and returns the first qualifying building's name (either the player's custom <code>meta.name</code> if they named it at purchase, or the base <code>BUILDINGS[*].name</code>). "Qualifying" means <code>price &ge; TERRITORY_UNLOCK_BUILDING_MIN_GP</code> (1000 gp, the same threshold that triggered the territory unlock in v1.7006) and <code>ownerType==='cycle'</code> owned by a cycle whose <code>territory</code> field matches. Since later territories were unlocked BY building such a building, there's always a qualifying asset available (monotonic unlock rule means even if the building is later sold, the territory stays unlocked — in that unusual case the helper falls back to generic "Headquarters"). The panel display name reads "Headquarters · Minsaka" (or "The Crossroads Safe House · Gojimura" if the player named their Gojimura-territory Safe House "The Crossroads"), keeping the territory suffix as a locator. The 🧭 icon remains on the panel header since that glyph is used consistently across the codebase (char-peek unassigned chip, swap modal, grind ad-hoc picker) as the "not in a real squad" signifier — changing it here would create visual drift across three other surfaces. Internal name (<code>'__unassigned__::&lt;territory&gt;'</code>) unchanged — the panel key is still the data-model sentinel that every downstream consumer (<code>S.squadCollapsed</code>, event handlers, swap modal) depends on. <strong>No SQL change. No data-model change.</strong> The new <code>territoryHQName</code> helper reads existing fields on existing state.</div>
@@ -6202,7 +6204,8 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS qp_price INT DEFAULT 0;</code><strong
     border:1px solid var(--parchment-deep);border-radius:6px;background:rgba(201,146,42,.04);"></div>
   <div class="mbtns" style="gap:8px;flex-wrap:wrap">
     <button class="btn bink" type="button" id="ov-inbox-close">Close</button>
-    <button class="btn bpur" type="button" id="ov-inbox-clear-all" title="Auto-collect every ready quest and grind. Downtime rolls still need the d20 reveal and will stay pending.">✓ Collect All</button>
+    <button class="btn bink" type="button" id="ov-inbox-dismiss" title="Hide these notifications without collecting. Rewards remain unclaimed — you can still collect via the Quest Map or Grinds list.">✕ Clear Inbox</button>
+    <button class="btn bpur" type="button" id="ov-inbox-clear-all" title="Collect every ready quest and grind reward now (costs QP). Downtime rolls still need the d20 reveal and will stay pending.">✓ Collect All</button>
   </div>
 </div></div>
 <div class="ov" id="ov-dt-forfeit" style="z-index:510"><div class="modal" style="max-width:420px">
@@ -16441,6 +16444,7 @@ function _collectInboxItems(){
   var set=(typeof activeQuestSet==='function')?activeQuestSet():null;
   (qs.pending||[]).forEach(function(pq){
     if(!pq||(pq.doneAt||0)>now)return;
+    if(pq._inboxDismissed)return; // v1.7022 — user dismissed from inbox
     var q=(set&&typeof questByIdx==='function')?questByIdx(set,pq.idx):null;
     var title=q&&q.title?q.title:('Quest #'+(pq.idx+1));
     var chars=(pq.chars||[]).map(function(ci){
@@ -16457,6 +16461,7 @@ function _collectInboxItems(){
   // Completed grind missions ready to collect
   (qs.grindPending||[]).forEach(function(gp){
     if(!gp||(gp.doneAt||0)>now)return;
+    if(gp._inboxDismissed)return; // v1.7022 — user dismissed from inbox
     var chars=(gp.chars||[]).map(function(ci){
       var c=S.party&&S.party[ci];return c?c.name:'?';
     }).join(', ');
@@ -16508,10 +16513,36 @@ function openInboxModal(){
   // v1.7018 — the Collect All button only makes sense when at least one
   // ready quest or ready grind exists. Downtime rolls can't be collected
   // via this path (they need the d20 modal reveal).
+  // v1.7022 — also surface the QP cost dynamically on the button label and
+  // govern the Dismiss ("Clear Inbox") button the same way (it can't
+  // dismiss downtime rolls, so it's only useful when actionable items
+  // exist). Both buttons hide when only downtime rows remain.
   var clearBtn=document.getElementById('ov-inbox-clear-all');
+  var dismissBtn=document.getElementById('ov-inbox-dismiss');
+  var _actionable=items.some(function(it){return it.kind==='quest'||it.kind==='grind';});
   if(clearBtn){
-    var _actionable=items.some(function(it){return it.kind==='quest'||it.kind==='grind';});
     clearBtn.style.display=_actionable?'':'none';
+    // Dynamic label: "✓ Collect All (N QP)" when QP system is enabled
+    // and the user is not in dev mode. Fall back to bare "✓ Collect All"
+    // otherwise (dev mode → free; QP disabled → also free).
+    if(_actionable){
+      var _cost=(qpCfg()||{}).costFastForward||50;
+      var _shouldShowCost=(!isDevModeActive()&&qpEnabled());
+      clearBtn.textContent=_shouldShowCost?('✓ Collect All ('+_cost+' QP)'):'✓ Collect All';
+      // Disable when the user can't afford it (QP enabled and balance low).
+      if(_shouldShowCost&&(S.qpBalance||0)<_cost){
+        clearBtn.disabled=true;
+        clearBtn.style.opacity='0.5';
+        clearBtn.title='Need '+_cost+' QP to collect (you have '+(S.qpBalance||0)+').';
+      } else {
+        clearBtn.disabled=false;
+        clearBtn.style.opacity='';
+        clearBtn.title='Collect every ready quest and grind reward now. Downtime rolls still need the d20 reveal and will stay pending.';
+      }
+    }
+  }
+  if(dismissBtn){
+    dismissBtn.style.display=_actionable?'':'none';
   }
   if(!items.length){
     list.innerHTML='';
@@ -16584,52 +16615,132 @@ function openInboxModal(){
     var clearBtn=document.getElementById('ov-inbox-clear-all');
     if(clearBtn&&!clearBtn._wired){
       clearBtn.addEventListener('click',function(){
+        // v1.7022 — mirror the Quest Map's Collect All semantics: same QP
+        // cost, same confirmation, same inline collection logic (no more
+        // fake-click dispatch — that hit the v1.7013 same-id collision bug).
+        // The qmap handler at btn-qmap-fast-forward does all of this
+        // already; we reimplement it here so the user can drive the same
+        // action from the inbox without navigating to the Quest Map first.
         var qs=S.questState||{};
         var now=Date.now();
-        var questCount=0, grindCount=0, dtSkipped=0;
-        // 1) Quests — autoCollectExpired does this batch already.
-        (qs.pending||[]).forEach(function(pq){
-          if(pq&&(pq.doneAt||0)<=now)questCount++;
-        });
-        if(typeof autoCollectExpired==='function')autoCollectExpired();
-        // 2) Grinds — no batch helper exists, so we drive the per-grind
-        //    collect path by simulating the data-a="gcollect" click on
-        //    each ready entry. We synthesize a minimal event-like object
-        //    that the existing document-level click handler can consume.
-        //    Using document.createEvent so the native handler's closest()
-        //    lookup still works identically.
-        var readyGrinds=(qs.grindPending||[]).filter(function(gp){
-          return gp&&(gp.doneAt||0)<=now;
-        });
-        grindCount=readyGrinds.length;
-        // The handler lives on document; we just need to dispatch a real
-        // click on a temporary button with the right data attrs. This
-        // avoids re-implementing the 50+ lines of reward distribution.
-        readyGrinds.forEach(function(gp){
-          var fake=document.createElement('button');
-          fake.setAttribute('data-a','gcollect');
-          fake.setAttribute('data-gid',gp.id);
-          fake.style.display='none';
-          document.body.appendChild(fake);
-          try{fake.click();}catch(e){}
-          document.body.removeChild(fake);
-        });
-        // 3) Downtime rolls — skip, but count so we can tell the user.
-        dtSkipped=(S.pendingDowntimeRolls||[]).length;
-        // Re-render the inbox so the user sees what's left.
-        openInboxModal();
-        // Summary toast via the adventure log.
-        if(typeof logAdd==='function'){
-          var parts=[];
-          if(questCount)parts.push(questCount+' quest'+(questCount===1?'':'s'));
-          if(grindCount)parts.push(grindCount+' grind'+(grindCount===1?'':'s'));
-          if(parts.length){
-            var extra=dtSkipped?(' \u00b7 '+dtSkipped+' downtime roll'+(dtSkipped===1?'':'s')+' still pending'):'';
-            logAdd('\u2709 Inbox: auto-collected '+parts.join(' + ')+extra,'adv');
+        var readyPending=(qs.pending||[]).filter(function(pq){return pq&&(pq.doneAt||0)<=now&&!pq._inboxDismissed;});
+        var readyGrind=(qs.grindPending||[]).filter(function(gp){return gp&&(gp.doneAt||0)<=now&&!gp._inboxDismissed;});
+        var totalReady=readyPending.length+readyGrind.length;
+        var dtSkipped=(S.pendingDowntimeRolls||[]).length;
+        if(!totalReady){
+          if(dtSkipped){
+            alert('Only downtime rolls are pending. Tap a downtime row in the inbox to reveal the d20.');
+          } else {
+            alert('Nothing ready to collect right now.');
           }
+          return;
         }
+        var cost=(qpCfg()||{}).costFastForward||50;
+        var label=[];
+        if(readyPending.length)label.push(readyPending.length+' quest'+(readyPending.length===1?'':'s'));
+        if(readyGrind.length)label.push(readyGrind.length+' grind mission'+(readyGrind.length===1?'':'s'));
+        if(!isDevModeActive()&&qpEnabled()){
+          if(!confirm('Collect '+label.join(' and ')+'? Costs '+cost+' QP.'))return;
+          if(!qpSpend(cost,'fast_forward_collect','Inbox collect all: '+label.join(', ')))return;
+        } else {
+          if(!confirm('Collect '+label.join(' and ')+'?'))return;
+        }
+        var set=(typeof activeQuestSet==='function')?activeQuestSet():null;
+        var summary=[];
+        // ── Regular quests ──
+        readyPending.slice().forEach(function(pq){
+          var q=(set&&typeof questByIdx==='function')?questByIdx(set,pq.idx):null;
+          if(!q)return;
+          var prevGold=S.gold||0;
+          if(typeof collectQuest==='function')collectQuest(pq.idx,pq,q,set);
+          summary.push('• "'+q.title+'" → '+((S.gold||0)-prevGold)+' gp');
+        });
+        // ── Grind missions (resolve by reference, not by id — avoids the
+        //     v1.7013 same-id collision that tripped up v1.7021's fake-click) ──
+        readyGrind.slice().forEach(function(gpEntry){
+          var gpIdx=(qs.grindPending||[]).indexOf(gpEntry);
+          if(gpIdx===-1)return;
+          var gReward=parseInt(gpEntry.reward)||0;
+          var chars=gpEntry.chars||[];
+          var cn=chars.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', ')||'unassigned';
+          var charPool=Math.floor(gReward*0.10);
+          var franchiseCut=gReward-charPool;
+          var dist=distributeCharPay(chars,charPool);
+          franchiseCut-=dist.franchiseDebit;
+          chars.forEach(function(ci){
+            var c=S.party[ci];if(!c)return;
+            var share=dist.shares[ci]||0;
+            if(c.coinPurse==null)c.coinPurse=0;
+            if(share>0){
+              c.coinPurse+=share;
+              var item=pickItemForChar(c,c.coinPurse);
+              if(item){
+                if(!c.inv)c.inv=[];
+                c.inv.push(item.name);
+                c.coinPurse-=item.price;
+                if(c.coinPurse<0)c.coinPurse=0;
+                logAdd(c.name+' spent '+item.price+' gp on '+item.name,'buy');
+                if(!c.ownedItems)c.ownedItems=[];
+                if(c.ownedItems.indexOf(item.name)===-1)c.ownedItems.push(item.name);
+              }
+            }
+          });
+          franchiseCut+=dist.unspent;
+          var prevGold=S.gold||0;
+          goldAdd(franchiseCut,'Grind: "'+gpEntry.title+'" ('+cn+') — franchise cut','adv');
+          if(!S.questLog)S.questLog=[];
+          S.questLog.unshift({cycleId:qs.cycleId,questTitle:gpEntry.title+' [Grind]',type:'grind',
+            reward:gReward,franchiseCut:franchiseCut,completedAt:new Date().toLocaleString()});
+          logAdd('Grind complete (inbox): "'+gpEntry.title+'" — '+gReward+' gp','adv');
+          summary.push('• [Grind] "'+gpEntry.title+'" → '+((S.gold||0)-prevGold)+' gp');
+          qs.grindPending.splice(gpIdx,1);
+        });
+        if(summary.length){
+          if(typeof saveActiveSetProgress==='function')saveActiveSetProgress();
+          save();
+          if(typeof setGold==='function')setGold();
+          if(typeof renderAdv==='function')renderAdv();
+          if(typeof healCompletedCycleArchives==='function')healCompletedCycleArchives();
+          if(typeof renderCycleMapCards==='function')renderCycleMapCards();
+          if(uid())sbPush(false);
+        }
+        if(typeof renderInboxBadge==='function')renderInboxBadge();
+        // Re-render the modal so the user sees the remaining items (likely
+        // downtime rolls, if any).
+        openInboxModal();
       });
       clearBtn._wired=true;
+    }
+    // v1.7022 — Clear Inbox (dismiss without collecting). Marks every ready
+    // quest/grind entry with an _inboxDismissed flag so _collectInboxItems
+    // filters them out. Rewards remain in state — the user can still collect
+    // them via the Quest Map or Grinds list. The badge recomputes on every
+    // renderInboxBadge() call, so dismissing three entries with zero other
+    // pending items clears the red dot. Downtime rolls are not dismissed —
+    // they carry game-state side effects (d20 rolls with stat math) that
+    // would be confusing to bury.
+    var dismissBtn=document.getElementById('ov-inbox-dismiss');
+    if(dismissBtn&&!dismissBtn._wired){
+      dismissBtn.addEventListener('click',function(){
+        var qs=S.questState||{};
+        var now=Date.now();
+        var dismissed=0;
+        (qs.pending||[]).forEach(function(pq){
+          if(pq&&(pq.doneAt||0)<=now&&!pq._inboxDismissed){pq._inboxDismissed=true;dismissed++;}
+        });
+        (qs.grindPending||[]).forEach(function(gp){
+          if(gp&&(gp.doneAt||0)<=now&&!gp._inboxDismissed){gp._inboxDismissed=true;dismissed++;}
+        });
+        if(!dismissed){
+          alert('Nothing to clear (only downtime rolls remain, and those can only be resolved via the d20 reveal).');
+          return;
+        }
+        save();
+        if(typeof renderInboxBadge==='function')renderInboxBadge();
+        openInboxModal();
+        logAdd('✉ Inbox cleared: '+dismissed+' notification'+(dismissed===1?'':'s')+' hidden. Rewards are unclaimed — collect via the Quest Map when you\u2019re ready.','adv');
+      });
+      dismissBtn._wired=true;
     }
     // Initial render (covers reload path).
     try{renderInboxBadge();}catch(e){}
