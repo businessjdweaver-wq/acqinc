@@ -9937,6 +9937,7 @@ function migrateGrindToTerritoriesV1_7013(){
 function migrateGrindPendingDedupV1_7017(){
   var qs=S.questState||{};
   var totalRemoved=0;
+  var totalStamped=0;
   // Step 1: dedup live qs.grindPending
   if(Array.isArray(qs.grindPending)&&qs.grindPending.length){
     var seen={};
@@ -9954,6 +9955,21 @@ function migrateGrindPendingDedupV1_7017(){
       qs.grindPending=cleaned;
       totalRemoved+=removed;
     }
+  }
+  // Step 1b: backfill territory on live entries that lack it. v1.7013 added
+  // the .territory field to every new grindPending entry, but entries that
+  // predate v1.7013 (or ones created by a stale code path that didn't pass
+  // territory context) still have a missing/empty .territory. Without this
+  // field the Grinds-modal in-progress filter can't scope the entry into
+  // its owning territory's view. Default to origin territory — that's where
+  // all pre-v1.7013 grinds implicitly ran.
+  if(Array.isArray(qs.grindPending)&&S.originTerritory){
+    qs.grindPending.forEach(function(gp){
+      if(gp&&!gp.territory){
+        gp.territory=S.originTerritory;
+        totalStamped++;
+      }
+    });
   }
   // Step 2: shake grindPending off non-active archives. Archives hold
   // completion history; they shouldn't mirror live in-progress state.
@@ -9973,6 +9989,9 @@ function migrateGrindPendingDedupV1_7017(){
   }
   if(totalRemoved>0&&typeof logAdd==='function'){
     logAdd('\uD83E\uDDF9 Cleaned '+totalRemoved+' stale grind entr'+(totalRemoved===1?'y':'ies')+' (archive dedup)','adv');
+  }
+  if(totalStamped>0&&typeof logAdd==='function'){
+    logAdd('\uD83D\uDDFA Stamped '+totalStamped+' grind entr'+(totalStamped===1?'y':'ies')+' with territory '+S.originTerritory,'adv');
   }
 }
 
