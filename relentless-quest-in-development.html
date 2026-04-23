@@ -2531,7 +2531,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7037</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7038</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3337,7 +3337,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7037
+      Version 1.7038
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3371,6 +3371,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7038</strong> &mdash; Encumbrance-on-purchase: three-way choice modal + refund-on-cancel. <strong>User report:</strong> when a store purchase would encumber the assigned character, the Franchise Storage flow already offered a drop-an-existing-item picker (<code>encumbranceRelinquishPrompt</code> / <code>ov-enc-drop</code>, v1.575/576), but the store-buy and quest-prereq-slot-buy flows did not — they showed only a simple yes/no "Send to Franchise Storage instead?" confirm. <strong>Investigation finding:</strong> the store-buy and quest-prereq-slot-buy flows are actually the <em>same</em> code path — both open <code>ov-buyitem</code> and commit through the <code>ov-bi-yes</code> handler, which at line ~24772 ran a <code>confirm()</code> for the encumbrance branch. The quest-prereq-slot entry point (<code>qcs-store-link</code>) sets <code>window._questModalOpenAfterBuy=true</code> so the quest modal re-opens after a successful buy, but that hook was bypassed by an early <code>return;</code> in the encumbrance branch. Also noticed: clicking "No" (cancel) on the yes/no confirm already <em>kept the user's gold</em> while delivering nothing — a pre-existing latent gold-leak bug since gold is spent at line 24752 (<code>goldSpend</code>) before reaching the encumbrance check. <strong>What landed:</strong> <strong>(1) New modal <code>ov-enc-choice</code>.</strong> Three-button layout (Drop &amp; Deliver / Send to Franchise Storage / Cancel &amp; Refund) with an inline dropdown of relinquishable items (weight ≥ incoming, sourced from <code>destC.inv</code> with the same <code>__meta__</code>-exclusion filter as <code>encumbranceRelinquishPrompt</code>). Distinct from the existing <code>ov-enc-drop</code> because Cancel here has to refund gold — the storage→char transfer flow that uses <code>ov-enc-drop</code> is free, so its Cancel can just close. <strong>(2) New helper <code>encumbranceChoicePrompt(destC, destCi, incomingItem, onDrop, onStorage, onCancel)</code>.</strong> Three callbacks match the three outcomes. If the character has no items ≥ incoming weight, the Drop button renders grayed out (opacity .45, <code>disabled=true</code>, explanatory title) and the dropdown shows a "(no items of equal or greater weight)" placeholder with a secondary italic note row; the user can still choose Send to Storage or Cancel. Clone-and-replace pattern on all three buttons to clear any listeners from a prior invocation, mirroring <code>encumbranceRelinquishPrompt</code>'s approach. Fallback path if the modal DOM is missing: degrade to a confirm() with Storage vs. Cancel (no drop path in the fallback — there's no simple prompt equivalent for a weight-filtered dropdown). <strong>(3) <code>ov-bi-yes</code> handler rewired.</strong> The encumbrance branch now calls <code>encumbranceChoicePrompt</code> and returns; the three outcomes run through three new local helpers defined just above the check: <code>_finalizeToChar</code> (drop → put incoming in char.inv + full <code>_reopen</code> auto-assign for the quest-prereq flow), <code>_finalizeToStorage</code> (storage → push to <code>franchiseStorage</code>, clear <code>_questModalOpenAfterBuy</code> since the char isn't carrying it so the prereq slot stays unmet), <code>_cancelAndRefund</code> (refund via <code>goldAdd(total, 'Refund: ... (encumbrance-cancel)', 'buy')</code>, clear <code>_questModalOpenAfterBuy</code>, close buy modal). The refund log entry is symmetric with the original <code>goldSpend</code> charge so the ledger shows both the debit and the credit. <strong>(4) Quest prereq behavior pinned per user spec.</strong> When the chosen outcome is Send-to-Storage and the flow was initiated from a quest-prereq-slot Purchase button, the quest modal does NOT re-open / auto-assign — the purchased prereq item is in franchise storage, not in the slotted character's inventory, so the slot remains unmet (matches <code>questPrereqCheck</code>'s rule that item prereqs count only items carried by non-busy peg-slot chars, v1.616/v1.620). If the user wants to satisfy the slot, they can Give the item from storage to the character via the existing Franchise Storage row's drop-picker flow. <strong>Scope boundaries:</strong> <strong>(i) <code>from-storage</code> (franchise storage → char Give) path unchanged.</strong> Still uses <code>encumbranceRelinquishPrompt</code> / <code>ov-enc-drop</code>; no behavior change. The two flows live on different modals so the user can have one open and not risk button/listener state clash with the other. <strong>(ii) Quantity handling.</strong> The encumbrance check is <code>wouldEncumber(c, item.name)</code> which considers one unit of weight — if the user buys <code>qty=3</code> and drops one existing ≥-weight item to make room, the resulting state may still leave the character encumbered (they receive 3 copies, dropped only 1). This matches how <code>wouldEncumber</code> and the encumbrance system generally work (encumbrance is not blocked — only warned-on-would-trigger — and a character CAN be encumbered). No qty-per-drop logic added; keeps the fix narrow. If needed, a v1.7039 could iterate: require dropping enough items to cover <code>qty × incomingWt</code>, or force <code>qty=1</code> for encumbering buys. <strong>(iii) Non-character destinations unchanged.</strong> Buying to storage, buildings, vehicles, or squads bypasses the encumbrance check as before — no character carries those items. <strong>(iv) Fallback path behavior.</strong> If the new modal DOM somehow isn't found (should never happen on a correctly-loaded page), the fallback <code>confirm()</code> offers Storage vs. Cancel-with-refund. Losing the Drop option in fallback is a conservative degradation; the two destination paths still work. <strong>No SQL change. No data-model change.</strong> Pure UI + handler-logic fix. One new modal (<code>ov-enc-choice</code>, ~20 lines HTML), one new helper function (<code>encumbranceChoicePrompt</code>, ~75 lines), three new local finalization closures in the <code>ov-bi-yes</code> handler (~55 lines), replacing the previous ~8-line encumbrance branch. Net add ~140 lines.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7037</strong> &mdash; Contracts screen layout reshuffle. <strong>User ask:</strong> move the Task Search box to the top of the page, and move the "new contract" composer (name field + gp value + + Add button) between the Undo/Archive/Kudos action row and the Pinned Tasks zone at the top of <code>#tlist</code>. <strong>New top-to-bottom order on the Contracts screen:</strong> (1) title "✦ Active Contracts", (2) 🔍 search bar, (3) Undo / Archive / Kudos action row (+ desktop column-count toggle + Rebalance), (4) "New contract…" composer row, (5) gp-per-tick hint + ℹ help icon, (6) daily task-budget readout, (7) <code>#tlist</code> containing Pinned Tasks zone and main task list. <strong>Rationale:</strong> search-first positioning lets the user locate any existing contract before deciding whether to add a new one — a common pattern when re-engaging with a long backlog. The new-contract composer sits directly above the task list (Pinned zone is the first visible item inside <code>#tlist</code>), which creates a natural add → see-appear-below flow. Previously the composer was at the top of the screen and the budget readout separated it from the pin zone, so a newly added contract was visually far from its appearance point. <strong>Purely HTML reordering — no JS changes.</strong> Every element keeps its existing <code>id</code>, so every event listener (<code>#btn-addtask</code>, <code>#new-tname</code>, <code>#new-tgp</code>, <code>#contract-search-input</code>, <code>#btn-undo</code>, <code>#btn-nav-archive</code>, <code>#btn-kudos</code>, <code>#cols-toggle</code>, <code>#btn-cols-rebalance</code>, <code>#btn-contracts-help</code>, <code>#task-budget-readout</code>) continues to bind and fire unchanged. <code>bindContractSearch()</code> still finds <code>#contract-search-wrap</code>. <code>renderTasks()</code> still writes into <code>#tlist</code>. The hidden legacy stubs (<code>#tsort</code>, <code>#btn-newgrp</code>, <code>#btn-nav-projects</code>) are preserved in their guard positions just before <code>#tlist</code>. No data-model change. No SQL change. CSS classes (<code>.addrow</code>, <code>.stitle</code>, <code>.hint</code>) unchanged, so existing per-element styling (border colors, spacing, typography) reads identically in the new position.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7036</strong> &mdash; Pinned-row drawer spacing fixes. <strong>User report:</strong> after v1.7034/7035 added the ⏳ waiting button to the pinned-row left drawer (making it 3 buttons: 📍 + ✕ + ⏳), swiping a pinned row right on mobile showed the drawer plus partial ghosting of the right-drawer buttons on the same row. The reveal ate most of the visible row width on narrow pinned sub-columns. <strong>Three coordinated fixes:</strong> <strong>(1) Tighter pinned drawer buttons.</strong> New rule <code>.strow.strow-pin .strow-drawer-btn{min-width:38px;padding:0 5px}</code> scopes pinned-row drawer buttons to 38px instead of the main-list 44px. Scoped specifically to <code>.strow-pin</code> so main-list sub-rows keep comfort-size hit boxes; pinned rows are inherently more compact (narrower sub-columns, smaller content) so 38px still comfortably fits a thumb but gives 6px per button × 3 = 18px savings across the drawer. <strong>(2) Reduced pinned reveal distance.</strong> <code>.strow.strow-pin.strow-show-del .strow-main</code> translate reduced from 170px → 140px. Budget: 3 × 38 + 2 × 8 padding + small gaps ≈ 130px; 140 gives buffer. Main-list rows keep the 120px reveal from v1.7034 (they have the full 44px buttons). <strong>(3) Right drawer opacity gating.</strong> Added <code>.strow.strow-pin .strow-actions{opacity:0;pointer-events:none}</code> at rest and <code>.strow.strow-pin.strow-show-actions .strow-actions{opacity:1;pointer-events:auto}</code> on swipe-left. This is a scoped revival of the v1.6965 drawer-hiding treatment (which was rolled back in v1.6966 along with a broader translucent-row experiment); here it only affects pinned rows and only hides the right drawer, so the artifacts the v1.6966 rollback was addressing don't recur. Effect: when the user swipes a pinned row right (to reveal the left drawer's 📍/✕/⏳ buttons), the right drawer's +gp label and ⇈/↑/↓ reorder buttons stay fully hidden instead of potentially bleeding through at the row's right edge. When the user swipes left (to reveal the right drawer), the right drawer fades in with a 180ms ease matching the row's translate animation. The <code>pointer-events:none</code> on the hidden state means accidental taps near the row's right edge don't trigger the reorder buttons — only when the drawer is actually revealed. No changes to main-list rows, which keep their always-visible drawers (both at rest and during swipe) since they've always had opaque parchment and no bleed-through issues. No SQL change. No data-model change. CSS-only fix, three rules changed.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7035</strong> &mdash; Two fixes on the v1.7034 waiting-state UX. <strong>(1) Drawer bleed-through on waiting rows.</strong> <strong>User report:</strong> after marking a sub-task as waiting on mobile, both the left drawer (✕ / ⏳) AND the right drawer (⇈ / ↑ / ↓ / ⇄ / 📌) were visible underneath the row content at rest — not just when swiped. Looked like the row was stuck in "both drawers revealed" mode, cluttering the layout. <strong>Root cause:</strong> v1.7032's waiting tint was written as <code>.strow.strow-waiting .strow-main{background:rgba(38,122,130,.07)}</code> — but <code>.strow-main</code> needs to be OPAQUE to hide the absolutely-positioned drawers sitting behind it (that's how the v1.6924 swipe system works: the drawers are permanently behind the main row, revealed by transforming the main row left/right on swipe). Setting <code>.strow-main</code>'s background to a 7%-alpha teal replaced the opaque parchment with a near-transparent tint, so the drawers bled through. <strong>Fix:</strong> apply the tint to the outer <code>.strow</code> wrapper (harmless — it's behind everything) AND set <code>.strow-main</code> to a pre-mixed opaque color <code>#e6e0bc</code> — that's the RGB average of parchment <code>#f4e8c1</code> and 7% teal, so it reads as "parchment with teal tint" while staying fully opaque. Drawers stay hidden at rest; waiting rows still read as tinted. <strong>(2) No mobile path to clear waiting flag.</strong> <strong>User observation:</strong> the v1.7034 drawer ⏳ opens the note editor (for setting/editing), but the only way to CLEAR the waiting flag was tapping the inline ⏳ on the row — which is a small target and not obvious. Right-click works on desktop; mobile had no equivalent. <strong>Fix:</strong> the note editor modal (<code>ov-waiting-note</code>) gains a "✓ Done waiting" button that only appears when the target item is currently waiting. Tapping it flips <code>item.waiting</code> to <code>false</code>, preserves the note (so re-flagging later doesn't lose context), and closes the modal. The existing "Clear note" button also now hides when there's no note to clear, reducing visual noise. A new <code>_syncWaitingNoteButtons()</code> helper runs on every modal open (drawer path, badge path, right-click auto-open path — all three call sites updated) to reflect the current target's state onto the button visibility. <strong>Interaction model is now:</strong> <em>to mark waiting</em> — tap ⏳ in drawer (sub-task) or action row (task), fill in note if desired, Save. <em>to edit note</em> — same path; the editor opens with existing note pre-filled. <em>to clear waiting</em> — tap ⏳ and then "✓ Done waiting" (mobile) or tap the inline ⏳ on the row (quick shortcut) or right-click the checkbox (desktop). <em>to just edit the note without changing flag</em> — Save always keeps waiting=true. Symmetric and discoverable. No SQL change. No data-model change.</div>
@@ -4591,6 +4592,24 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS qp_price INT DEFAULT 0;</code><strong
   <div class="mbtns" style="display:flex;gap:8px">
     <button class="btn bink" id="ov-enc-drop-cancel" style="flex:1">Cancel</button>
     <button class="btn bg" id="ov-enc-drop-ok" style="flex:1">Drop & Transfer</button>
+  </div>
+</div></div>
+<!-- v1.7038 — ENCUMBRANCE CHOICE MODAL (store/quest-prereq buy flow) -->
+<!-- Three-way choice: drop an item to make room, send to storage, or cancel
+     the purchase (with gold refund). Distinct from ov-enc-drop because this
+     one is invoked AFTER gold has been spent, so Cancel must refund. -->
+<div class="ov" id="ov-enc-choice"><div class="modal" style="max-width:380px">
+  <h3 style="font-family:'Cinzel',serif;font-size:.95em;color:var(--crimson);margin-bottom:10px">⚠ Encumbrance — How to Deliver?</h3>
+  <div id="ov-enc-choice-msg" style="font-size:.82em;color:var(--ink-light);margin-bottom:10px"></div>
+  <div id="ov-enc-choice-droprow" style="margin-bottom:10px">
+    <div style="font-size:.78em;color:var(--ink-light);margin-bottom:4px;font-weight:600">Drop an existing item to make room:</div>
+    <select id="ov-enc-choice-sel" style="width:100%;padding:8px 10px;font-size:.95em;border:1px solid var(--parchment-deep);border-radius:5px;background:var(--parchment)"></select>
+    <div id="ov-enc-choice-nodrop" style="display:none;font-size:.75em;color:var(--ink-light);font-style:italic;margin-top:4px">No items of equal or greater weight to relinquish.</div>
+  </div>
+  <div class="mbtns" style="display:flex;flex-direction:column;gap:6px">
+    <button class="btn bg" id="ov-enc-choice-drop">Drop &amp; Deliver to Character</button>
+    <button class="btn bgn" id="ov-enc-choice-storage">Send to Franchise Storage Instead</button>
+    <button class="btn bink" id="ov-enc-choice-cancel">Cancel Purchase &amp; Refund Gold</button>
   </div>
 </div></div>
 
@@ -24768,13 +24787,90 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
   }
   var ci=parseInt(ownerVal,10);
   var c=S.party[ci];
-  // Check encumbrance for gear items assigned to a character
-  if(c&&item.wt&&wouldEncumber(c,item.name)){
-    if(!confirm('⚠ '+c.name+' would become encumbered carrying this item ('+item.wt+' lb).\n\nSend to Franchise Storage instead?'))return;
+  // ── v1.7038 — Post-buy finalization helpers ──
+  // Extracted so the encumbrance-choice callbacks can call the same
+  // finalization paths the sync path uses. _finalizeToChar matches the
+  // original non-encumbrance "deliver to character inv" path including the
+  // _reopen / auto-assign hook (for the quest-prereq-slot buy flow).
+  // _finalizeToStorage matches the original encumbrance-yes-send-to-storage
+  // path and intentionally does NOT trigger _reopen: when the purchased
+  // prereq item ends up in franchise storage, the character who was slotted
+  // isn't carrying it, so the quest prereq slot remains unmet.
+  var _finalizeToChar=function(){
+    if(!S.party[ci].inv)S.party[ci].inv=[];
+    for(var ii=0;ii<qty;ii++)S.party[ci].inv.push(item.name);
+    logAdd(item.name+' ×'+qty+' → '+S.party[ci].name,'buy');
+    P5.item=null;P5.assetMode=false;P5.customItem=null;
+    var _reopen=window._questModalOpenAfterBuy;
+    window._questModalOpenAfterBuy=false;
+    closeOv('ov-buyitem');
+    save();renderParty();renderStore();
+    if(_reopen&&qddQuestLike){
+      qddRender(qddQuestLike,qddIsGrind);
+      (function(){
+        var _slots=qddBuildCharSlots(qddQuestLike,qddIsGrind);
+        var _assigned=Object.keys(qddSlotAssignments)
+          .map(function(k){return qddSlotAssignments[k];})
+          .filter(function(_ci){return _ci!==null&&_ci!==undefined;});
+        _slots.forEach(function(slot){
+          if(slot.nonChar)return;
+          if(qddSlotAssignments[slot.key]!==null&&qddSlotAssignments[slot.key]!==undefined)return;
+          var _match=_assigned.filter(function(_ci){
+            return qddCharCoversSlot(S.party[_ci],slot,Object.values(qddSlotAssignments).filter(function(k){return k!==_ci;}));
+          })[0];
+          if(_match!==undefined){
+            qddSlotAssignments[slot.key]=_match;
+          }
+        });
+        qddRender(qddQuestLike,qddIsGrind);
+      }());
+      updateQuestModal();
+      openOv('ov-quest');
+    }
+  };
+  var _finalizeToStorage=function(){
     if(!S.franchiseStorage)S.franchiseStorage=[];
     for(var si=0;si<qty;si++)S.franchiseStorage.push(item.name);
     logAdd(item.name+' ×'+qty+' → Franchise Storage (weight)','buy');
-    P5.item=null;P5.assetMode=false;P5.customItem=null;closeOv('ov-buyitem');save();renderParty();renderStore();
+    // Clear the _reopen flag — buy succeeded but the char isn't carrying
+    // the item, so the quest modal auto-assign logic must not run. If the
+    // user still wants to advance the quest modal, they can click Issue
+    // from franchise storage later through the normal give path.
+    P5.item=null;P5.assetMode=false;P5.customItem=null;
+    window._questModalOpenAfterBuy=false;
+    closeOv('ov-buyitem');
+    save();renderParty();renderStore();
+  };
+  var _cancelAndRefund=function(){
+    // Refund gold already spent at line above (goldSpend). Use goldAdd so
+    // the refund is logged symmetrically with the original charge.
+    goldAdd(total,'Refund: '+item.name+' ×'+qty+' (encumbrance-cancel)','buy');
+    P5.item=null;P5.assetMode=false;P5.customItem=null;
+    window._questModalOpenAfterBuy=false;
+    closeOv('ov-buyitem');
+    save();renderStore();
+  };
+  // Check encumbrance for gear items assigned to a character
+  if(c&&item.wt&&wouldEncumber(c,item.name)){
+    // v1.7038 — Three-way choice: drop an existing item, send to storage,
+    // or cancel-and-refund. Replaces the previous yes/no confirm which (a)
+    // didn't offer the drop option available in the franchise-storage-to-
+    // char Give flow, and (b) silently kept the user's gold on "No"
+    // (cancel) — a pre-existing minor bug now fixed via _cancelAndRefund.
+    encumbranceChoicePrompt(c,ci,item.name,
+      function onDrop(_relinquished){
+        // Character has already had the relinquished item moved to storage
+        // by the helper. Now deliver the new item to their inventory and
+        // run the full finalization (including _reopen/auto-assign).
+        _finalizeToChar();
+      },
+      function onStorage(){
+        _finalizeToStorage();
+      },
+      function onCancel(){
+        _cancelAndRefund();
+      }
+    );
     return;
   }
   if(ownerVal==='storage'||ownerVal==='__storage__'){
@@ -26600,6 +26696,91 @@ function encumbranceRelinquishPrompt(destC, destCi, incomingItem, onProceed){
     onProceed();
   });
   openOv('ov-enc-drop');
+}
+
+// ── v1.7038 — Encumbrance choice helper for the store/quest-prereq buy flow ──
+// Distinct from encumbranceRelinquishPrompt because this runs AFTER gold has
+// been spent in goldSpend(), so Cancel must refund the purchase. Offers three
+// outcomes via callbacks:
+//   onDrop(relinquishedItemName)  — user chose to drop an existing item;
+//                                    item has been spliced from char inv and
+//                                    pushed to franchiseStorage before callback.
+//                                    Caller then delivers the new item to char.
+//   onStorage()                    — user chose to send incoming item to storage.
+//                                    Caller pushes incoming item into storage.
+//   onCancel()                     — user backed out; caller must refund gold
+//                                    and abort the purchase (no state mutation
+//                                    has happened yet in this helper).
+function encumbranceChoicePrompt(destC, destCi, incomingItem, onDrop, onStorage, onCancel){
+  var incomingWt=ITEM_WEIGHT[incomingItem]||1;
+  var giveOptions=(destC.inv||[]).filter(function(x){
+    return typeof x==='string'&&x.indexOf('__meta__')!==0&&(ITEM_WEIGHT[x]||1)>=incomingWt;
+  });
+  var _msg=document.getElementById('ov-enc-choice-msg');
+  var _sel=document.getElementById('ov-enc-choice-sel');
+  var _nodrop=document.getElementById('ov-enc-choice-nodrop');
+  var _bDrop=document.getElementById('ov-enc-choice-drop');
+  var _bStorage=document.getElementById('ov-enc-choice-storage');
+  var _bCancel=document.getElementById('ov-enc-choice-cancel');
+  // Fallback when the modal DOM isn't available — degrade to a confirm-style
+  // flow with two prompts (storage-or-cancel). Drop path requires the modal
+  // since there's no simple prompt equivalent for a scoped dropdown.
+  if(!_msg||!_sel||!_bDrop||!_bStorage||!_bCancel){
+    if(confirm('\u26a0 '+destC.name+' would become encumbered carrying '+incomingItem+' ('+incomingWt+' lb).\n\nOK = Send to Franchise Storage instead.\nCancel = Refund and abort.')){
+      onStorage();
+    } else {
+      onCancel();
+    }
+    return;
+  }
+  _msg.textContent='\u26a0 '+destC.name+' would become encumbered carrying '+incomingItem+' ('+incomingWt+' lb). Choose how to handle this delivery:';
+  if(giveOptions.length){
+    _sel.innerHTML=giveOptions.map(function(it){
+      return '<option value="'+esc(it)+'">'+esc(it)+' ('+(ITEM_WEIGHT[it]||1)+' lb)</option>';
+    }).join('');
+    _sel.disabled=false;
+    _sel.style.opacity='1';
+    if(_nodrop)_nodrop.style.display='none';
+    _bDrop.disabled=false;
+    _bDrop.style.opacity='1';
+    _bDrop.style.cursor='pointer';
+    _bDrop.title='';
+  } else {
+    // No droppable items ≥ incoming weight — gray out Drop option with note.
+    _sel.innerHTML='<option value="">(no items of equal or greater weight)</option>';
+    _sel.disabled=true;
+    _sel.style.opacity='.5';
+    if(_nodrop)_nodrop.style.display='';
+    _bDrop.disabled=true;
+    _bDrop.style.opacity='.45';
+    _bDrop.style.cursor='not-allowed';
+    _bDrop.title='No items of '+incomingWt+' lb or heavier to relinquish.';
+  }
+  // Clone buttons to discard any prior listeners from a previous invocation.
+  var _bDrop2=_bDrop.cloneNode(true);_bDrop.parentNode.replaceChild(_bDrop2,_bDrop);
+  var _bStorage2=_bStorage.cloneNode(true);_bStorage.parentNode.replaceChild(_bStorage2,_bStorage);
+  var _bCancel2=_bCancel.cloneNode(true);_bCancel.parentNode.replaceChild(_bCancel2,_bCancel);
+  _bDrop2.addEventListener('click',function(){
+    if(_bDrop2.disabled)return;
+    var relinquished=document.getElementById('ov-enc-choice-sel').value;
+    if(!relinquished)return;
+    closeOv('ov-enc-choice');
+    var _ri=destC.inv.indexOf(relinquished);
+    if(_ri!==-1)destC.inv.splice(_ri,1);
+    if(!S.franchiseStorage)S.franchiseStorage=[];
+    S.franchiseStorage.push(relinquished);
+    logAdd(destC.name+' relinquished '+relinquished+' to Franchise Storage to make room.','buy');
+    onDrop(relinquished);
+  });
+  _bStorage2.addEventListener('click',function(){
+    closeOv('ov-enc-choice');
+    onStorage();
+  });
+  _bCancel2.addEventListener('click',function(){
+    closeOv('ov-enc-choice');
+    onCancel();
+  });
+  openOv('ov-enc-choice');
 }
 
 function sbGet(table,params){
