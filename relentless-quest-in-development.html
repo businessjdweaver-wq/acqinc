@@ -2531,7 +2531,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7038</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7039</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3337,7 +3337,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7038
+      Version 1.7039
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3371,6 +3371,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7039</strong> &mdash; Territory persistence fix (round-trip strip, sixth occurrence). <strong>User report:</strong> after unclocking all squads and quest cycles to re-sort squads, then re-activating Solarians to the active cycle and assigning characters, all four squads landed in a collapsed "Unassigned Territory 0 / 4 squads · 0 unassigned" zone and none were offered in the grind clock-in picker. Screenshot confirmed Solarians, Stellani, Terrans, and Bloodhawks all stacked in the empty-territory bucket while the Headquarters (8/10) virtual unassigned panel correctly reported its Minsaka characters — so characters and squads had gotten out of sync on the territory field. <strong>Root cause.</strong> <code>sq.homeTerritory</code> (added by v1.7006) was never persisted to Supabase. The <code>squads</code> table sbPush (line ~27067) wrote <code>{user_id, name, squad_name, emoji, color, member_names, member_ids, collapsed}</code> and the sbPull rebuild (line ~27674) constructed <code>{_sbId, name, emoji, color, memberIdxs, collapsed}</code> — <code>homeTerritory</code> appeared in neither. After a push+pull cycle, every squad returned with <code>homeTerritory</code> undefined; <code>migrateToTerritoryV1_7006</code> (called later in the sbPull <code>.then</code> chain) tried to backfill via the <code>!sq.homeTerritory</code> guard, but on a fresh <code>S=createDefaultState()</code> with <code>originTerritory:''</code>, its fallback was <code>sq.homeTerritory=S.originTerritory||''</code> — itself empty-string when <code>computeOriginTerritory()</code> fired before <code>QUESTSETS</code>/<code>mergeCustomContent</code> had stabilized the territory stamps. Net result: squads reliably landed with <code>homeTerritory=''</code> on every pull, and the Party screen's bucket key <code>sq.homeTerritory||S.originTerritory||''</code> (line ~17289) resolved to the empty bucket. The grind clock-in helper <code>availableSquadsForGrindClockIn(territory)</code> (v1.7013, line ~8188) then filtered to squads whose <code>homeTerritory</code> matched the target territory — with empty-string on every squad, nothing matched Minsaka, and the picker was empty. <strong>Also broken.</strong> <code>S.originTerritory</code> and <code>S.unlockedTerritories</code> (added by v1.7006) were also never persisted — they rode on the franchise row's <code>settings</code> jsonb column but no <code>_originTerritory</code> / <code>_unlockedTerritories</code> keys were being written or read. The migration's re-seed from <code>QUESTSETS[0]</code> covered <code>originTerritory</code> for the default (Minsaka) case, but any later territories the player unlocked by buying a 1000+ gp building in a non-origin cycle would silently vanish on the next pull, reverting the franchise to origin-only. This violates the v1.7006 monotonic-unlock invariant. <strong>What landed.</strong> <strong>(1) <code>squads.name</code> column now carries a <code>__sqmeta__</code> pack.</strong> Extends the v1.495 pattern that originally packed emoji and color into the <code>name</code> column before they got dedicated columns. sbPush now writes <code>name:sq.name+'__sqmeta__'+JSON.stringify({homeTerritory:...})</code> when <code>homeTerritory</code> is set; <code>squad_name</code> stays clean as the authoritative display-name source. The only live consumer of the <code>name</code> column is the sbPull legacy branch (line ~27640), which already strips <code>__sqmeta__</code> before <code>__members__</code> — so back-compat is by construction. No ALTER TABLE required; fifth time this "piggyback on an existing channel" pattern has shipped (v1.495 emoji/color in name, v1.6995 <code>_boh</code>/<code>_fx</code> in <code>type</code>, v1.7001 <code>_col</code> in <code>__meta</code>, v1.7033 <code>_done</code>/<code>_waiting</code>/<code>_waitingNote</code> in <code>__meta</code>, now <code>homeTerritory</code> in <code>__sqmeta__</code>). <strong>(2) Both sbPull branches (new-schema and legacy) parse <code>__sqmeta__</code> for <code>homeTerritory</code>.</strong> The new-schema branch extracts <code>homeTerritory</code> from the <code>name</code> column's pack before using <code>squad_name</code> as the clean sqName — the extraction is shared across branches via a pre-check that runs before the <code>if(sq.squad_name)</code> split. Stamped onto the rebuilt squad object alongside <code>_sbId, name, emoji, color, memberIdxs, collapsed</code>. Empty string when the pack is absent; <code>migrateToTerritoryV1_7006</code> later in the <code>.then</code> chain still backfills from <code>S.originTerritory</code> for any squad that arrived without a pack (pre-v1.7039 rows, or fresh franchises). <strong>(3) franchise.settings blob now carries <code>_originTerritory</code> and <code>_unlockedTerritories</code>.</strong> Matches the existing <code>_qpPending</code> / <code>_qpLedger</code> pattern for franchise-level state that hasn't been promoted to a dedicated column. sbPush writes them into <code>cleanSettings</code> before the upsert; sbPull reads them back and strips them (they're removed from the cleanSettings that ends up on <code>S.settings</code> so there's no source-of-truth ambiguity between <code>S.originTerritory</code> and <code>S.settings._originTerritory</code>). Fallback behavior on missing values: sbPull only overwrites <code>S.originTerritory</code> / <code>S.unlockedTerritories</code> when the blob value is non-empty, so a pull from a pre-v1.7039 row doesn't wipe values the local in-memory state had (which typically came from localStorage or the migration). <strong>(4) Code-session <code>_keys</code> updated.</strong> The <code>_keys</code> array at sbPush (line ~26851, used by code-session accounts that save the whole <code>S</code> object as a single blob to <code>login_codes.player_data</code>) added <code>originTerritory</code>, <code>unlockedTerritories</code>, and <code>kudos</code>. <code>kudos</code> was another silent omission (added by v1.6996) — code-session users would've lost their kudos log on cross-device pulls. Several other fields remain absent from <code>_keys</code> (<code>archCollapsed</code>, <code>squadCollapsed</code>, <code>qpPending</code>, <code>qpLedger</code>, <code>qpLoginStreak</code>, <code>qpLastLoginDate</code>, <code>lastFavCheck</code>, plus the intentionally-session-local <code>stock</code>/<code>stockDate</code>/<code>doneEnc</code>/<code>encAssigned</code>/<code>pendingQuests</code>); these are flagged in an inline comment for the pending grep-audit that v1.7001 and v1.7033 already called for. Not addressed in this version to keep the fix narrowly scoped. <strong>Deployment note: first-pull behavior on existing saves.</strong> On first load after deploy, <code>migrateToTerritoryV1_7006</code> runs as usual and backfills <code>homeTerritory</code> on every squad via the fallback path (<code>foundTerr||S.originTerritory||''</code>). On the next save (debounced push), the new pack writes <code>homeTerritory</code> into <code>squads.name.__sqmeta__</code> and <code>_originTerritory</code>/<code>_unlockedTerritories</code> into <code>franchise.settings</code>. From that save forward the state is authoritative; subsequent pulls restore the field from the blob rather than re-running the QUESTSETS-seeded fallback. <strong>Workaround for users mid-session before the save completes:</strong> a console one-liner <code>S.squads.forEach(sq=>sq.homeTerritory=sq.homeTerritory||'Minsaka');save();renderParty();</code> forces an immediate backfill + push without waiting for the auto-save debounce. Per-user territory string varies if they've renamed the origin; default Minsaka per v1.7007's hardcoded stamps on the four built-in cycles. <strong>Sixth occurrence of the "JSON-rides-but-wasn't-plumbed" pattern.</strong> Prior five instances catalogued in v1.7033's audit note (<em>pct</em> v1.543, <em>bagOfHolding/effect</em> v1.6995, <em>pinned/split_group_meta</em> v1.6930, <em>_col</em> v1.7001, <em>done/waiting/waitingNote</em> v1.7033). Adding a systematic grep-audit to v1.7040's backlog — each additive field added to <code>S</code>/<code>sq</code>/<code>c</code>/<code>item</code> since v1.6900 should be cross-checked against the sbPush column lists and the code-session <code>_keys</code> array. If anything else is missing, it's a latent time-bomb. <strong>Scope boundaries.</strong> <strong>(i) No SQL change.</strong> Piggyback pattern avoids ALTER TABLE on both <code>squads</code> (homeTerritory rides in <code>name.__sqmeta__</code>) and <code>franchise</code> (origin/unlocked ride in <code>settings.jsonb</code>). If later we want a dedicated <code>home_territory</code> column for query performance or reporting, it's a trivial additive migration — the read path would just prefer the column over the pack. <strong>(ii) <code>c.homeTerritory</code> persistence was already correct.</strong> Character rows use dedicated columns, and <code>c.homeTerritory</code> was plumbed in the v1.7006 party sbPush/sbPull via the broader field-preservation... (audit needed to verify; noted as a follow-up). The symptom Justin reported focused on squads so they're fixed first; characters appear to be working per the rendered "Headquarters (8/10)" bucket showing correct Minsaka membership. <strong>(iii) Existing <code>__sqmeta__</code> legacy pack behavior unchanged.</strong> The legacy branch still parses emoji/color from <code>__sqmeta__</code> for pre-v1.495 rows; the v1.7039 addition of <code>homeTerritory</code> to the pack is additive — old rows still work, new rows carry the new field. <strong>(iv) Character <code>homeTerritory</code> backfill on load unchanged.</strong> Line 16719's per-render loop in <code>renderParty</code> (v1.7006) still catches characters created by any of the six <code>S.party.push(…)</code> sites without homeTerritory; this patch doesn't disturb that path. <strong>Unchanged behaviors.</strong> Grind clock-in rules (one-territory-per-squad, v1.7013), territory unlock via 1000+ gp building purchase (v1.7006), per-territory unassigned bucket cap (v1.7006), squad creation territory picker (v1.7006). Those all continue to work; they just now have a reliable persistent <code>homeTerritory</code> to read. <strong>No SQL change. No data-model change beyond the additive <code>_originTerritory</code>/<code>_unlockedTerritories</code> keys in the franchise settings blob and the additive <code>homeTerritory</code> field inside <code>squads.name</code>'s <code>__sqmeta__</code> pack.</strong></div>
         <div style="margin-bottom:9px"><strong>Version 1.7038</strong> &mdash; Encumbrance-on-purchase: three-way choice modal + refund-on-cancel. <strong>User report:</strong> when a store purchase would encumber the assigned character, the Franchise Storage flow already offered a drop-an-existing-item picker (<code>encumbranceRelinquishPrompt</code> / <code>ov-enc-drop</code>, v1.575/576), but the store-buy and quest-prereq-slot-buy flows did not — they showed only a simple yes/no "Send to Franchise Storage instead?" confirm. <strong>Investigation finding:</strong> the store-buy and quest-prereq-slot-buy flows are actually the <em>same</em> code path — both open <code>ov-buyitem</code> and commit through the <code>ov-bi-yes</code> handler, which at line ~24772 ran a <code>confirm()</code> for the encumbrance branch. The quest-prereq-slot entry point (<code>qcs-store-link</code>) sets <code>window._questModalOpenAfterBuy=true</code> so the quest modal re-opens after a successful buy, but that hook was bypassed by an early <code>return;</code> in the encumbrance branch. Also noticed: clicking "No" (cancel) on the yes/no confirm already <em>kept the user's gold</em> while delivering nothing — a pre-existing latent gold-leak bug since gold is spent at line 24752 (<code>goldSpend</code>) before reaching the encumbrance check. <strong>What landed:</strong> <strong>(1) New modal <code>ov-enc-choice</code>.</strong> Three-button layout (Drop &amp; Deliver / Send to Franchise Storage / Cancel &amp; Refund) with an inline dropdown of relinquishable items (weight ≥ incoming, sourced from <code>destC.inv</code> with the same <code>__meta__</code>-exclusion filter as <code>encumbranceRelinquishPrompt</code>). Distinct from the existing <code>ov-enc-drop</code> because Cancel here has to refund gold — the storage→char transfer flow that uses <code>ov-enc-drop</code> is free, so its Cancel can just close. <strong>(2) New helper <code>encumbranceChoicePrompt(destC, destCi, incomingItem, onDrop, onStorage, onCancel)</code>.</strong> Three callbacks match the three outcomes. If the character has no items ≥ incoming weight, the Drop button renders grayed out (opacity .45, <code>disabled=true</code>, explanatory title) and the dropdown shows a "(no items of equal or greater weight)" placeholder with a secondary italic note row; the user can still choose Send to Storage or Cancel. Clone-and-replace pattern on all three buttons to clear any listeners from a prior invocation, mirroring <code>encumbranceRelinquishPrompt</code>'s approach. Fallback path if the modal DOM is missing: degrade to a confirm() with Storage vs. Cancel (no drop path in the fallback — there's no simple prompt equivalent for a weight-filtered dropdown). <strong>(3) <code>ov-bi-yes</code> handler rewired.</strong> The encumbrance branch now calls <code>encumbranceChoicePrompt</code> and returns; the three outcomes run through three new local helpers defined just above the check: <code>_finalizeToChar</code> (drop → put incoming in char.inv + full <code>_reopen</code> auto-assign for the quest-prereq flow), <code>_finalizeToStorage</code> (storage → push to <code>franchiseStorage</code>, clear <code>_questModalOpenAfterBuy</code> since the char isn't carrying it so the prereq slot stays unmet), <code>_cancelAndRefund</code> (refund via <code>goldAdd(total, 'Refund: ... (encumbrance-cancel)', 'buy')</code>, clear <code>_questModalOpenAfterBuy</code>, close buy modal). The refund log entry is symmetric with the original <code>goldSpend</code> charge so the ledger shows both the debit and the credit. <strong>(4) Quest prereq behavior pinned per user spec.</strong> When the chosen outcome is Send-to-Storage and the flow was initiated from a quest-prereq-slot Purchase button, the quest modal does NOT re-open / auto-assign — the purchased prereq item is in franchise storage, not in the slotted character's inventory, so the slot remains unmet (matches <code>questPrereqCheck</code>'s rule that item prereqs count only items carried by non-busy peg-slot chars, v1.616/v1.620). If the user wants to satisfy the slot, they can Give the item from storage to the character via the existing Franchise Storage row's drop-picker flow. <strong>Scope boundaries:</strong> <strong>(i) <code>from-storage</code> (franchise storage → char Give) path unchanged.</strong> Still uses <code>encumbranceRelinquishPrompt</code> / <code>ov-enc-drop</code>; no behavior change. The two flows live on different modals so the user can have one open and not risk button/listener state clash with the other. <strong>(ii) Quantity handling.</strong> The encumbrance check is <code>wouldEncumber(c, item.name)</code> which considers one unit of weight — if the user buys <code>qty=3</code> and drops one existing ≥-weight item to make room, the resulting state may still leave the character encumbered (they receive 3 copies, dropped only 1). This matches how <code>wouldEncumber</code> and the encumbrance system generally work (encumbrance is not blocked — only warned-on-would-trigger — and a character CAN be encumbered). No qty-per-drop logic added; keeps the fix narrow. If needed, a v1.7039 could iterate: require dropping enough items to cover <code>qty × incomingWt</code>, or force <code>qty=1</code> for encumbering buys. <strong>(iii) Non-character destinations unchanged.</strong> Buying to storage, buildings, vehicles, or squads bypasses the encumbrance check as before — no character carries those items. <strong>(iv) Fallback path behavior.</strong> If the new modal DOM somehow isn't found (should never happen on a correctly-loaded page), the fallback <code>confirm()</code> offers Storage vs. Cancel-with-refund. Losing the Drop option in fallback is a conservative degradation; the two destination paths still work. <strong>No SQL change. No data-model change.</strong> Pure UI + handler-logic fix. One new modal (<code>ov-enc-choice</code>, ~20 lines HTML), one new helper function (<code>encumbranceChoicePrompt</code>, ~75 lines), three new local finalization closures in the <code>ov-bi-yes</code> handler (~55 lines), replacing the previous ~8-line encumbrance branch. Net add ~140 lines.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7037</strong> &mdash; Contracts screen layout reshuffle. <strong>User ask:</strong> move the Task Search box to the top of the page, and move the "new contract" composer (name field + gp value + + Add button) between the Undo/Archive/Kudos action row and the Pinned Tasks zone at the top of <code>#tlist</code>. <strong>New top-to-bottom order on the Contracts screen:</strong> (1) title "✦ Active Contracts", (2) 🔍 search bar, (3) Undo / Archive / Kudos action row (+ desktop column-count toggle + Rebalance), (4) "New contract…" composer row, (5) gp-per-tick hint + ℹ help icon, (6) daily task-budget readout, (7) <code>#tlist</code> containing Pinned Tasks zone and main task list. <strong>Rationale:</strong> search-first positioning lets the user locate any existing contract before deciding whether to add a new one — a common pattern when re-engaging with a long backlog. The new-contract composer sits directly above the task list (Pinned zone is the first visible item inside <code>#tlist</code>), which creates a natural add → see-appear-below flow. Previously the composer was at the top of the screen and the budget readout separated it from the pin zone, so a newly added contract was visually far from its appearance point. <strong>Purely HTML reordering — no JS changes.</strong> Every element keeps its existing <code>id</code>, so every event listener (<code>#btn-addtask</code>, <code>#new-tname</code>, <code>#new-tgp</code>, <code>#contract-search-input</code>, <code>#btn-undo</code>, <code>#btn-nav-archive</code>, <code>#btn-kudos</code>, <code>#cols-toggle</code>, <code>#btn-cols-rebalance</code>, <code>#btn-contracts-help</code>, <code>#task-budget-readout</code>) continues to bind and fire unchanged. <code>bindContractSearch()</code> still finds <code>#contract-search-wrap</code>. <code>renderTasks()</code> still writes into <code>#tlist</code>. The hidden legacy stubs (<code>#tsort</code>, <code>#btn-newgrp</code>, <code>#btn-nav-projects</code>) are preserved in their guard positions just before <code>#tlist</code>. No data-model change. No SQL change. CSS classes (<code>.addrow</code>, <code>.stitle</code>, <code>.hint</code>) unchanged, so existing per-element styling (border colors, spacing, typography) reads identically in the new position.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7036</strong> &mdash; Pinned-row drawer spacing fixes. <strong>User report:</strong> after v1.7034/7035 added the ⏳ waiting button to the pinned-row left drawer (making it 3 buttons: 📍 + ✕ + ⏳), swiping a pinned row right on mobile showed the drawer plus partial ghosting of the right-drawer buttons on the same row. The reveal ate most of the visible row width on narrow pinned sub-columns. <strong>Three coordinated fixes:</strong> <strong>(1) Tighter pinned drawer buttons.</strong> New rule <code>.strow.strow-pin .strow-drawer-btn{min-width:38px;padding:0 5px}</code> scopes pinned-row drawer buttons to 38px instead of the main-list 44px. Scoped specifically to <code>.strow-pin</code> so main-list sub-rows keep comfort-size hit boxes; pinned rows are inherently more compact (narrower sub-columns, smaller content) so 38px still comfortably fits a thumb but gives 6px per button × 3 = 18px savings across the drawer. <strong>(2) Reduced pinned reveal distance.</strong> <code>.strow.strow-pin.strow-show-del .strow-main</code> translate reduced from 170px → 140px. Budget: 3 × 38 + 2 × 8 padding + small gaps ≈ 130px; 140 gives buffer. Main-list rows keep the 120px reveal from v1.7034 (they have the full 44px buttons). <strong>(3) Right drawer opacity gating.</strong> Added <code>.strow.strow-pin .strow-actions{opacity:0;pointer-events:none}</code> at rest and <code>.strow.strow-pin.strow-show-actions .strow-actions{opacity:1;pointer-events:auto}</code> on swipe-left. This is a scoped revival of the v1.6965 drawer-hiding treatment (which was rolled back in v1.6966 along with a broader translucent-row experiment); here it only affects pinned rows and only hides the right drawer, so the artifacts the v1.6966 rollback was addressing don't recur. Effect: when the user swipes a pinned row right (to reveal the left drawer's 📍/✕/⏳ buttons), the right drawer's +gp label and ⇈/↑/↓ reorder buttons stay fully hidden instead of potentially bleeding through at the row's right edge. When the user swipes left (to reveal the right drawer), the right drawer fades in with a 180ms ease matching the row's translate animation. The <code>pointer-events:none</code> on the hidden state means accidental taps near the row's right edge don't trigger the reorder buttons — only when the drawer is actually revealed. No changes to main-list rows, which keep their always-visible drawers (both at rest and during swipe) since they've always had opaque parchment and no bleed-through issues. No SQL change. No data-model change. CSS-only fix, three rules changed.</div>
@@ -26855,7 +26856,22 @@ function sbPush(manual){
       // v1.6930: Pinned Spotlight + split-group metadata persist for code-
       // session accounts via the player_data blob. (The regular user path
       // uses dedicated jsonb columns on franchise.)
-      'splitGroupMeta','pinned'];
+      'splitGroupMeta','pinned',
+      // v1.7039: territory progression state. originTerritory and
+      // unlockedTerritories were added by v1.7006 but never plumbed into
+      // the code-session blob — the migrateToTerritoryV1_7006 heal-on-load
+      // seeded originTerritory from QUESTSETS but unlockedTerritories was
+      // lost on every pull. Both now ride in the blob so code-session
+      // saves round-trip cleanly.
+      'originTerritory','unlockedTerritories',
+      // v1.7039 note: other v1.7006+ state fields (archCollapsed, squadCollapsed,
+      // kudos, qpPending, qpLedger, qpLoginStreak, qpLastLoginDate, lastFavCheck)
+      // are also absent from this list. Code-session is the less-common path
+      // and these fields have various trade-offs (some are intentionally
+      // session-local, e.g. stock/stockDate rotate daily). A deliberate
+      // audit is tracked in the v1.7039 changelog and in the grep-audit
+      // TODO called for by v1.7001 and v1.7033.
+      'kudos'];
     _keys.forEach(function(k){if(S[k]!==undefined)_blob[k]=S[k];});
     return sbFetch(SB_URL+'/rest/v1/login_codes?id=eq.'+encodeURIComponent(currentUser._codeId),{
       method:'PATCH',
@@ -26885,6 +26901,20 @@ function sbPush(manual){
     ['_franchiseStorage','_questLog','_taskGroups','_partyAssetsBackup','_archivedBackup',
      '_downtimeJobs','_questStateBackup','_questCyclesHistoryBackup','_questCycleSquadsBackup',
      '_qpBalance','_qpPending','_qpLedger','_qpEarnedToday','_qpEarnDate'].forEach(function(k){delete cleanSettings[k];});
+    // v1.7039 — pack territory progression state into the settings blob
+    // (underscore-prefixed, matching the _qpPending / _qpLedger pattern used
+    // for other franchise-level state that doesn't yet have a dedicated
+    // column). Without this, S.originTerritory and S.unlockedTerritories
+    // were recomputed from QUESTSETS on every load via
+    // migrateToTerritoryV1_7006, which works for the origin seed but drops
+    // any later unlocks the player earned by buying territory-gating
+    // buildings. The monotonic-unlock invariant (v1.7006) is meaningless
+    // if the list doesn't survive a pull. Pushing these as _originTerritory
+    // and _unlockedTerritories means the franchise row is now the source
+    // of truth; the migration on load still heals missing data for fresh
+    // or legacy saves.
+    cleanSettings._originTerritory=S.originTerritory||'';
+    cleanSettings._unlockedTerritories=(S.unlockedTerritories||[]).slice();
     return sbUpsert('franchise',[{
       user_id:userId,
       gold:S.gold,
@@ -27068,9 +27098,27 @@ function sbPush(manual){
       var memberNames=(sq.memberIdxs||[]).map(function(ci){
         return S.party[ci]?S.party[ci].name:'';
       }).filter(function(n){return n;});
-      // Block 3: proper columns — keep name column as squad name only
+      // v1.7039 — pack homeTerritory into the `name` column via a __sqmeta__
+      // suffix, extending the v1.495 pattern that originally carried emoji
+      // and color the same way. The dedicated emoji/color columns
+      // superseded that use of __sqmeta__, but the piggyback channel is
+      // still the cleanest way to carry a new field without requiring an
+      // ALTER TABLE on the squads schema. Consumers of the `name` column
+      // that expect a clean squad name will need to strip __sqmeta__ — but
+      // the only live consumer is the sbPull legacy branch (line ~27640)
+      // which already strips __sqmeta__ before __members__, so this is
+      // back-compat by construction. `squad_name` stays clean as the
+      // authoritative source of the display name for the new-schema path.
+      var _nameCol=sq.name;
+      var _sqmetaObj={};
+      if(sq.homeTerritory)_sqmetaObj.homeTerritory=sq.homeTerritory;
+      if(Object.keys(_sqmetaObj).length){
+        _nameCol=sq.name+'__sqmeta__'+JSON.stringify(_sqmetaObj);
+      }
+      // Block 3: proper columns — squad_name stays clean; name carries
+      // the __sqmeta__ pack (or is equal to squad_name when no meta).
       return {user_id:userId,
-        name:sq.name,          // clean name — no more packing
+        name:_nameCol,
         squad_name:sq.name,
         emoji:sq.emoji||'⚔',
         color:sq.color||SQUAD_COLORS[0],
@@ -27385,6 +27433,18 @@ function sbPull(manual){
       // QP pending/ledger still in settings blob (no new column needed — these are ephemeral)
       S.qpPending=rawSettings._qpPending||[];
       S.qpLedger=rawSettings._qpLedger||[];
+      // v1.7039 — read territory progression state from the settings blob.
+      // Fall back to the in-memory value (from localStorage) for saves made
+      // before this version, so we don't wipe an existing unlocked list on
+      // the first pull after upgrade. migrateToTerritoryV1_7006 runs later
+      // in this .then chain and will re-seed from QUESTSETS if both the
+      // blob and memory are empty.
+      if(typeof rawSettings._originTerritory==='string'&&rawSettings._originTerritory){
+        S.originTerritory=rawSettings._originTerritory;
+      }
+      if(Array.isArray(rawSettings._unlockedTerritories)&&rawSettings._unlockedTerritories.length){
+        S.unlockedTerritories=rawSettings._unlockedTerritories.slice();
+      }
       // Legacy backup fields (task_groups now has its own table; these are fallbacks only)
       backupPartyAssets=rawSettings._partyAssetsBackup||[];
       backupArchived=rawSettings._archivedBackup||[];
@@ -27393,7 +27453,11 @@ function sbPull(manual){
       var cleanSettings=Object.assign({},rawSettings);
       ['_franchiseStorage','_questLog','_taskGroups','_partyAssetsBackup','_archivedBackup',
        '_downtimeJobs','_questStateBackup','_questCyclesHistoryBackup','_questCycleSquadsBackup',
-       '_qpBalance','_qpPending','_qpLedger','_qpEarnedToday','_qpEarnDate'].forEach(function(k){delete cleanSettings[k];});
+       '_qpBalance','_qpPending','_qpLedger','_qpEarnedToday','_qpEarnDate',
+       // v1.7039 — territory progression state is unpacked above; strip the
+       // underscore keys from settings so they don't also get stored on S.settings
+       // where they'd become a source-of-truth ambiguity.
+       '_originTerritory','_unlockedTerritories'].forEach(function(k){delete cleanSettings[k];});
       S.settings=normalizeSettings(cleanSettings);
     }
     if(party&&party.length){
@@ -27630,6 +27694,21 @@ function sbPull(manual){
       S.squads=squads.map(function(sq){
         // Block 3: read proper columns first, fall back to packed name for legacy rows
         var sqName,memberNames,sqEmoji,sqColor;
+        // v1.7039 — homeTerritory rides in the name column's __sqmeta__ pack
+        // regardless of which schema branch the row came from (see sbPush).
+        // We parse it here so both branches can stamp it onto the rebuilt
+        // squad object. Falls back to '' when absent; migrateToTerritoryV1_7006
+        // (called later in the sbPull .then chain) then backfills from
+        // S.originTerritory for any squad still lacking it.
+        var sqHomeTerritory='';
+        var _rawNameCol=sq.name||'';
+        var _newMetaSep=_rawNameCol.indexOf('__sqmeta__');
+        if(_newMetaSep!==-1){
+          try{
+            var _newMetaObj=JSON.parse(_rawNameCol.slice(_newMetaSep+10));
+            if(_newMetaObj&&_newMetaObj.homeTerritory)sqHomeTerritory=_newMetaObj.homeTerritory;
+          }catch(_e){}
+        }
         if(sq.squad_name){
           // New schema
           sqName=sq.squad_name;
@@ -27642,7 +27721,14 @@ function sbPull(manual){
           sqName=rawName;sqEmoji='⚔';sqColor=SQUAD_COLORS[0];memberNames=[];
           var metaSep=rawName.indexOf('__sqmeta__');
           if(metaSep!==-1){
-            try{var metaObj=JSON.parse(rawName.slice(metaSep+10));sqEmoji=metaObj.emoji||sqEmoji;sqColor=metaObj.color||sqColor;}catch(e){}
+            try{var metaObj=JSON.parse(rawName.slice(metaSep+10));sqEmoji=metaObj.emoji||sqEmoji;sqColor=metaObj.color||sqColor;
+              // v1.7039 — legacy branch also picks up homeTerritory from the
+              // same __sqmeta__ pack, in case a pre-v1.7039 row gets pushed
+              // with the new field and then re-pulled via the legacy path
+              // (shouldn't happen under normal flow since squad_name is
+              // always written, but defensive against shape drift).
+              if(metaObj.homeTerritory)sqHomeTerritory=metaObj.homeTerritory;
+            }catch(e){}
             rawName=rawName.slice(0,metaSep);
           }
           var sep=rawName.indexOf('__members__');
@@ -27653,7 +27739,11 @@ function sbPull(manual){
         memberNames.forEach(function(name){
           S.party.forEach(function(c,ci){if(c.name===name)memberIdxs.push(ci);});
         });
-        return {_sbId:sq.id,name:sqName,emoji:sqEmoji,color:sqColor,memberIdxs:memberIdxs,collapsed:false};
+        return {_sbId:sq.id,name:sqName,emoji:sqEmoji,color:sqColor,memberIdxs:memberIdxs,collapsed:false,
+          // v1.7039 — carry homeTerritory through sbPull. Empty string when
+          // absent; the v1.7006 migration that runs later in this .then
+          // chain backfills from S.originTerritory.
+          homeTerritory:sqHomeTerritory};
       });
     }
     // v1.6995 — Bag ownerRef reconciliation (moved from before squads-load
