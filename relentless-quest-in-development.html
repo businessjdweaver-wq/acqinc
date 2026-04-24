@@ -2747,7 +2747,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7067</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7068</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3540,7 +3540,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7067
+      Version 1.7068
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3580,6 +3580,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7068</strong> &mdash; Quest-prereq Purchase button: route pets (and all party-asset items) through asset-mode commit so they end up in <code>S.partyAssets</code> instead of corrupted as strings in a character&#39;s <code>inv</code>. <strong>User report.</strong> After v1.7067 made the Purchase button render for pet prereqs, clicking it on the Rat slot did appear to complete a purchase, but the quest prereq slot remained unmet. Inspection of the affected character&#39;s gear screen showed Rat sitting in the regular Inventory list (alongside Adventurer&#39;s Pack, Mace, etc.) rather than in the &quot;Pets &amp; Mounts&quot; section. <strong>Diagnosis.</strong> The <code>qcs-store-link</code> click handler at line ~25770 sets <code>P5.assetMode=false</code> and routes through a path that uses <code>P5.item=&#39;__questitem__&#39;</code> + <code>P5.customItem=shopItem</code>. The buy commit (<code>ov-bi-yes</code>) reads <code>P5.assetMode</code> to decide between (a) push to <code>S.partyAssets</code> as a typed object (asset-mode path, lines 26583-26595) or (b) push to <code>S.party[ci].inv</code> as a flat string (inv path, line 26610). Pets &mdash; like vehicles, mounts, animals, and any item flagged <code>party:true</code> &mdash; require asset-mode because the prereq met-check at line ~34783 scans <code>S.partyAssets</code> for matching <code>type:&#39;pet&#39;</code> entries; a pet sitting as a string in <code>inv</code> is invisible to that check. The normal store-side opener at line ~26439 has an <code>if(item.party){ P5.assetMode=true; ... }</code> branch that flips the mode and sets up the asset-style owner picker. The <code>qcs-store-link</code> handler bypassed that branch entirely, so all party-asset items purchased via prereq Purchase buttons silently corrupted into inv strings. The bug existed for vehicles, animals, and mounts as well as pets &mdash; pets just made it newly visible because v1.7067 was the first version where pet prereqs even got a Purchase button. <strong>What landed.</strong> <strong>(1) <code>qcs-store-link</code> handler now branches on <code>shopItem.party</code>.</strong> When true, it runs the same asset-mode setup the regular store opener uses: <code>P5.assetMode=true</code>, <code>ensureAssetMetas()</code>, building / animal owner-picker variants, name row, party note, etc. <code>P5.item</code> is set to the pet&#39;s name (string) so the commit handler resolves it via the <code>_allItems</code> name lookup at line 26508 (which already includes <code>PETS</code> via v1.7067&#39;s SQL seed). When false, the original gear path runs unchanged. <strong>(2) Asset-mode commit now honors the quest-prereq re-open flag.</strong> The inv-path commit (<code>_finalizeToChar</code> at line ~26608) had the <code>_reopen</code> hook from v1.6924 that re-renders the quest modal after a successful prereq buy; the asset-mode commit at line 26594 closed the buy modal silently without the equivalent. Added a parallel <code>_reopenAsset</code> read so post-purchase the quest modal re-opens and the prereq slot lights up green. Notably the asset-mode re-open does NOT auto-assign characters to slots the way the inv-path does &mdash; pet ownership semantics are different (the user picks the owner explicitly via the asset-mode owner-picker, including unowned-franchise / squad / building / vehicle, so auto-assigning the &quot;slotted character&quot; based on a pet buy is ambiguous). The user sees the slot now met (the existing met-check correctly handles char-owned vs unowned pets) and proceeds. <strong>Migration for affected users.</strong> Anyone who purchased a pet via the prereq Purchase button after v1.7067 deployed will have the pet stuck as a string in their <code>inv</code>. Console one-liner to heal: <code>(()=&gt;{const targetCi=S.party.findIndex(c=&gt;c&amp;&amp;c.name===&#39;Bree Zephyrstone&#39;);if(targetCi===-1)return&#39;not found&#39;;const c=S.party[targetCi];const ratIdx=(c.inv||[]).indexOf(&#39;Rat&#39;);if(ratIdx===-1)return&#39;no Rat in inv&#39;;c.inv.splice(ratIdx,1);if(!S.partyAssets)S.partyAssets=[];S.partyAssets.push({name:&#39;Rat&#39;,ic:&#39;\ud83d\udc00&#39;,type:&#39;pet&#39;,meta:{uid:&#39;a&#39;+Date.now().toString(36)+Math.random().toString(36).slice(2,8),customName:&#39;&#39;,ownerType:&#39;char&#39;,ownerRef:c.name}});return&#39;Rat moved from &#39;+c.name+&#39;\u2019s inv to partyAssets as a pet (ownerType=char)&#39;;})()</code> (replace the character name as needed). Then trigger a save by doing any small UI action. <strong>Scope.</strong> Two edits, both in the buy flow (handler routing + commit re-open). No SQL change, no data-model change, no schema change. The <code>S.partyAssets</code> shape is unchanged &mdash; this just routes purchased pets into it correctly instead of into <code>inv</code>.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7067</strong> &mdash; Pet prereqs now show a Purchase button, route to the Pets store tab. Companion to Quest Editor v1.693 + the <code>pets</code>-table seed migration. <strong>Context.</strong> Pets are now in the store as DB rows (seeded via the migration). The classification logic was already correct: <code>isPetItemName('Rat')</code> returns true once Rat exists in <code>PETS</code>, the slot label correctly renders as <code>\ud83d\udc3e PET</code>. But the Purchase button stayed suppressed because of an outdated <code>!slot.isPet</code> guard with the comment &quot;No purchase button for pet prereqs \u2014 pets aren&#39;t in the store.&quot; That comment was true when written; isn&#39;t anymore. <strong>What landed.</strong> Three coordinated edits, all in <code>renderParty</code>&#39;s quest-prep modal render paths: <strong>(1)</strong> The qhole-render Purchase button now emits for pet slots too, routed to the <code>pets</code> store tab instead of <code>adventuring</code>. <strong>(2)</strong> The hireling-needed qhole render path got the same fix; both call sites used the same suppression pattern. <strong>(3)</strong> The info-prereq summary row builder (<code>qddBuildInfoPrereqs</code>) now classifies pet items via <code>isPetItemName</code>, sets <code>isPet:true</code> on the row + uses the <code>\ud83d\udc3e</code> icon, and the corresponding Purchase button in <code>qddInfoPrereqHtml</code> routes pet rows to the <code>pets</code> tab. Without (3), info-summary rows previously rendered every item with the gear icon and routed every Purchase button to the gear tab \u2014 broken for pets, but invisible because the suppression at the qhole level hid the broken button anyway. Fixing both guarantees consistency across the two prereq render surfaces. <strong>Met-check unchanged.</strong> The slot&#39;s &quot;is this prereq satisfied&quot; logic at line 34783 (looks for a matching pet in <code>S.partyAssets</code>) is correct as-is. After purchasing a Rat from the store, the pet ends up in <code>partyAssets</code>, the quest modal re-opens via <code>_questModalOpenAfterBuy</code>, the re-render runs the met-check, finds the pet, lights the slot green. <strong>Click handler unchanged.</strong> The <code>qcs-store-link</code> click handler at line 25781 already includes <code>PETS</code> in its name lookup, so emitting a button with <code>data-tab="pets"</code> for a pet name &quot;just works&quot; \u2014 buy modal opens with the right item, purchase completes, post-buy re-render does the rest. <strong>Scope.</strong> Three edits in three render paths; click handler + buy commit + met-check + post-purchase reopen all unchanged. <strong>No SQL change in this version</strong> (the <code>pets</code> table seed shipped separately as <code>seed-pets.sql</code>). <strong>No data-model change.</strong></div>
         <div style="margin-bottom:9px"><strong>Version 1.7066</strong> &mdash; Apply v1.7065&#39;s secondary-utility button sizing principle to Contracts and Adventure screens. <strong>Contracts</strong>: <code>\u27f2 Undo</code>, <code>The Archive</code>, <code>\u2b50 Kudos</code> action row dropped to inline <code>font-size:.65em; padding:.25em .4em</code> matching the Party screen treatment. <strong>Adventure</strong>: <code>\ud83d\udcc5 Theme</code>, <code>\ud83d\uddfa Map</code>, <code>\ud83d\udcdc Log</code> action row gets the same treatment. <strong>Principle being applied.</strong> Secondary utility buttons (modal openers, jump-to-section, collapse toggles, undo surfaces) in a sticky action bar above content should read as recessive relative to: (a) the bottom navigation, (b) the content itself (task cards, quest cards, character rows), and (c) the content&#39;s section headers. These five buttons all fit that category \u2014 none are the primary action the user came to the screen to take. <strong>Deliberately NOT touched.</strong> <code>+ Add</code> on Contracts and <code>+ Group</code> on Archive are primary CTAs and stay at their current size. Store screen has a different structural pattern (inline search / reroll / category tabs) and doesn&#39;t fit the &quot;secondary utility above content&quot; model. Settings screen buttons are all configurative and stay at their current size. Modal buttons (Save/Cancel/Yes/No/Close) use a different convention \u2014 their discoverability as primary-action-in-modal matters more than hierarchy recession, so they&#39;re left alone. Bottom nav and in-content action buttons (task card \u2715 / \ud83d\udccc / swipe drawer buttons) are the other side of the hierarchy and stay at their sizes. <strong>Scope.</strong> Two HTML inline-style edits, six buttons total. No CSS changes, no JS changes, no data-model change.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7065</strong> &mdash; Party-screen hierarchy fix: secondary utility buttons shrunk to match their role. <strong>Context.</strong> After v1.7063/v1.7064 fixed the roster-row text readability, the top-of-page buttons (ASSETS / STATS / RECRUIT trio + MANAGE SQUADS + COLLAPSE ALL) looked disproportionately massive relative to the newly-legible character rows below. Screenshot confirmed five big uppercase-serif-bold buttons consuming a substantial fraction of the visible viewport before the user saw any party content, and carrying more visual weight than the bottom nav (CONTRACTS / PARTY / QUEST / STORE) which is the <em>actually primary</em> navigation. <strong>Root cause.</strong> The trio at lines 3290\u201392 had inline <code>min-height:36px</code> with no font-size override, so they inherited the <code>.btn.sm</code> baseline of <code>.68em</code> but then got padded to 36px tall regardless. The two action buttons at line 18196\u201397 were already at an inline <code>font-size:.78em</code> override \u2014 which was <em>up</em> from the <code>.sm</code> baseline, not down \u2014 so they rendered even larger than .68em defaults. <strong>What landed.</strong> All five buttons (three top + two in the tagbar) dropped to inline <code>font-size:.65em; padding:.25em .4em</code>. The top trio also lost their <code>min-height:36px</code> floor in favor of <code>min-height:30px</code>. These are secondary utility actions \u2014 jumps within the page, modal opens, collapse toggles \u2014 not primary CTAs. They now read as such: visible, tappable, clearly-labeled, but visually recessive so the character roster content dominates the viewport. <strong>What this does NOT change.</strong> The chip row (Skills/Tools/Lang/Faith/Overlap) is unchanged \u2014 those are toggle chips at a different visual weight tier. Search field and Continue Downtime banner (when visible) also unchanged. Bottom nav unchanged. Territory and squad headers unchanged (those got their own proportional bump in v1.7063 and are now the dominant content-level signals). <strong>Scope.</strong> Pure CSS / inline-style change. Five buttons, one HTML template, one JS template string. No data-model change, no state change. Tap targets still meet the 30px minimum for touch (the trio sits at exactly 30px; the tagbar buttons use the default <code>.btn</code> padding which totals ~30px at the new font-size too).</div>
@@ -25791,11 +25792,67 @@ document.getElementById('ov-quest').addEventListener('click',function(e){
     // Set up the buy modal exactly as the store does
     P5.item=null;P5.assetMode=false;
     window._questModalOpenAfterBuy=true; // flag to re-open quest modal after purchase
+    // v1.7068 — Party-asset items (pets, vehicles, animals, mounts —
+    // anything with `party:true`) take a fundamentally different commit
+    // path: they push to S.partyAssets as typed objects, not to
+    // S.party[ci].inv as strings. The normal store-side modal opener
+    // routes party-asset items through an assetMode branch that sets
+    // up the owner picker, optional name row, etc.; without it, party-
+    // asset items end up in inv as flat strings and the prereq met-
+    // check at line ~34783 (which scans S.partyAssets for matching pet
+    // type) can't see them. Pre-v1.7068 the qcs-store-link handler
+    // bypassed that branch, so a Rat purchased via a prereq Purchase
+    // button silently corrupted the data: the pet went into the
+    // character's inv, the prereq slot stayed unmet despite ownership.
+    // Fix: when shopItem.party is true, run the same asset-mode setup
+    // the regular store opener uses (P5.assetMode=true + the modal
+    // setup at lines 26439-26468), then return.
+    if(shopItem.party){
+      P5.assetMode=true;
+      P5.item=shopItem.name; // name-based — search-safe; commit handler
+                              // resolves via _allItems lookup at line 26508
+      if(typeof ensureAssetMetas==='function')ensureAssetMetas();
+      var _isPrereqBuilding2=shopItem.rar==='building'||shopItem.type==='structure'
+        ||shopItem.type==='income'||shopItem.type==='workshop'
+        ||shopItem.type==='utility'||shopItem.type==='stronghold';
+      if(_isPrereqBuilding2){
+        document.getElementById('ov-bi-ownerlbl').textContent='Buildings are placed in Franchise Storage.';
+        document.getElementById('ov-bi-sel').innerHTML='<option value="__storage__">Franchise Storage</option>';
+        document.getElementById('ov-bi-charrow').style.display='none';
+        document.getElementById('ov-bi-namerow').style.display='none';
+        document.getElementById('ov-bi-weaponrow').style.display='none';
+        document.getElementById('ov-bi-partynote').style.display='none';
+        document.getElementById('ov-bi-msg').textContent=shopItem.name+' — \uD83E\uDE99 '+shopItem.price+' gp';
+      } else {
+        document.getElementById('ov-bi-ownerlbl').textContent=
+          (typeof isAnimalAsset==='function'&&isAnimalAsset(shopItem))
+            ?'Assign to Character, Building, Vehicle, or Squad'
+            :'Assign to Building, Vehicle, or Squad (optional)';
+        document.getElementById('ov-bi-sel').innerHTML=assetOwnerOptionsHtml('');
+        document.getElementById('ov-bi-charrow').style.display='block';
+        var _isAnim2=(typeof isAnimalAsset==='function'&&isAnimalAsset(shopItem));
+        document.getElementById('ov-bi-namerow').style.display=_isAnim2?'block':'none';
+        document.getElementById('ov-bi-namelbl').textContent=
+          (shopItem.type==='mount'?'Mount Name':'Animal Name');
+        document.getElementById('ov-bi-petname').value='';
+        document.getElementById('ov-bi-weaponrow').style.display='none';
+        document.getElementById('ov-bi-partynote').style.display='block';
+        document.getElementById('ov-bi-partynote').textContent=_isAnim2
+          ?'Choose a name now or leave it blank to keep the base '+
+            (shopItem.type==='mount'?'mount':'animal')+' name.'
+          :'Optional: assign these assets to a building, vehicle, or squad.';
+        document.getElementById('ov-bi-msg').textContent=shopItem.name+' — \uD83E\uDE99 '+shopItem.price+' gp each';
+      }
+      document.getElementById('ov-bi-qty').value='1';
+      openOv('ov-buyitem');
+      return;
+    }
+    // Original path — non-party items (regular gear) continue here:
+    document.getElementById('ov-bi-qty').value='1';
     var storeItems=[].concat(GEAR||[]);
     var storeIdx=storeItems.indexOf(shopItem);
     if(storeIdx===-1){storeItems.push(shopItem);storeIdx=storeItems.length-1;}
     P5.item=storeIdx;
-    document.getElementById('ov-bi-qty').value='1';
     var _isPrereqBuilding=shopItem&&(shopItem.rar==='building'||shopItem.type==='structure'
       ||shopItem.type==='income'||shopItem.type==='workshop'||shopItem.type==='utility'
       ||shopItem.type==='stronghold');
@@ -26535,7 +26592,20 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
       S.partyAssets.push({name:item.name,ic:item.ic,type:item.type,meta:meta});
     }
     logAdd('Purchased: '+item.name+' ×'+qty+' ('+total+' gp)','buy');
-    P5.item=null;P5.assetMode=false;P5.customItem=null;closeOv('ov-buyitem');save();renderParty();renderStore();
+    P5.item=null;P5.assetMode=false;P5.customItem=null;
+    // v1.7068 — Honor the quest-prereq re-open flag for asset-mode
+    // purchases too. Without this, buying a pet (or any party-asset
+    // item) via the quest prereq Purchase button correctly placed the
+    // pet in S.partyAssets but didn't re-open the quest modal, so the
+    // user had to manually re-find the quest to see the slot is now
+    // met. Mirrors the _finalizeToChar re-open block at line ~26617.
+    var _reopenAsset=window._questModalOpenAfterBuy;
+    window._questModalOpenAfterBuy=false;
+    closeOv('ov-buyitem');
+    save();renderParty();renderStore();
+    if(_reopenAsset&&qddQuestLike){
+      qddRender(qddQuestLike,qddIsGrind);
+    }
     return;
   }
   var ci=parseInt(ownerVal,10);
