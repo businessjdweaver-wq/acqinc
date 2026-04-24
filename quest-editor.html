@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Quest Editor v1.692</title>
+<title>Quest Editor v1.693</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -386,7 +386,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 <body>
 <div id="login-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--parch);border:2px solid var(--gold);border-radius:10px;padding:24px;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.5)">
-    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.692</span></h2>
+    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.693</span></h2>
     <div style="margin-bottom:12px">
       <label style="display:block;font-size:.8em;color:var(--ink2);margin-bottom:4px">Email</label>
       <input type="text" id="email" autocomplete="email" style="width:100%;padding:8px;border:1px solid var(--gold);border-radius:5px;background:var(--parch);font-size:.9em;box-sizing:border-box">
@@ -402,7 +402,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 
 <div id="app">
   <div id="hdr">
-    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.692</span></h1>
+    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.693</span></h1>
     <div id="login-area">
       <span id="user-email"></span>
       <button class="hbtn" id="btn-push" style="display:none" title="Push all local changes to Supabase">☁ Push</button>
@@ -1116,17 +1116,19 @@ var BUILDING_NAMES = [
   'Safe House','Temple Shrine','Greenhouse','Fortress Keep'
 ];
 
-var PET_NAMES = [
-  // Common / familiar pets
-  'Cat','Toad','Rat','Owl','Crab','Frog','Weasel','Bat','Lizard','Snake',
-  // Standard companions
-  'Raven (Trained)','Hawk','Hound','Ferret',
-  'Wolf (Trained)',
-  // Exotic / rare
-  'Dire Wolf Alpha','Pseudo-Dragon',
-  'Owlbear Chick','Shadowcat','Storm Eagle',
-  'Phase Spider (Tamed)','Displacer Beast Cub','Dragon Wyrmling (Brass)'
-];
+// v1.693 — PET_NAMES is no longer hardcoded. The DB `pets` table is the
+// single source of truth: when designers pick a pet prereq, the dropdown
+// shows ONLY pets that exist in the DB and are therefore acquirable in
+// the main app's store. Previously this array carried 23 hardcoded names
+// (Cat, Toad, Rat, etc.) which drift out of sync with the DB caused real
+// user confusion: a designer could pick "Rat" as a prereq even though
+// no Rat row existed in `pets`, and the main app would then mislabel
+// the prereq as a generic ITEM and offer a Purchase button that led to
+// "not in store" failures. With the DB now seeded with the common pets
+// (see migration v1.7067) and this array empty, the merge below is now
+// the only source for PET_NAMES — keeping the Editor and main app in
+// permanent sync.
+var PET_NAMES = [];
 
 var GEAR_PREREQ_NAMES = [
   'Longsword','Shortsword','Dagger','Rapier','Quarterstaff',
@@ -5122,7 +5124,66 @@ function showQuestForm(setId, idx) {
     '</div>' +
     '<div class="fgrid" style="margin-top:10px">' +
     frow('Pet Prerequisites <span class="select-hint">(Ctrl/⌘ for multi)</span>',
-      multiSelect('qf-pets', PET_NAMES, (q.pre && q.pre.items || []).filter(function(x){ return PET_NAMES.indexOf(x) !== -1; }))) +
+      (function(){
+        // v1.693 — DB-as-canonical pet picker.
+        //
+        // (1) Empty-state handling: if PET_NAMES is empty (DB returned no
+        //     rows), render an explanatory note instead of a blank
+        //     <select> that silently confuses the designer. Tells them
+        //     to seed the pets table before authoring pet prereqs.
+        //
+        // (2) Orphan-saved-value visibility: if this quest already has a
+        //     pet prereq saved (e.g. "Rat" from before the seeding run)
+        //     but that name is no longer in PET_NAMES (DB doesn't have
+        //     a row for it), the filter at the original render path
+        //     would drop it silently — designer wouldn't see it, save
+        //     would emit it as gone, prereq permanently lost. Instead
+        //     we surface every saved pet name that's NOT in the current
+        //     PET_NAMES as an option with a "⚠ not in DB" suffix so the
+        //     designer is aware and can deliberately keep or drop it.
+        var savedPets = (q.pre && q.pre.items || []).filter(function(x){
+          return PET_NAMES.indexOf(x) !== -1;
+        });
+        var orphanPets = (q.pre && q.pre.items || []).filter(function(x){
+          // Only treat as orphan if it's NOT in PET_NAMES AND NOT in
+          // GEAR_PREREQ_NAMES. Anything in gear-prereqs is correctly
+          // a gear item, not an orphan pet.
+          return PET_NAMES.indexOf(x) === -1
+            && GEAR_PREREQ_NAMES.indexOf(x) === -1;
+        });
+        if (PET_NAMES.length === 0 && orphanPets.length === 0) {
+          return '<div style="font-size:.85em;color:var(--ink2);font-style:italic;padding:8px;border:1px dashed rgba(102,68,30,.3);border-radius:4px;background:rgba(255,255,255,.4)">'+
+            'No pets in the DB yet. Seed the <code>pets</code> table before authoring pet prereqs.'+
+            '</div>';
+        }
+        // Build option list: real DB pets + any orphan saved values
+        // marked with a warning suffix so they're identifiable.
+        var allOpts = PET_NAMES.slice();
+        var allSelected = savedPets.slice();
+        orphanPets.forEach(function(p){
+          allOpts.push(p); // appended at end
+          allSelected.push(p);
+        });
+        var html = '<select id="qf-pets" multiple>' +
+          allOpts.map(function(o, idx){
+            var isOrphan = idx >= PET_NAMES.length;
+            var label = isOrphan ? (o + '  \u26A0 not in DB') : o;
+            return '<option value="' + esc(o) + '"' +
+              (allSelected.indexOf(o) !== -1 ? ' selected' : '') + '>' +
+              esc(label) + '</option>';
+          }).join('') + '</select>';
+        if (orphanPets.length) {
+          html += '<div style="font-size:.78em;color:var(--ink2);margin-top:4px">'+
+            '\u26A0 '+orphanPets.length+' pet name'+(orphanPets.length===1?'':'s')+
+            ' on this quest '+(orphanPets.length===1?'is':'are')+
+            ' not in the DB. Players cannot acquire '+
+            (orphanPets.length===1?'it':'them')+
+            ' through the store. Either seed the row, or remove the prereq.'+
+            '</div>';
+        }
+        return html;
+      })()
+    ) +
     '</div>' +
     '<div class="fsec-title" style="margin-top:14px;font-size:.78em">Bonus Rewards <span class="select-hint">— optional, award +% gp when party owns these</span></div>' +
     '<div class="fgrid c2">' +
