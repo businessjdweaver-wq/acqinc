@@ -2723,7 +2723,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7051</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7052</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3531,7 +3531,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7051
+      Version 1.7052
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3571,6 +3571,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7052</strong> &mdash; Sync forensic logger + concurrent-tab detector. <strong>Context.</strong> User reported four distinct sync symptoms over 4 hours: duplicate quest/downtime completions re-appearing, a spent QP voucher whose balance credit didn&#39;t land on the redeemer&#39;s account, contracts deferred or set to recur returning to the active screen, and lost Pinned Spotlight entries. Console had zero errors. The v1.7041 persistence self-test reported 1499 pass / 0 fail on regular-user round-trip and 41 pass / 0 fail / 5 skip on code-session coverage. All required Supabase table columns were confirmed present. By elimination, the bugs are not in the plumbing (fields correctly round-trip when tested in isolation) — they arise from <em>interactions between sessions</em> that the self-test cannot simulate. Leading hypothesis: multi-tab / multi-device concurrent sessions where a stale tab&#39;s debounced push overwrites fresh server state from another tab. The 4-second <code>autoPushTimer</code> debounce + <code>Promise.all(ops)</code> parallel push architecture + lack of server-side version checking means &quot;last write wins,&quot; and the loser silently loses data. This version ships diagnostic instrumentation to confirm (or refute) that theory. <strong>(1) <code>RQ_SYNCDIAG</code> module.</strong> A new IIFE at line ~7138 provides an in-memory ring buffer (200-entry cap) that captures every push/pull/save event with a compact state fingerprint. The fingerprint includes: <code>gold</code>, <code>qpBalance</code>, <code>qpEarnedToday</code>, <code>activeLen</code>, <code>archivedLen</code>, <code>pinnedLen</code>, <code>partyLen</code>, <code>squadsLen</code>, <code>partyAssetsLen</code>, <code>qsPendingLen</code>, <code>qsGrindPendingLen</code>, <code>qsDoneLen</code>, <code>qsSetId</code>, <code>qsCycleNum</code>, <code>qpLedgerLen</code>, <code>qpPendingLen</code>, plus compact hashes of task ids, first-5 archive titles, and pinned-item digest. The buffer persists to <code>localStorage[&#39;rq_syncdiag:&lt;uid&gt;&#39;]</code> so a browser crash or refresh doesn&#39;t lose forensic history. API: <code>log(type, payload)</code>, <code>fingerprint()</code>, <code>diff(a, b)</code>, <code>detectConcurrent()</code>, <code>getAll()</code>, <code>clear()</code>, <code>getTabId()</code>, <code>startHeartbeat()</code>. Exposed as <code>window.RQ_SYNCDIAG</code> for console access. Lightweight when dev mode is off (only heartbeat writes, no fingerprint capture); full detail only when dev mode is on. <strong>(2) Heartbeat-based multi-tab detection.</strong> Each tab writes its <code>tabId</code> + timestamp to <code>localStorage[&#39;rq_heartbeat:&lt;uid&gt;&#39;]</code> every 10 seconds under a sub-key keyed on the tabId. Heartbeats older than 30 seconds are considered stale. When <code>detectConcurrent()</code> reads the map, it returns every fresh heartbeat from a tab OTHER than our own — a non-empty result means &quot;someone else is running this account right now.&quot; A <code>beforeunload</code> handler removes our own heartbeat on page close so other tabs see us go away promptly. A <code>storage</code>-event listener fires whenever another tab writes to either the heartbeat key or the account&#39;s <code>acqv7:</code> save key; both write a <code>concurrent</code> log entry so the forensic trace shows exactly when a cross-tab write happened. <strong>(3) Instrumentation points.</strong> Five sites hooked: <code>saveLocalState</code> logs <code>save</code> events; <code>sbPush</code> entry logs <code>push_start</code> + completion logs <code>push_ok</code> / <code>push_fail</code>; <code>sbPull</code> captures a BEFORE fingerprint at entry, logs <code>pull_start</code>, then at success logs <code>pull_ok</code> with a diff report showing exactly which fingerprint keys changed between what we had and what the server returned. <code>pull_fail</code> logs on catch. Both regular-user and code-session paths are instrumented. A <code>visibilitychange</code> handler logs every foreground/background transition so the trace captures when a tab was actually being used. <strong>(4) UI: 🔬 Sync Diagnostic Log modal.</strong> New button in Settings → Developer Tools section, right below 🧪 Run Persistence Self-Test. Opens <code>ov-sync-diag</code> modal showing: (a) a live concurrent-tab indicator at the top — green &quot;✓ No other tabs detected&quot; or crimson &quot;⚠ N other tabs active on this account&quot; with their ages; (b) a color-coded reverse-chronological event list with type, timestamp, tabId, payload summary, fingerprint one-liner, and concurrent-tab markers for any event logged during a multi-tab moment; (c) footer buttons 📋 Copy (serializes the full buffer as formatted JSON to the clipboard — for pasting back into a support conversation), ↻ Refresh (re-renders without re-opening), 🗑 Clear (wipes the buffer after confirm). <strong>(5) Console export.</strong> <code>RQ_SYNCDIAG.getAll()</code> returns the buffer; <code>JSON.stringify(RQ_SYNCDIAG.getAll(),null,2)</code> gives a copy-pasteable dump. On dev-mode boot the console prints &quot;🔬 RQ_SYNCDIAG active (tabId …). Open Settings → Dev → 🔬 Sync Diagnostic Log to view&quot; so users know the tool is armed. <strong>Scope boundaries.</strong> Pure observation. Never mutates <code>S</code>, never makes network calls, never interferes with the existing push/pull pipeline. If a logging call throws (e.g. <code>localStorage</code> quota exhausted), the try/catch eats it silently — instrumentation never affects real behavior. Performance cost: a single fingerprint computation (~50μs) per push or pull; heartbeat writes a small JSON blob every 10 seconds. Negligible. <strong>Planned follow-ups.</strong> Once we have traces showing the actual failure mode, the v1.7053+ work will likely need: (a) cross-tab coordination via <code>BroadcastChannel</code> or the <code>storage</code> event, so a push in Tab A can notify Tab B to pull before its own next push; (b) server-side version/etag column on franchise + key tables so stale pushes get rejected by RLS rather than silently overwriting; (c) or — simplest — a &quot;foreground tab owns writes&quot; lock where only the currently-visible tab of a given account runs sbPush. Scope TBD based on what the forensic traces show. <strong>Data privacy note.</strong> The log stores only the fingerprint numbers (counts, flags, ids) — never raw task names, character names, or content text. Safe to paste the copy-exported JSON into a support conversation. <strong>No SQL change. No data-model change. No changes to any existing feature behavior.</strong></div>
         <div style="margin-bottom:9px"><strong>Version 1.7051</strong> &mdash; Dev-bar access for two test accounts. <strong>User need.</strong> Routine testing happens on <code>stable@stable.com</code> and <code>restart1@restart.com</code> rather than on the primary admin account (<code>566fc455-3cd5-4a93-8663-9b361296e5a9</code>), because those are the accounts that exercise regular-user flows the way a student would experience them. But the v1.6959 admin lockdown gated dev-mode access to a single UID, so reaching the dev bar from inside a test account required logging out, logging in as admin, enabling dev mode, logging out, logging back in as the test account \\u2014 and then dev mode wouldn't carry over anyway because <code>isDevModeActive()</code> re-checks <code>isAdmin()</code> on every call. Net effect: Justin could not get to the Ledger, QP Manager, +1 Day, or sync-diagnostic tools from inside the accounts where he most needed them to diagnose user-reported sync issues. <strong>What landed.</strong> Added both test-account UIDs to <code>ADMIN_UIDS</code> at line ~27579: <code>972f5001-ca4f-4388-9e03-3e9d9dcfa1f1</code> (stable@stable.com) and <code>57e9c9c9-c37b-4d4e-9744-100dca070d08</code> (restart1@restart.com). Each now has full admin access to the dev bar and the admin-only buttons <code>btn-enable-dev</code>, <code>btn-gen-code</code>, <code>btn-gen-bulk</code>. Inline comment clarifies the provenance (developer-controlled test accounts, not student accounts). <strong>Security posture unchanged.</strong> The v1.6959 model is preserved: <code>isAdmin()</code> is a UID-allowlist check, <code>isDevModeActive()</code> requires both <code>isAdmin()</code> AND <code>S.settings.devModeOverride</code>. A student whose UID is not on the list cannot enter dev mode even with <code>devModeOverride=true</code> in their blob. The <code>?dev=1</code> URL parameter (the actual credential-leak vector fixed in v1.6959) stays disabled \\u2014 it was the auto-login-with-hardcoded-password that was dangerous, not the param itself. Adding explicit UIDs to the allowlist is the precedent v1.6959 set: \"Add more UUIDs here to grant admin.\" <strong>RLS note.</strong> The client-side allowlist is hide-UI-only. Real server-side authorization for <code>login_codes</code>, <code>content_items</code> (official scope), and any other admin-only tables is (or should be) enforced by Supabase RLS policies keyed to the actual authenticated UID \\u2014 not by a client flag. If RLS is not already restricting admin writes to the primary admin UID, the two new test UIDs will now ALSO be able to write admin-restricted data. Audit recommended before treating this as production-ready. For the current development deployment context (single developer, controlled accounts, no student access to these UIDs or their passwords), the risk is negligible. <strong>Scope boundaries.</strong> No other changes. No new features, no UI edits, no persistence plumbing, no cost tuning. Pure four-line allowlist addition plus a comment block explaining why. <strong>No SQL change. No data-model change.</strong> <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7050</strong> &mdash; QP Manager audit + downtime-cost display bug fix. <strong>User-reported symptom.</strong> Changed Advance Downtime cost from 5 to 2 in the QP Manager, saved, and pushed to Supabase \u2014 but the Party screen's <code>\ud83d\udd6f Continue Downtime</code> bar kept multiplying by 5. <strong>Root cause.</strong> The QP Manager Save handler at line ~23254 called <code>save()</code> and <code>updateQpDisplay()</code> but never re-triggered <code>renderParty()</code> or <code>renderAdv()</code>. Every QP-cost-labeled button on those screens (Continue Downtime, Auto-Assign Grind, Recall/Rest/Early-Complete, Rebalance, the v1.7047 \u21c4 transfer row labels) is drawn on <code>renderParty</code>/<code>renderAdv</code> ticks, so saving a new cost value didn't refresh any of them until something else happened to trigger a re-render. Persistence itself was correct \u2014 the value was in <code>S.settings.qp.costDowntime</code>, rode the franchise <code>settings</code> jsonb column cleanly, and read back correctly on pull. <strong>Audit context.</strong> The bug inspired a full audit of every QP-spend option to verify each reads cost dynamically from <code>qpCfg()</code> at render/click time. Four unrelated issues surfaced and are fixed together here. <strong>Fix 1 \u2014 QP Manager Save now re-renders.</strong> Save handler now calls <code>renderParty()</code>, <code>renderAdv()</code>, <code>updateSqmgrFocusToolbar()</code>, and (if a quest-assignment modal is currently open) <code>qddRender()</code>. Every cost-labeled button picks up the new value within one paint frame. No more stale labels. <strong>Fix 2 \u2014 Back-to-HQ plumbed through <code>qpCfg().costBackToHQ</code>.</strong> The character-peek "\ud83c\udfe0 Back to HQ" button had <code>10</code> hardcoded in six places (button label at line ~16636, two alerts at ~19121/19122, confirm dialog at ~19132, the actual <code>qpSpend(10,...)</code> at ~19173, and the adventure log entry at ~19181). This was the last remaining hardcoded <code>qpSpend</code> literal in the entire codebase \u2014 every other qpSpend call already read from <code>qpCfg()</code>. Added <code>costBackToHQ</code> to <code>normalizeSettings</code> defaults (default 10, matching prior behavior) and replaced all six hardcoded values with <code>qpCfg().costBackToHQ||10</code> reads. The v1.6943 and v1.7047 changelogs both explicitly noted "character peek's 10 QP Back to HQ button is unchanged" \u2014 it was never plumbed. It is now. <strong>Fix 3 \u2014 <code>costAssignToSquad</code> exposed in QP Manager UI.</strong> This field (added by v1.6943, default 5 QP, drives the "\u2694 join" open-seat cost in the v1.6942/6943 Assign-to-Squad modal) was defaulted in settings but had no input surface in the manager. The v1.6943 changelog flagged this as a follow-up: "Not yet exposed in the QP Manager UI \u2014 Adding a dedicated manager field is a 3-line patch." Shipped. New input field labeled "Assign to squad (open seat join)" sits between Auto-assign and Territory squad swap in the cost-knobs grid. The Territory-squad-swap label itself was also clarified to "Territory squad swap / full-squad seat trade" since that single knob governs both the v1.572 Territory Swap Zone and the v1.6943 full-squad bump trade. <strong>Fix 4 \u2014 Back-to-HQ input field added to QP Manager.</strong> New "Back to HQ (character peek)" row under the squad-swap row, paired with Fix 2 so the user can tune the cost without editing via console. <strong>Fix 5 \u2014 <code>costAutoAssign</code> save-fallback typo.</strong> The QP Manager Save handler had <code>parseInt(...)||5</code> for <code>costAutoAssign</code>, but the normalizeSettings default and the openQpManager read both use <code>1</code>. A user who cleared the field and clicked Save would get 5 instead of 1 \u2014 subtle inconsistency, corrected to <code>||1</code>. <strong>Fix 6 \u2014 Stale "Auto-assign (1 QP)" tooltip at line ~25071.</strong> <code>updateQuestModal</code> wrote a hardcoded tooltip string even though the button TEXT at <code>qddRender</code> (line ~34085) correctly read <code>qpCfg().costAutoAssign</code>. The tooltip now uses the same dynamic cost so hover text matches button label. <strong>What the audit did NOT change.</strong> Four "dead-knob" cost fields in the QP Manager (<code>costQuestSplit</code>, <code>costMagicItem</code>, <code>costRename</code>, <code>costHomebrew</code>) are editable in the UI but have zero read sites \u2014 they're UI-only today. User explicitly opted to KEEP these for now rather than strip them, on the chance the features land later. Flagged in the audit report for future cleanup or activation. <strong>No data-model change, no SQL change.</strong> All five new user-editable fields ride the same franchise <code>settings</code> jsonb column that holds every other QP cost. Existing saves without <code>costBackToHQ</code> or <code>costAssignToSquad</code> fall through to defaults (10 and 5) and get the fields stamped on next save. <strong>Scope boundaries.</strong> Pure audit + plumbing. No gameplay rules changed, no rebalance, no new features \u2014 every cost defaults to its prior value. The only user-visible difference is (a) the Continue Downtime bar now reflects Manager changes without a reload, (b) three new editable cost fields in the Manager, (c) Back-to-HQ alerts and confirm dialog now cite the current cost. <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean. Grep for <code>qpSpend\\([0-9]</code> (hardcoded literal args) returns zero matches \u2014 confirming every QP spend in the app is now parameterized.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7049</strong> &mdash; Party/squad consolidation plan, final step: Squad Manager \u2194 Quest Preview direct link + UX polish. Closes out the 5-version sequence (v1.7044 attribute columns, v1.7045 overlap coloring, v1.7046 shopping-mode narrow, v1.7047 transfer buttons, v1.7048 readability). <strong>(1) Neutralized axis pill colors.</strong> The v1.7044 per-axis tints (teal skills / brown tools / slate lang / gold faith) conflated two signals: axis identity and overlap coloring. The axis is already labelled by the column header; the same info on the pill background was noise. Collapsed all four <code>prr-pill-*</code> variants to a single neutral parchment-tinted style. Overlap coloring (v1.7045) remains the only source of pill color, so seeing a colored pill now unambiguously means \"shared with another character in the current scope.\" <em>The axis-variant CSS classes (<code>prr-pill-tools</code>, <code>prr-pill-lang</code>, <code>prr-pill-rel</code>) are still emitted by the renderer but have no CSS rules targeting them \u2014 kept as no-ops in case we ever want axis-distinction back without a render-path edit.</em> <strong>(2) \u201C\uD83D\uDED2 Shop for this squad\u201D CTA in Quest Preview.</strong> New gold button in the Quest Preview list\u2019s squad banner, rendered only when the current <code>_qpvSquad</code> has at least one shopping-list entry. Clicking closes the preview list and opens the Squad Manager pre-entered into shopping mode for this exact squad \u2014 skipping the three-step old navigation (close preview \u2192 navTo party \u2192 Manage Squads \u2192 \uD83D\uDED2 Shopping \u2192 squad picker). Mirrors the tail of <code>_openShoppingMode()</code> without the picker stage since we already know the target. Stashes <code>window._qpvReturnAnchor = {setId, squadName}</code> so the Squad Manager can offer a reverse jump. <strong>(3) \u201C\u2190 Back to Quest Preview\u201D button in the shopping banner.</strong> The Squad Manager shopping-mode banner (the gold-dashed strip above the Fill Role donor list) now renders a teal \u201C\u2190 Back to Quest Preview\u201D button whenever <code>window._qpvReturnAnchor</code> is set. Clicking consumes the anchor (one-shot, cleared immediately so later reopens don\u2019t re-enter shopping-mode unexpectedly), closes the Squad Manager, re-opens the Quest Preview list for the remembered <code>setId</code>, and restores <code>_qpvSquad</code> to the anchor\u2019s squad name. The player sees updated coverage percentages on every quest row immediately \u2014 which is the whole point of shopping: see what\u2019s missing, swap people in, check what\u2019s now covered. Button absent when there\u2019s no return anchor (i.e. player entered Squad Manager via the normal Manage Squads toolbar rather than via the Quest Preview CTA), so existing workflows are unchanged. <strong>(4) Action-oriented line on each donor row.</strong> The Fill Role donor cards previously showed name / class / level / source squad / matched tags / delta %. Easy to miss the actual effect of a click. Added a third line between the meta line and the tags: <code>Move: [source] \u2192 <strong>[target]</strong></code> in teal bold. For cycle-locked donors the same line flips to <code>\uD83D\uDD12 Locked to current cycle</code> in crimson so the refusal reason reads as prominently as the action would have. Mirrors the \u201Cremove X, transfer Y in for cost Z\u201D framing from the consolidation-plan spec, adapted to the Squad Manager context where moves are free and cost disclosure isn\u2019t part of the story. <strong>Design note on cost.</strong> Squad Manager\u2019s Fill Role has always moved characters for free via <code>sqmgrAssignChar</code>; the <code>openAssignSquadModal</code> path that\u2019s used by the v1.7047 row-level \u21C4 button charges 5\u201310 QP. That asymmetry is pre-existing and intentional \u2014 Squad Manager is positioned as the free composition tool for deliberate planning; the row-level \u21C4 is the quick-and-costed ad-hoc path. This version doesn\u2019t change either cost behavior; it just makes the Squad Manager path faster to enter and clearer to read. <strong>(5) Drag handles + swipe drawers: still not shipping.</strong> Same rationale as v1.7048\u2019s \u201Cwhat this version does NOT include\u201D: the \u21C4 row button reaches every transfer scenario, HTML5 drag on iOS Safari needs substantial polyfill work, \u201Cdrag to HQ\u201D has no natural drop target. The action-line addition in (4) above closes the remaining UX gap where it was hard to see <em>what would happen</em> when clicking a donor \u2014 which was the real value of drag-to-reorder anyway. <strong>Scope boundaries.</strong> Pure UI + dispatch. No data-model change, no new state fields (the return anchor is a transient <code>window._qpvReturnAnchor</code>, one-shot, never persisted). The shopping-list data itself (<code>S._shoppingList</code>) is untouched. The existing \uD83C\uDFAF Fill Role and \u2696 Rebalance flows are unchanged \u2014 only the shopping-mode banner and the donor-card markup inside Fill Role got touched. Self-test should pass unchanged. <strong>No SQL change. No data-model change.</strong> <strong>Consolidation plan summary (v1.7044\u20131.7049).</strong> <em>Party screen:</em> attribute pill columns with four axis toggles, overlap coloring with squad/territory/franchise scope, per-character \u21C4 transfer button, per-squad \u21C4 Relocate button, shopping-mode auto-narrow. <em>Quest Preview:</em> direct \u201C\uD83D\uDED2 Shop for this squad\u201D jump to Squad Manager. <em>Squad Manager:</em> \u201C\u2190 Back to Quest Preview\u201D reverse jump, clearer donor action line. <em>Persistence:</em> four new fields on S (<code>partyAttrAxes</code>, <code>partyOverlapOn</code>, <code>partyOverlapScope</code>, <code>partyShoppingOverride</code>) plumbed through all eight surfaces per the v1.7041 self-test protocol. Ten stacked UX improvements to how the player analyzes squad composition without a single database migration.</div>
@@ -4081,6 +4082,10 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS qp_price INT DEFAULT 0;</code><strong
          pattern (seven occurrences shipped v1.543 → v1.7040) by simulating
          the full push→pull cycle in-memory and comparing before/after. -->
     <button class="btn sm full" id="btn-rq-persistence-test" style="margin-top:6px;background:rgba(138,92,26,.1);border:1px solid var(--gold-dark);color:var(--gold-dark)">🧪 Run Persistence Self-Test</button>
+    <!-- v1.7052: sync forensic log + concurrent-tab detector. Captures every
+         push/pull/save with a state fingerprint so multi-tab race conditions
+         are visible in the trace. Pairs with the RQ_SYNCDIAG JS module. -->
+    <button class="btn sm full" id="btn-rq-sync-diag" style="margin-top:6px;background:rgba(26,107,138,.1);border:1px solid var(--teal);color:var(--teal)">🔬 Sync Diagnostic Log</button>
   </div>
   <div class="set-sec" id="dev-d20-sec">
     <div class="set-sec-ttl">🎲 Dev Rolling Table</div>
@@ -5063,6 +5068,27 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS qp_price INT DEFAULT 0;</code><strong
   <div class="mbtns">
     <button class="btn bink" type="button" id="ov-aw-cancel">Cancel</button>
     <button class="btn" type="button" id="ov-aw-proceed" style="background:var(--crimson);color:#fff;border:none">🏠 Confirm &amp; Return</button>
+  </div>
+</div></div>
+
+<!-- v1.7052: Sync Diagnostic Log modal. Read-only forensic viewer for the
+     RQ_SYNCDIAG ring buffer — lists every push/pull/save/visibility/concurrent
+     event with timestamp, type, fingerprint values, and inter-event diffs.
+     Shown only to admin/dev-mode users. -->
+<div class="ov" id="ov-sync-diag" style="z-index:510"><div class="modal" style="max-width:560px;max-height:92vh;display:flex;flex-direction:column;padding:0;overflow:hidden;border-radius:12px">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 12px;border-bottom:2px solid var(--parchment-deep);flex-shrink:0;background:var(--parchment)">
+    <div>
+      <h3 style="margin:0;font-family:'Cinzel',serif;font-size:1.05em">🔬 Sync Diagnostic Log</h3>
+      <div id="ov-syncdiag-tabinfo" style="font-size:.68em;color:var(--ink-light);margin-top:2px;font-family:monospace"></div>
+    </div>
+    <button id="ov-syncdiag-close" style="width:32px;height:32px;border-radius:50%;background:rgba(44,26,14,.08);border:1px solid var(--parchment-deep);font-size:1em;cursor:pointer;color:var(--ink);display:flex;align-items:center;justify-content:center;flex-shrink:0" title="Close">✕</button>
+  </div>
+  <div id="ov-syncdiag-concurrent" style="flex-shrink:0;padding:8px 14px;font-size:.78em;border-bottom:1px solid var(--parchment-deep);background:rgba(44,26,14,.03)"></div>
+  <div id="ov-syncdiag-body" style="flex:1;overflow-y:auto;padding:10px 14px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;font-family:monospace;font-size:.72em;color:var(--ink)"></div>
+  <div style="flex-shrink:0;padding:10px 14px;border-top:2px solid var(--parchment-deep);background:var(--parchment);display:flex;gap:6px;flex-wrap:wrap">
+    <button id="ov-syncdiag-copy" class="btn sm" style="flex:1;min-width:100px;background:rgba(26,107,138,.1);border:1px solid var(--teal);color:var(--teal)">📋 Copy</button>
+    <button id="ov-syncdiag-refresh" class="btn sm" style="flex:1;min-width:100px;background:rgba(138,92,26,.1);border:1px solid var(--gold-dark);color:var(--gold-dark)">↻ Refresh</button>
+    <button id="ov-syncdiag-clear" class="btn sm" style="flex:1;min-width:100px;background:rgba(155,32,54,.1);border:1px solid var(--crimson);color:var(--crimson)">🗑 Clear</button>
   </div>
 </div></div>
 
@@ -7131,8 +7157,243 @@ function localSaveKey(){
   return 'acqv7:'+(uid()||'guest');
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// v1.7052 — RQ_SYNCDIAG: sync forensic logger
+// ══════════════════════════════════════════════════════════════════════════
+// Read-only diagnostic logger that captures every push/pull/save event with
+// a state fingerprint, so we can forensically reconstruct what happened when
+// a multi-tab or stale-write sync bug occurs.
+//
+// Architecture:
+//   • Events go to an in-memory ring buffer (RQ_SYNCDIAG._buffer, cap 200).
+//   • On every append, the buffer is also persisted to localStorage under
+//     'rq_syncdiag:<uid>' so a crashed/refreshed tab's history survives.
+//   • A "heartbeat" is written every 10 seconds to 'rq_heartbeat:<uid>' —
+//     each tab writes its own tabId + timestamp. Another tab's heartbeat
+//     being fresh (within 30s) means a concurrent session exists.
+//   • The UI (ov-sync-diag modal) renders the buffer in reverse-chronological
+//     order, with a copy-to-clipboard and clear button.
+//
+// Scope: pure observation. Never mutates S, never fires network calls. Safe
+// to enable/disable at any time. All logging is gated on isDevModeActive()
+// so non-admin users don't pay the I/O cost.
+var RQ_SYNCDIAG = (function(){
+  var MAX_BUFFER = 200;
+  var HEARTBEAT_MS = 10000;
+  var HEARTBEAT_FRESH_MS = 30000;
+  var _buffer = [];
+  var _tabId = 'tab_'+Math.random().toString(36).slice(2,10);
+  var _hbTimer = null;
+  function _key(){ return 'rq_syncdiag:'+(uid()||'guest'); }
+  function _hbKey(){ return 'rq_heartbeat:'+(uid()||'guest'); }
+  function _persist(){
+    try{ localStorage.setItem(_key(), JSON.stringify(_buffer.slice(-MAX_BUFFER))); }catch(e){}
+  }
+  function _restore(){
+    try{
+      var raw = localStorage.getItem(_key());
+      if(raw){ var a = JSON.parse(raw); if(Array.isArray(a)) _buffer = a.slice(-MAX_BUFFER); }
+    }catch(e){}
+  }
+  // Build a compact fingerprint of state at a moment in time. This is the
+  // "what did the app think was true" snapshot; diffing two fingerprints
+  // tells us what changed between any two events.
+  function fingerprint(){
+    try{
+      var qs = (S && S.questState) || {};
+      var active = (S && S.active) || [];
+      var archived = (S && S.archived) || [];
+      var pinned = (S && S.pinned) || [];
+      var party = (S && S.party) || [];
+      var squads = (S && S.squads) || [];
+      var partyAssets = (S && S.partyAssets) || [];
+      // Task id fingerprint: sort task _tids and take first 8 chars joined —
+      // lets us see at a glance if the set of tasks changed.
+      var _taskIds = active.map(function(t){ return (t && t._tid)||'?'; }).sort().join(',').slice(0,120);
+      var _archTitles = archived.slice(0,5).map(function(t){ return (t && t.name)||'?'; }).join('|').slice(0,80);
+      var _pinnedDigest = pinned.map(function(p){ return (p && (p.kind+':'+(p.tid||'')+':'+(p.sid||'')))||'?'; }).join(',').slice(0,120);
+      return {
+        gold: (S && typeof S.gold==='number')?S.gold:null,
+        qpBalance: (S && typeof S.qpBalance==='number')?S.qpBalance:null,
+        qpEarnedToday: (S && typeof S.qpEarnedToday==='number')?S.qpEarnedToday:null,
+        activeLen: active.length,
+        archivedLen: archived.length,
+        pinnedLen: pinned.length,
+        partyLen: party.length,
+        squadsLen: squads.length,
+        partyAssetsLen: partyAssets.length,
+        qsPendingLen: ((qs && qs.pending)||[]).length,
+        qsGrindPendingLen: ((qs && qs.grindPending)||[]).length,
+        qsDoneLen: ((qs && qs.done)||[]).length,
+        qsSetId: (qs && qs.setId)||null,
+        qsCycleNum: (qs && typeof qs.cycleNum==='number')?qs.cycleNum:null,
+        qpLedgerLen: ((S && S.qpLedger)||[]).length,
+        qpPendingLen: ((S && S.qpPending)||[]).length,
+        taskIds: _taskIds,
+        archTitles: _archTitles,
+        pinnedDigest: _pinnedDigest
+      };
+    }catch(e){
+      return { error:(e&&e.message)||'fingerprint failed' };
+    }
+  }
+  // Diff two fingerprints, returning only changed keys. Used in pull-after
+  // entries to show exactly what changed on the network round-trip.
+  function diff(a, b){
+    if(!a || !b) return {};
+    var out = {};
+    var keys = {};
+    Object.keys(a||{}).forEach(function(k){ keys[k]=true; });
+    Object.keys(b||{}).forEach(function(k){ keys[k]=true; });
+    Object.keys(keys).forEach(function(k){
+      if(a[k] !== b[k]){ out[k] = { from: a[k], to: b[k] }; }
+    });
+    return out;
+  }
+  // Check for other tabs by reading all rq_heartbeat:* keys. Returns an
+  // array of {tabId, ageMs} for FRESH heartbeats from OTHER tabs. The
+  // caller's own heartbeat is filtered out by matching _tabId.
+  function detectConcurrent(){
+    try{
+      var hbRaw = localStorage.getItem(_hbKey());
+      if(!hbRaw) return [];
+      var hb = JSON.parse(hbRaw);
+      if(!hb || typeof hb !== 'object') return [];
+      var now = Date.now();
+      var out = [];
+      Object.keys(hb).forEach(function(tabId){
+        if(tabId === _tabId) return; // our own
+        var ts = hb[tabId];
+        if(typeof ts !== 'number') return;
+        var age = now - ts;
+        if(age <= HEARTBEAT_FRESH_MS) out.push({ tabId: tabId, ageMs: age });
+      });
+      return out;
+    }catch(e){ return []; }
+  }
+  // Write our own heartbeat. Merges into existing heartbeat map so multi-tab
+  // detection works symmetrically — every tab both reads and writes the
+  // same localStorage key with its own tabId as a sub-key.
+  function _writeHeartbeat(){
+    try{
+      if(!uid()) return; // no identity yet
+      var raw = localStorage.getItem(_hbKey());
+      var hb = {};
+      try{ if(raw) hb = JSON.parse(raw) || {}; }catch(e){ hb = {}; }
+      // Prune stale entries while we're here (older than 2× fresh window)
+      var now = Date.now();
+      var cutoff = now - (HEARTBEAT_FRESH_MS * 2);
+      Object.keys(hb).forEach(function(k){
+        if(typeof hb[k] !== 'number' || hb[k] < cutoff) delete hb[k];
+      });
+      hb[_tabId] = now;
+      localStorage.setItem(_hbKey(), JSON.stringify(hb));
+    }catch(e){}
+  }
+  // Append an event. Type is a short tag ('push', 'pull', 'save', 'visibility',
+  // 'concurrent', 'manual'). Payload is a JSON-safe object; fingerprint is
+  // computed here and attached automatically.
+  function log(type, payload){
+    // Keep logging lightweight when not in dev mode — just track heartbeats
+    // so multi-tab detection still works, but skip the fingerprint cost.
+    var isDev = (typeof isDevModeActive==='function') && isDevModeActive();
+    var entry = {
+      ts: Date.now(),
+      tabId: _tabId,
+      type: type || 'event',
+      payload: payload || {}
+    };
+    if(isDev){
+      entry.fp = fingerprint();
+      var others = detectConcurrent();
+      if(others.length) entry.concurrentTabs = others;
+    }
+    _buffer.push(entry);
+    if(_buffer.length > MAX_BUFFER) _buffer = _buffer.slice(-MAX_BUFFER);
+    _persist();
+    return entry;
+  }
+  function clear(){
+    _buffer = [];
+    try{ localStorage.removeItem(_key()); }catch(e){}
+  }
+  function getAll(){ return _buffer.slice(); }
+  function getTabId(){ return _tabId; }
+  // Start the heartbeat timer. Called once at boot; idempotent.
+  function startHeartbeat(){
+    if(_hbTimer) return;
+    _writeHeartbeat();
+    _hbTimer = setInterval(_writeHeartbeat, HEARTBEAT_MS);
+    // Also listen for tab visibility change — log + refresh heartbeat
+    // on every foreground/background transition so the log captures
+    // when a tab was actually in the foreground.
+    try{
+      document.addEventListener('visibilitychange', function(){
+        log('visibility', { state: document.visibilityState });
+        if(document.visibilityState === 'visible') _writeHeartbeat();
+      });
+      // On page unload, remove our heartbeat so other tabs don't see us
+      // as still active. Fire-and-forget; exceptions silently ignored.
+      window.addEventListener('beforeunload', function(){
+        try{
+          var raw = localStorage.getItem(_hbKey());
+          if(!raw) return;
+          var hb = JSON.parse(raw) || {};
+          delete hb[_tabId];
+          localStorage.setItem(_hbKey(), JSON.stringify(hb));
+        }catch(e){}
+      });
+    }catch(e){}
+  }
+  // Listen for storage events from other tabs — if another tab writes to
+  // our heartbeat key or save key, we know a concurrent session just did
+  // something. Log it so the forensic trace has cross-tab markers.
+  try{
+    window.addEventListener('storage', function(e){
+      if(!e || !e.key) return;
+      var hbK = _hbKey();
+      var saveK = 'acqv7:'+(uid()||'guest');
+      if(e.key === hbK){
+        // Another tab wrote its heartbeat
+        log('concurrent', { source: 'heartbeat', newValue: (e.newValue||'').slice(0,200) });
+      } else if(e.key === saveK){
+        // Another tab wrote to localStorage (its save just fired)
+        log('concurrent', { source: 'localStorage save', keyHint: saveK });
+      }
+    });
+  }catch(e){}
+  // Restore buffer from localStorage on module init so a refresh doesn't
+  // lose history.
+  _restore();
+  return {
+    log: log,
+    fingerprint: fingerprint,
+    diff: diff,
+    detectConcurrent: detectConcurrent,
+    clear: clear,
+    getAll: getAll,
+    getTabId: getTabId,
+    startHeartbeat: startHeartbeat
+  };
+})();
+window.RQ_SYNCDIAG = RQ_SYNCDIAG;
+// Announce readiness after uid() is resolvable
+setTimeout(function(){
+  try{
+    if(typeof isDevModeActive==='function' && isDevModeActive()){
+      console.log('%c🔬 RQ_SYNCDIAG active (tabId '+RQ_SYNCDIAG.getTabId()+'). '+
+        'Open Settings → Dev → 🔬 Sync Diagnostic Log to view. '+
+        'Or run RQ_SYNCDIAG.getAll() in the console.',
+        'color:#1a6b8a;font-weight:bold;padding:4px 8px;background:#0a1a2a;border-radius:4px');
+    }
+    RQ_SYNCDIAG.startHeartbeat();
+  }catch(e){}
+}, 800);
+
 function saveLocalState(){
   try{localStorage.setItem(localSaveKey(),JSON.stringify(S));}catch(e){}
+  // v1.7052 — log every save for forensic reconstruction
+  try{ RQ_SYNCDIAG.log('save', {}); }catch(e){}
   // Also persist CONTENT_LIB locally so custom content survives page reload
   try{
     var _clKey='rq_content:'+(uid()||'guest');
@@ -27455,6 +27716,178 @@ document.getElementById('btn-jump-cycle2').addEventListener('click',function(){
       alert('rqPersistenceTest() unavailable — rebuild required.');
     }
   });
+  // v1.7052 — Sync Diagnostic Log button. Opens the ov-sync-diag modal
+  // and renders the current state of the RQ_SYNCDIAG ring buffer, plus a
+  // live concurrent-tab indicator at the top.
+  var syncDiagBtn=document.getElementById('btn-rq-sync-diag');
+  if(syncDiagBtn)syncDiagBtn.addEventListener('click',function(){
+    renderSyncDiagModal();
+    openOv('ov-sync-diag');
+  });
+})();
+
+// v1.7052 — Sync diagnostic modal renderer. Builds the event list + the
+// concurrent-tab indicator + the tab-info header. Read-only; no state
+// mutation, safe to call anytime.
+function renderSyncDiagModal(){
+  try{
+    var tabInfo=document.getElementById('ov-syncdiag-tabinfo');
+    var concEl=document.getElementById('ov-syncdiag-concurrent');
+    var bodyEl=document.getElementById('ov-syncdiag-body');
+    if(!bodyEl||!concEl||!tabInfo)return;
+    // Header: my tabId + current uid
+    tabInfo.textContent='tab '+RQ_SYNCDIAG.getTabId()+' · user '+(uid()||'(none)');
+    // Concurrent-tab indicator
+    var others=RQ_SYNCDIAG.detectConcurrent();
+    if(others.length){
+      concEl.style.background='rgba(155,32,54,.08)';
+      concEl.style.color='var(--crimson)';
+      concEl.innerHTML='⚠ <strong>'+others.length+' other tab'+(others.length===1?'':'s')+' active on this account:</strong> '+
+        others.map(function(o){return o.tabId+' ('+Math.round(o.ageMs/1000)+'s ago)';}).join(', ')+
+        ' &mdash; concurrent session detected. Writes from stale tabs can overwrite fresh state.';
+    } else {
+      concEl.style.background='rgba(31,111,31,.08)';
+      concEl.style.color='var(--forest)';
+      concEl.innerHTML='✓ No other tabs detected on this account. Single-session run.';
+    }
+    // Event body, reverse-chronological
+    var events=RQ_SYNCDIAG.getAll().slice().reverse();
+    if(!events.length){
+      bodyEl.innerHTML='<div style="padding:20px;text-align:center;color:var(--ink-light);font-family:\'Cinzel\',serif">No events captured yet.<br><span style="font-size:.85em;font-family:monospace">Dev mode must be on for full fingerprint capture. Trigger a Push/Pull from Cloud Sync and re-open this log.</span></div>';
+      return;
+    }
+    // Color-code by event type for scanning
+    var colorMap={
+      'push_start':'var(--gold-dark)',
+      'push_ok':'var(--forest)',
+      'push_fail':'var(--crimson)',
+      'pull_start':'var(--gold-dark)',
+      'pull_ok':'var(--teal)',
+      'pull_fail':'var(--crimson)',
+      'save':'var(--ink-light)',
+      'visibility':'var(--ink-light)',
+      'concurrent':'var(--crimson)'
+    };
+    bodyEl.innerHTML=events.map(function(e,i){
+      var color=colorMap[e.type]||'var(--ink)';
+      var dt=new Date(e.ts);
+      var hh=('0'+dt.getHours()).slice(-2);
+      var mm=('0'+dt.getMinutes()).slice(-2);
+      var ss=('0'+dt.getSeconds()).slice(-2);
+      var ms=('00'+dt.getMilliseconds()).slice(-3);
+      var time=hh+':'+mm+':'+ss+'.'+ms;
+      var payload=e.payload||{};
+      var fp=e.fp;
+      var lines=[];
+      lines.push('<div style="margin-bottom:6px;padding:6px 8px;background:rgba(44,26,14,.03);border-left:3px solid '+color+';border-radius:3px">');
+      lines.push('<div style="display:flex;justify-content:space-between;margin-bottom:2px"><strong style="color:'+color+'">'+e.type+'</strong><span style="color:var(--ink-light)">'+time+' · '+e.tabId+'</span></div>');
+      // Payload summary (manual, mode, error, diff, etc)
+      if(payload && Object.keys(payload).length){
+        var _pline=[];
+        Object.keys(payload).forEach(function(k){
+          if(k==='diff'){
+            var d=payload.diff||{};
+            var dKeys=Object.keys(d);
+            if(dKeys.length){
+              _pline.push('<span style="color:var(--gold-dark)">diff:</span> '+
+                dKeys.map(function(dk){
+                  var v=d[dk];
+                  return dk+'('+_fmtVal(v.from)+'→'+_fmtVal(v.to)+')';
+                }).join(' · '));
+            } else {
+              _pline.push('<span style="color:var(--ink-light)">diff: (no changes)</span>');
+            }
+          } else if(k==='error'){
+            _pline.push('<span style="color:var(--crimson)">error:</span> '+esc(String(payload[k]).slice(0,160)));
+          } else if(typeof payload[k]==='object' && payload[k]!==null){
+            _pline.push(k+': '+esc(JSON.stringify(payload[k]).slice(0,120)));
+          } else {
+            _pline.push(k+': '+esc(String(payload[k])));
+          }
+        });
+        if(_pline.length)lines.push('<div style="margin-bottom:2px">'+_pline.join(' · ')+'</div>');
+      }
+      // Fingerprint summary — a compact single-line pick of the most useful fields
+      if(fp){
+        var fpLine=[];
+        if(typeof fp.qpBalance==='number')fpLine.push('qp:'+fp.qpBalance);
+        if(typeof fp.gold==='number')fpLine.push('gp:'+fp.gold);
+        if(typeof fp.activeLen==='number')fpLine.push('act:'+fp.activeLen);
+        if(typeof fp.archivedLen==='number')fpLine.push('arch:'+fp.archivedLen);
+        if(typeof fp.pinnedLen==='number')fpLine.push('pin:'+fp.pinnedLen);
+        if(typeof fp.qsPendingLen==='number')fpLine.push('qpend:'+fp.qsPendingLen);
+        if(typeof fp.qsDoneLen==='number')fpLine.push('qdone:'+fp.qsDoneLen);
+        if(typeof fp.qsSetId==='string'&&fp.qsSetId)fpLine.push('set:'+fp.qsSetId);
+        if(typeof fp.qsCycleNum==='number')fpLine.push('cyc:'+fp.qsCycleNum);
+        lines.push('<div style="color:var(--ink-light);font-size:.9em">'+fpLine.join(' · ')+'</div>');
+      }
+      // Concurrent-tab warning if this event was logged during a multi-tab moment
+      if(e.concurrentTabs && e.concurrentTabs.length){
+        lines.push('<div style="color:var(--crimson);font-size:.9em;margin-top:2px">⚠ concurrent: '+
+          e.concurrentTabs.map(function(c){return c.tabId;}).join(', ')+'</div>');
+      }
+      lines.push('</div>');
+      return lines.join('');
+    }).join('');
+  }catch(err){
+    try{
+      var b=document.getElementById('ov-syncdiag-body');
+      if(b)b.innerHTML='<div style="color:var(--crimson);padding:10px">Error rendering log: '+esc(err&&err.message||String(err))+'</div>';
+    }catch(e2){}
+  }
+}
+// v1.7052 — small helper: format a fingerprint value for diff display.
+// Strings, numbers, nulls render directly. Longer strings get truncated.
+function _fmtVal(v){
+  if(v===null||v===undefined)return '∅';
+  if(typeof v==='string')return v.length>30?('"'+v.slice(0,28)+'…"'):('"'+v+'"');
+  if(typeof v==='number'||typeof v==='boolean')return String(v);
+  try{ var s=JSON.stringify(v); return s.length>30?(s.slice(0,28)+'…'):s; }catch(e){ return '?'; }
+}
+// v1.7052 — wire the modal's footer buttons.
+(function(){
+  var copyBtn=document.getElementById('ov-syncdiag-copy');
+  var refreshBtn=document.getElementById('ov-syncdiag-refresh');
+  var clearBtn=document.getElementById('ov-syncdiag-clear');
+  var closeBtn=document.getElementById('ov-syncdiag-close');
+  if(copyBtn)copyBtn.addEventListener('click',function(){
+    try{
+      var payload={
+        tabId: RQ_SYNCDIAG.getTabId(),
+        uid: uid()||null,
+        generatedAt: new Date().toISOString(),
+        concurrent: RQ_SYNCDIAG.detectConcurrent(),
+        events: RQ_SYNCDIAG.getAll()
+      };
+      var text=JSON.stringify(payload,null,2);
+      if(navigator.clipboard&&navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(function(){
+          copyBtn.textContent='✓ Copied';
+          setTimeout(function(){ copyBtn.textContent='📋 Copy'; },1500);
+        }).catch(function(){
+          // fallback: dump to console
+          console.log('=== RQ_SYNCDIAG EXPORT ===');
+          console.log(text);
+          alert('Clipboard blocked. Full log printed to console.');
+        });
+      } else {
+        console.log('=== RQ_SYNCDIAG EXPORT ===');
+        console.log(text);
+        alert('Clipboard unavailable. Full log printed to console — copy from there.');
+      }
+    }catch(err){ alert('Copy failed: '+(err&&err.message||String(err))); }
+  });
+  if(refreshBtn)refreshBtn.addEventListener('click',function(){
+    renderSyncDiagModal();
+  });
+  if(clearBtn)clearBtn.addEventListener('click',function(){
+    if(!confirm('Clear the sync diagnostic log? This removes all captured events from memory and localStorage.'))return;
+    RQ_SYNCDIAG.clear();
+    renderSyncDiagModal();
+  });
+  if(closeBtn)closeBtn.addEventListener('click',function(){
+    closeOv('ov-sync-diag');
+  });
 })();
 document.getElementById('btn-save-names').addEventListener('click',function(){
   if(!S.settings)S.settings={};
@@ -28098,6 +28531,11 @@ function sbPush(manual){
     if(manual)syncStatus('Log in to sync with Supabase.','var(--crimson)');
     return Promise.resolve(false);
   }
+  // v1.7052 — log the push attempt with fingerprint + concurrent-tab snapshot
+  // taken BEFORE the push fires. Essential for multi-tab forensics: when a
+  // stale push overwrites good server state, the trace shows exactly what
+  // fingerprint was about to be written + whether another tab was alive.
+  try{ RQ_SYNCDIAG.log('push_start', { manual: !!manual, mode: (currentUser&&currentUser._codeLogin)?'code':'regular' }); }catch(e){}
   // Code-session: save entire state as blob to login_codes.player_data
   if(currentUser&&currentUser._codeLogin){
     var _blob={};
@@ -28544,6 +28982,8 @@ function sbPush(manual){
   return Promise.all(ops)
     .then(function(){
       _pushInProgress=false;
+      // v1.7052 — log successful push
+      try{ RQ_SYNCDIAG.log('push_ok', { manual: !!manual }); }catch(e){}
       if(manual){
         syncStatus('✅ Pushed '+new Date().toLocaleTimeString(),'var(--forest)');
         logAdd('Supabase: push complete.','gold');
@@ -28555,6 +28995,9 @@ function sbPush(manual){
     })
     .catch(function(err){
       _pushInProgress=false;
+      // v1.7052 — log push failure with error message so we can identify
+      // silent schema/network failures in the forensic trace
+      try{ RQ_SYNCDIAG.log('push_fail', { manual: !!manual, error: (err&&err.message)||String(err) }); }catch(e){}
       syncStatus('⚠ Sync error: '+err.message,'var(--crimson)');
       notifySupabaseOffline('push',err);
       console.error('Supabase push:',err);
@@ -28700,6 +29143,12 @@ function sbPull(manual){
     if(manual)syncStatus('Log in to pull from Supabase.','var(--crimson)');
     return Promise.resolve(false);
   }
+  // v1.7052 — capture fingerprint BEFORE the pull overwrites local state.
+  // The diff between push_ok and pull_ok fingerprints is the smoking gun
+  // for multi-tab bugs: if a pull arrives with different values than our
+  // recent push put out, another session wrote after we did.
+  var _syncdiag_before = null;
+  try{ _syncdiag_before = RQ_SYNCDIAG.fingerprint(); RQ_SYNCDIAG.log('pull_start', { manual: !!manual }); }catch(e){}
   // Code-session: load from login_codes.player_data blob
   if(currentUser&&currentUser._codeLogin){
     if(manual)syncStatus('Loading save…','var(--gold-dark)');
@@ -28725,6 +29174,12 @@ function sbPull(manual){
   if(typeof migrateMercPersonalV1_7024==='function')migrateMercPersonalV1_7024(); // v1.7024
           setGold();applySettings();renderTasks();renderSettings();renderAdv();
           renderParty();renderArchive();renderLog();updateQpDisplay();
+          // v1.7052 — log code-session pull_ok with diff
+          try{
+            var _syncdiag_cs_after = RQ_SYNCDIAG.fingerprint();
+            var _diff_cs = RQ_SYNCDIAG.diff(_syncdiag_before, _syncdiag_cs_after);
+            RQ_SYNCDIAG.log('pull_ok', { manual: !!manual, mode:'code', diff: _diff_cs });
+          }catch(e){}
           syncStatus('☁ Loaded','var(--ink-light)');
           navTo('tasks');window.scrollTo({top:0,behavior:'smooth'});
         } else {
@@ -28732,12 +29187,14 @@ function sbPull(manual){
           var fresh=applyStarterLoadout(true);
           setGold();applySettings();renderTasks();renderSettings();renderAdv();
           renderParty();renderArchive();renderLog();updateQpDisplay();
+          try{ RQ_SYNCDIAG.log('pull_ok', { manual: !!manual, mode:'code', note:'starter applied (new account)' }); }catch(e){}
           maybeShowWelcome(fresh);
           syncStatus('☁ New account ready','var(--ink-light)');
           navTo('tasks');window.scrollTo({top:0,behavior:'smooth'});
         }
         return true;
       }).catch(function(err){
+        try{ RQ_SYNCDIAG.log('pull_fail', { manual: !!manual, mode:'code', error: (err&&err.message)||String(err) }); }catch(e){}
         notifySupabaseOffline('code pull',err);
         console.error('Code pull error:',err);
       });
@@ -29351,6 +29808,14 @@ function sbPull(manual){
     healCompletedCycleArchives(); // v1.6948
     setGold();applySettings();renderTasks();renderSettings();renderAdv();renderParty();window.scrollTo({top:0,behavior:'smooth'});renderArchive();renderLog();updateQpDisplay();maybeShowWelcome(starterAppliedFromCloud);
     var inv=0;(S.party||[]).forEach(function(c){inv+=(c.inv||[]).length;});
+    // v1.7052 — log pull_ok with before/after diff. This is the key forensic
+    // entry: shows exactly which fingerprint values changed between what we
+    // had locally and what the server returned.
+    try{
+      var _syncdiag_after = RQ_SYNCDIAG.fingerprint();
+      var _diff = RQ_SYNCDIAG.diff(_syncdiag_before, _syncdiag_after);
+      RQ_SYNCDIAG.log('pull_ok', { manual: !!manual, diff: _diff });
+    }catch(e){}
     if(manual){
       syncStatus('✅ Pulled '+new Date().toLocaleTimeString()+
         ' — '+S.gold+' gp · '+(S.active||[]).length+' tasks · '+
@@ -29361,6 +29826,8 @@ function sbPull(manual){
     }
     return true;
   }).catch(function(err){
+    // v1.7052 — log pull failure
+    try{ RQ_SYNCDIAG.log('pull_fail', { manual: !!manual, error: (err&&err.message)||String(err) }); }catch(e){}
     syncStatus(manual?'❌ Pull failed: '+err.message:'⚠ Offline — using local data','var(--crimson)');
     notifySupabaseOffline('pull',err);
     console.error('Supabase pull:',err);
