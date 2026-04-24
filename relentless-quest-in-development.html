@@ -2710,7 +2710,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7056</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7057</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3503,7 +3503,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7056
+      Version 1.7057
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3543,6 +3543,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7057</strong> &mdash; Inbox routing fix (deferred from v1.7056). Resolves the long-standing &quot;inbox links don&#39;t consistently work&quot; report by making every inbox row land the user on the surface that can actually resolve the item. <strong>Problem recap.</strong> Since v1.7004&#39;s inbox shipped, every quest and grind row in the inbox modal had an <code>onClick</code> that just called <code>navTo(&#39;adventure&#39;)</code>. That routes to the currently-active cycle&#39;s Adventure screen, which fails three distinct ways: (a) quest rows for <em>non-active-cycle</em> quests were never even in the inbox to begin with \u2014 the collector only scanned <code>qs.pending</code> (live active-cycle) and missed <code>setProgress[sid].pending</code> for every other cycle, so any quest returned on a paused/switched-away cycle was invisible; (b) quest rows for active-cycle quests landed correctly but the user had no feedback about <em>why</em> it worked sometimes; (c) grind rows landed on the Adventure screen which doesn&#39;t show grinds at all since v1.6913 \u2014 grinds live in the Quest Map&#39;s Grinds modal (<code>openGrindsList()</code>), so the user had to close out and navigate manually. The v1.7056 changelog documented this as deferred; this version ships the fix. <strong>(1) Inbox now covers every cycle.</strong> <code>_collectInboxItems</code> unions <code>qs.pending</code> with every <code>setProgress[sid].pending</code> for non-active cycles (matching the v1.6905 pattern for party status / busy-scan). Each item tracks the source <code>setId</code>. For non-active rows, the subtitle appends \u201c\u00b7 on &lt;CycleName&gt;\u201d so the user knows they&#39;re about to context-switch. Grinds continue to read only from <code>qs.grindPending</code> because v1.7017 explicitly clears <code>setProgress[sid].grindPending</code> for non-active cycles \u2014 grinds are territory-scoped, not cycle-scoped (v1.7013), so there&#39;s no archive path to add. <strong>(2) Quest row click activates the right cycle.</strong> If the target row&#39;s <code>setId</code> differs from the current active cycle, the onClick calls <code>activateQuestCycleSet(setId)</code> before <code>navTo(&#39;adventure&#39;)</code>. That helper is the same path the Quest Map&#39;s Activate button uses \u2014 it calls <code>saveActiveSetProgress()</code> for the outgoing cycle, then <code>loadSetProgress()</code> for the new one, then <code>renderAdv()</code>. The user lands on the Adventure screen where the just-ready quest is visible and collectable. Idempotent when the target cycle is already active (round-trips through save/load on the same setId). <strong>(3) Grind row click opens the Grinds modal.</strong> Each grind row carries its <code>territory</code> (v1.7013) and the onClick now calls <code>openGrindsList(territory)</code> which is the authoritative entry point for the Grinds modal, scoped to the specified territory (Minsaka vs Gojimura shifts). Subtitle gains \u201c\u00b7 &lt;territory&gt; shift\u201d so multi-territory franchises see which shift the grind belongs to. Falls back to <code>navTo(&#39;adventure&#39;)</code> if <code>openGrindsList</code> is somehow unavailable. <strong>(4) Clear Inbox extended to non-active-cycle pendings.</strong> The \u2709 Clear Inbox button&#39;s dismiss loop now walks <code>setProgress[sid].pending</code> for every non-active cycle and sets <code>_inboxDismissed</code> on each ready entry. Without this extension, users with returned quests from a paused cycle could never clear their inbox badge \u2014 the button would report \u201cNothing to clear\u201d even though (1) was surfacing non-active items in the visible list. Grinds are skipped in the archive walk for the same reason (1) skips them on the collection side: v1.7017 clears non-active <code>grindPending</code> arrays. <strong>(5) Collect All: gracefully surfaces non-active-cycle items it can&#39;t touch.</strong> The \u2713 Collect All button continues to only process active-cycle <code>qs.pending</code> and <code>qs.grindPending</code> \u2014 <code>collectQuest()</code> needs a live <code>qs</code> reference + matching <code>set</code> object to award rewards correctly, and batch-swapping cycles mid-collection is risky. Instead, the button now counts ready pendings on non-active cycles and (a) when those are the <em>only</em> ready items, alerts \u201cN item(s) are ready on other cycles. Tap each inbox row individually to switch cycles and collect.\u201d; (b) when it successfully collects active-cycle items but non-active ones remain, logs a matching hint to the adventure log so the user knows why the inbox isn&#39;t empty. Per-item click (from fix #2) gets them to each non-active cycle with one tap each. A future version could refactor <code>collectQuest</code> to accept explicit <code>(qs, set)</code> arguments and auto-loop through cycles inside Collect All, but that&#39;s a larger change than warranted for this report. <strong>What this does NOT change.</strong> Downtime rows (already correct \u2014 they open <code>openDowntimePendingModal</code> directly). Polling cadence, red-dot animation, z-index, button positions, the v1.7056 header layout, the v1.7055 \u201c\u26a0 no HQ\u201d badge, persistence paths. Collect All reward-distribution logic is untouched; it just has better empty-state and post-completion feedback. <strong>Scope boundaries.</strong> One function rewritten (<code>_collectInboxItems</code>), one handler extended (<code>ov-inbox-dismiss</code> / Clear Inbox), one handler adjusted (<code>ov-inbox-collect</code> / Collect All, two small additions \u2014 alert branch + log line). No new state fields, no new DOM elements, no CSS changes, no migration. <strong>No SQL change. No data-model change.</strong></div>
         <div style="margin-bottom:9px"><strong>Version 1.7056</strong> &mdash; Notification system consolidation + header compaction. Four user-driven changes shipping together. <strong>(1) Downtime ribbon retired.</strong> The standalone <code>#downtime-ribbon</code> bar (v1.6904) between <code>#hdr</code> and the dev bar is removed entirely. Pending downtime rolls continue to surface as \ud83d\udd6f entries in the inbox modal (that path has worked since v1.7004&#39;s <code>_collectInboxItems</code>); the bar was duplicative. <code>renderDowntimeRibbon()</code> is left as a no-op rather than deleted because it has ~8 call sites scattered through load, roll-resolution, and downtime-completion paths, and the function exits cleanly when the DOM element is absent (existing pre-check at line ~15853). Removing the function would have required five more hunks; leaving it harmless costs nothing. The <code>#downtime-ribbon</code> HTML and its comment block are gone. <strong>(2) Roll button hides after click in pending-downtime modal.</strong> Previously the \ud83c\udfb2 Roll All button flipped to \u201c\u2713 Done\u201d after the animation completed, but that state had no remaining function and added visual weight after the results list was already visible. The button now sets <code>style.display=&#39;none&#39;</code> post-animation. <code>openDowntimePendingModal()</code> resets <code>style.display=&#39;&#39;</code> on entry so if a second batch of downtimes arrives and the modal reopens, the button reappears. <strong>(3) Inbox button moved into <code>#hdr</code>, title compressed to &quot;RQ&quot;, sub-nav bar removed.</strong> The v1.7004 <code>#subnav</code> bar is deleted. Its sole child (the \u2709 envelope button with red-dot notification badge) moves inline into <code>#hdr</code>-row&#39;s grid, inserted between the gold/QP display and the \u2699 settings gear. The grid template expands from <code>44px 1fr auto 44px</code> to <code>44px 1fr auto 36px 44px</code> to accommodate the new cell; the inbox button uses the standard <code>btn.bink.sm</code> header-button styling and hosts an absolutely-positioned <code>.inbox-dot</code> span (new CSS class, renamed from <code>.subnav-dot</code> to match its new home). The \u2709 glyph and dot state / polling / click-to-open-inbox behavior are unchanged \u2014 only the DOM location moved, and the click handler still targets <code>#btn-inbox</code> so no wiring change was needed. To make room on the header bar for the new button, the <code>#hdr-title</code> H1 always displays the fixed short label &quot;RQ \u2694&quot; in <code>applySettings()</code>, regardless of the user&#39;s custom <code>appName</code> setting. The user&#39;s full appName still drives the browser tab title (via <code>document.title</code>) and the subtitle below the main title (via <code>#hdr-sub</code>), so renaming the franchise remains supported \u2014 only the top-bar label is fixed. <code>--sub-h</code> CSS custom property is retired and <code>#app</code>&#39;s padding-top simplifies from <code>calc(var(--hdr-h) + var(--sub-h) + 14px)</code> back to <code>calc(var(--hdr-h) + 14px)</code>. Net reclaim on mobile iOS: ~36px of vertical screen content area (32px in compact-hdr mode). <strong>(4) Tavern / named-building inclusion in origin HQ label + latent field-name bug fix.</strong> The Party screen&#39;s \ud83e\udded HQ panel for the origin territory now reads &quot;Headquarters: The Golden Stag\u2009\u00b7\u2009Minsaka&quot; when the player has purchased and named a qualifying \u22651000 gp cycle-owned building in origin. When no qualifying building exists (common for franchises that haven&#39;t bought any real estate yet), the label stays the plain &quot;Headquarters\u2009\u00b7\u2009Minsaka&quot; it was before. <strong>Pre-existing latent bug (since v1.7018) fixed in the same edit.</strong> The <code>territoryHQName()</code> helper read <code>m.name</code> off the asset-meta object, but the purchase flow saves the user-chosen name into <code>m.customName</code> (see <code>finishRealEstateNaming</code> at line ~9387; same convention used by <code>assetDisplayName</code> at line 7631, the Party Assets renderer at line 18771, and the Animal naming field at line 18719). <code>m.name</code> is never populated on the meta object. So <em>non-origin</em> territory HQ panels have been showing the base building name (e.g. &quot;Tavern\u2009\u00b7\u2009Gojimura&quot;) instead of the player&#39;s custom name (e.g. &quot;The Golden Stag\u2009\u00b7\u2009Gojimura&quot;) since v1.7018 shipped. Fixed by reading <code>m.customName</code>. Non-origin panels now correctly surface the player-chosen name for the first time; the fix composes with (3)&#39;s origin extension so the two behaviors are consistent \u2014 both territories honor named buildings, origin additionally prefixes with &quot;Headquarters:&quot; to keep the HQ anchor legible. <strong>Scope boundaries.</strong> No change to: squad creation gating, Relocate modal, cycle-owned real estate catalog rendering, Party Assets section (it already reads <code>m.customName</code> correctly), grind clock-in rules, inbox polling / dot badge state, persistence paths, or the v1.7055 &quot;\u26a0 no HQ&quot; badge behavior. Item 3 from the user report (inbox entries don&#39;t consistently activate the specific quest/grind/cycle) was investigated \u2014 confirmed as real (inbox onClicks call <code>navTo(&#39;adventure&#39;)</code> which lands on the currently-active cycle, not the cycle that the inbox entry belongs to; grinds have no cycle-scoped view at all so their inbox links land on an unrelated screen) \u2014 but deliberately NOT fixed in this version. Reserved for a follow-up because the right fix requires each <code>_collectInboxItems</code> entry to carry cycle/grind context in its <code>onClick</code>, which is a larger plumbing change. <strong>No SQL change. No data-model change.</strong> Four coordinated display/UI changes plus one latent bug fix.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7055</strong> &mdash; Party screen: surface pre-rules-era legacy territory state with a &quot;\u26A0 no HQ&quot; badge. <strong>User-reported symptom.</strong> The Gojimura territory zone was rendering on the Party screen with a &quot;Headquarters \u00B7 Gojimura&quot; HQ panel for Torinn and the Solarians squad \u2014 but the user had never completed a Gojimura cycle, so they had never had the chance to purchase a 1000+ gp building to unlock the territory under the v1.7006 rules. <strong>Root cause.</strong> Diagnostic console dump showed <code>S.unlockedTerritories</code> contained only <code>[&quot;Minsaka&quot;]</code>, but 11 characters and one squad carried <code>homeTerritory:&quot;Gojimura&quot;</code> stamps. The Party screen&#39;s render loop (line 17992) defensively appends any bucket territory not in <code>S.unlockedTerritories</code> to the ordered render list \u2014 so the zone surfaced anyway, driven by the homeTerritory stamps. <code>territoryHQName()</code> correctly returned its &quot;Headquarters&quot; fallback string because no qualifying building existed, producing the misleading label &quot;Headquarters \u00B7 Gojimura&quot; that read as if a real HQ existed. <strong>How the legacy state arose.</strong> Pre-v1.7039, <code>S.unlockedTerritories</code> was never persisted to Supabase \u2014 every cross-device pull reset it to origin-only. This franchise likely had Gojimura in the unlocked list transiently during earlier testing (before v1.7039&#39;s franchise-settings-blob persistence fix), created Solarians there via the v1.7006 squad creation picker while the territory was unlocked in-memory, and then a subsequent pull stripped the unlocked-list. The squad + character <code>homeTerritory</code> stamps survived (those fields ride on their own persistence paths) but the unlocked-list authority fell back to origin-only. Since then, <code>recomputeUnlockedTerritories()</code> has never re-added Gojimura because no qualifying building exists to regenerate the unlock. <strong>Design decision: no auto-heal.</strong> The three available fix paths were (a) re-add Gojimura to unlocked via a migration scanning homeTerritory stamps, (b) strip the stamps and relocate everyone to origin, or (c) keep the data as-is and fix the UI honesty. Option (c) was chosen because new franchises created after v1.7039 cannot reach this state \u2014 the quest cycles were begun before the territory-rule change was in effect for this specific save. No other user on the system should have the same orphaned-stamps condition. Auto-healing the unlocked list would silently contradict the v1.7006 gating contract for anyone whose state happens to match this pattern for a non-legacy reason. <strong>What landed.</strong> <strong>(1) New helper <code>territoryHasHQBuilding(territory)</code>.</strong> Sibling to <code>territoryHQName</code>. Returns true for origin (always has HQ by definition, no building required) and for any non-origin territory with at least one \u22651000 gp <code>ownerType:&#39;cycle&#39;</code> asset in <code>S.partyAssets</code> whose owning cycle&#39;s territory matches. Returns false otherwise \u2014 the signal the UI uses to surface the warning badge. <strong>(2) HQ unassigned-bucket panel header.</strong> When the bucket&#39;s <code>homeTerritory</code> is non-origin AND <code>territoryHasHQBuilding</code> returns false, prepend a small crimson-pilled &quot;\u26A0 no HQ&quot; badge to the existing (N / 10) cap indicator. Tooltip: &quot;No qualifying 1000+ gp building in this territory \u2014 legacy state from before the territory rules.&quot; <strong>(3) Territory zone wrapper header.</strong> Same badge, same gating, rendered between the territory name and the existing &quot;N / 4 squads \u00B7 M unassigned&quot; count readout. Two places to land the badge because the wrapper is the most prominent claim of territory legitimacy; the HQ panel is the player&#39;s direct destination for unassigned-character actions. Both need to read honestly. <strong>Scope deliberately limited.</strong> Real squad panels (e.g. the Solarians banner itself) do NOT get the badge \u2014 the warning applies to the territory as a whole and showing it on every squad panel inside an already-badged zone would be redundant. The badge is purely a display signal; no data change, no state field, no migration, no re-assignment logic. Every existing code path around <code>S.unlockedTerritories</code>, <code>sq.homeTerritory</code>, <code>c.homeTerritory</code>, <code>territoryHQName</code>, <code>charHomeTerritory</code>, and the Party screen render loop continues to work unchanged. The zone renders, squads operate, the HQ panel accepts unassigned characters as before \u2014 the UI just now reads the truth about whether a real headquarters backs the territory. <strong>Scope boundaries.</strong> Does not touch: squad creation gating (still requires a territory to be in <code>S.unlockedTerritories</code>), Relocate modal (still reads from <code>S.unlockedTerritories</code>), grind clock-in rules, per-territory bucket caps, or any persistence path. Does not add a migration. Does not alter <code>territoryHQName</code>&#39;s fallback behavior \u2014 the label still reads &quot;Headquarters \u00B7 Gojimura&quot; when no building exists; the badge is additive signal alongside that label. <strong>No SQL change. No data-model change.</strong> One new helper function, two new emit-time badge insertions, all reading existing state.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7054</strong> &mdash; Recovery release: corrected push-before-pull logic after v1.7053 caused data loss. <strong>v1.7053 is skipped.</strong> Not deployed widely. The v1.7053 fix for the iPhone ghost-pending-grinds bug introduced a worse bug: the &quot;unpushed changes&quot; flag was set by <code>saveLocalState()</code>, which fires not only on user actions but also on boot normalization (initSession line ~32493), migration healers, and various post-pull cleanup paths. Result: every boot had the flag set, so push-first always fired, sometimes with partial or stale localStorage state that overwrote good server state. At least one user lost progress to this. <strong>The correct fix (this version).</strong> Move the flag-set up one level to <code>save()</code> instead of <code>saveLocalState()</code>. Only <code>save()</code> \u2014 the genuine user-action write path \u2014 marks the local state as having unpushed changes. Boot normalization, pull hydration, migrations, and dedupes all call <code>saveLocalState()</code> directly without going through <code>save()</code>, so they no longer flag work as unpushed. <strong>Push-before-pull gating.</strong> At boot, <code>initSession()</code> checks <code>_hasUnpushedChanges()</code>. If true, there&#39;s genuine pending work from the previous session that never made it to Supabase (most commonly: user did an action, then the 4-second auto-push debounce never fired before the tab was closed or reloaded) \u2014 push first to get it to the server, then pull. If false, the local blob is known to match a prior successful push \u2014 pull directly and trust the server. <strong>Resurrection safety net.</strong> The pre-v1.7053 restore-local-pending-if-server-empty block is KEPT but now gated on the same <code>_hasUnpushedChanges()</code> flag. When the flag is clear (no unpushed work), resurrection does NOT fire \u2014 the iPhone ghost-pending bug from v1.7052&#39;s trace is killed. When the flag is set and the push-before-pull path fires but somehow doesn&#39;t make it (e.g. network flapped between push and pull), the resurrection block provides a last-chance restore for local work. Belt-and-braces. <strong>Apology + lessons.</strong> I should have recognized during v1.7053 authoring that <code>saveLocalState()</code> is called from many non-user paths, including the mandatory boot-time <code>saveLocalState()</code> at initSession line ~32493 that fires on every startup. The flag was effectively always set. The <em>fix</em> for the ghost-pending bug made the push-first path fire every time, which made a second class of bug visible (stale push overwrites good server state). Moving the flag up to <code>save()</code> is the minimum change that correctly isolates user-driven writes from boot-time bookkeeping writes. <strong>Scope boundaries.</strong> No new features. No new UI. No new Supabase columns, no migrations. The v1.7052 diagnostic logger is retained. The <code>boot_sync</code> event now also records the snapshot lengths of <code>localPending</code> and <code>localGrind</code> for forensic continuity. If a user sees data loss or ghost return AGAIN after this release, the log will show exactly which path fired and with what values. <strong>No SQL change. No data-model change. No changes to any feature behavior beyond the startup sync decision tree.</strong></div>
@@ -15991,38 +15992,102 @@ function openDowntimePendingModal(){
 function _collectInboxItems(){
   var items=[];
   var now=Date.now();
-  // Completed quests ready to collect
   var qs=S.questState||{};
-  var set=(typeof activeQuestSet==='function')?activeQuestSet():null;
-  (qs.pending||[]).forEach(function(pq){
-    if(!pq||(pq.doneAt||0)>now)return;
-    if(pq._inboxDismissed)return; // v1.7022 — user dismissed from inbox
-    var q=(set&&typeof questByIdx==='function')?questByIdx(set,pq.idx):null;
-    var title=q&&q.title?q.title:('Quest #'+(pq.idx+1));
-    var chars=(pq.chars||[]).map(function(ci){
-      var c=S.party&&S.party[ci];return c?c.name:'?';
-    }).join(', ');
-    items.push({
-      kind:'quest',
-      icon:'📜',
-      title:title,
-      sub:chars?('Returned: '+chars):'Returned from quest',
-      onClick:function(){closeOv('ov-inbox');navTo('adventure');}
+  var activeSetId=qs.setId||'';
+  // v1.7057 — Scan BOTH the active cycle's live qs.pending AND every
+  // setProgress[sid].pending for non-active cycles. Prior versions only
+  // showed active-cycle quests in the inbox, so a user with returned
+  // quests from a different cycle never saw them in the envelope. The
+  // v1.6905 changelog catalogued this exact "only qs.pending" blind spot
+  // for other scans (party status, busy calc, etc.) — the inbox inherits
+  // the same fix pattern: union the live list with every archive's
+  // .pending, annotating each entry with its owning setId.
+  var questSources=[];
+  // Active cycle first — carries the live qs.pending array
+  if(Array.isArray(qs.pending)){
+    questSources.push({setId:activeSetId,pendings:qs.pending});
+  }
+  // Each non-active cycle's archived pendings
+  var sp=qs.setProgress||{};
+  Object.keys(sp).forEach(function(sid){
+    if(sid===activeSetId)return; // already covered by live qs.pending
+    var spEntry=sp[sid];
+    if(!spEntry||!Array.isArray(spEntry.pending)||!spEntry.pending.length)return;
+    questSources.push({setId:sid,pendings:spEntry.pending});
+  });
+  questSources.forEach(function(src){
+    var setForSrc=(QUESTSETS||[]).filter(function(s){return s&&s.id===src.setId;})[0]||null;
+    var setName=setForSrc&&setForSrc.name?setForSrc.name:'';
+    src.pendings.forEach(function(pq){
+      if(!pq||(pq.doneAt||0)>now)return;
+      if(pq._inboxDismissed)return; // v1.7022 — user dismissed from inbox
+      var q=(setForSrc&&typeof questByIdx==='function')?questByIdx(setForSrc,pq.idx):null;
+      var title=q&&q.title?q.title:('Quest #'+((pq.idx||0)+1));
+      var chars=(pq.chars||[]).map(function(ci){
+        var c=S.party&&S.party[ci];return c?c.name:'?';
+      }).join(', ');
+      // Subtitle surfaces the cycle name when it differs from the active
+      // cycle so the user knows they're context-switching on click.
+      var baseSub=chars?('Returned: '+chars):'Returned from quest';
+      var isNonActive=(src.setId&&src.setId!==activeSetId);
+      var sub=isNonActive&&setName?(baseSub+' \u00b7 on '+setName):baseSub;
+      // onClick: if the quest is from a non-active cycle, swap the active
+      // cycle to that setId before navigating. activateQuestCycleSet()
+      // saves the outgoing cycle's progress and loads the new one via the
+      // same path the Quest Map's Activate button uses; idempotent on a
+      // cycle that's already active.
+      var targetSetId=src.setId;
+      items.push({
+        kind:'quest',
+        icon:'📜',
+        title:title,
+        sub:sub,
+        onClick:function(){
+          closeOv('ov-inbox');
+          if(targetSetId&&targetSetId!==(S.questState&&S.questState.setId)){
+            if(typeof activateQuestCycleSet==='function')activateQuestCycleSet(targetSetId);
+          }
+          navTo('adventure');
+        }
+      });
     });
   });
-  // Completed grind missions ready to collect
+  // Completed grind missions ready to collect. Grinds live only in
+  // qs.grindPending — v1.7017 explicitly clears setProgress[sid].grindPending
+  // on non-active cycles because grinds are territory-scoped, not
+  // cycle-scoped (v1.7013). So we only need to scan the one array.
   (qs.grindPending||[]).forEach(function(gp){
     if(!gp||(gp.doneAt||0)>now)return;
-    if(gp._inboxDismissed)return; // v1.7022 — user dismissed from inbox
+    if(gp._inboxDismissed)return; // v1.7022
     var chars=(gp.chars||[]).map(function(ci){
       var c=S.party&&S.party[ci];return c?c.name:'?';
     }).join(', ');
+    // v1.7057 — append the territory name so users with multi-territory
+    // franchises know which shift the grind belongs to (Minsaka vs
+    // Gojimura). Grinds carry a .territory field per v1.7013.
+    var baseSub=chars?('Returned: '+chars):'Returned from grind';
+    var sub=gp.territory?(baseSub+' \u00b7 '+gp.territory+' shift'):baseSub;
+    var targetTerritory=gp.territory||'';
     items.push({
       kind:'grind',
       icon:'⚒',
       title:gp.title||'Grind Mission',
-      sub:chars?('Returned: '+chars):'Returned from grind',
-      onClick:function(){closeOv('ov-inbox');navTo('adventure');}
+      sub:sub,
+      onClick:function(){
+        // v1.7057 — grinds live in the Grinds modal, not the Adventure
+        // screen. Previously this called navTo('adventure') which dumped
+        // the user on the active cycle's quest list with no grind in
+        // view, requiring them to close out and navigate to the Quest
+        // Map to reach the Grinds modal. openGrindsList() opens the
+        // right modal directly, scoped to the grind's territory so only
+        // that territory's shift entries render.
+        closeOv('ov-inbox');
+        if(typeof openGrindsList==='function'){
+          openGrindsList(targetTerritory);
+        } else {
+          navTo('adventure');
+        }
+      }
     });
   });
   // Pending downtime rolls (already-completed downtimes awaiting d20)
@@ -16179,8 +16244,29 @@ function openInboxModal(){
         var readyGrind=(qs.grindPending||[]).filter(function(gp){return gp&&(gp.doneAt||0)<=now&&!gp._inboxDismissed;});
         var totalReady=readyPending.length+readyGrind.length;
         var dtSkipped=(S.pendingDowntimeRolls||[]).length;
+        // v1.7057 — Count non-active-cycle ready pendings. These exist in
+        // setProgress[sid].pending but collectQuest() requires a live
+        // qs.pending reference and the matching active cycle context, so
+        // this handler doesn't try to auto-collect them. The user is
+        // notified to click each inbox row individually — that path
+        // swaps the active cycle to the right one via activateQuestCycleSet
+        // and lands on the Adventure screen where collection happens
+        // normally.
+        var activeSetId=qs.setId||'';
+        var nonActiveReady=0;
+        var sp=qs.setProgress||{};
+        Object.keys(sp).forEach(function(sid){
+          if(sid===activeSetId)return;
+          var spEntry=sp[sid];
+          if(!spEntry||!Array.isArray(spEntry.pending))return;
+          spEntry.pending.forEach(function(pq){
+            if(pq&&(pq.doneAt||0)<=now&&!pq._inboxDismissed)nonActiveReady++;
+          });
+        });
         if(!totalReady){
-          if(dtSkipped){
+          if(nonActiveReady){
+            alert(nonActiveReady+' item'+(nonActiveReady===1?' is':'s are')+' ready on other cycles. Tap each inbox row individually to switch cycles and collect.');
+          } else if(dtSkipped){
             alert('Only downtime rolls are pending. Tap a downtime row in the inbox to reveal the d20.');
           } else {
             alert('Nothing ready to collect right now.');
@@ -16255,6 +16341,12 @@ function openInboxModal(){
           if(typeof healCompletedCycleArchives==='function')healCompletedCycleArchives();
           if(typeof renderCycleMapCards==='function')renderCycleMapCards();
           if(uid())sbPush(false);
+          // v1.7057 — Surface any ready items on non-active cycles that
+          // Collect All deliberately skipped, so the user knows the inbox
+          // isn't fully empty and why.
+          if(nonActiveReady){
+            logAdd('\u2709 Inbox: '+nonActiveReady+' item'+(nonActiveReady===1?'':'s')+' on other cycles still ready \u2014 tap each row to switch cycles and collect.','adv');
+          }
         }
         if(typeof renderInboxBadge==='function')renderInboxBadge();
         // Re-render the modal so the user sees the remaining items (likely
@@ -16277,11 +16369,28 @@ function openInboxModal(){
         var qs=S.questState||{};
         var now=Date.now();
         var dismissed=0;
+        // Active cycle pendings
         (qs.pending||[]).forEach(function(pq){
           if(pq&&(pq.doneAt||0)<=now&&!pq._inboxDismissed){pq._inboxDismissed=true;dismissed++;}
         });
         (qs.grindPending||[]).forEach(function(gp){
           if(gp&&(gp.doneAt||0)<=now&&!gp._inboxDismissed){gp._inboxDismissed=true;dismissed++;}
+        });
+        // v1.7057 — Non-active cycle pendings live in setProgress[sid].pending.
+        // Dismissal must reach them too, otherwise the inbox would not
+        // clear for users with returned quests from a cycle they've since
+        // paused or switched away from. Grinds are skipped here because
+        // v1.7017 clears setProgress[sid].grindPending on non-active
+        // cycles — there's nothing to dismiss in the archive.
+        var activeSetId=qs.setId||'';
+        var sp=qs.setProgress||{};
+        Object.keys(sp).forEach(function(sid){
+          if(sid===activeSetId)return;
+          var spEntry=sp[sid];
+          if(!spEntry||!Array.isArray(spEntry.pending))return;
+          spEntry.pending.forEach(function(pq){
+            if(pq&&(pq.doneAt||0)<=now&&!pq._inboxDismissed){pq._inboxDismissed=true;dismissed++;}
+          });
         });
         if(!dismissed){
           alert('Nothing to clear (only downtime rolls remain, and those can only be resolved via the d20 reveal).');
