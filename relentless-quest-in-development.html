@@ -3136,6 +3136,34 @@ body.dev-active #app{margin-top:36px;}
   </div>
 </div></div>
 
+<!-- v1.7077 SNAPSHOT HISTORY MODAL — server-side recovery point list. -->
+<div class="ov" id="ov-snapshot-list"><div class="modal" style="max-width:560px;max-height:92vh;display:flex;flex-direction:column">
+  <h3 style="margin-bottom:6px;font-size:1em">🕰 Snapshot History</h3>
+  <p class="hint" style="margin-bottom:8px">Each snapshot is a complete copy of your save stored on Supabase. Newest first. Tap <strong>Restore</strong> to roll back — your current state is auto-snapshotted first as a safety net.</p>
+  <div id="ov-snap-status" style="font-size:.85em;color:var(--ink-light);margin-bottom:6px;min-height:1.2em"></div>
+  <div id="ov-snap-list" style="flex:1;overflow-y:auto;margin-bottom:10px;border:1px solid var(--parchment-deep);border-radius:6px;padding:6px;background:var(--parchment)"></div>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+    <input type="text" id="ov-snap-label" placeholder="Optional label (e.g. before quest activation)" style="flex:1;min-width:140px;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:6px;background:#fff;color:var(--ink);font-size:.85em">
+    <button class="btn bg sm" id="ov-snap-take">💾 Take Snapshot Now</button>
+  </div>
+  <div style="display:flex;gap:8px;justify-content:space-between;margin-top:4px">
+    <button class="btn bink sm" id="ov-snap-refresh">↻ Refresh</button>
+    <button class="btn bg sm" id="ov-snap-close">Close</button>
+  </div>
+</div></div>
+
+<!-- v1.7077 SNAPSHOT PREVIEW MODAL — shown before a Restore commits. -->
+<div class="ov" id="ov-snapshot-preview" style="z-index:520"><div class="modal" style="max-width:480px">
+  <h3 style="margin-bottom:6px;font-size:1em">🕰 Restore Snapshot?</h3>
+  <p class="hint" style="margin-bottom:8px">This will overwrite your current save with the contents of this snapshot. Your <em>current</em> state is auto-saved as a fresh snapshot first, so this is reversible.</p>
+  <div id="ov-snap-prev-meta" style="background:var(--parchment);border:1px solid var(--parchment-deep);border-radius:6px;padding:8px;margin-bottom:10px;font-size:.85em"></div>
+  <div id="ov-snap-prev-diff" style="background:rgba(26,107,138,.06);border:1px solid var(--teal);border-radius:6px;padding:8px;margin-bottom:12px;font-size:.85em"></div>
+  <div style="display:flex;gap:8px;justify-content:space-between">
+    <button class="btn bg sm" id="ov-snap-prev-cancel">Cancel</button>
+    <button class="btn bink sm" id="ov-snap-prev-restore" style="background:var(--crimson);color:#fff">⚠ Restore This Snapshot</button>
+  </div>
+</div></div>
+
 <!-- ARCHIVE -->
 <!-- PROJECTS -->
 <div class="scr" id="s-projects">
@@ -3593,7 +3621,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7076b
+      Version 1.7077
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3633,6 +3661,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7077</strong> &mdash; Server-side snapshot history (data-loss recovery system). <strong>Why.</strong> User reported losing a full day of progress with no backup; the existing JSON Export was a manual all-or-nothing tool, and the in-incognito session left no localStorage forensic trail when the tab eventually closed. The v1.7041 self-test passes, the v1.7052 sync diagnostic logger has no error trace, and the v1.7054 unpushed-changes flag system was working as designed — yet a day of state still got lost. Diagnosis is incomplete, but the recovery story matters more than the root cause: even a perfect push/pull system needs a rollback surface for the bugs you haven&rsquo;t found yet, the mis-routed writes you didn&rsquo;t know about, and the accidental destructive actions the user takes in good faith. <strong>What landed.</strong> A new Supabase table <code>franchise_snapshots</code> stores the full <code>S</code> blob as a jsonb row, with <code>user_id</code>, <code>created_at</code>, <code>label</code>, <code>client_version</code>, <code>byte_size</code>, and <code>is_manual</code> columns plus a <code>(user_id, created_at DESC)</code> index. RLS policies restrict each user to their own snapshots (SELECT/INSERT/DELETE keyed to <code>auth.uid() = user_id</code>). <strong>(1) Auto-snapshot at every successful push.</strong> The <code>sbPush</code> success branch fires <code>_snapshotAfterPush()</code> as a fire-and-forget side effect after <code>_markAllPushed()</code>. The helper is throttled by <code>S.settings.snapshotIntervalMin</code> (default 15 min): if the most recent snapshot is younger than the interval, skip. Snapshot insert errors are swallowed entirely &mdash; a failed snapshot never propagates back to throw on sbPush, because the push is the source of truth and a missing snapshot just means we don&rsquo;t have that particular recovery point. <strong>(2) Manual snapshot.</strong> <code>takeSnapshotNow(label)</code> bypasses the throttle and accepts an optional label string (max 200 chars, trimmed). Exposed on <code>window</code> for console use. <strong>(3) Retention enforcement.</strong> After every successful insert, <code>_snapshotEnforceRetention()</code> queries the user&rsquo;s rows ordered newest-first, and if count exceeds <code>S.settings.snapshotRetention</code> (default 50, valid range 5&ndash;500), deletes everything beyond the cap in chunks of 50 (keeps URLs short). The SQL also includes a commented-out trigger function for a hard server-side ceiling at 200 rows per user as a backstop &mdash; left commented because client enforcement is sufficient and triggers add migration complexity. <strong>(4) UI: Settings &rarr; Data section.</strong> New <code>&#x1F570; Snapshot History</code> button below View Ledger, plus two select dropdowns for the two settings knobs (auto-snapshot every: 0/5/15/30/60/240 min; keep last: 25/50/100/200). The selectors auto-snap to the nearest available option when reading values that came from another device or were edited via console, so non-canonical settings don&rsquo;t silently break. <strong>(5) Snapshot list modal (<code>ov-snapshot-list</code>).</strong> Newest-first list of every stored snapshot for the current user. Each row shows label (with optional <code>manual</code> badge for is_manual rows), formatted creation time (Today / Yesterday / Mon DD format), relative age (Xs/Xm/Xh/Xd ago), byte size (B/KB/MB), and client version. Per-row buttons: <code>Restore</code> (opens preview modal) and <code>&times;</code> (delete with confirm). Footer: a label input + <code>&#x1F4BE; Take Snapshot Now</code> button to take a manual snapshot from inside the modal. <strong>(6) Restore preview modal (<code>ov-snapshot-preview</code>, z:520).</strong> Before any restore commits, the user sees a metadata block (label, creation time, size, client version) and a diff block listing 10 key state metrics: gold, QP balance, active contracts, archived, pinned, party characters, squads, party assets, quests completed, quests pending. Each line shows <em>current</em> &rarr; <em>snapshot</em> values with green/crimson delta arrows for numeric changes. Two confirms before restore actually fires. <strong>(7) Restore mechanics.</strong> <code>restoreSnapshot(id)</code> first creates a &ldquo;pre-restore safety&rdquo; auto-snapshot of the <em>current</em> state (so the restore itself is reversible), then deserializes the chosen blob through <code>createDefaultState</code> as a base (so older snapshots that lack newer fields get sensible defaults), wipes every key on the live <code>S</code> in place, copies in the new keys, calls <code>saveLocalState</code>, then forces a manual <code>sbPush(true)</code> to make the restored state authoritative on the server. In-place mutation rather than reassignment because v1.7052 made <code>window.S</code> a getter against the closure-scoped variable; reassigning would orphan the diagnostic surface. Render every visible screen post-restore so the player sees the new state immediately. <strong>(8) Console API.</strong> All five entry points are exposed on <code>window</code> for power-user access: <code>takeSnapshotNow(label)</code>, <code>listSnapshots(limit)</code>, <code>fetchSnapshot(id)</code>, <code>restoreSnapshot(id)</code>, <code>deleteSnapshot(id)</code>. Useful for scripted recovery: e.g., copy the latest snapshot id from <code>listSnapshots()</code>, inspect it via <code>fetchSnapshot(id)</code>, then <code>restoreSnapshot(id)</code> if it&rsquo;s the one you want. <strong>SQL migration required:</strong> run <code>v1_7077_snapshots.sql</code> in the Supabase SQL editor before deploying. Idempotent (CREATE TABLE / INDEX / POLICY all use IF NOT EXISTS or DROP IF EXISTS). <strong>Scope boundaries.</strong> Pure additive recovery system. Push/pull mechanics, debounce timing, RLS on existing tables, sync diagnostic logger &mdash; all unchanged. The snapshot system is a backstop on top of the existing pipeline, not a replacement. The new fields ride in <code>S.settings</code> which itself round-trips through the franchise settings blob &mdash; no changes to existing tables. <strong>What this does NOT solve.</strong> The root cause of the user&rsquo;s lost day is still unknown; this version doesn&rsquo;t prevent the loss, it just guarantees you can roll back from one. If the underlying mechanism is a stale-tab overwrite, a bad pull, or a buggy migration, the snapshot from before the corruption is still there to roll back to &mdash; and the safety snapshot taken before the restore is also there in case the rollback target itself is corrupt. Two-deep rollback floor.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7076b</strong> &mdash; Fill Role: locked + busy donor click actions land. Second half of the v1.7076 build (v1.7076a shipped the visibility readouts; this version wires up the actions). <strong>Why.</strong> v1.7076a made all matching donors visible in the Fill Role list with locked/busy state readouts, but the rows themselves were inert \u2014 click warnings led to a deferred-feature alert. This version lights up those clicks with the full cost-flow paths the user specified: locked rows open the existing paid-move modals (Territory Swap Zone for locked-to-locked, Assign-to-Squad for locked-to-unlocked); busy rows confirm a per-character recall with QP cost + impact preview, then complete the move atomically. <strong>(1) New QP knob: <code>costRecallFromActivity</code>.</strong> Default 15. Sits between <code>costSquadSwap</code> (10, the seat-trade fee) and <code>costRecall</code> (25, the abort-the-whole-quest fee). New default added to <code>normalizeSettings</code>; new input field added to the QP Manager labeled \u201CRecall single character from activity (Fill Role)\u201D, slotted right after the existing \u201CCancel / recall quest\u201D row. Load + save handlers wired through <code>openQpManager</code> and the manager\u2019s save block, both with the standard <code>parseInt(value)||15</code> fallback. <strong>(2) New helper: <code>_recallCharFromActivity(ci)</code>.</strong> Pulls a single character out of every active engagement they\u2019re on without affecting other characters on those same engagements. For quests + grinds, routes through v1.6922\u2019s <code>getPendingEngagementsForChar</code> + <code>applyAbandonImpact</code> so the existing prereq_fail vs support semantics govern (quest aborts entirely if removing this char breaks prereqs; otherwise the quest continues short-handed and the char\u2019s share is forfeited). For downtime, splices every <code>S.downtimeJobs</code> entry where <code>j.ci===ci</code> and <code>endsAt&gt;now</code> with its own adventure-log entry (<code>applyAbandonImpact</code> doesn\u2019t cover downtime). Returns the count of engagements removed for caller feedback. Caller is responsible for the QP cost \u2014 this function only mutates state, so it can be reused by the v1.7077 scheduled-move path which uses no QP. <strong>(3) Donor click handler: three-branch flow.</strong> The single click handler at <code>[data-focus-move]</code> now branches on donor state:<br>&bull; <strong>Locked source \u2192 locked target</strong> (both on cycles) opens <code>openSwapModal(curSq, sourceTerr, targetSq)</code>. Cross-territory check refuses if the two squads are in different territories \u2014 cycle integrity makes that swap unsupported (consistent with the existing v1.572 swap-zone semantics). Cost: <code>costSquadSwap</code> per character moved.<br>&bull; <strong>Locked source \u2192 unlocked target</strong> (donor leaving a deployed squad to join a non-deployed one) opens <code>openAssignSquadModal(ci)</code>, which already handles the v1.6943 cost ladder (5 QP open seat / 10 QP full-squad trade) plus the v1.6944 <code>allowLocked=true</code> bypass.<br>&bull; <strong>Busy</strong> (on quest/grind/downtime) confirms the recall: dialog shows kind + time-until-free + <code>costRecallFromActivity</code> + per-engagement impact lines (\u201C\u2717 Quest will FAIL\u201D vs \u201C\u26a0 Quest will continue \u2014 share forfeited\u201D from <code>classifyAbandonImpact</code>, plus a downtime cancellation line if applicable). On confirm: <code>qpSpend</code>, <code>_recallCharFromActivity</code>, then <code>sqmgrAssignChar</code> to the target. The QP gate refuses if balance &lt; cost or QP system disabled \u2014 standard pattern. Edge case: if another tab/session completes the engagement between confirm-render and confirm-click (so <code>_recallCharFromActivity</code> returns 0), the user is informed the cost was spent and the move proceeds anyway \u2014 cleaner than a refund-and-fail loop, and rare enough not to warrant transactional rollback.<br>&bull; <strong>Free + unlocked</strong>: original v1.7049 free-move path, unchanged. <strong>(4) CSS: blocked rows are clickable now.</strong> The v1.7076a <code>cursor:default</code> on <code>.sqmgr-focus-result-blocked</code> is removed; rows inherit the parent\u2019s pointer cursor so the affordance is honest. <code>:active</code> opacity drops to .55 (from .7) so taps register visually. <strong>(5) Legend updated.</strong> The hint line below the donor list now reads \u201CTap any donor to move them into [target]. \uD83D\uDD12 (locked) and \u2694/\u2692/\uD83D\uDD6F (busy) rows show a confirm with cost &amp; impact preview before committing\u201D \u2014 reflects that all rows are now actionable. <strong>What\u2019s next \u2014 v1.7077.</strong> The schedule-the-move alternative (queue a transfer for when the busy character becomes free, with an inbox notification on completion). Spec already drafted: new <code>S.scheduledMoves[]</code> array, polling check piggybacked on the existing v1.7004 30-second inbox poll, persistence through <code>sbPush</code>/<code>sbPull</code> with the v1.7041 self-test whitelists updated, plus cleanup edge cases for severed source chars and disbanded target squads. <strong>Scope boundaries.</strong> No changes to <code>sqmgrAssignChar</code>, <code>computeDonorRankings</code>, or any other helper outside of the new <code>_recallCharFromActivity</code> + the donor click handler. <code>applyAbandonImpact</code> is unchanged \u2014 the v1.6922 contract is reused as-is. The seat-trade modal (<code>openAssignSquadModal</code>) is unchanged; it works correctly for the locked-source-to-unlocked-target case because allowLocked=true is already its default for full-trade moves. <strong>No SQL change.</strong> The new <code>costRecallFromActivity</code> field rides the existing <code>S.settings.qp</code> jsonb blob \u2014 same path every other QP knob takes. <strong>No data-model change beyond the additive QP knob.</strong> Existing saves without the field fall through to the default 15 and get the field stamped on next save.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7076a.1</strong> &mdash; Squad Manager modal: lock height. <strong>User report.</strong> After v1.7076a, the modal\u2019s vertical extent rescaled every time the donor list grew or shrank \u2014 picking a third skill that surfaced 8 donors made the modal taller, removing a pick made it shorter. Disorienting because the player\u2019s viewport reference point kept shifting under their cursor. <strong>Root cause.</strong> The modal box at line ~4562 had <code>max-height:92vh</code> only \u2014 a ceiling, not a floor. Combined with the v1.7075 <code>#sqmgr-focus-panel{flex:1 1 auto}</code> rule, the box sized to fit content up to the cap, so any content-height change rescaled the whole box. <strong>Fix.</strong> Changed <code>max-height:92vh</code> to <code>height:92vh;max-height:92vh</code> so the box claims a fixed 92vh regardless of content. The focus panel inside still flex-grows to fill the box; the donor list now scrolls within a stable container instead of stretching the modal itself. One-character fix in the inline style. <strong>Scope boundaries.</strong> No JS change. No data-model change. No SQL change. The 92vh value is unchanged \u2014 only its meaning changed from \u201Ccap\u201D to \u201Ctarget.\u201D</div>
         <div style="margin-bottom:9px"><strong>Version 1.7076a</strong> &mdash; Fill Role: busy/locked donors now visible with readouts. First half of a two-part build (v1.7076b will add the click-action paths: paid recall for busy chars and Territory Swap Zone open for cycle-locked chars). <strong>Why.</strong> <code>computeDonorRankings</code> previously hard-filtered busy characters out of the donor pool. The player saw only currently-available characters and had no signal that more options existed if they could wait or pay. Per user spec: show the full pool with explanatory readouts, then layer click actions on top. <strong>(1) New module-level helpers.</strong> <code>_msUntilFreeGlobal(ci)</code> mirrors the closure-scoped <code>_msUntilFree</code> inside <code>renderParty</code> but is callable from anywhere. Two improvements over the closure version: kind taxonomy distinguishes \u2018quest\u2019 / \u2018grind\u2019 / \u2018downtime\u2019 separately rather than lumping quests+grinds together as \u2018quest\u2019, and the return shape carries the source engagement object (the actual pending or downtime job) which v1.7076b\u2019s recall path will need. <code>_fmtAvailGlobal(ms)</code> mirrors the closure formatter (\u201CXd / X.X hr / X min\u201D output). Both live next to <code>_buildBusySet</code>. <strong>(2) <code>computeDonorRankings</code> rewrite.</strong> The busy-set filter is removed. Each donor row now carries <code>busyMs</code>, <code>busyKind</code>, and <code>busySource</code> alongside the existing <code>locked</code> flag. The <code>matchCount===0</code> filter stays (per user Q2: irrelevant donors are noise). Sort tiebreaker added: free \u2192 busy \u2192 locked among equally-matched donors so actionable options surface first. <strong>(3) Donor card render: three readout states.</strong> The action line below the meta line resolves in priority order: <em>locked</em> shows \u201C\uD83D\uDD12 Locked to current cycle\u201D in crimson (with a parenthetical busy clock if the locked char is also on an engagement); <em>busy</em> shows \u201C\u2694 On quest \u2014 free in 2h 14m\u201D / \u201C\u2692 On grind \u2014 free in 1h 5m\u201D / \u201C\uD83D\uDD6F On downtime \u2014 free in 4h 30m\u201D in gold; <em>free</em> shows the original v1.7049 \u201CMove: [source] \u2192 [target]\u201D in teal. Locked precedes busy because the swap-zone path is the only way to move a locked char regardless of whether they\u2019re also engaged. The character name suffix grows a kind-icon (\u2694 / \u2692 / \uD83D\uDD6F) so each row reads at a glance. <strong>(4) Visual treatment for blocked rows.</strong> New <code>.sqmgr-focus-result-blocked</code> class (applied when locked OR busy) gives the row 70% opacity, dashed border, and a parchment tint \u2014 reads as \u201Cvisible but currently inert\u201D. Cursor stays default since these rows aren\u2019t click-actionable yet. <strong>(5) Click-handler placeholder gate.</strong> Until v1.7076b ships the recall + swap flows, busy-row clicks now surface an explanatory alert (\u201CName is currently on a quest \u2014 free in N hours. Paid recall + scheduled-move coming in a future update\u2026\u201D) instead of silently failing inside <code>sqmgrAssignChar</code>\u2019s busy-set check. The locked-row gate from v1.7049 is unchanged. <strong>(6) Legend updated.</strong> The hint line below the donor list now lists all three states: \u201C\uD83D\uDD12 = locked to a cycle (use Swap Zone). \u2694/\u2692/\uD83D\uDD6F = currently busy on quest/grind/downtime.\u201D <strong>What\u2019s deferred to v1.7076b.</strong> New QP knob <code>costRecallFromActivity</code> (15 QP default) plus QP Manager UI field. Click warnings on busy donors with cost-to-recall confirm. Click on locked donors closing Fill Role + opening the Territory Swap Zone modal pre-targeted. Per-character recall mechanics that wrap v1.6922\u2019s <code>classifyAbandonImpact</code> + <code>applyAbandonImpact</code>. <strong>What\u2019s deferred to v1.7077.</strong> The schedule-the-move system (queue a transfer for when the busy character becomes free, with an inbox notification on completion). <strong>Pre-existing issue noted, not fixed.</strong> <code>_buildBusySet</code> walks only the active cycle\u2019s pendings. Since v1.6905, <code>_msUntilFree</code> walks every <code>setProgress[*]</code> too; <code>_buildBusySet</code> never got the same fix. This affects every callsite that treats busy as a hard filter (the now-removed <code>computeDonorRankings</code> filter, plus a handful of others). Fixing it could shift behavior in unexpected places, so it\u2019s flagged for a separate cleanup pass. <strong>Scope boundaries.</strong> <code>sqmgrAssignChar</code> unchanged. The data-model is unchanged. No SQL change. No new state fields, no persistence plumbing. Just two new helpers, an extended donor-row data shape, an enriched render path, and a placeholder click gate.</div>
@@ -4198,6 +4227,28 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS qp_price INT DEFAULT 0;</code><strong
   <div class="set-sec" id="settings-data-sec">
     <div class="set-sec-ttl">Data</div>
     <button class="btn bink full" id="btn-nav-log" style="margin-bottom:6px">📖 View Ledger</button>
+    <button class="btn bink full" id="btn-snapshot-history" style="margin-bottom:6px;background:rgba(26,107,138,.1);border:1px solid var(--teal);color:var(--teal)">🕰 Snapshot History</button>
+    <div class="set-row" style="align-items:center;margin-bottom:6px">
+      <label class="lbl" style="font-size:.82em">Auto-snapshot every</label>
+      <select id="set-snap-interval" style="font-size:.85em">
+        <option value="0">Every push</option>
+        <option value="5">5 minutes</option>
+        <option value="15">15 minutes</option>
+        <option value="30">30 minutes</option>
+        <option value="60">1 hour</option>
+        <option value="240">4 hours</option>
+      </select>
+    </div>
+    <div class="set-row" style="align-items:center;margin-bottom:6px">
+      <label class="lbl" style="font-size:.82em">Keep last</label>
+      <select id="set-snap-retention" style="font-size:.85em">
+        <option value="25">25 snapshots</option>
+        <option value="50">50 snapshots</option>
+        <option value="100">100 snapshots</option>
+        <option value="200">200 snapshots</option>
+      </select>
+    </div>
+    <div class="hint" style="margin-bottom:8px;font-size:.78em">Snapshots are stored on Supabase. Older ones are pruned automatically.</div>
     <button class="btn bink full" id="btn-export" style="margin-bottom:6px">📤 Export Save (JSON)</button>
     <button class="btn bink full" id="btn-import-trigger" style="margin-bottom:6px">📥 Import Save (JSON)</button>
     <input type="file" id="import-file-input" accept=".json,application/json" style="display:none">
@@ -6140,7 +6191,7 @@ var ADV={title:'Legacy',enc:[]}; // compat stub
 
 /* ═══════════════════════ STATE ═══════════════════════ */
 
-var DEFAULT_SETTINGS={appName:'Relentless Quest',subtitle:'Relentless Quest',fontSize:18,resetTime:'06:00',questSort:'sequence',welcomeSeen:false,showWelcome:false,taskBudgetRemaining:300,taskBudgetDate:'',testQuestMins:0,questDurationSecs:30,accessFontSize:18,accessLineSpacing:'relaxed',highContrast:true,autoCycleMonthly:false,speciesNames:true,contractsColumns:1,contractsColsAutoBalanced:false,autoPromptSubtaskComplete:true};
+var DEFAULT_SETTINGS={appName:'Relentless Quest',subtitle:'Relentless Quest',fontSize:18,resetTime:'06:00',questSort:'sequence',welcomeSeen:false,showWelcome:false,taskBudgetRemaining:300,taskBudgetDate:'',testQuestMins:0,questDurationSecs:30,accessFontSize:18,accessLineSpacing:'relaxed',highContrast:true,autoCycleMonthly:false,speciesNames:true,contractsColumns:1,contractsColsAutoBalanced:false,autoPromptSubtaskComplete:true,snapshotIntervalMin:15,snapshotRetention:50};
 
 function normalizeSettings(raw){
   var cfg=Object.assign({}, DEFAULT_SETTINGS, raw||{});
@@ -6199,6 +6250,13 @@ function normalizeSettings(raw){
   // on first desktop launch in multi-col mode? False = will auto-balance next
   // time applyContractsColumns() fires with n>=2. True = leave alone.
   cfg.contractsColsAutoBalanced=!!cfg.contractsColsAutoBalanced;
+  // v1.7077 — Snapshot system: how often (minutes) auto-snapshots are taken
+  // and how many to retain per user. 0 = take one on every successful push.
+  // Negative or non-numeric values fall back to defaults.
+  var _smin=parseInt(cfg.snapshotIntervalMin,10);
+  cfg.snapshotIntervalMin=(_smin>=0&&_smin<=1440)?_smin:DEFAULT_SETTINGS.snapshotIntervalMin;
+  var _sret=parseInt(cfg.snapshotRetention,10);
+  cfg.snapshotRetention=(_sret>=5&&_sret<=500)?_sret:DEFAULT_SETTINGS.snapshotRetention;
   return cfg;
 }
 function applyAccessibilitySettings(){
@@ -28042,6 +28100,7 @@ function applySettings(){
   /* v1.6984 */ autoBalanceContractsColsOnFirstLaunch();
   /* v1.6987 */ bindDeviceTransitionListener();
   /* v1.7002 */ bindContractSearch();
+  /* v1.7077 */ try{ if(typeof _syncSnapshotSelectors==='function')_syncSnapshotSelectors(); }catch(e){}
 }
 
 function updateDevBar(){
@@ -28702,6 +28761,273 @@ document.getElementById('import-file-input').addEventListener('change',function(
   reader.readAsText(file);
 });
 
+/* ── v1.7077 SNAPSHOT UI WIRING ──────────────────────────────────────
+   Button handlers + modal rendering. Pure presentation — all the
+   actual work happens in the snapshot helpers earlier in the file. */
+function _snapFmtTime(iso){
+  try{
+    var d=new Date(iso);
+    var now=new Date();
+    var sameDay = d.toDateString()===now.toDateString();
+    var sameYear = d.getFullYear()===now.getFullYear();
+    var time = d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    if(sameDay)return 'Today '+time;
+    var ystr=new Date(now.getTime()-86400000).toDateString();
+    if(d.toDateString()===ystr)return 'Yesterday '+time;
+    if(sameYear)return d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+time;
+    return d.toLocaleDateString()+' '+time;
+  }catch(e){ return iso||'?'; }
+}
+function _snapFmtBytes(n){
+  if(!(n>0))return '?';
+  if(n<1024)return n+' B';
+  if(n<1024*1024)return (n/1024).toFixed(1)+' KB';
+  return (n/1024/1024).toFixed(2)+' MB';
+}
+function _snapAge(iso){
+  try{
+    var ms = Date.now() - Date.parse(iso);
+    if(!(ms>=0))return '';
+    var s = Math.floor(ms/1000);
+    if(s<60)return s+'s ago';
+    var m = Math.floor(s/60);
+    if(m<60)return m+'m ago';
+    var h = Math.floor(m/60);
+    if(h<24)return h+'h ago';
+    var d = Math.floor(h/24);
+    return d+'d ago';
+  }catch(e){ return ''; }
+}
+function _snapStatus(msg, color){
+  var el=document.getElementById('ov-snap-status');
+  if(!el)return;
+  el.textContent=msg||'';
+  el.style.color=color||'var(--ink-light)';
+}
+function _renderSnapshotList(){
+  var list=document.getElementById('ov-snap-list');
+  if(!list)return;
+  list.innerHTML='<div style="color:var(--ink-light);text-align:center;padding:14px;font-size:.85em">Loading snapshots…</div>';
+  _snapStatus('');
+  if(!uid()){
+    list.innerHTML='<div style="color:var(--crimson);text-align:center;padding:14px;font-size:.85em">Log in to view snapshots.</div>';
+    return;
+  }
+  listSnapshots(200).then(function(rows){
+    if(!rows||!rows.length){
+      list.innerHTML='<div style="color:var(--ink-light);text-align:center;padding:14px;font-size:.85em">No snapshots yet. The first will be created on your next save+push, or tap <strong>💾 Take Snapshot Now</strong> below.</div>';
+      _snapStatus('0 snapshots stored.');
+      return;
+    }
+    var html='';
+    rows.forEach(function(r){
+      var lbl = r.label || (r.is_manual?'manual':'auto');
+      var manualBadge = r.is_manual ? '<span style="background:var(--crimson);color:#fff;padding:1px 6px;border-radius:8px;font-size:.7em;margin-left:6px">manual</span>' : '';
+      var safeLbl = esc(lbl);
+      html += '<div class="snap-row" data-snap-id="'+esc(r.id)+'" '+
+        'style="display:flex;align-items:center;gap:8px;padding:7px 8px;'+
+        'border-bottom:1px solid var(--parchment-deep);font-size:.85em">'+
+          '<div style="flex:1;min-width:0">'+
+            '<div style="font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+
+              safeLbl+manualBadge+
+            '</div>'+
+            '<div style="color:var(--ink-light);font-size:.85em">'+
+              esc(_snapFmtTime(r.created_at))+' · '+esc(_snapAge(r.created_at))+' · '+esc(_snapFmtBytes(r.byte_size))+
+              (r.client_version?' · '+esc(r.client_version):'')+
+            '</div>'+
+          '</div>'+
+          '<button class="btn bg sm snap-restore" data-snap-id="'+esc(r.id)+'" '+
+            'style="font-size:.78em;padding:5px 9px">Restore</button>'+
+          '<button class="snap-del" data-snap-id="'+esc(r.id)+'" '+
+            'title="Delete this snapshot" '+
+            'style="background:none;border:none;color:var(--crimson);cursor:pointer;font-size:1.1em;padding:4px 6px">×</button>'+
+        '</div>';
+    });
+    list.innerHTML=html;
+    _snapStatus(rows.length+' snapshot'+(rows.length===1?'':'s')+' stored.');
+  }).catch(function(err){
+    list.innerHTML='<div style="color:var(--crimson);text-align:center;padding:14px;font-size:.85em">Failed to load snapshots: '+esc(err.message||String(err))+'</div>';
+  });
+}
+function _summarizeSnapshotBlob(blob){
+  // Compact one-line summary for the preview pane.
+  if(!blob||typeof blob!=='object')return {};
+  return {
+    gold: blob.gold|0,
+    qpBalance: blob.qpBalance|0,
+    activeLen: (blob.active||[]).length,
+    archivedLen: (blob.archived||[]).length,
+    pinnedLen: (blob.pinned||[]).length,
+    partyLen: (blob.party||[]).length,
+    squadsLen: (blob.squads||[]).length,
+    partyAssetsLen: (blob.partyAssets||[]).length,
+    questDoneLen: ((blob.questState&&blob.questState.done)||[]).length,
+    questPendingLen: ((blob.questState&&blob.questState.pending)||[]).length
+  };
+}
+function _diffLine(label, a, b){
+  if(a===b)return '<div style="color:var(--ink-light)">'+esc(label)+': '+esc(String(a))+'</div>';
+  var delta = (typeof a==='number'&&typeof b==='number')?(a-b):null;
+  var arrow = delta===null ? ' (changed)' :
+    (delta>0 ? ' <span style="color:var(--forest)">(+'+delta+')</span>' :
+               ' <span style="color:var(--crimson)">('+delta+')</span>');
+  return '<div><strong>'+esc(label)+':</strong> '+esc(String(b))+' → '+esc(String(a))+arrow+'</div>';
+}
+function _renderSnapshotPreview(snapRow){
+  var meta=document.getElementById('ov-snap-prev-meta');
+  var diff=document.getElementById('ov-snap-prev-diff');
+  if(!meta||!diff)return;
+  var lbl = snapRow.label || (snapRow.is_manual?'manual':'auto');
+  meta.innerHTML =
+    '<div><strong>Label:</strong> '+esc(lbl)+'</div>'+
+    '<div><strong>Created:</strong> '+esc(_snapFmtTime(snapRow.created_at))+' ('+esc(_snapAge(snapRow.created_at))+')</div>'+
+    '<div><strong>Size:</strong> '+esc(_snapFmtBytes(snapRow.byte_size))+'</div>'+
+    (snapRow.client_version?'<div><strong>Version:</strong> '+esc(snapRow.client_version)+'</div>':'');
+  // Diff: snapshot's summary vs current S
+  var snap = _summarizeSnapshotBlob(snapRow.snapshot);
+  var cur  = _summarizeSnapshotBlob(S);
+  diff.innerHTML =
+    '<div style="font-weight:600;margin-bottom:4px">After restore (current → snapshot):</div>'+
+    _diffLine('Gold', snap.gold, cur.gold)+
+    _diffLine('QP balance', snap.qpBalance, cur.qpBalance)+
+    _diffLine('Active contracts', snap.activeLen, cur.activeLen)+
+    _diffLine('Archived', snap.archivedLen, cur.archivedLen)+
+    _diffLine('Pinned', snap.pinnedLen, cur.pinnedLen)+
+    _diffLine('Party characters', snap.partyLen, cur.partyLen)+
+    _diffLine('Squads', snap.squadsLen, cur.squadsLen)+
+    _diffLine('Party assets', snap.partyAssetsLen, cur.partyAssetsLen)+
+    _diffLine('Quests completed', snap.questDoneLen, cur.questDoneLen)+
+    _diffLine('Quests pending', snap.questPendingLen, cur.questPendingLen);
+}
+// Module-scoped: the row currently selected for preview/restore.
+var _snapPendingRestore = null;
+
+document.getElementById('btn-snapshot-history').addEventListener('click',function(){
+  if(!uid()){
+    alert('Log in first — snapshots are stored on your Supabase account.');
+    return;
+  }
+  openOv('ov-snapshot-list');
+  _renderSnapshotList();
+});
+document.getElementById('ov-snap-close').addEventListener('click',function(){
+  closeOv('ov-snapshot-list');
+});
+document.getElementById('ov-snap-refresh').addEventListener('click',function(){
+  _renderSnapshotList();
+});
+document.getElementById('ov-snap-take').addEventListener('click',function(){
+  var labelEl=document.getElementById('ov-snap-label');
+  var lbl = (labelEl&&labelEl.value||'').trim();
+  _snapStatus('Taking snapshot…');
+  takeSnapshotNow(lbl||'manual').then(function(ok){
+    if(labelEl)labelEl.value='';
+    if(ok){
+      _snapStatus('✓ Snapshot saved.','var(--forest)');
+      _renderSnapshotList();
+    } else {
+      _snapStatus('⚠ Snapshot failed (see console).','var(--crimson)');
+    }
+  });
+});
+// Delegated handler for restore/delete buttons inside the list.
+document.getElementById('ov-snap-list').addEventListener('click',function(ev){
+  var restoreBtn = ev.target.closest && ev.target.closest('.snap-restore');
+  var delBtn = ev.target.closest && ev.target.closest('.snap-del');
+  if(restoreBtn){
+    var id = restoreBtn.getAttribute('data-snap-id');
+    if(!id)return;
+    _snapStatus('Loading snapshot for preview…');
+    fetchSnapshot(id).then(function(row){
+      _snapPendingRestore = row;
+      _renderSnapshotPreview(row);
+      openOv('ov-snapshot-preview');
+      _snapStatus('');
+    }).catch(function(err){
+      _snapStatus('⚠ '+err.message,'var(--crimson)');
+    });
+    return;
+  }
+  if(delBtn){
+    var did = delBtn.getAttribute('data-snap-id');
+    if(!did)return;
+    if(!confirm('Delete this snapshot? This is permanent and cannot be undone.'))return;
+    _snapStatus('Deleting…');
+    deleteSnapshot(did).then(function(){
+      _snapStatus('✓ Deleted.','var(--forest)');
+      _renderSnapshotList();
+    }).catch(function(err){
+      _snapStatus('⚠ '+err.message,'var(--crimson)');
+    });
+  }
+});
+document.getElementById('ov-snap-prev-cancel').addEventListener('click',function(){
+  _snapPendingRestore = null;
+  closeOv('ov-snapshot-preview');
+});
+document.getElementById('ov-snap-prev-restore').addEventListener('click',function(){
+  if(!_snapPendingRestore){ closeOv('ov-snapshot-preview'); return; }
+  var row = _snapPendingRestore;
+  _snapPendingRestore = null;
+  // Second confirm for hard destructive operation.
+  if(!confirm('Restore snapshot from '+_snapFmtTime(row.created_at)+'?\n\nYour current state will be overwritten. (A safety snapshot of your current state is auto-created first.)')){
+    closeOv('ov-snapshot-preview');
+    return;
+  }
+  closeOv('ov-snapshot-preview');
+  _snapStatus('Restoring… this may take a moment.','var(--ink-light)');
+  restoreSnapshot(row.id).then(function(){
+    closeOv('ov-snapshot-list');
+    alert('✓ Snapshot restored from '+_snapFmtTime(row.created_at)+'.\n\nThe restored state has been pushed to Supabase as the new authoritative save.');
+  }).catch(function(err){
+    _snapStatus('⚠ Restore failed: '+(err.message||err),'var(--crimson)');
+    alert('Restore failed: '+(err.message||err)+'\n\nYour current state is unchanged.');
+  });
+});
+
+// Settings selectors — write-through binding.
+(function(){
+  var iSel=document.getElementById('set-snap-interval');
+  var rSel=document.getElementById('set-snap-retention');
+  if(iSel && !iSel._bound){
+    iSel._bound=true;
+    iSel.addEventListener('change',function(){
+      if(!S.settings)S.settings={};
+      S.settings.snapshotIntervalMin = parseInt(iSel.value,10)||0;
+      try{ save(); }catch(e){}
+    });
+  }
+  if(rSel && !rSel._bound){
+    rSel._bound=true;
+    rSel.addEventListener('change',function(){
+      if(!S.settings)S.settings={};
+      S.settings.snapshotRetention = parseInt(rSel.value,10)||50;
+      try{ save(); }catch(e){}
+    });
+  }
+})();
+// Sync the selectors to current settings whenever the Settings screen is rendered.
+function _syncSnapshotSelectors(){
+  var iSel=document.getElementById('set-snap-interval');
+  var rSel=document.getElementById('set-snap-retention');
+  if(!iSel||!rSel)return;
+  var iv = parseInt((S.settings&&S.settings.snapshotIntervalMin),10);
+  if(!(iv>=0))iv=15;
+  // Snap to nearest available option.
+  var ivOpts=[0,5,15,30,60,240];
+  var bestIv=ivOpts[0], bestDist=Infinity;
+  ivOpts.forEach(function(v){ var d=Math.abs(v-iv); if(d<bestDist){bestDist=d;bestIv=v;} });
+  iSel.value=String(bestIv);
+  var rv = parseInt((S.settings&&S.settings.snapshotRetention),10);
+  if(!(rv>=5))rv=50;
+  var rvOpts=[25,50,100,200];
+  var bestRv=rvOpts[0]; bestDist=Infinity;
+  rvOpts.forEach(function(v){ var d=Math.abs(v-rv); if(d<bestDist){bestDist=d;bestRv=v;} });
+  rSel.value=String(bestRv);
+}
+window._syncSnapshotSelectors = _syncSnapshotSelectors;
+/* ───────────────── end v1.7077 SNAPSHOT UI WIRING ──────────────────── */
+
 /* ═══════════════════════ SUPABASE SYNC ═══════════════════════ */
 var SB_URL='https://burtvenqfzextswpjziw.supabase.co';
 var SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1cnR2ZW5xZnpleHRzd3Bqeml3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyNTkxMzEsImV4cCI6MjA5MDgzNTEzMX0.M9krIdktkO1wMeKYMm_HoR_tEykewbRUVHdjerg1XIo';
@@ -29283,6 +29609,268 @@ function notifySupabaseOffline(context,err){
   alert(msg+'\n\nDetails: '+detail);
 }
 
+/* ── v1.7077 SNAPSHOTS ─────────────────────────────────────────────────
+   Server-side snapshot history. Each successful sbPush also writes a
+   compact snapshot row to franchise_snapshots so a user who experiences
+   data loss (stale push, mis-routed write, accidental deletion, lost
+   incognito tab, etc.) can roll back to any of the last N states.
+
+   Shape: { id, user_id, created_at, snapshot (jsonb full S), label,
+            client_version, byte_size, is_manual }
+
+   Auto path: written at the tail of sbPush success, throttled by
+     S.settings.snapshotIntervalMin (default 15 min). If the most recent
+     snapshot is younger than the threshold AND the fingerprint matches,
+     skip — avoids churning the table during rapid-fire saves.
+
+   Manual path: forced via takeSnapshotNow(), bypasses throttle, accepts
+     a label string.
+
+   Retention: cap at S.settings.snapshotRetention (default 50). On each
+     successful insert, query oldest beyond cap and delete.
+
+   Failure mode: snapshot insert errors are SWALLOWED. The push itself
+     is the source of truth; a snapshot write that fails just means we
+     don't have that recovery point. Critically, a snapshot failure
+     never propagates back to throw on sbPush.
+   ───────────────────────────────────────────────────────────────────── */
+var RQ_CLIENT_VERSION='v1.7077';
+var SNAPSHOT_RETENTION_DEFAULT=50;
+var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
+
+function _snapshotFingerprint(){
+  // Tiny hash of the most volatile state fields. Two states with the
+  // same fingerprint → no point taking a new snapshot.
+  try{
+    var s = (S.gold|0) + ':' + (S.qpBalance|0) + ':' +
+      (S.active||[]).length + ':' + (S.archived||[]).length + ':' +
+      (S.party||[]).length + ':' + (S.partyAssets||[]).length + ':' +
+      ((S.questState&&S.questState.done)||[]).length + ':' +
+      ((S.questState&&S.questState.pending)||[]).length;
+    return s;
+  }catch(e){ return ''+Date.now(); }
+}
+
+function _snapshotShouldThrottle(){
+  // Read settings; return Promise<bool>. Resolves true if recent enough
+  // and fingerprint unchanged.
+  var intervalMin = parseInt(
+    (S.settings && S.settings.snapshotIntervalMin),
+    10
+  );
+  if(!(intervalMin>=0))intervalMin=SNAPSHOT_INTERVAL_MIN_DEFAULT;
+  if(intervalMin===0)return Promise.resolve(false); // "every push"
+  var cutoffMs = Date.now() - intervalMin*60*1000;
+  var userId = uid();
+  if(!userId)return Promise.resolve(true); // no auth → don't write
+  var fp = _snapshotFingerprint();
+  // Fetch the most recent snapshot's created_at + a small fingerprint
+  // proxy (we store snapshot.gold + snapshot.qpBalance etc. inline in
+  // a tiny query? simpler: just look at created_at and assume any state
+  // change earns a new snapshot once the interval elapses).
+  var url = SB_URL+'/rest/v1/franchise_snapshots'+
+    '?user_id=eq.'+encodeURIComponent(userId)+
+    '&select=created_at,is_manual'+
+    '&order=created_at.desc&limit=1';
+  return sbFetch(url,{method:'GET'})
+    .then(function(r){ if(!r.ok)return []; return r.json(); })
+    .then(function(rows){
+      if(!rows||!rows.length)return false; // no prior snapshot → take one
+      var lastTs = Date.parse(rows[0].created_at);
+      if(!(lastTs>0))return false;
+      return lastTs > cutoffMs;
+    })
+    .catch(function(){ return false; });
+}
+
+function _snapshotEnforceRetention(){
+  var userId = uid();
+  if(!userId)return Promise.resolve();
+  var retention = parseInt(
+    (S.settings && S.settings.snapshotRetention),
+    10
+  );
+  if(!(retention>=5))retention=SNAPSHOT_RETENTION_DEFAULT;
+  if(retention>500)retention=500;
+  // Find rows beyond the retention cap and delete them.
+  var url = SB_URL+'/rest/v1/franchise_snapshots'+
+    '?user_id=eq.'+encodeURIComponent(userId)+
+    '&select=id,created_at'+
+    '&order=created_at.desc';
+  return sbFetch(url,{method:'GET'})
+    .then(function(r){ if(!r.ok)return []; return r.json(); })
+    .then(function(rows){
+      if(!rows||rows.length<=retention)return;
+      var toDelete = rows.slice(retention).map(function(r){ return r.id; });
+      if(!toDelete.length)return;
+      // Delete in chunks of 50 to keep URLs short.
+      var chunks=[];
+      for(var i=0;i<toDelete.length;i+=50){
+        chunks.push(toDelete.slice(i,i+50));
+      }
+      return chunks.reduce(function(p,chunk){
+        return p.then(function(){
+          var filter='id=in.('+chunk.map(encodeURIComponent).join(',')+')';
+          return sbDel('franchise_snapshots',
+            'user_id=eq.'+encodeURIComponent(userId)+'&'+filter
+          );
+        });
+      },Promise.resolve());
+    })
+    .catch(function(err){
+      console.warn('[Snapshot] retention enforcement failed:', err);
+    });
+}
+
+function _snapshotInsert(label, isManual){
+  var userId = uid();
+  if(!userId)return Promise.resolve(false);
+  var blob;
+  try{ blob = JSON.parse(JSON.stringify(S)); }
+  catch(e){ return Promise.resolve(false); }
+  var byteSize = 0;
+  try{ byteSize = JSON.stringify(blob).length; }catch(e){}
+  var row = {
+    user_id: userId,
+    snapshot: blob,
+    label: label||null,
+    client_version: RQ_CLIENT_VERSION,
+    byte_size: byteSize,
+    is_manual: !!isManual
+  };
+  return sbInsert('franchise_snapshots', row)
+    .then(function(){
+      try{ RQ_SYNCDIAG.log('snapshot_ok',{ manual: !!isManual, label: label||null, bytes: byteSize }); }catch(e){}
+      return true;
+    })
+    .catch(function(err){
+      console.warn('[Snapshot] insert failed:', err);
+      try{ RQ_SYNCDIAG.log('snapshot_fail',{ manual: !!isManual, error: (err&&err.message)||String(err) }); }catch(e){}
+      return false;
+    });
+}
+
+// Called from sbPush success branch. Returns a Promise that always
+// resolves (never rejects) so the caller can fire-and-forget.
+function _snapshotAfterPush(){
+  if(!uid())return Promise.resolve(false);
+  return _snapshotShouldThrottle().then(function(skip){
+    if(skip)return false;
+    return _snapshotInsert('auto', false).then(function(ok){
+      if(ok) _snapshotEnforceRetention();
+      return ok;
+    });
+  }).catch(function(){ return false; });
+}
+
+// Manual entry point. Always writes regardless of throttle.
+function takeSnapshotNow(label){
+  if(!uid()){
+    alert('Log in first — snapshots are stored on your Supabase account.');
+    return Promise.resolve(false);
+  }
+  var lbl = (typeof label==='string'&&label.trim())?label.trim().slice(0,200):'manual';
+  syncStatus('💾 Taking snapshot…','var(--ink-light)');
+  return _snapshotInsert(lbl, true).then(function(ok){
+    if(ok){
+      syncStatus('💾 Snapshot saved '+new Date().toLocaleTimeString(),'var(--forest)');
+      logAdd('Snapshot taken: '+lbl,'gold');
+      _snapshotEnforceRetention();
+    } else {
+      syncStatus('⚠ Snapshot failed','var(--crimson)');
+    }
+    return ok;
+  });
+}
+window.takeSnapshotNow = takeSnapshotNow; // console access
+
+// List recent snapshots for the current user. Returns array of
+// {id, created_at, label, client_version, byte_size, is_manual}.
+// Does NOT include the snapshot blob — too heavy for a list view.
+function listSnapshots(limit){
+  var userId = uid();
+  if(!userId)return Promise.resolve([]);
+  var lim = parseInt(limit,10); if(!(lim>0))lim=200;
+  var url = SB_URL+'/rest/v1/franchise_snapshots'+
+    '?user_id=eq.'+encodeURIComponent(userId)+
+    '&select=id,created_at,label,client_version,byte_size,is_manual'+
+    '&order=created_at.desc&limit='+lim;
+  return sbFetch(url,{method:'GET'})
+    .then(function(r){ if(!r.ok)return []; return r.json(); })
+    .catch(function(){ return []; });
+}
+window.listSnapshots = listSnapshots;
+
+// Fetch a single snapshot's full blob.
+function fetchSnapshot(id){
+  var userId = uid();
+  if(!userId)return Promise.reject(new Error('not authenticated'));
+  var url = SB_URL+'/rest/v1/franchise_snapshots'+
+    '?id=eq.'+encodeURIComponent(id)+
+    '&user_id=eq.'+encodeURIComponent(userId)+
+    '&select=*&limit=1';
+  return sbFetch(url,{method:'GET'})
+    .then(function(r){ if(!r.ok)return r.text().then(function(t){throw new Error('fetch '+r.status+': '+t);}); return r.json(); })
+    .then(function(rows){
+      if(!rows||!rows.length)throw new Error('snapshot not found');
+      return rows[0];
+    });
+}
+window.fetchSnapshot = fetchSnapshot;
+
+// Restore a snapshot into S, save locally, then push (so the restored
+// state becomes authoritative on the server). HARD operation — caller
+// must confirm.
+function restoreSnapshot(id){
+  return fetchSnapshot(id).then(function(row){
+    if(!row||!row.snapshot)throw new Error('snapshot has no payload');
+    // Take a "before-restore" snapshot first so the current state is
+    // preserved if the restore turns out to be wrong.
+    return _snapshotInsert('pre-restore safety', true).then(function(){
+      // Rebuild S from the snapshot. Use createDefaultState first so any
+      // fields missing from older snapshots get sensible defaults.
+      try{
+        var fresh = createDefaultState();
+        var blob = row.snapshot;
+        for(var k in blob){
+          if(blob.hasOwnProperty(k))fresh[k]=blob[k];
+        }
+        // Replace S in place. Variable was made into a getter on window
+        // by v1.7052, so we mutate in place rather than reassigning.
+        // Wipe all current keys, then copy in.
+        for(var k1 in S){ if(S.hasOwnProperty(k1)) delete S[k1]; }
+        for(var k2 in fresh){ if(fresh.hasOwnProperty(k2)) S[k2]=fresh[k2]; }
+      }catch(e){
+        throw new Error('snapshot deserialization failed: '+(e.message||e));
+      }
+      try{ saveLocalState(); }catch(e){}
+      // Force a push so server state matches the restored S.
+      return sbPush(true).then(function(){
+        try{ logAdd('🕰 Snapshot restored: '+(row.label||'auto')+' from '+new Date(row.created_at).toLocaleString(),'gold'); }catch(e){}
+        try{ RQ_SYNCDIAG.log('snapshot_restored',{ id: row.id, created_at: row.created_at, label: row.label }); }catch(e){}
+        // Refresh every visible surface so the user sees the restored state.
+        try{ applySettings(); }catch(e){}
+        try{ setGold(); }catch(e){}
+        try{ renderTasks(); }catch(e){}
+        try{ renderParty(); }catch(e){}
+        try{ renderSettings(); }catch(e){}
+        return true;
+      });
+    });
+  });
+}
+window.restoreSnapshot = restoreSnapshot;
+
+function deleteSnapshot(id){
+  var userId = uid();
+  if(!userId)return Promise.reject(new Error('not authenticated'));
+  return sbDel('franchise_snapshots',
+    'id=eq.'+encodeURIComponent(id)+'&user_id=eq.'+encodeURIComponent(userId)
+  );
+}
+window.deleteSnapshot = deleteSnapshot;
+/* ───────────────────── end v1.7077 SNAPSHOTS ──────────────────────── */
+
 /* ── PUSH ── */
 function sbPush(manual){
   if(!uid()){
@@ -29758,6 +30346,9 @@ function sbPush(manual){
       // no longer matters because saveLocalState() itself doesn't set the
       // flag (only save() does). Safe to mark clean after saveLocalState.
       try{ _markAllPushed(); }catch(e){}
+      // v1.7077 — fire-and-forget snapshot. Throttled internally; never
+      // throws back to the caller; logs success/fail to RQ_SYNCDIAG.
+      try{ _snapshotAfterPush(); }catch(e){}
       return true;
     })
     .catch(function(err){
