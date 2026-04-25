@@ -3623,7 +3623,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7080
+      Version 1.7081
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3663,6 +3663,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7081</strong> &mdash; Inbox audit: cross-reference inbox entries against the Quest Log to detect already-collected ghosts. <strong>User report.</strong> The inbox showed six ready grind missions (Patrol the District, Message Delivery, Tavern Security, Translate Documents, Escort the Healer, Track a Runaway), all "Returned: \&lt;character\&gt; · Minsaka shift". User reported familiarity with these entries &mdash; the suspicion was that they had already been collected and cleared, and what was on screen was a stale display. Without a paper trail check there was no way to confirm. <strong>Approach.</strong> Every successful grind collection writes a row to <code>S.questLog</code> (line ~16722) with <code>questTitle</code> suffixed " [Grind]", a <code>chars</code> array of <code>{name, cut, item}</code>, a <code>completedAt</code> timestamp, and the franchise/per-char gold split. Quest collections write similar rows without the suffix. <code>S.questLog</code> persists across reloads via the <code>quest_log</code> column (v1.6996+), survives Supabase round-trip cleanly per the v1.7041 self-test whitelist, and is capped at 200 entries. So the question "did I already collect this grind?" is answerable as "is there a matching <code>questLog</code> row with the same title + character names?" <strong>(1) New diagnostic helper: <code>rqInboxAudit()</code>.</strong> Walks <code>qs.grindPending</code> and every <code>qs.pending</code> + <code>setProgress[*].pending</code>, building a per-entry audit. For each, looks up matching <code>questLog</code> rows by title (with " [Grind]" suffix stripped for grinds) and by character-name set (lower-cased + sorted + joined as a comparison key). A name-set match indicates the entry has already been collected at least once. Two-tier matching: exact name-set OR every pending name appearing in the log row's <code>chars</code> array (covers the case where the log row records more chars than the pending). Returns a structured result with <code>likelyAlreadyCollected</code>, <code>likelyFresh</code>, <code>duplicateGroups</code>, and a printable <code>summary</code> string. Exposed as <code>window.rqInboxAudit</code>; runs read-only with no state mutation. <strong>(2) v1.7017 duplicate detector.</strong> While we're walking <code>qs.grindPending</code>, also detect intra-array duplicates &mdash; entries with identical <code>(id + chars + territory)</code> tuples. v1.7017 shipped the <code>migrateGrindPendingDedupV1_7017</code> cleanup specifically to remove this class of duplicate; if the audit reports them again, the cleanup is regressing or a new write site is creating them. The result block surfaces these prominently so the user knows it's a real bug signal, not just a cosmetic display issue. <strong>(3) New 🔬 Audit button inside the inbox modal.</strong> Slot in the inbox modal's footer between Clear Inbox and Collect All. Tapping opens a new <code>ov-inbox-audit</code> modal at z:520 that renders the structured <code>rqInboxAudit()</code> output as readable HTML with three sections: <em>Likely already collected</em> (crimson, the alarming category &mdash; lists each entry with title, chars, and the matching log row's <code>completedAt</code> timestamp), <em>Likely fresh</em> (forest green, the safe category), and <em>v1.7017-class duplicates</em> (only if non-empty). Footer has 📋 Copy (clipboard) and Close. The bottom of the modal includes an action hint explaining what to do with the result &mdash; tap Clear Inbox to dismiss already-collected ghosts, or run a console one-liner to remove them from <code>qs.grindPending</code> entirely (with the recommended snapshot-first preamble). <strong>(4) Title attribute on the audit button.</strong> Tooltip explains the function in plain language: "Cross-reference these inbox entries against your Quest Log. If a row is shown as 'likely already collected,' a matching collection record exists in your log &mdash; meaning the entry is probably a stale ghost rather than a fresh return." So users who hover (desktop) or long-press (some mobile browsers) get the gist before tapping. <strong>What this version doesn't do.</strong> Doesn't auto-clean the duplicates &mdash; that's a destructive action that should be deliberate after the user reads the audit. The "what to do" hint at the bottom of the audit modal explains the manual one-liner, paired with a snapshot-first reminder via Settings → Snapshot History (v1.7077). Doesn't extend the audit to <code>S.pendingDowntimeRolls</code> &mdash; downtime entries don't have a matching <code>questLog</code> row format and they're a different lifecycle (d20 reveal modal owns their resolution); the audit explicitly excludes them. Doesn't change collection mechanics, persistence, or any existing handler. <strong>Scope boundaries.</strong> One new helper function (<code>rqInboxAudit</code>), one new modal HTML block (<code>ov-inbox-audit</code>), one new button in the inbox footer, three new event-handler wirings (audit trigger, audit-modal close, audit-modal copy). No changes to <code>_collectInboxItems</code>, the inbox poll, the badge renderer, the collect/dismiss handlers, or any quest/grind/downtime resolution path. <strong>No SQL change. No data-model change.</strong> Pure read-only diagnostic surface bolted onto the existing inbox.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7080</strong> &mdash; Fill Role: sliding-cost transfer ladder + locked-donor first-class flow. <strong>User report.</strong> The v1.7076b locked-donor click handler refused to commit a move directly &mdash; it bounced the user out to the Territory Swap Zone (locked&harr;locked) or the Assign-to-Squad modal (locked&rarr;unlocked) for the cost step. That's a modal-hop without a clear cost preview at the decision point. User asked for: (a) keep the option open even when the donor is locked, (b) sliding cost scale based on friction (same-territory unlocked = free; cross-territory; cycle-locked; busy on activity), (c) explicit warning when pulling the donor would cause a quest to fail prereqs (logic that already exists in <code>classifyAbandonImpact</code> from v1.6922, just not surfaced in this flow). <strong>What landed.</strong> <strong>(1) Two new QP knobs.</strong> <code>costCrossTerritory</code> (default 5, half of <code>costSquadSwap</code>) and <code>costCycleLock</code> (default 10, matches <code>costSquadSwap</code>). Both default in <code>normalizeSettings</code>; both surface in the QP Manager UI under Fill Role surcharges, slotted right below the existing v1.7076b "Recall single character from activity" field. Save/load handlers wired through both <code>openQpManager</code> and the manager's save block, with the standard <code>parseInt(value)||default</code> fallback shape. Defaults sit on a deliberate ladder: same-territory unlocked free &rarr; cross-territory 5 QP &rarr; cycle-locked 10 QP &rarr; busy 15 QP &rarr; combinations stack additively. Worst-case (cross-territory + cycle-locked + busy) costs 30 QP for the move plus the impact warnings for any quest the busy donor was on. <strong>(2) New helper: <code>computeFillRoleMoveCost(ci, targetName)</code>.</strong> Returns one structured object describing every component cost, every warning, and any hard blockers for moving the given donor into the given target. Components are tagged with <code>key</code> + <code>label</code> + <code>cost</code> so the confirm dialog can render a breakdown rather than a single opaque number. Warnings include per-engagement <code>classifyAbandonImpact</code> verdicts ("&#x2717; Quest will FAIL" vs "&#x26a0; share forfeited") for busy donors plus a generic deployed-roster note for non-busy locked donors. The <code>blockers</code> array carries the v1.572 cross-territory locked&harr;locked refusal as a hard stop &mdash; consumers abort when blockers is non-empty. Exposed on <code>window</code> for console use and future UI surfaces (e.g., a hover tooltip on the donor row showing the cost preview before the click). <strong>(3) Donor click handler rewrite.</strong> Replaced the v1.7076b three-branch (LOCKED / BUSY / Free+unlocked) dispatch with one unified flow:<br>&bull; Defensive same-target check (no-op if donor already in target)<br>&bull; Target-full reroute to <code>openSeatTradeModal</code> (v1.7078, unchanged &mdash; the seat-trade fee is its own concern)<br>&bull; Single <code>computeFillRoleMoveCost</code> call &rarr; one confirm dialog showing every component cost, every warning, and the running total against current QP balance<br>&bull; Pre-confirm balance check (saves the user a click when the answer is obviously "no")<br>&bull; On confirm: <code>qpSpend(total)</code> with composite reason string listing every tier, then <code>_recallCharFromActivity</code> if busy, then <code>sqmgrAssignChar(ci, targetName, true)</code> with <code>allowLocked=true</code> since we just paid the cycle-lock cost explicitly.<br>The locked-source case no longer redirects the user to <code>openSwapModal</code> or <code>openAssignSquadModal</code> &mdash; the move commits in-place. Same-territory locked&harr;locked Territory Swap Zone is still reachable from the squad panel for users who want the swap UX; we just don't force them through it for a Fill Role move. <strong>(4) Stacked-cost confirm format.</strong> The confirm dialog renders as: a one-line target/source summary, a "COST BREAKDOWN" section listing each tier with its label and QP cost (e.g., "&bull; Cross-territory move (Minsaka &rarr; Stellani) &mdash; 5 QP"), a total line, the current balance, then a "WARNINGS" section listing every quest-fail / share-forfeit / downtime-cancel impact, then an extra-prominent callout if any quest would FAIL ("&#x26a0;&#x26a0;  N quests will fail if you proceed"). Free moves show a "Free move (same territory, no cycle, not busy)" line instead of the breakdown. <strong>(5) Updated legend.</strong> The hint line below the donor list now reads: "Costs scale with friction: same-territory free; cross-territory + cycle-locked + busy donors stack QP costs (and may surface quest-fail warnings). Confirm dialog shows the full breakdown before committing." Replaces the v1.7076b "&#x1F512; (locked) and &#x2694;/&#x2692;/&#x1F56F; (busy) rows show a confirm" line that under-described the new ladder. <strong>(6) QP ledger entries.</strong> Composite spend uses <code>qpSpend(total, 'fill_role_move', reason)</code> where <code>reason</code> lists every tier key (e.g., "Fill Role: Aukan &rarr; Solarians [crossTerritory+cycleLock]"). One ledger entry per move regardless of how many tiers stacked, so the ledger remains scannable. <strong>Hard blockers preserved.</strong> The v1.572 cross-territory locked&harr;locked refusal is still enforced &mdash; cycle integrity won't allow a 1-for-1 swap between two squads in different territories that are both deployed. Surfaces as a blocker alert with the explanation. <strong>What this version does NOT change.</strong> <code>openSeatTradeModal</code>, <code>openSwapModal</code>, <code>openAssignSquadModal</code>, <code>_recallCharFromActivity</code>, <code>classifyAbandonImpact</code>, <code>applyAbandonImpact</code>, <code>computeDonorRankings</code>, <code>sqmgrAssignChar</code> &mdash; all unchanged. The v1.7078 target-full seat-trade reroute is unchanged. The v1.7079 collapsible attribute panel inside the seat-trade picker is unchanged. The legend below the donor list is the only render-path edit. Edge case left for a future version: when a donor is busy/locked AND the target is full, the user goes through two consecutive confirms (the cost ladder, then the seat-trade modal). Composing those into one dialog would require <code>openSeatTradeModal</code> to accept pre-paid context, which is more invasive than this version's scope. <strong>Scope boundaries.</strong> Two new QP knob defaults, two new QP Manager input fields, one new helper function (<code>computeFillRoleMoveCost</code>), one rewritten click handler in <code>renderSqmgrFocusPanel</code>, one updated legend string. <strong>No SQL change. No data-model change.</strong> The two new fields ride in the existing <code>S.settings.qp</code> jsonb blob &mdash; same path every other QP knob takes; existing saves without the fields fall through to defaults and stamp them on next save.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7079</strong> &mdash; Trade-seat picker: per-row collapsible attribute panel + expand/collapse-all toolbar. <strong>User report.</strong> The v1.7078 trade-seat picker (the "pick a member to bump to HQ" modal that opens when Fill Role lands on a full target squad) showed only name + class + level for each candidate. Not enough information to make a useful decision &mdash; bumping someone could silently delete capabilities the squad relies on. <strong>What landed.</strong> Each member row in <code>openSeatTradeModal</code> is now a collapsible card. Auto-collapsed by default; tapping the chevron expands the card to show that member's full skills / tools / lang / faith inventory. The "→ HQ" button stays where it was, on the right, and is a separate tap target so expanding doesn't accidentally bump anyone. Toolbar across the top of the picker has <strong>▾ Expand all</strong> and <strong>▸ Collapse all</strong> buttons. <strong>(1) Squad coverage analysis at modal open.</strong> Before rendering rows, the function tabulates a coverage map per axis: <code>squadCoverageCount[axis][value] = N</code>, where N is how many current squad members have that attribute. Used to identify <em>sole-source</em> attributes per member: any value where <code>squadCoverageCount[ax][v]===1</code> means this member is the only person in the squad covering it &mdash; bumping them deletes that capability. <strong>(2) Sole-source warning on the collapsed row.</strong> Each row's name shows a crimson <strong>⚠ &minus;N</strong> badge listing how many capabilities the squad would lose if that member were bumped. Hover/long-press tooltip says "Bumping this character would leave the squad without N capability/ies." Provides actionable signal without requiring expansion. Members with no sole-source attributes show no badge. <strong>(3) Pill color coding inside the expanded panel.</strong> Three states: (a) <span style="color:var(--crimson)">crimson with ⚠ prefix</span> for sole-source attributes (this member is the only carrier in the squad); (b) <span style="color:var(--gold-dark)">gold with ★ prefix</span> for attributes that match the active Fill Role picks (read opportunistically from <code>sqmgrFocusPicks</code> if non-empty &mdash; means "this person is here for the same reason you're trying to fill, so bumping them is doubly costly"); (c) muted axis-colored pills (teal Skills / brown Tools / slate Lang / gold Faith) for attributes that other members of the squad also cover &mdash; safe to bump. Pills sort within each axis: solo first, then picks, then alphabetical. <strong>(4) Toolbar legend.</strong> The toolbar's right side shows a one-line legend: "⚠ = sole source" plus, when picks are active, "★ = Fill Role pick". Reading the legend gives the user the decision rubric in one glance. <strong>(5) Cross-entry-point compatibility.</strong> <code>openSeatTradeModal</code> is also called from the v1.6943 character peek "join squad" picker (when the user picks a full squad), and the v1.7047 per-row &#x21C4; transfer button. Both entry points now also benefit from the expanded view &mdash; <code>sqmgrFocusPicks</code> is empty in those flows so no gold pills appear, but the sole-source crimson highlighting is always meaningful regardless of how the modal was opened. <strong>(6) Wiring.</strong> Each row carries its own <code>data-seat-toggle</code> chevron button; click handler reads <code>data-seat-details</code> sibling and flips its <code>display</code>. Toolbar buttons walk all chevrons and call the same toggle helper for each. <code>stopPropagation</code> on the chevron prevents future ancestor handlers from acting on the same tap. The <code>data-trade-bump</code> button is a separate child element so its click flow is unaffected by the new chevron &mdash; the original v1.7078 trade logic (qpSpend → unassign → assign → log → close) is untouched. <strong>Implementation note: native <code>&lt;details&gt;</code> avoided.</strong> A native <code>&lt;details&gt;</code> would have been simpler but would have made the entire summary row a toggle target &mdash; meaning tapping anywhere on the row, including the "→ HQ" button area, would expand/collapse instead of triggering the trade. Bespoke chevron + manual show/hide gives explicit control over which sub-elements toggle vs. commit. Matches the rest of the app's idiom (the codebase uses <code>&lt;details&gt;</code> only for top-level Settings sections and territory zones, never for action-bearing rows). <strong>Scope boundaries.</strong> Pure replacement of <code>openSeatTradeModal</code>'s row-render loop. The function signature, the modal it reuses (<code>ov-assign-squad</code>), the qpSpend → unassign → assign trade path, the busy-set integration, the cancel and "Back to squad picker" footer, and every call site of <code>openSeatTradeModal</code> are untouched. <strong>No SQL change. No data-model change. No new state fields, no persistence work.</strong> Pure additive UX layer.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7078</strong> &mdash; Fill Role: free-path donor click silently failed when the target squad was full. <strong>User report.</strong> In the Squad Manager &rarr; Fill Role flow, target = Solarians (already at 10/10), donor = Aukan (Hireling, unassigned, unlocked, free move). The modal showed a 1/1 match badge and "Move: Unassigned &rarr; Solarians" with no cost. Tapping the row opened the confirm dialog ("Move Aukan into Solarians?"); pressing OK appeared to do nothing &mdash; no alert, no error, no roster change, no UI feedback at all. <strong>Root cause.</strong> The v1.7076b donor click handler at <code>[data-focus-move]</code> ships three explicit branches for locked-source, busy-source, and free + unlocked donors. The free + unlocked branch (the original v1.7049 code path) calls <code>sqmgrAssignChar(ci, targetName)</code> unconditionally without checking whether the target has roster capacity. <code>sqmgrAssignChar</code> itself <em>does</em> have a capacity guard (refuses to add if <code>memberIdxs.length &gt;= SQUAD_MAX_SIZE</code>) and was supposed to surface the refusal via two visual paths: (a) a red-flash + count animation on the target's tile in <code>#sqmgr-grid</code>, and (b) a crimson message on <code>#sqmgr-hint</code> via <code>updateSqmgrHint()</code>. <strong>Both feedback surfaces were deleted in v1.7075</strong> when the legacy bottom-of-modal Squad Manager DOM was stripped (the v1.7075 changelog correctly noted that the deleted render functions <em>safely</em> no-op via <code>getElementById</code> null-guards &mdash; which is true for rendering, but the v1.6943 capacity-rejection feedback path got silently neutered as collateral damage). With both feedback paths null-guarded out, <code>sqmgrAssignChar</code> rejected the move and returned with zero user-visible signal. The v1.7076b changelog explicitly noted "No changes to <code>sqmgrAssignChar</code>, <code>computeDonorRankings</code>, or any other helper outside of the new <code>_recallCharFromActivity</code> + the donor click handler" &mdash; correct as a scope statement, but it meant the dependency on the deleted feedback DOM was carried forward without being noticed. <strong>(1) Free-path target-capacity check.</strong> The donor click handler's free + unlocked branch now computes <code>targetMembers</code> at click time and, if <code>targetMembers.length &gt;= SQUAD_MAX_SIZE</code> AND the donor isn't already in the target, reroutes to the seat-trade flow before the move ever fires. Routes directly to <code>openSeatTradeModal(ciIncoming, targetSquadName)</code> &mdash; the v1.6943 second-stage modal that lists the target squad's current members with bumpable indicators &mdash; because we already know the target squad and don't need <code>openAssignSquadModal</code>'s intermediate full-squad picker. Falls back to <code>openAssignSquadModal</code> if <code>openSeatTradeModal</code> isn't available (defensive). <strong>(2) Pre-routing dead-end protection.</strong> Before opening the seat-trade picker, two pre-checks: (a) if every current member of the target is on a quest, grind, or downtime job (via <code>_buildBusySet</code>), the picker would render with all rows disabled &mdash; show an explanatory alert instead of opening the dead-end UI; (b) if QP is enabled and balance is below <code>costSquadSwap</code>, refuse with a "need N QP, have M" alert before opening the picker. The picker itself also surfaces these refusals on each row, but pre-checking lets us skip a useless modal-open + close round-trip when no productive action is possible. <strong>(3) Backstop alert in <code>sqmgrAssignChar</code>.</strong> Even with the click-handler pre-check, a future caller or a race condition (e.g., another tab/session adds the 10th member between confirm-render and confirm-click) could still hit the capacity-full branch in <code>sqmgrAssignChar</code>. Added an <code>alert()</code> at the top of that branch so users always get user-visible feedback when this rejection fires, regardless of where it was called from. The legacy red-flash + count-animate code is kept untouched below the alert &mdash; it's a no-op when <code>#sqmgr-grid</code> is absent (Fill Role mode), and a useful animation when it's present (other call sites that render the legacy grid). Defense in depth. <strong>Why the seat-trade flow rather than just blocking.</strong> The v1.7076b free + unlocked branch was philosophically a "fast path" &mdash; donors with no friction get a single confirm and then the move completes. But "target is full" is a friction the player needs to know about and resolve via the same trade-into-full-squad path that the character peek's "join squad" picker (v1.6943) and the per-row &#x21C4; transfer button (v1.7047) already provide. Routing into <code>openSeatTradeModal</code> reuses the existing flow rather than introducing a Fill-Role-specific dead-end. The seat-trade picker also handles the implicit cost disclosure (10 QP) and the busy-member-can't-be-bumped semantics that this branch was missing. <strong>Scope boundaries.</strong> Two surgical edits inside <code>renderSqmgrFocusPanel</code>'s click handler (~33519) and one alert insertion in <code>sqmgrAssignChar</code>'s capacity branch (~32779). No changes to <code>computeDonorRankings</code>, <code>openSeatTradeModal</code>, <code>openAssignSquadModal</code>, <code>renderSqmgrFocusPanel</code> below the click handler, or any of the v1.7076b locked/busy paths. The v1.7076b LOCKED-source-to-UNLOCKED-target branch already routes to <code>openAssignSquadModal</code> which handles full-target via its own seat-trade hand-off, so it's correct without changes. The v1.7076b LOCKED-to-LOCKED branch routes to <code>openSwapModal</code> which performs a 1-for-1 swap by definition and can't overflow. The v1.7076b BUSY branch was already QP-gated and capacity-aware (the <code>sqmgrAssignChar</code> tail-call could still hit the silent-rejection in the rare case that the target filled up between the recall confirm and the assign call &mdash; the new alert backstop now catches that). <strong>Pre-existing issue noted, not fixed.</strong> The same v1.7075-deleted-feedback-DOM problem may affect other call sites of <code>sqmgrAssignChar</code> that pass through Fill Role mode but don't pre-check capacity. The alert backstop catches all of them now, so this is no longer silent &mdash; but the legacy red-flash animation still runs against null DOM in those paths. Worth a future cleanup pass to remove the dead animation code entirely; not in scope for this version because removing it changes behavior on the legacy non-Fill-Role entry points where the DOM still exists. <strong>No SQL change. No data-model change. No new state fields.</strong> Three small JS edits, ~30 lines total.</div>
@@ -4525,7 +4526,21 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS qp_price INT DEFAULT 0;</code><strong
   <div class="mbtns" style="gap:8px;flex-wrap:wrap">
     <button class="btn bink" type="button" id="ov-inbox-close">Close</button>
     <button class="btn bink" type="button" id="ov-inbox-dismiss" title="Hide these notifications without collecting. Rewards remain unclaimed — you can still collect via the Quest Map or Grinds list.">✕ Clear Inbox</button>
+    <button class="btn bink sm" type="button" id="ov-inbox-audit" title="Cross-reference these inbox entries against your Quest Log (S.questLog). If a row is shown as 'likely already collected,' a matching collection record exists in your log — meaning the entry is probably a stale ghost rather than a fresh return." style="font-size:.78em">🔬 Audit</button>
     <button class="btn bpur" type="button" id="ov-inbox-clear-all" title="Collect every ready quest and grind reward now (costs QP). Downtime rolls still need the d20 reveal and will stay pending.">✓ Collect All</button>
+  </div>
+</div></div>
+
+<!-- v1.7081 — Inbox audit result modal. Shows the rqInboxAudit() output in
+     a readable form so non-console users can interpret it. Stacks above
+     the inbox modal at z:520. -->
+<div class="ov" id="ov-inbox-audit" style="z-index:520"><div class="modal" style="max-width:560px;max-height:90vh;display:flex;flex-direction:column">
+  <h3 style="margin-bottom:6px">🔬 Inbox Audit</h3>
+  <p class="hint" style="margin-bottom:8px;font-size:.78em">Each inbox entry is cross-referenced against <code>S.questLog</code> (your collection record). If a row appears below as <strong>already collected</strong>, a matching log entry exists — strong evidence the inbox row is a stale duplicate rather than a fresh return.</p>
+  <div id="ov-inbox-audit-body" style="flex:1;overflow-y:auto;font-size:.82em;line-height:1.4;padding:8px;background:var(--parchment);border:1px solid var(--parchment-deep);border-radius:6px;margin-bottom:10px"></div>
+  <div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">
+    <button class="btn bink sm" type="button" id="ov-inbox-audit-copy" title="Copy the full audit text to your clipboard">📋 Copy</button>
+    <button class="btn bink sm" type="button" id="ov-inbox-audit-close">Close</button>
   </div>
 </div></div>
 <div class="ov" id="ov-dt-forfeit" style="z-index:510"><div class="modal" style="max-width:420px">
@@ -16501,6 +16516,205 @@ function _collectInboxItems(){
   return items;
 }
 
+// ── v1.7081 — Inbox audit: cross-reference live grindPending against questLog ──
+// User reported that ready grinds in the inbox looked familiar — they suspected
+// they'd already been collected. Without a paper-trail check, we can't tell
+// whether the inbox is showing (a) legitimately new pendings or (b) stale
+// grindPending entries that survived collection (a v1.7017-class bug recurring).
+//
+// Strategy: every successful grind collection pushes a row to S.questLog with
+// questTitle suffix " [Grind]" and a chars array of {name, cut, item}. The
+// audit walks current qs.grindPending and qs.pending and, for each entry,
+// looks for a matching log row by title + character-name set. Match → likely
+// already collected. No match → fresh pending awaiting collection.
+//
+// Also flags duplicates WITHIN qs.grindPending itself (the v1.7017 recurrence
+// signal): two entries with the same id + sorted-chars set are almost
+// certainly a bug, since each grind instance is meant to be unique.
+//
+// Console: rqInboxAudit() returns a structured result and prints a readable
+// summary. Also called by the v1.7081 "🔬 Audit Inbox" button inside the
+// inbox modal so non-console users can trigger it.
+function rqInboxAudit(opts){
+  opts=opts||{};
+  var verbose=opts.verbose!==false;
+  var qs=S.questState||{};
+  var now=Date.now();
+  var log=S.questLog||[];
+
+  // ── helpers ─────────────────────────────────────────────────────────
+  function _charNames(chars){
+    return (chars||[]).map(function(ci){
+      var c=S.party&&S.party[ci];
+      return c?c.name:('?#'+ci);
+    });
+  }
+  // Normalize a name array for comparison: lower-cased + sorted joined.
+  function _nameKey(names){
+    return (names||[]).map(function(n){return (n||'').toLowerCase().trim();}).sort().join('|');
+  }
+
+  // ── Build the questLog index: title → array of entries ───────────────
+  // We index ALL grind log rows so the audit can scan against any timestamp,
+  // not just same-day. Keying by title only (no char names) because a single
+  // log entry can have multiple chars and we want to spot any overlap.
+  var grindLogByTitle={};
+  log.forEach(function(e,li){
+    if(!e||e.type!=='grind')return;
+    var t=(e.questTitle||'').replace(/\s*\[Grind\]\s*$/,'').trim();
+    if(!t)return;
+    if(!grindLogByTitle[t])grindLogByTitle[t]=[];
+    grindLogByTitle[t].push({li:li,entry:e});
+  });
+  var questLogByTitle={};
+  log.forEach(function(e,li){
+    if(!e||e.type==='grind')return;
+    var t=(e.questTitle||'').trim();
+    if(!t)return;
+    if(!questLogByTitle[t])questLogByTitle[t]=[];
+    questLogByTitle[t].push({li:li,entry:e});
+  });
+
+  // ── Audit grindPending entries ──────────────────────────────────────
+  var grindAudit=[];
+  (qs.grindPending||[]).forEach(function(gp,gpi){
+    var ready=(gp.doneAt||0)<=now;
+    var charNames=_charNames(gp.chars);
+    var charNameKey=_nameKey(charNames);
+    var title=(gp.title||'').trim();
+    var matches=(grindLogByTitle[title]||[]).filter(function(rec){
+      var logNames=(rec.entry.chars||[]).map(function(cr){return cr.name;});
+      var logKey=_nameKey(logNames);
+      // Two ways to match: identical name set, OR every grindPending name
+      // is present in the log entry (covers the case where the log row
+      // has more chars but our pending is a subset).
+      if(logKey===charNameKey)return true;
+      var allPresent=charNames.every(function(n){
+        return (logNames||[]).some(function(ln){return (ln||'').toLowerCase()===(n||'').toLowerCase();});
+      });
+      return allPresent && charNames.length>0;
+    });
+    grindAudit.push({
+      gpi:gpi,
+      title:title,
+      chars:charNames,
+      ready:ready,
+      doneAt:gp.doneAt||0,
+      reward:gp.reward||0,
+      territory:gp.territory||'',
+      logMatches:matches.map(function(m){
+        return {logIndex:m.li,completedAt:m.entry.completedAt,reward:m.entry.reward,
+                chars:(m.entry.chars||[]).map(function(cr){return cr.name;})};
+      })
+    });
+  });
+
+  // ── Audit quest pendings (active cycle + non-active cycles) ─────────
+  var questAudit=[];
+  function _scanQuestPending(setId,arr){
+    var setObj=(QUESTSETS||[]).filter(function(s){return s&&s.id===setId;})[0]||null;
+    (arr||[]).forEach(function(pq,pi){
+      if(!pq||pq._inboxDismissed)return;
+      var ready=(pq.doneAt||0)<=now;
+      var q=setObj&&typeof questByIdx==='function'?questByIdx(setObj,pq.idx):null;
+      var title=q&&q.title?q.title:('Quest #'+((pq.idx||0)+1));
+      var charNames=_charNames(pq.chars);
+      var matches=(questLogByTitle[title]||[]).filter(function(rec){
+        var logNames=(rec.entry.chars||[]).map(function(cr){return cr.name;});
+        var logKey=_nameKey(logNames);
+        return _nameKey(charNames)===logKey;
+      });
+      questAudit.push({
+        setId:setId,
+        pi:pi,
+        title:title,
+        chars:charNames,
+        ready:ready,
+        doneAt:pq.doneAt||0,
+        reward:pq.reward||0,
+        logMatches:matches.map(function(m){
+          return {logIndex:m.li,completedAt:m.entry.completedAt,reward:m.entry.reward,
+                  chars:(m.entry.chars||[]).map(function(cr){return cr.name;})};
+        })
+      });
+    });
+  }
+  _scanQuestPending(qs.setId||'',qs.pending);
+  var sp=qs.setProgress||{};
+  Object.keys(sp).forEach(function(sid){
+    if(sid===(qs.setId||''))return;
+    _scanQuestPending(sid,sp[sid]&&sp[sid].pending);
+  });
+
+  // ── Flag intra-grindPending duplicates (v1.7017 recurrence signal) ──
+  var dupeBuckets={};
+  (qs.grindPending||[]).forEach(function(gp,gpi){
+    var key=(gp.id||'?')+'|'+_nameKey(_charNames(gp.chars))+'|'+(gp.territory||'');
+    if(!dupeBuckets[key])dupeBuckets[key]=[];
+    dupeBuckets[key].push(gpi);
+  });
+  var duplicateGroups=[];
+  Object.keys(dupeBuckets).forEach(function(k){
+    if(dupeBuckets[k].length>=2)duplicateGroups.push({key:k,indices:dupeBuckets[k]});
+  });
+
+  var result={
+    grindPendingCount:(qs.grindPending||[]).length,
+    questPendingCount:questAudit.length,
+    grindLogTotal:Object.values(grindLogByTitle).reduce(function(n,a){return n+a.length;},0),
+    questLogTotal:Object.values(questLogByTitle).reduce(function(n,a){return n+a.length;},0),
+    grindAudit:grindAudit,
+    questAudit:questAudit,
+    duplicateGroups:duplicateGroups,
+    likelyAlreadyCollected:grindAudit.filter(function(g){return g.logMatches.length>0;})
+                           .concat(questAudit.filter(function(q){return q.logMatches.length>0;})),
+    likelyFresh:grindAudit.filter(function(g){return g.logMatches.length===0;})
+                .concat(questAudit.filter(function(q){return q.logMatches.length===0;}))
+  };
+
+  if(verbose){
+    var lines=[];
+    lines.push('=== Inbox Audit ===');
+    lines.push('grindPending: '+result.grindPendingCount+' · questPending: '+result.questPendingCount);
+    lines.push('questLog grind rows: '+result.grindLogTotal+' · questLog regular-quest rows: '+result.questLogTotal);
+    lines.push('');
+    lines.push('LIKELY ALREADY COLLECTED ('+result.likelyAlreadyCollected.length+'):');
+    if(!result.likelyAlreadyCollected.length){
+      lines.push('  (none — every pending appears fresh)');
+    } else {
+      result.likelyAlreadyCollected.forEach(function(it){
+        var when=it.logMatches.map(function(m){return m.completedAt;}).join(', ');
+        lines.push('  ⚠ "'+it.title+'" — chars: '+(it.chars.join(', ')||'?')+
+          ' — found '+it.logMatches.length+' matching log row(s): '+when);
+      });
+    }
+    lines.push('');
+    lines.push('LIKELY FRESH ('+result.likelyFresh.length+'):');
+    if(!result.likelyFresh.length){
+      lines.push('  (none — every pending has a log match)');
+    } else {
+      result.likelyFresh.forEach(function(it){
+        lines.push('  ✓ "'+it.title+'" — chars: '+(it.chars.join(', ')||'?'));
+      });
+    }
+    lines.push('');
+    lines.push('INTRA-grindPending DUPLICATES ('+result.duplicateGroups.length+'):');
+    if(!result.duplicateGroups.length){
+      lines.push('  (none)');
+    } else {
+      lines.push('  ⚠ v1.7017-class duplicates detected — same (id + chars + territory) appears more than once:');
+      result.duplicateGroups.forEach(function(g){
+        lines.push('    key='+g.key+' at indices ['+g.indices.join(', ')+']');
+      });
+    }
+    var summary=lines.join('\n');
+    if(typeof console!=='undefined'&&console.log)console.log(summary);
+    result.summary=summary;
+  }
+  return result;
+}
+window.rqInboxAudit=rqInboxAudit;
+
 // Show/hide the red dot on the envelope based on current inbox count.
 function renderInboxBadge(){
   var dot=document.getElementById('inbox-dot');
@@ -16794,6 +17008,100 @@ function openInboxModal(){
         logAdd('✉ Inbox cleared: '+dismissed+' notification'+(dismissed===1?'':'s')+' hidden. Rewards are unclaimed — collect via the Quest Map when you\u2019re ready.','adv');
       });
       dismissBtn._wired=true;
+    }
+    // v1.7081 — Audit button: cross-references inbox vs questLog.
+    var auditBtn=document.getElementById('ov-inbox-audit');
+    if(auditBtn&&!auditBtn._wired){
+      auditBtn.addEventListener('click',function(){
+        var result=rqInboxAudit({verbose:true});
+        var body=document.getElementById('ov-inbox-audit-body');
+        if(body){
+          // Render as styled HTML for readability (the `summary` text is great
+          // for clipboard but bare in the modal). We re-walk the structured
+          // result here rather than parsing the summary string.
+          var html='';
+          html+='<div style="margin-bottom:8px;color:var(--ink-light);font-size:.78em">';
+          html+='grindPending: <strong>'+result.grindPendingCount+'</strong> · ';
+          html+='questPending: <strong>'+result.questPendingCount+'</strong> · ';
+          html+='questLog grind rows: <strong>'+result.grindLogTotal+'</strong> · ';
+          html+='questLog regular rows: <strong>'+result.questLogTotal+'</strong>';
+          html+='</div>';
+          // Already-collected (the alarming category)
+          html+='<div style="margin-bottom:10px"><div style="font-weight:700;color:var(--crimson);margin-bottom:4px">'+
+            '⚠ Likely already collected ('+result.likelyAlreadyCollected.length+')</div>';
+          if(!result.likelyAlreadyCollected.length){
+            html+='<div style="font-style:italic;color:var(--ink-light);font-size:.8em">None — every pending appears fresh.</div>';
+          } else {
+            html+='<div style="font-size:.78em">These inbox entries have a matching collection record in your Quest Log. Strong evidence the entry is a stale ghost rather than a fresh return.</div>';
+            html+='<ul style="margin:6px 0 0 16px;padding:0">';
+            result.likelyAlreadyCollected.forEach(function(it){
+              var when=it.logMatches.map(function(m){return m.completedAt;}).join(' · ');
+              html+='<li style="margin-bottom:4px"><strong>'+esc(it.title)+'</strong>'+
+                ' — chars: '+esc(it.chars.join(', ')||'?')+
+                '<br><span style="color:var(--ink-light);font-size:.85em">log: '+esc(when)+'</span></li>';
+            });
+            html+='</ul>';
+          }
+          html+='</div>';
+          // Fresh
+          html+='<div style="margin-bottom:10px"><div style="font-weight:700;color:var(--forest);margin-bottom:4px">'+
+            '✓ Likely fresh ('+result.likelyFresh.length+')</div>';
+          if(!result.likelyFresh.length){
+            html+='<div style="font-style:italic;color:var(--ink-light);font-size:.8em">None — every pending has a matching log entry.</div>';
+          } else {
+            html+='<ul style="margin:6px 0 0 16px;padding:0">';
+            result.likelyFresh.forEach(function(it){
+              html+='<li style="margin-bottom:3px"><strong>'+esc(it.title)+'</strong> — '+esc(it.chars.join(', ')||'?')+'</li>';
+            });
+            html+='</ul>';
+          }
+          html+='</div>';
+          // Duplicates
+          if(result.duplicateGroups.length){
+            html+='<div style="margin-bottom:10px;padding:6px 8px;background:rgba(192,57,43,.08);border:1px solid var(--crimson);border-radius:6px">'+
+              '<div style="font-weight:700;color:var(--crimson);margin-bottom:3px">⚠ v1.7017-class duplicates detected ('+result.duplicateGroups.length+')</div>'+
+              '<div style="font-size:.78em">The same (id + chars + territory) appears more than once in qs.grindPending. This is the bug pattern v1.7017 fixed; if you see this, the cleanup is regressing.</div>';
+            html+='<ul style="margin:6px 0 0 16px;padding:0;font-size:.78em;font-family:monospace">';
+            result.duplicateGroups.forEach(function(g){
+              html+='<li>'+esc(g.key)+' at indices ['+g.indices.join(', ')+']</li>';
+            });
+            html+='</ul></div>';
+          }
+          // Action hint
+          html+='<div style="margin-top:10px;padding:6px 8px;background:rgba(201,146,42,.06);border:1px dashed var(--gold-dark);border-radius:6px;font-size:.78em;color:var(--ink-light)">';
+          html+='<strong>What to do.</strong> If "likely already collected" is non-empty: tap <strong>✕ Clear Inbox</strong> to dismiss those rows without re-collecting (rewards stay where they are). If you want the underlying ghost entries gone from <code>qs.grindPending</code> entirely, run <code>S.questState.grindPending = S.questState.grindPending.filter(gp => (gp.doneAt||0) > Date.now())</code> in the console — but take a snapshot first via Settings → Snapshot History.';
+          html+='</div>';
+          body.innerHTML=html;
+        }
+        openOv('ov-inbox-audit');
+      });
+      auditBtn._wired=true;
+    }
+    // v1.7081 — Audit-modal Close + Copy buttons
+    var auditCloseBtn=document.getElementById('ov-inbox-audit-close');
+    if(auditCloseBtn&&!auditCloseBtn._wired){
+      auditCloseBtn.addEventListener('click',function(){closeOv('ov-inbox-audit');});
+      auditCloseBtn._wired=true;
+    }
+    var auditCopyBtn=document.getElementById('ov-inbox-audit-copy');
+    if(auditCopyBtn&&!auditCopyBtn._wired){
+      auditCopyBtn.addEventListener('click',function(){
+        var result=rqInboxAudit({verbose:true});
+        var txt=result.summary||'';
+        if(navigator.clipboard&&navigator.clipboard.writeText){
+          navigator.clipboard.writeText(txt).then(function(){
+            auditCopyBtn.textContent='✓ Copied';
+            setTimeout(function(){auditCopyBtn.textContent='📋 Copy';},1400);
+          },function(){
+            alert('Copy failed. The text was logged to console instead.');
+            console.log(txt);
+          });
+        } else {
+          alert('Clipboard API unavailable. Audit text logged to console.');
+          console.log(txt);
+        }
+      });
+      auditCopyBtn._wired=true;
     }
     // Initial render (covers reload path).
     try{renderInboxBadge();}catch(e){}
@@ -29846,7 +30154,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7080';
+var RQ_CLIENT_VERSION='v1.7081';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
