@@ -2433,6 +2433,20 @@ body.dev-active #app{margin-top:36px;}
    should lay out naturally inside it. */
 .sqmgr-focus-result{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;margin-bottom:4px;background:#fff;border:1px solid var(--parchment-deep);cursor:pointer;}
 .sqmgr-focus-result:active{opacity:.75;}
+/* v1.7076a — visible-but-blocked donor cards (busy on an engagement OR in
+   a cycle-locked squad). Muted opacity + dashed border + parchment tint
+   so the row reads as "visible but currently inert". The cursor stays
+   default (pointer-or-not is a v1.7076b concern when click warnings ship);
+   for now, the existing click handler ignores busy chars at the data
+   layer via sqmgrAssignChar's busy-set check, so taps on these rows are
+   silent no-ops. */
+.sqmgr-focus-result-blocked{
+  opacity:.7;
+  background:rgba(245,238,220,.6);
+  border-style:dashed;
+  cursor:default;
+}
+.sqmgr-focus-result-blocked:active{opacity:.7;}
 .sqmgr-focus-result-match{flex-shrink:0;font-family:'Cinzel',serif;font-size:.68em;font-weight:700;background:rgba(26,107,138,.12);color:var(--teal);padding:3px 6px;border-radius:4px;white-space:nowrap;}
 .sqmgr-focus-result-match.perfect{background:var(--teal);color:#fff;}
 .sqmgr-focus-result-body{flex:1;min-width:0;}
@@ -2786,7 +2800,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7075</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7076a</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3579,7 +3593,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7075
+      Version 1.7076a
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3619,6 +3633,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7076a</strong> &mdash; Fill Role: busy/locked donors now visible with readouts. First half of a two-part build (v1.7076b will add the click-action paths: paid recall for busy chars and Territory Swap Zone open for cycle-locked chars). <strong>Why.</strong> <code>computeDonorRankings</code> previously hard-filtered busy characters out of the donor pool. The player saw only currently-available characters and had no signal that more options existed if they could wait or pay. Per user spec: show the full pool with explanatory readouts, then layer click actions on top. <strong>(1) New module-level helpers.</strong> <code>_msUntilFreeGlobal(ci)</code> mirrors the closure-scoped <code>_msUntilFree</code> inside <code>renderParty</code> but is callable from anywhere. Two improvements over the closure version: kind taxonomy distinguishes \u2018quest\u2019 / \u2018grind\u2019 / \u2018downtime\u2019 separately rather than lumping quests+grinds together as \u2018quest\u2019, and the return shape carries the source engagement object (the actual pending or downtime job) which v1.7076b\u2019s recall path will need. <code>_fmtAvailGlobal(ms)</code> mirrors the closure formatter (\u201CXd / X.X hr / X min\u201D output). Both live next to <code>_buildBusySet</code>. <strong>(2) <code>computeDonorRankings</code> rewrite.</strong> The busy-set filter is removed. Each donor row now carries <code>busyMs</code>, <code>busyKind</code>, and <code>busySource</code> alongside the existing <code>locked</code> flag. The <code>matchCount===0</code> filter stays (per user Q2: irrelevant donors are noise). Sort tiebreaker added: free \u2192 busy \u2192 locked among equally-matched donors so actionable options surface first. <strong>(3) Donor card render: three readout states.</strong> The action line below the meta line resolves in priority order: <em>locked</em> shows \u201C\uD83D\uDD12 Locked to current cycle\u201D in crimson (with a parenthetical busy clock if the locked char is also on an engagement); <em>busy</em> shows \u201C\u2694 On quest \u2014 free in 2h 14m\u201D / \u201C\u2692 On grind \u2014 free in 1h 5m\u201D / \u201C\uD83D\uDD6F On downtime \u2014 free in 4h 30m\u201D in gold; <em>free</em> shows the original v1.7049 \u201CMove: [source] \u2192 [target]\u201D in teal. Locked precedes busy because the swap-zone path is the only way to move a locked char regardless of whether they\u2019re also engaged. The character name suffix grows a kind-icon (\u2694 / \u2692 / \uD83D\uDD6F) so each row reads at a glance. <strong>(4) Visual treatment for blocked rows.</strong> New <code>.sqmgr-focus-result-blocked</code> class (applied when locked OR busy) gives the row 70% opacity, dashed border, and a parchment tint \u2014 reads as \u201Cvisible but currently inert\u201D. Cursor stays default since these rows aren\u2019t click-actionable yet. <strong>(5) Click-handler placeholder gate.</strong> Until v1.7076b ships the recall + swap flows, busy-row clicks now surface an explanatory alert (\u201CName is currently on a quest \u2014 free in N hours. Paid recall + scheduled-move coming in a future update\u2026\u201D) instead of silently failing inside <code>sqmgrAssignChar</code>\u2019s busy-set check. The locked-row gate from v1.7049 is unchanged. <strong>(6) Legend updated.</strong> The hint line below the donor list now lists all three states: \u201C\uD83D\uDD12 = locked to a cycle (use Swap Zone). \u2694/\u2692/\uD83D\uDD6F = currently busy on quest/grind/downtime.\u201D <strong>What\u2019s deferred to v1.7076b.</strong> New QP knob <code>costRecallFromActivity</code> (15 QP default) plus QP Manager UI field. Click warnings on busy donors with cost-to-recall confirm. Click on locked donors closing Fill Role + opening the Territory Swap Zone modal pre-targeted. Per-character recall mechanics that wrap v1.6922\u2019s <code>classifyAbandonImpact</code> + <code>applyAbandonImpact</code>. <strong>What\u2019s deferred to v1.7077.</strong> The schedule-the-move system (queue a transfer for when the busy character becomes free, with an inbox notification on completion). <strong>Pre-existing issue noted, not fixed.</strong> <code>_buildBusySet</code> walks only the active cycle\u2019s pendings. Since v1.6905, <code>_msUntilFree</code> walks every <code>setProgress[*]</code> too; <code>_buildBusySet</code> never got the same fix. This affects every callsite that treats busy as a hard filter (the now-removed <code>computeDonorRankings</code> filter, plus a handful of others). Fixing it could shift behavior in unexpected places, so it\u2019s flagged for a separate cleanup pass. <strong>Scope boundaries.</strong> <code>sqmgrAssignChar</code> unchanged. The data-model is unchanged. No SQL change. No new state fields, no persistence plumbing. Just two new helpers, an extended donor-row data shape, an enriched render path, and a placeholder click gate.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7075</strong> &mdash; Squad Manager modal: legacy DOM deleted. Direct follow-up to v1.7074. <strong>Why.</strong> v1.7074 hid the legacy bottom layout via JS (<code>display:none</code> toggling on six DOM ids when in focus mode), but the DOM was still rendering and stashing/restoring its previous display values. Per user spec: just delete it. The legacy DOM served the retired \u201Ctap squad \u2192 tap squad \u2192 manually transfer characters\u201D workflow, which has had no entry point since v1.7073 retired the Manage Squads button. <strong>(1) Six DOM blocks deleted</strong> from the <code>ov-squad-mgr</code> modal: <code>#sqmgr-ribbons</code> (filter ribbon strips, already <code>display:none</code> since v1.6937), <code>#sqmgr-grid</code> (4\u00d72 squad-tile grid duplicating the focus panel\u2019s own Step-1 picker), <code>#sqmgr-swap-zone</code> (Territory Swap drop slots), <code>#sqmgr-hint</code> (\u201CTap a character, then tap a squad\u201D status bar), <code>#sqmgr-chars</code> + <code>#sqmgr-scroll-hint</code> (mobile character-card list + scroll affordance), and <code>#sqmgr-desktop-cols</code> (the desktop 3-column transfer layout that was showing the misleading \u201CSelect a squad above\u201D placeholders). The focus panel <code>#sqmgr-focus-panel</code> is now the entire modal content alongside the header. <strong>(2) Render functions kept as dead code.</strong> <code>renderSqmgrGrid</code>, <code>renderSqmgrChars</code>, <code>renderSwapZone</code>, <code>renderSqmgrDesktop</code>, <code>renderSqmgrRibbons</code>, and <code>updateSqmgrHint</code> are all called from <code>renderSquadManager</code>, but each function early-returns when its target <code>getElementById</code> comes back null. With the DOM gone, they all no-op safely. Same approach as v1.6924\u2019s Projects-feature retention. <strong>(3) CSS simplified.</strong> The v1.7074 <code>.sqmgr-focus-only</code> gating is replaced by a simpler unconditional rule: <code>#sqmgr-focus-panel{flex:1 1 auto;min-height:0;overflow-y:auto}</code>. The 260px desktop height cap and the 240px inner <code>.sqmgr-focus-results</code> cap are both gone. The two duplicate CSS blocks targeting deleted DOM (<code>#sqmgr-grid</code>, <code>#sqmgr-desktop-cols</code>, etc.) at lines ~2378 and ~2475 are kept as harmless rules with no matching elements \u2014 again matching the v1.6924 retention pattern. The legacy-hide loop in <code>renderSquadManager</code> is also kept; it now iterates six <code>getElementById</code> calls that all return null and the loop body skips. <strong>Scope boundaries.</strong> Pure DOM/CSS deletion. No JS logic changed beyond what was already null-guarded. The focus panel render path, <code>computeDonorRankings</code>, the donor-card click handlers, the \u201C\u2190 Change squad\u201D button, the shopping-mode banner \u2014 all unchanged. <strong>No SQL change. No data-model change.</strong></div>
         <div style="margin-bottom:9px"><strong>Version 1.7074</strong> &mdash; Squad Manager modal cleanup, follow-up to v1.7073. <strong>Why.</strong> After v1.7073 retired the Squad Manager\u2019s entry point on the Party screen, the modal could only be opened pre-targeted (via the per-squad \uD83C\uDFAF Fill Role / \uD83D\uDED2 Shopping buttons or the Quest Preview shop CTA). But the modal itself still rendered three legacy surfaces from its old role as a manual transfer UI: a four-button toolbar (Fill Role / Overlap / Rebalance / Shopping) duplicating actions that now live on the Party screen, a 4\u00d72 squad-tile grid duplicating the focus panel\u2019s own Step-1 chip picker, and a desktop two-column transfer layout asking \u201CSelect a squad above\u201D when there\u2019s no squad-grid click in the new flow. Worst symptom: clicking attribute chips in Step 2 appeared to do nothing because Step 3 (the donor list) was being clipped by a 260px <code>max-height</code> + <code>overflow:auto</code> on the focus panel \u2014 picks registered fine, donors computed fine, but the result was hidden below the fold of an inner scroll area. <strong>(1) Toolbar removed.</strong> The four buttons in <code>.sqmgr-focus-toolbar</code> are deleted from the modal HTML. <code>updateSqmgrFocusToolbar</code> stays \u2014 every <code>getElementById</code> call inside it is null-guarded with <code>if(b\u2026)</code> already, so the function safely no-ops. The IIFE that wired click handlers is similarly guarded. The functions remain callable from the dev console. <strong>(2) Legacy panels hidden in Fill Role mode.</strong> <code>renderSquadManager</code> now toggles <code>display:none</code> on six surfaces (<code>sqmgr-grid</code>, <code>sqmgr-hint</code>, <code>sqmgr-chars</code>, <code>sqmgr-desktop-cols</code>, <code>sqmgr-swap-zone</code>, <code>sqmgr-scroll-hint</code>) when <code>sqmgrFocusMode</code> is true. The original display value is stashed in <code>dataset.sqmgrPrevDisplay</code> and restored on focus-mode exit, so a console-driven re-entry without focus mode still shows the legacy UI \u2014 not lost, just out of the way. <strong>(3) Focus panel allowed to grow.</strong> A new <code>.sqmgr-focus-only</code> class on <code>#sqmgr-modal-box</code> (set by <code>renderSquadManager</code> when in focus mode) lifts the desktop 260px height cap on the focus panel. The panel becomes the modal\u2019s primary scroll container; the inner <code>.sqmgr-focus-results</code> 240px cap is also lifted under this class so two scrollbars don\u2019t stack. Step 3 now lays out below Step 2 inside the panel\u2019s natural scroll, fully reachable. <strong>(4) Entry-point render fix.</strong> <code>openSquadManagerForFillRole</code>, <code>openSquadManagerForShopping</code>, and the v1.7049 Quest Preview \u201CShop for this squad\u201D CTA all changed their tail render calls from <code>renderSqmgrFocusPanel + updateSqmgrFocusToolbar + renderSqmgrChars</code> to a single <code>renderSquadManager()</code>. Why: the legacy-hide logic in step (2) lives inside <code>renderSquadManager</code>, and these helpers set <code>sqmgrFocusMode=true</code> AFTER <code>openSquadManager()</code> already ran with focus mode false. Without the second render call, the legacy panels stayed visible. <strong>Scope boundaries.</strong> Pure UI cleanup. <code>renderSqmgrFocusPanel</code>, <code>computeDonorRankings</code>, <code>runAutoRebalance</code>, <code>_openShoppingMode</code>, <code>S._shoppingList</code>, <code>S._sqmgrPins</code> \u2014 unchanged. The Squad Manager\u2019s own toolbar and legacy transfer UI are not deleted, just hidden when in focus mode and recoverable when the flag is false. <strong>No SQL change. No data-model change.</strong></div>
         <div style="margin-bottom:9px"><strong>Version 1.7073</strong> &mdash; Squad Manager retired from the Party-screen toolbar; its three useful actions migrated to per-squad and top-level Party buttons. <strong>Why.</strong> The Squad Manager modal had accumulated a four-button toolbar (\uD83C\uDFAF Fill Role / \uD83D\uDD0D Overlap / \u2696 Rebalance / \uD83D\uDED2 Shopping) that always required a follow-up squad-picker step, plus an Overlap toggle that became fully redundant once v1.7045 added the same toggle directly to the Party screen. The v1.7044\u20131.7049 consolidation series moved most squad analysis surfaces (attribute pill columns, overlap coloring, shopping-mode auto-narrow) onto the Party screen itself. This version closes the loop by retiring the manager's entry point and routing its remaining utility through Party-screen UI. <strong>(1) Top-level button replaced.</strong> The <code>\u2694 Manage Squads</code> button in the <code>#party-tagbar</code> is replaced with <code>\u2696 Rebalance (N QP)</code>. Rebalance promoted from a per-modal toolbar action to a top-level button because it operates across every squad simultaneously \u2014 it doesn\u2019t fit a per-squad header slot. Live cost label, disabled when QP is off / no squads exist / insufficient balance, with title text explaining the refusal reason. <code>runAutoRebalance()</code> itself unchanged \u2014 same hill-climb optimizer, same per-character pin respect, same cycle-lock surcharge, same QP confirm dialog. <strong>(2) Per-squad Fill Role.</strong> Each real squad\u2019s panel header (the same row as <code>\u270F Edit</code> and <code>\u21C4 Relocate</code>) grows a <code>\uD83C\uDFAF Fill Role</code> button. Click opens the Squad Manager pre-targeted at this squad with Focus Mode enabled, skipping the manager\u2019s own \u201Cwhich squad?\u201D picker. Virtual HQ panels (unassigned buckets) don\u2019t get the button \u2014 unassigned characters aren\u2019t a composable squad. <strong>(3) Per-squad Shopping.</strong> Same row, same pattern: <code>\uD83D\uDED2 Shopping (N)</code> with the live list count on the label. Rendered ONLY when this squad has a non-empty <code>S._shoppingList</code> entry, so squads with no list don\u2019t get a button that would just alert \u201Clist is empty.\u201D Click opens the manager pre-entered into shopping mode for this squad, mirroring the tail of the v1.7049 Quest Preview \u201CShop for this squad\u201D CTA \u2014 same path, different entry point. <strong>(4) Overlap dropped, not migrated.</strong> The Squad Manager toolbar\u2019s \uD83D\uDD0D Overlap button has no Party-screen equivalent because the Party screen already has its own Overlap toggle (v1.7045) with the same scope semantics. Two surfaces, one signal \u2014 retiring the manager\u2019s version eliminates a redundant control. <strong>(5) New helpers.</strong> <code>openSquadManagerForFillRole(squadName)</code> and <code>openSquadManagerForShopping(squadName)</code> wrap the existing <code>openSquadManager()</code> with the appropriate post-open state mutations. Both validate the squad still exists (defensive against rename/disband races) and surface a friendly alert if not. The Squad Manager modal itself is unchanged \u2014 it just becomes reachable through narrower entry points. <strong>(6) Dead-code retention.</strong> The two <code>data-a=\"sqmgr\"</code> dispatcher branches (in the <code>#party-tagbar</code> and <code>#plist</code> click delegators) stay in place even though no button on the page emits that <code>data-a</code> anymore. Cost is two harmless if-branches; benefit is that <code>openSquadManager</code> remains callable from the dev console and any future re-entry path doesn\u2019t need re-plumbing. Matches the v1.6924 pattern of how the Projects code was kept around for safety after Split/Merge/Pin replaced it. <strong>Scope boundaries.</strong> Pure UI re-routing. <code>openSquadManager</code>, <code>renderSquadManager</code>, <code>renderSqmgrFocusPanel</code>, <code>runAutoRebalance</code>, <code>_openShoppingMode</code>, the <code>S._shoppingList</code> data model, the <code>S._sqmgrPins</code> per-character pin map \u2014 all unchanged. No new state field, no schema change, no migration. The four buttons inside the Squad Manager modal\u2019s own toolbar still function for users who land there via the Quest Preview CTA or via console call. <strong>No SQL change. No data-model change.</strong></div>
@@ -32481,7 +32496,14 @@ function _shoppingListTotalCount(){
 // Compute donor rankings — for each non-focused character, how many picks they cover + coverage delta
 function computeDonorRankings(focusSq,picks){
   if(!focusSq||!picks||!picks.length)return [];
-  var busy=_buildBusySet();
+  // v1.7076a — _buildBusySet still consulted but no longer used to FILTER
+  // busy characters out of the donor pool. Per user spec the donor list
+  // now shows everyone with explanatory readouts so the player can see
+  // their full pool, including who's temporarily unavailable. The actual
+  // "should clicking this card trigger an immediate move" decision lives
+  // in the donor-card click handler in renderSqmgrFocusPanel (planned for
+  // v1.7076b — busy chars warn with cost-to-recall, locked chars open
+  // the Territory Swap Zone).
   var members={};(focusSq.memberIdxs||[]).forEach(function(ci){members[ci]=true;});
   var allSquads=S.squads||[];
   var baseCov=squadCoverage(focusSq).pct;
@@ -32489,38 +32511,46 @@ function computeDonorRankings(focusSq,picks){
   (S.party||[]).forEach(function(c,ci){
     if(!c)return;
     if(members[ci])return; // already in focus squad
-    if(busy[ci])return;    // can't move busy chars
     // Find current squad (may be unassigned)
     var curSqName='';
     allSquads.forEach(function(sq){
       if((sq.memberIdxs||[]).indexOf(ci)!==-1)curSqName=sq.name;
     });
-    // If current squad is cycle-locked, only allow if it's NOT locked; else skip
-    // (Characters in locked squads can only move via the territory swap zone)
-    if(curSqName&&squadIsLockedByCycle(curSqName)){
-      // Keep them but flag — they need a swap, not a move
-      // For UI simplicity, include them but mark as locked
-    }
     // Count how many picks this char covers
     var matched=[];
     picks.forEach(function(p){
       if(_charHasAttr(c,p.axis,p.value))matched.push(p);
     });
-    if(matched.length===0)return; // no relevance
+    if(matched.length===0)return; // no relevance — Q2 user spec: keep this filter
     // Compute coverage delta if we added them to focus squad
     var fake={memberIdxs:(focusSq.memberIdxs||[]).concat([ci])};
     var newCov=squadCoverage(fake).pct;
     var delta=newCov-baseCov;
+    // v1.7076a — annotate availability + lock state so the renderer can
+    // surface explanatory readouts. avail.kind is 'quest' / 'grind' /
+    // 'downtime' / '' (free); avail.ms is the time-until-free in ms.
+    var avail=_msUntilFreeGlobal(ci);
     pool.push({
       ci:ci,c:c,matched:matched,matchCount:matched.length,
       delta:delta,curSq:curSqName,
-      locked:!!(curSqName&&squadIsLockedByCycle(curSqName))
+      locked:!!(curSqName&&squadIsLockedByCycle(curSqName)),
+      // v1.7076a additions
+      busyMs:avail.ms,
+      busyKind:avail.kind,
+      busySource:avail.source
     });
   });
   // Rank: by match count desc, then delta desc, then level desc
+  // v1.7076a — secondary tiebreaker added: AMONG equal match-count + delta,
+  // free chars rank above busy chars so the player sees actionable options
+  // first. Locked is ranked last among the equally-matched.
   pool.sort(function(a,b){
     if(b.matchCount!==a.matchCount)return b.matchCount-a.matchCount;
     if(b.delta!==a.delta)return b.delta-a.delta;
+    // v1.7076a — sort by availability tier: free (0) < busy (1) < locked (2)
+    var aTier=a.locked?2:(a.busyMs>0?1:0);
+    var bTier=b.locked?2:(b.busyMs>0?1:0);
+    if(aTier!==bTier)return aTier-bTier;
     return (b.c.level||0)-(a.c.level||0);
   });
   return pool;
@@ -32659,15 +32689,41 @@ function renderSqmgrFocusPanel(){
         var srcLabel=d.curSq?esc(d.curSq):'🧭 Unassigned';
         // v1.7049 — action-oriented subtitle line showing the concrete move
         // the click will make, mirroring "remove X, bring Y in" framing.
-        // For non-locked donors: "Move: [source] → [target]"
-        // For locked: "🔒 Locked in cycle-locked squad — can't move"
-        var actionLine=d.locked?
-          '<div class="sqmgr-focus-result-action" style="color:var(--crimson)">\uD83D\uDD12 Locked to current cycle</div>':
-          '<div class="sqmgr-focus-result-action">Move: '+srcLabel+' \u2192 <strong>'+esc(targetSq.name)+'</strong></div>';
-        html+='<div class="sqmgr-focus-result" data-focus-move="'+d.ci+'">'+
+        // v1.7076a — extended to surface busy/locked state. Three readout
+        // states, in priority order:
+        //   (1) Locked: "🔒 Locked to current cycle" (crimson) — char's
+        //       current squad is on a quest cycle; can't be free-moved.
+        //   (2) Busy:   "⚔ On quest — free in 2h 14m" (gold) — char
+        //       is on an active engagement; click warnings + recall ship
+        //       in v1.7076b.
+        //   (3) Free:   "Move: [source] → [target]" (teal) — original
+        //       v1.7049 framing for immediately-actionable donors.
+        // Locked takes priority over busy because the swap-zone path is
+        // the only way to move a locked char regardless of whether
+        // they're also on an engagement.
+        var actionLine;
+        var availLabel=(d.busyMs>0)?_fmtAvailGlobal(d.busyMs):'';
+        if(d.locked){
+          actionLine='<div class="sqmgr-focus-result-action" style="color:var(--crimson)">\uD83D\uDD12 Locked to current cycle'+(d.busyMs>0?' (\u00b7 '+esc(availLabel)+')':'')+'</div>';
+        } else if(d.busyMs>0){
+          var _kindIcon=d.busyKind==='downtime'?'\uD83D\uDD6F':(d.busyKind==='grind'?'\u2692':'\u2694');
+          var _kindLabel=d.busyKind==='downtime'?'On downtime':(d.busyKind==='grind'?'On grind':'On quest');
+          actionLine='<div class="sqmgr-focus-result-action" style="color:var(--gold-dark)">'+_kindIcon+' '+_kindLabel+' \u2014 free in '+esc(availLabel)+'</div>';
+        } else {
+          actionLine='<div class="sqmgr-focus-result-action">Move: '+srcLabel+' \u2192 <strong>'+esc(targetSq.name)+'</strong></div>';
+        }
+        // v1.7076a — name suffix: 🔒 for locked (existed pre-v1.7076), and
+        // a kind-icon for busy chars so the row scans at-a-glance.
+        var nameSuffix=d.locked?' \uD83D\uDD12':(d.busyMs>0?(' '+(d.busyKind==='downtime'?'\uD83D\uDD6F':(d.busyKind==='grind'?'\u2692':'\u2694'))):'');
+        // v1.7076a — muted styling for not-currently-actionable donors so
+        // the card reads as "visible but inert" until v1.7076b wires up
+        // the recall + swap-zone click paths. Free donors render at full
+        // opacity for emphasis.
+        var rowClass='sqmgr-focus-result'+((d.locked||d.busyMs>0)?' sqmgr-focus-result-blocked':'');
+        html+='<div class="'+rowClass+'" data-focus-move="'+d.ci+'">'+
           '<div class="sqmgr-focus-result-match'+(isPerfect?' perfect':'')+'">'+matchLabel+'</div>'+
           '<div class="sqmgr-focus-result-body">'+
-            '<div class="sqmgr-focus-result-name">'+esc(d.c.name)+(d.locked?' 🔒':'')+'</div>'+
+            '<div class="sqmgr-focus-result-name">'+esc(d.c.name)+nameSuffix+'</div>'+
             '<div class="sqmgr-focus-result-meta">'+esc(d.c.cls||'')+' · Lv '+(d.c.level||0)+' · from '+srcLabel+'</div>'+
             actionLine+
             '<div class="sqmgr-focus-result-tags">'+matchedTags+otherTags+'</div>'+
@@ -32676,7 +32732,9 @@ function renderSqmgrFocusPanel(){
           '</div>';
       });
       html+='</div>';
-      html+='<div style="font-size:.62em;color:var(--ink-light);font-style:italic;margin-top:4px;padding:0 2px">Tap a donor to move them into '+esc(targetSq.name)+'. 🔒 = in a cycle-locked squad (use Swap Zone instead).</div>';
+      // v1.7076a — legend updated to reflect the three states. v1.7076b
+      // will replace this hint when click warnings + recall ship.
+      html+='<div style="font-size:.62em;color:var(--ink-light);font-style:italic;margin-top:4px;padding:0 2px">Tap a donor to move them into '+esc(targetSq.name)+'. \uD83D\uDD12 = locked to a cycle (use Swap Zone). \u2694/\u2692/\uD83D\uDD6F = currently busy on quest/grind/downtime.</div>';
     }
   }
   html+='</div>';
@@ -32761,6 +32819,19 @@ function renderSqmgrFocusPanel(){
       if(curSqName&&squadIsLockedByCycle(curSqName)){
         alert(c.name+' is currently in '+curSqName+', which is locked to an active cycle. Use the ⇄ Territory Swap Zone to move them.');
         return;
+      }
+      // v1.7076a — busy-char placeholder gate. Cards now show busy chars
+      // with availability readouts (free in N hours), but the actual
+      // recall path with cost confirms ships in v1.7076b. Until then,
+      // clicking a busy donor surfaces a deferred-feature explanation
+      // rather than silently failing inside sqmgrAssignChar.
+      if(typeof _msUntilFreeGlobal==='function'){
+        var _avail=_msUntilFreeGlobal(ci);
+        if(_avail.ms>0){
+          var _kindLabel=_avail.kind==='downtime'?'downtime':(_avail.kind==='grind'?'grind':'quest');
+          alert(c.name+' is currently on a '+_kindLabel+' \u2014 free in '+_fmtAvailGlobal(_avail.ms)+'.\n\nPaid recall + scheduled-move are coming in a future update; for now, wait for them to be free or pick a different donor.');
+          return;
+        }
       }
       if(!confirm('Move '+c.name+' into '+targetName+'?'+(curSqName?' (Currently in '+curSqName+'.)':' (Currently unassigned.)'))){
         return;
@@ -36053,6 +36124,59 @@ function _buildBusySet(){
     if(job&&job.ci!==undefined&&(job.endsAt||0)>now)busy[job.ci]=true;
   });
   return busy;
+}
+
+// v1.7076a — Module-level _msUntilFree. Mirrors the closure version inside
+// renderParty (line ~18697) but is callable from anywhere. Two improvements
+// over the closure version:
+//   (1) The `kind` field distinguishes 'quest' / 'grind' / 'downtime'
+//       separately rather than lumping quests+grinds together as 'quest'.
+//       Downstream code (recall path, busy-readout label) needs to know
+//       which engagement type is blocking so it can route correctly.
+//   (2) Walks every cycle's pendings (active + every setProgress[sid]),
+//       matching the v1.6905 fix to the closure version.
+// Returns {ms, kind, source} where source is the actual engagement object
+// (pending / grindPending / downtime job) — convenient for v1.7076b's
+// recall path.
+function _msUntilFreeGlobal(ci){
+  var now=Date.now();
+  var best=0,kind='',source=null;
+  function _scan(list,k){
+    if(!list)return;
+    list.forEach(function(pq){
+      if(!pq||(pq.chars||[]).indexOf(ci)===-1)return;
+      var rem=(pq.doneAt||0)-now;
+      if(rem>0&&(best===0||rem<best)){best=rem;kind=k;source=pq;}
+    });
+  }
+  var qs=S.questState||{};
+  _scan(qs.pending,'quest');
+  _scan(qs.grindPending,'grind');
+  if(qs.setProgress){
+    Object.keys(qs.setProgress).forEach(function(sid){
+      var sp=qs.setProgress[sid]||{};
+      _scan(sp.pending,'quest');
+      _scan(sp.grindPending,'grind');
+    });
+  }
+  (S.downtimeJobs||[]).forEach(function(j){
+    if(!j||j.ci!==ci)return;
+    var rem=(j.endsAt||0)-now;
+    if(rem>0&&(best===0||rem<best)){best=rem;kind='downtime';source=j;}
+  });
+  return {ms:best,kind:kind,source:source};
+}
+
+// v1.7076a — compact "Xd / X.X hr / X min" format. Module-level mirror of
+// the renderParty closure helper, callable from anywhere.
+function _fmtAvailGlobal(ms){
+  if(ms<=0)return 'free';
+  var totalMin=Math.ceil(ms/60000);
+  if(totalMin<60)return totalMin+' min';
+  var hours=ms/3600000;
+  if(hours<48)return (Math.round(hours*4)/4).toString()+' hr';
+  var days=Math.round(ms/86400000*10)/10;
+  return days+'d';
 }
 
 // ══════════════════════════════════════════════════════════════════════════
