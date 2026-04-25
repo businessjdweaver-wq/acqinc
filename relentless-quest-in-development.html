@@ -3623,7 +3623,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7087
+      Version 1.7088
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3663,6 +3663,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7088</strong> &mdash; QP Manager promoted from per-franchise preferences panel to global game-tuning panel. <strong>User report.</strong> &quot;There should only be one value of QP-spend for advancing downtime. It should apply to all users who play this game. It should be editable while in the dev interface.&quot; <strong>Architectural mismatch (v1.626 &rarr; v1.7087).</strong> Since v1.626 introduced the QP Manager, every QP knob (costs, earns, loyalty, vesting, dailyCap, qpToGpRate &mdash; about 30 fields total) was stored inside <code>S.settings.qp</code>, which lives in <code>franchise.settings</code> jsonb. That column is per-user/per-franchise. So when the dev tuned <code>costDowntime</code> from 5 to 1, only the dev&#39;s own franchise row picked it up. Every other player kept whatever value their last save had stamped &mdash; or, for new accounts, whatever <code>normalizeSettings</code> defaulted to at boot. The QP Manager looked like a game-tuning panel but acted like a per-account preferences panel. The bug only surfaced visibly because the dev tested with multiple accounts (admin + <code>stable@stable.com</code>) and saw values diverge. <strong>Fix &mdash; new global table.</strong> New <code>qp_config</code> table holds a single canonical row keyed <code>id=&#39;global&#39;</code> with all QP knobs in a <code>config</code> jsonb column. RLS: anyone reads (so guest sessions get the same costs as authed sessions); only the three admin UIDs (in <code>ADMIN_UIDS</code>) write. <code>updated_at</code> + <code>updated_by</code> columns + a touch trigger track who changed what when. The seed insert uses the v1.7087 <code>normalizeSettings</code> defaults so existing accounts see the same values they had on day one of v1.7088 deploy. <strong>Boot sequence rewrite.</strong> Two new helpers in the same code area as <code>sbGet/sbInsert/sbUpsert/sbDel</code>: <code>fetchGlobalQpConfig()</code> reads the canonical row and OVERWRITES <code>S.settings.qp</code> wholesale (then re-runs <code>normalizeSettings</code> to backfill any new knob added in code but not yet present in the global row). <code>pushGlobalQpConfig()</code> upserts the local <code>S.settings.qp</code> back to the global row, gated client-side on <code>isDevModeActive()</code> &mdash; the RLS policy is the actual security boundary, but a friendly client-side reject avoids confusing 403s. Both helpers are exposed on <code>window</code> for console use. The fetch hooks into the boot Promise.all (in parallel with <code>loadContentLibrary</code>, <code>loadPetsFromDB</code>, <code>loadItemsFromDB</code>) so the global config arrives before <code>renderParty()</code> first paints. Guest/offline path also fetches (RLS-public read), with a follow-up <code>renderParty()</code> + <code>updateQpDisplay()</code> after the parallel chain resolves so any QP-cost labels on the contracts/party screens repaint with the freshly-arrived values. Failure mode: silent &mdash; if the table read fails (network, missing table, RLS misconfig), <code>S.settings.qp</code> keeps whatever <code>normalizeSettings</code> + <code>sbPull</code> produced. Logged to console but doesn&#39;t block boot. <strong>QP Manager Save rewrite.</strong> Save handler now: (a) dev-mode gate at the top &mdash; non-devs see &quot;developer mode required&quot; alert and the handler returns early; (b) populates <code>S.settings.qp</code> from form fields exactly as before (so the in-session UI sees the change immediately, before the network round-trip); (c) calls <code>save()</code> + <code>updateQpDisplay()</code> as before for local persistence + header refresh; (d) NEW: calls <code>pushGlobalQpConfig()</code> which upserts the canonical row. On success, console-logs and the existing flash indicator pulses. On failure, an alert surfaces the error AND tells the user the local in-memory values are still updated; reload to revert. (e) re-renders Party / Adv / sqmgr / quest-detail surfaces (v1.7050 fix retained) so labels reflect new values without page reload. <strong>What this version doesn&#39;t do.</strong> Doesn&#39;t strip <code>S.settings.qp</code> from <code>franchise.settings</code> on push &mdash; that column still rides through sbPush as it always has, but the global fetch overwrites it on every boot, so it&#39;s effectively vestigial. Could be cleaned up in a future pass for byte savings, but the risk/reward isn&#39;t there given the read path always wins. Doesn&#39;t hide the QP Manager modal entry surface for non-devs &mdash; the dev-bar (<code>#dev-bar.active</code>) is already only shown to <code>isDevModeActive()</code>, so non-devs literally can&#39;t reach the manager through normal UI. The dev gate inside the Save handler is belt-and-suspenders for the case where someone reaches the modal via console or a future code path. Doesn&#39;t address other closure-capture patterns flagged in v1.7087 (e.g. <code>renderGrindsList</code>&#39;s <code>_grindAutoCost</code>) &mdash; same fix-pattern (de-closure + fresh read at click time) applies; deferred to keep this version&#39;s scope tight on the architectural change. <strong>Migration.</strong> Per user instruction: silent adopt. Existing per-franchise <code>S.settings.qp</code> values are simply overwritten on next boot when <code>fetchGlobalQpConfig</code> resolves. No notification, no preservation, no log entry. The dev sets the canonical values once via QP Manager and every account picks them up on their next reload. <strong>Run order on deploy.</strong> (1) Run <code>v1_7088_qp_config.sql</code> in Supabase SQL editor &mdash; must exist before any client tries to read. (2) Deploy v1.7088 HTML. (3) Dev opens QP Manager (with dev mode toggle on), sets desired values (e.g. <code>costDowntime: 1</code>), saves. The save writes to the global row. (4) Any account that reloads at this point pulls the new values; their Continue Downtime bar reflects the global config. <strong>Why this fixes the original Continue Downtime bug.</strong> The user observed <code>stable@stable.com</code> seeing &quot;65 QP&quot; for 13 chars (=&nbsp;13&times;5) even after the dev had saved <code>costDowntime: 1</code>. The cause was that the save went to the dev&#39;s franchise row, not stable&#39;s. After v1.7088, the save goes to the global row, and stable&#39;s next boot pulls 1 from that row, so the bar correctly shows &quot;13 QP&quot;. The v1.7087 closure-capture + normalizeSettings-defaults fixes are retained &mdash; they were correct fixes for a different bug class (boot-timing race), and they continue to provide defense in depth on top of the global config. <strong>Scope boundaries.</strong> One new SQL table + RLS + seed + trigger (separate <code>v1_7088_qp_config.sql</code> file). Two new JS helpers (~50 lines). One Promise.all extension on the authed boot chain (4 lines). One Promise.all + render-after extension on the guest boot chain (~15 lines). Dev gate + push call inside the QP Manager Save handler (~15 lines). Version + changelog. <strong>Data-model change: additive only.</strong> One new table; existing tables untouched. Existing <code>franchise.settings.qp</code> values continue to be written/read but are functionally overwritten by the global config on every boot.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7087</strong> &mdash; Continue Downtime bar charged stale per-character QP cost (e.g. 5/char instead of saved value 1/char) in some sessions, and the click actually withdrew the wrong amount from QP balance &mdash; not just a label-display issue. <strong>User report.</strong> QP Manager &quot;Advance downtime (per job)&quot; was set to 1 and saved successfully. Server confirmed 1 (reload &rarr; Manager input shows 1). But the Party-screen Continue Downtime bar continued to display &quot;⚡ 65 QP&quot; for 13 resumable characters (=&nbsp;13&times;5), and clicking the button actually deducted 65 QP from balance. Persistence was correct; the bar was reading a different number than <code>S.settings.qp.costDowntime</code>. <strong>Two-stage diagnosis.</strong> Earlier sessions of this conversation chased multiple wrong theories (stale tab overwriting saves, persistence layer dropping the field, render staleness alone). The actual cause is a closure-capture bug compounded by a missing default in <code>normalizeSettings</code>. <strong>Cause part 1: missing default.</strong> <code>normalizeSettings</code> initialized 13 of the QP knobs explicitly (<code>costAutoAssign</code>, <code>costSquadSwap</code>, <code>costAssignToSquad</code>, etc.) but five were missing: <code>costDowntime</code>, <code>costRecall</code>, <code>costGrindAuto</code>, <code>costFastForward</code>, <code>costShortRest</code>, <code>costEarlyCompletion</code>. So a freshly-created <code>S</code> (boot before sbPull) had <code>S.settings.qp.costDowntime === undefined</code>. Every read site uses <code>qpCfg().costDowntime||5</code> as a defensive fallback, so the value seen at any read was <code>5</code> (or whatever the per-knob fallback was). This worked correctly AS LONG AS no read site captured the fallback into a closure that survived past the sbPull replacement of <code>S.settings</code>. <strong>Cause part 2: closure capture.</strong> The Continue Downtime bar IIFE inside <code>renderParty</code> at line 18924 captured <code>var perCharCost = qpCfg().costDowntime||5</code> ONCE per renderParty pass. That closed-over <code>perCharCost</code> was reused in three places: (a) the initial button-label string in <code>bar.innerHTML</code>, (b) the checkbox-change <code>_updateDtBtn</code> recompute, (c) the click-time <code>qpSpend(qpCost,&hellip;)</code>. If <code>renderParty</code> happened to fire in the boot window before sbPull replaced <code>S.settings</code> (incognito tabs are particularly prone to this since they have no localStorage to seed from), the closure baked in <code>perCharCost = 5</code>. The bar IIFE only rebuilds when <code>resumable.length &gt; 0</code> AND <code>qpEnabled()</code> &mdash; on quiet days the early-return branch (<code>resumable.length === 0</code>) just hides the bar via <code>style.display=&apos;none&apos;</code> without rewriting <code>innerHTML</code>, so the stale closure persisted across many renderParty passes until the resumable list re-engaged the build path. The button label said 65 QP; clicking it actually charged 65 QP. <strong>Why this didn&apos;t surface in v1.7050.</strong> v1.7050 fixed the label-staleness symptom that appeared when the user changed costs in the QP Manager mid-session: the QP Manager Save handler now calls <code>renderParty()</code> after persisting, which rebuilds the bar with fresh values. That fix works for the in-session change case. It doesn&apos;t cover the boot-time case where <code>renderParty</code> fires before sbPull, because no QP Manager Save has happened in that timeline. The user never sees the stale Manager-Save symptom (label updates instantly), but does see the boot-time symptom (bar shows 5x even after costs are stored as 1 on the server, until something triggers another renderParty AFTER sbPull AND with non-zero resumables). <strong>Fix.</strong> Two surgical changes. <strong>(1) <code>normalizeSettings</code> defaults.</strong> Six new <code>if(cfg.qp.costX===undefined)cfg.qp.costX=N</code> initializers added (matching values: <code>costDowntime=5</code>, <code>costRecall=25</code>, <code>costGrindAuto=50</code>, <code>costFastForward=50</code>, <code>costShortRest=5</code>, <code>costEarlyCompletion=10</code>). Defaults match the QP-Manager save-handler fallbacks at line 25102+. After this change, any state object that has been through <code>normalizeSettings</code> has real numeric values for every QP knob; the <code>||5</code> fallback at read sites becomes a never-fires belt-and-suspenders clause rather than the actual source of values. <strong>(2) De-closure the bar IIFE.</strong> Removed the <code>var perCharCost = qpCfg().costDowntime||5</code> capture; replaced with a local function <code>function _getDowntimeCost(){ return qpCfg().costDowntime||5; }</code> that reads fresh from <code>S.settings.qp</code> at every call. The three former <code>perCharCost</code> consumers (initial button label, checkbox-change recompute, click-time qpSpend) now each call <code>_getDowntimeCost()</code> at the moment of need. Stale closures can&apos;t persist because there&apos;s no captured value to be stale &mdash; every read goes through <code>qpCfg()</code> live. <strong>Belt-and-suspenders effect.</strong> Either fix alone would have addressed the user&apos;s reported symptom. Together they form a defense in depth: the normalizeSettings change ensures the boot-time <code>S</code> has a real value, eliminating the source of the stale 5; the de-closure change ensures that even if some future code path slips an undefined-derived fallback into a closure somewhere, the click-time spend can&apos;t be wrong. <strong>What this version doesn&apos;t do.</strong> Doesn&apos;t audit other closure-capture patterns elsewhere in the codebase. Notable candidate: <code>renderGrindsList</code> at line ~9753 captures <code>var _grindAutoCost = qpCfg().costGrindAuto||50</code>, used for the auto-assign button label. The actual spend at line ~25716 is a fresh read so the spend would be correct, but the label could lag. Lower-stakes since the grinds list is re-rendered on every Grinds-tab visit (no display-none early-return path), so the closure has a much shorter lifespan. Flagged for a future cleanup pass; not addressed here to keep the fix narrowly scoped to the reported bug. Doesn&apos;t change any persistence, any data model, or any QP knob value. Doesn&apos;t affect sbPush/sbPull. <strong>Scope boundaries.</strong> Six lines added to <code>normalizeSettings</code> (the new <code>if(cfg.qp.costX===undefined)</code> initializers); two lines changed inside the Continue Downtime bar IIFE (replacement of <code>perCharCost</code> definition with <code>_getDowntimeCost</code> function); three call-site swaps of <code>perCharCost</code> &rarr; <code>_getDowntimeCost()</code>. <strong>No SQL change. No data-model change.</strong> Pure defensive refactor &mdash; defaults that should have been there from v1.626, plus removal of a closure that should never have been a closure.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7086</strong> &mdash; Trade-seat rows squashed by flex-column parent: <code>flex-shrink:0</code> on every child. <strong>Diagnosis trail (v1.7085 was wrong).</strong> v1.7085 hardened text colors to literal hex (instead of <code>var(--ink-light)</code>) on the theory that a browser color-adjustment heuristic was making text near-white. Did not help &mdash; rows stayed empty-looking. User then ran a console diagnostic that returned the smoking gun: <code>getComputedStyle(row).height === '16.9375px'</code>. The row's container had width 342px (correct) but height collapsed to ~17px, with <code>overflow:hidden</code> from v1.7079 clipping all visible content (chevron, emoji, name, →&nbsp;HQ button at <code>padding:9px 11px</code> needed ~40-50px). The earlier &quot;Row rect: {0,0,0,0}&quot; result was a misread &mdash; that diagnostic happened to walk the first row, which had been scrolled out of view inside <code>overflow:auto</code>. <strong>Root cause.</strong> The list parent <code>#ov-assign-squad-list</code> is <code>display:flex; flex-direction:column; max-height:50vh; overflow-y:auto</code>. With 10 rows of ~40px + toolbar ~40px + back button ~40px + 6px gaps = ~550px of intrinsic content, but the parent's max-height resolved to 418px. In a flex-column container, children default to <code>flex: 0 1 auto</code> &mdash; they can shrink below their content height. The browser uniformly squashed every row to ~17px to fit the 418px box. The <code>overflow:auto</code> on the parent then never engaged because, from flexbox's point of view, the children DID fit (they were squashed). The toolbar didn't squash visibly because its <code>flex-wrap:wrap</code> content already sat at the natural minimum height. <strong>Fix: <code>flex-shrink:0</code> on every row, the toolbar, and the back button.</strong> Three child types in the list, three places. <code>flex-shrink:0</code> tells flexbox &quot;don't squeeze this child below its content height.&quot; Once shrinking is disabled, the children claim their natural heights, the total exceeds the parent's max-height, and <code>overflow-y:auto</code> finally engages with a scrollbar &mdash; the correct UX for a long roster. <strong>Why this didn't bite earlier.</strong> v1.7079's collapsible rows ship by default in their collapsed state, with the inner details panel <code>display:none</code> &mdash; so the per-row content is just a flex summary div with a chevron + emoji + name + class subtitle + → HQ button. A 4-member squad's worth of rows fits in 50vh without squashing. The bug surfaces specifically when (a) the squad has a large enough roster, and (b) the user opens trade-seat as the destination of a Fill Role bump &mdash; here the user had a 10-member Solarians squad. Squads near roster cap (10) trigger the squash; smaller squads don't. <strong>Why v1.7085's color fix didn't reveal the size bug.</strong> Swapping <code>var(--ink-light)</code> to literal <code>#4a3020</code> changed nothing about the row's HEIGHT &mdash; only the text color. The 17px clipping was the real cause; both the variable color AND the literal color rendered correctly inside the 17px sliver, just clipped to invisibility. v1.7085 was diagnostically useful (it ruled out browser color-adjustment) but operationally a no-op. <strong>Scope boundaries.</strong> Three property additions, all <code>flex-shrink:0</code>, all on the trade-seat picker's children. No layout changes to any other modal. No changes to the rows' visible content, the chevron expand/collapse, the sole-source badge, the pill colors, or any of v1.7079's working architecture. The v1.7085 literal colors are kept &mdash; harmless and slightly more robust against future variable-resolution surprises. <strong>No SQL change. No data-model change.</strong> Three CSS property additions, ~3 lines.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7085</strong> &mdash; Trade-seat row text invisibility fix. <strong>User report.</strong> After v1.7079's collapsible row enhancement, the trade-seat picker rendered as eleven empty white rectangles &mdash; only the crimson sole-source &quot;⚠ −N&quot; badges and a few partially-visible character names were visible. User confirmed via DevTools that the source HTML was correct (e.g., <code>&lt;div style=&quot;font-size:.68em;color:var(--ink-light)&quot;&gt;Wizard · Lv 4&lt;/div&gt;</code> was present in the DOM) but the text rendered invisibly on screen. Same modal's toolbar and Cancel button rendered with normal dark-brown text. Affected only the trade-seat row content. <strong>Theory.</strong> Something at the row's CSS scope was resolving <code>var(--ink-light)</code> to a near-white value, likely browser-level color adjustment (forced-colors mode / auto-dark-mode heuristic / accessibility filter) that triggers when seeing <code>background:#fff</code> + variable-based text colors. The toolbar uses <code>background:var(--parchment)</code> so it didn't trigger the same heuristic; the rows use <code>background:#fff</code> so they did. Browsers like Edge with &quot;Page Color&quot; enabled, Safari with Reader-style overrides, or Chrome with experimental forced-colors features can all do this. <strong>Fix.</strong> Two-pronged: <strong>(1) Hard-code text colors</strong> on every text element inside <code>seat-trade-row</code> instead of relying on <code>var(--ink-light)</code> inheritance. The chevron button, avatar emoji span, character name div, and class-level subtitle div now all carry literal hex colors (<code>#2c1a0e</code> for primary text, <code>#4a3020</code> for muted) matching the original variable values. The <code>_renderMemberDetails</code> axis labels and empty-state hint were also hardened. The pills inside the expanded panel were already using literal RGBA backgrounds and explicit colors via <code>AXIS_COLORS</code>, so they were already safe. <strong>(2) <code>color-scheme: light only</code></strong> on the row container. This CSS property tells the browser the element opts into the light color scheme exclusively and shouldn't be auto-adjusted by user-agent dark-mode or forced-colors heuristics. Modern browsers respect this; older ones treat it as a no-op. Defense in depth alongside the explicit colors. <strong>Why not fix the variable.</strong> <code>--ink-light</code> works correctly everywhere else in the app (toolbar, modals, badges, etc.). The issue is scoped to this specific row + background combination triggering the browser-level adjustment. Globally redefining <code>--ink-light</code> as a literal would either (a) be redundant since it already IS a literal hex value, or (b) cascade-conflict with the high-contrast accessibility mode redefinition at line 764. Fixing at the call site is surgical and doesn't risk regressions elsewhere. <strong>What this version doesn't do.</strong> Doesn't audit other modals for the same pattern. If a similar invisibility appears elsewhere (any modal with <code>background:#fff</code> rows + variable-based text colors), the same fix pattern applies but isn't preemptively rolled out &mdash; would risk over-reaching into working code. Doesn't change the row LAYOUT, the chevron expand/collapse behavior, the sole-source badge logic, the pill color scheme, or any of v1.7079's working architecture. Doesn't change how the modal is opened, the QP cost flow, or the trade commit logic. <strong>Scope boundaries.</strong> Five surgical edits inside <code>openSeatTradeModal</code>'s row-render block: (a) row container gains <code>color:#2c1a0e;color-scheme:light only</code>; (b) summary div gains <code>color:#2c1a0e</code>; (c) chevron button color literal; (d) avatar span color literal; (e) name + subtitle divs color literals. Two edits in <code>_renderMemberDetails</code>: axis label color literal, empty-state hint color literal. <strong>No SQL change. No data-model change.</strong> Pure CSS-resolution defensive hardening.</div>
@@ -25103,6 +25104,14 @@ function qpmRefreshTestPanel(){
 }
 document.getElementById('btn-close-qp-manager').addEventListener('click',closeQpManager);
 document.getElementById('qpm-save').addEventListener('click',function(){
+  // v1.7088 — QP Manager is now a global game-tuning panel. Save writes
+  // to the qp_config table, not just the local franchise. Dev gate
+  // here is belt-and-suspenders; the table's RLS policy also rejects
+  // non-admin writes, but a friendlier client-side error is better.
+  if(typeof isDevModeActive==='function' && !isDevModeActive()){
+    alert('QP Manager: developer mode required to save changes.');
+    return;
+  }
   if(!S.settings.qp)S.settings.qp={};
   S.settings.qp.enabled=document.getElementById('qpm-enabled').checked;
   S.settings.qp.earnTask=parseInt(document.getElementById('qpm-earn-task').value)||0;
@@ -25156,6 +25165,20 @@ document.getElementById('qpm-save').addEventListener('click',function(){
   S.settings.qp.qpToGpRate=parseInt(document.getElementById('qpm-qp-to-gp-rate').value)||5;
   save();
   updateQpDisplay();
+  // v1.7088 — push to the global qp_config table. This is the source of
+  // truth for every account on next boot. Local save() above keeps the
+  // in-memory + localStorage copy fresh so the current session sees the
+  // change without waiting for the network round-trip.
+  if(typeof pushGlobalQpConfig==='function'){
+    pushGlobalQpConfig().then(function(){
+      console.log('[QP Manager] global config saved');
+    }).catch(function(err){
+      console.error('[QP Manager] global push failed:',err);
+      alert('QP Manager: failed to save global QP config to Supabase.\n\n'+
+        ((err&&err.message)||String(err))+
+        '\n\nLocal in-memory values updated; reload the page to revert.');
+    });
+  }
   // v1.7050 — re-render screens that embed QP-cost-labeled buttons so users
   // see the new values immediately without a page reload. Previously the
   // Continue Downtime bar (×costDowntime), Auto-Assign Grind button
@@ -30571,6 +30594,94 @@ function sbDel(table,filter){
     });
 }
 
+/* ── v1.7088 GLOBAL QP CONFIG ──────────────────────────────────────────
+   Single canonical row in qp_config table holds every QP knob (costs,
+   earns, loyalty, vesting, dailyCap). All clients pull on boot; only
+   admins can push (RLS-enforced). Replaces per-franchise S.settings.qp
+   as the source of truth.
+
+   Why: previously every franchise had its own copy of the QP config
+   inside franchise.settings.qp. That meant when the dev tuned a value
+   (e.g. costDowntime: 5 → 1), only the dev's own franchise picked it up.
+   Other accounts kept whatever values their last save had stamped, and
+   new accounts inherited normalizeSettings defaults at boot. The QP
+   Manager was effectively a per-account preferences panel masquerading
+   as a game-tuning panel.
+
+   v1.7088 makes it a real game-tuning panel. The QP Manager's Save
+   button now writes to the global qp_config row; on next boot, every
+   client reads from it. The franchise.settings.qp values become
+   vestigial — we don't strip them (no risk of regression) but the
+   read path always overwrites with the global config after sbPull,
+   so they have no live effect.
+
+   Boot sequence:
+     1. createDefaultState() seeds S.settings.qp with normalizeSettings
+        defaults (so we always have something while we wait for network)
+     2. sbPull restores franchise.settings.qp (legacy values, ignored)
+     3. fetchGlobalQpConfig() pulls from qp_config table, OVERWRITES
+        S.settings.qp with the global values
+     4. renderParty(), renderAdv(), updateQpDisplay() etc. all read fresh
+        from S.settings.qp (which now reflects the global config)
+
+   Failure mode: if the qp_config fetch fails (network down, table
+   missing, RLS misconfigured), S.settings.qp keeps whatever
+   normalizeSettings + sbPull produced. Logs to console but doesn't
+   block boot. */
+function fetchGlobalQpConfig(){
+  return sbGet('qp_config','id=eq.global&select=config&limit=1')
+    .then(function(rows){
+      if(!rows||!rows.length||!rows[0].config){
+        console.warn('[qp_config] empty response — falling back to defaults');
+        return null;
+      }
+      var cfg=rows[0].config;
+      if(!S.settings)S.settings={};
+      // Replace S.settings.qp wholesale with the global config. Any
+      // per-franchise stale values in franchise.settings.qp are
+      // overwritten in-memory; subsequent franchise pushes still
+      // include S.settings (with the freshly-overwritten qp subkey),
+      // but that's harmless — the global table is read first on next
+      // boot, so franchise.settings.qp is just along for the ride.
+      // Re-run normalizeSettings to ensure any new knob added to the
+      // code defaults but not yet in the global row gets backfilled
+      // (so the dev can see it in the QP Manager and save it).
+      S.settings.qp=Object.assign({},cfg);
+      S.settings=normalizeSettings(S.settings);
+      return cfg;
+    })
+    .catch(function(err){
+      console.warn('[qp_config] fetch failed; keeping current S.settings.qp',err);
+      return null;
+    });
+}
+function pushGlobalQpConfig(){
+  // Caller MUST gate on isDevModeActive() — RLS will reject non-admins
+  // anyway, but failing client-side gives a friendlier error.
+  if(typeof isDevModeActive==='function' && !isDevModeActive()){
+    return Promise.reject(new Error('Dev mode required to push QP config'));
+  }
+  if(!S.settings||!S.settings.qp){
+    return Promise.reject(new Error('No S.settings.qp to push'));
+  }
+  // Only ship the qp subkey — nothing else from S.settings.
+  var payload={
+    id:'global',
+    config:Object.assign({},S.settings.qp),
+    updated_by:(typeof uid==='function'?uid():null)
+  };
+  return sbUpsert('qp_config',[payload],'id')
+    .then(function(){
+      console.log('[qp_config] pushed global QP config');
+      return true;
+    });
+}
+try{
+  // Expose for console use / future UI surfaces.
+  window.fetchGlobalQpConfig=fetchGlobalQpConfig;
+  window.pushGlobalQpConfig=pushGlobalQpConfig;
+}catch(e){}
+
 function syncStatus(msg,color){
   var el=document.getElementById('sync-status');if(!el)return;
   el.textContent=msg;el.style.color=color||'var(--ink-light)';
@@ -30615,7 +30726,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7087';
+var RQ_CLIENT_VERSION='v1.7088';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -35124,8 +35235,19 @@ function initSession(pullFromCloud){
       _startupChain = sbPull(false);
     }
     return _startupChain.then(function(){
-      // Load content, pets, and items AFTER sbPull so S.party is populated before renderAdv fires
-      return Promise.all([loadContentLibrary(false),loadPetsFromDB(),loadItemsFromDB()]);
+      // Load content, pets, and items AFTER sbPull so S.party is populated before renderAdv fires.
+      // v1.7088 — also fetch the global QP config in parallel. fetchGlobalQpConfig
+      // overwrites S.settings.qp with the canonical row from the qp_config
+      // table, replacing any per-franchise legacy values that came back from
+      // sbPull. Failure is non-fatal (logs + falls back to whatever sbPull
+      // restored). Runs before any render so QP-cost-labeled buttons see
+      // the correct values on first paint.
+      return Promise.all([
+        loadContentLibrary(false),
+        loadPetsFromDB(),
+        loadItemsFromDB(),
+        (typeof fetchGlobalQpConfig==='function'?fetchGlobalQpConfig():Promise.resolve(null))
+      ]);
     }).then(function(){
       // Resurrection logic — gated on _hasLocalWork. Only restores the
       // local pending/grindPending snapshots if the flag indicated
@@ -35200,9 +35322,21 @@ function initSession(pullFromCloud){
   }
   suppressAutoPush=false;
   // Load pets and items even for guest/offline (RLS allows reading published rows without auth)
-  // Chain renderStore() so it fires after both resolve and DB arrays are populated
-  Promise.all([loadPetsFromDB(),loadItemsFromDB()]).then(function(){
+  // Chain renderStore() so it fires after both resolve and DB arrays are populated.
+  // v1.7088 — also pull global QP config (RLS-public read), so even guest
+  // sessions see the dev-tuned costs rather than only the normalizeSettings
+  // defaults. Failure is silent.
+  Promise.all([
+    loadPetsFromDB(),
+    loadItemsFromDB(),
+    (typeof fetchGlobalQpConfig==='function'?fetchGlobalQpConfig():Promise.resolve(null))
+  ]).then(function(){
     renderStore();
+    // After QP config arrives (in parallel with pets/items), re-run any
+    // already-painted views that depend on QP costs. Cheap; safe to call
+    // unconditionally.
+    if(typeof renderParty==='function')renderParty();
+    if(typeof updateQpDisplay==='function')updateQpDisplay();
   }).catch(function(){renderStore();});
   return Promise.resolve();
 }
