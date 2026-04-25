@@ -3621,7 +3621,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7078
+      Version 1.7079
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3661,6 +3661,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7079</strong> &mdash; Trade-seat picker: per-row collapsible attribute panel + expand/collapse-all toolbar. <strong>User report.</strong> The v1.7078 trade-seat picker (the "pick a member to bump to HQ" modal that opens when Fill Role lands on a full target squad) showed only name + class + level for each candidate. Not enough information to make a useful decision &mdash; bumping someone could silently delete capabilities the squad relies on. <strong>What landed.</strong> Each member row in <code>openSeatTradeModal</code> is now a collapsible card. Auto-collapsed by default; tapping the chevron expands the card to show that member's full skills / tools / lang / faith inventory. The "→ HQ" button stays where it was, on the right, and is a separate tap target so expanding doesn't accidentally bump anyone. Toolbar across the top of the picker has <strong>▾ Expand all</strong> and <strong>▸ Collapse all</strong> buttons. <strong>(1) Squad coverage analysis at modal open.</strong> Before rendering rows, the function tabulates a coverage map per axis: <code>squadCoverageCount[axis][value] = N</code>, where N is how many current squad members have that attribute. Used to identify <em>sole-source</em> attributes per member: any value where <code>squadCoverageCount[ax][v]===1</code> means this member is the only person in the squad covering it &mdash; bumping them deletes that capability. <strong>(2) Sole-source warning on the collapsed row.</strong> Each row's name shows a crimson <strong>⚠ &minus;N</strong> badge listing how many capabilities the squad would lose if that member were bumped. Hover/long-press tooltip says "Bumping this character would leave the squad without N capability/ies." Provides actionable signal without requiring expansion. Members with no sole-source attributes show no badge. <strong>(3) Pill color coding inside the expanded panel.</strong> Three states: (a) <span style="color:var(--crimson)">crimson with ⚠ prefix</span> for sole-source attributes (this member is the only carrier in the squad); (b) <span style="color:var(--gold-dark)">gold with ★ prefix</span> for attributes that match the active Fill Role picks (read opportunistically from <code>sqmgrFocusPicks</code> if non-empty &mdash; means "this person is here for the same reason you're trying to fill, so bumping them is doubly costly"); (c) muted axis-colored pills (teal Skills / brown Tools / slate Lang / gold Faith) for attributes that other members of the squad also cover &mdash; safe to bump. Pills sort within each axis: solo first, then picks, then alphabetical. <strong>(4) Toolbar legend.</strong> The toolbar's right side shows a one-line legend: "⚠ = sole source" plus, when picks are active, "★ = Fill Role pick". Reading the legend gives the user the decision rubric in one glance. <strong>(5) Cross-entry-point compatibility.</strong> <code>openSeatTradeModal</code> is also called from the v1.6943 character peek "join squad" picker (when the user picks a full squad), and the v1.7047 per-row &#x21C4; transfer button. Both entry points now also benefit from the expanded view &mdash; <code>sqmgrFocusPicks</code> is empty in those flows so no gold pills appear, but the sole-source crimson highlighting is always meaningful regardless of how the modal was opened. <strong>(6) Wiring.</strong> Each row carries its own <code>data-seat-toggle</code> chevron button; click handler reads <code>data-seat-details</code> sibling and flips its <code>display</code>. Toolbar buttons walk all chevrons and call the same toggle helper for each. <code>stopPropagation</code> on the chevron prevents future ancestor handlers from acting on the same tap. The <code>data-trade-bump</code> button is a separate child element so its click flow is unaffected by the new chevron &mdash; the original v1.7078 trade logic (qpSpend → unassign → assign → log → close) is untouched. <strong>Implementation note: native <code>&lt;details&gt;</code> avoided.</strong> A native <code>&lt;details&gt;</code> would have been simpler but would have made the entire summary row a toggle target &mdash; meaning tapping anywhere on the row, including the "→ HQ" button area, would expand/collapse instead of triggering the trade. Bespoke chevron + manual show/hide gives explicit control over which sub-elements toggle vs. commit. Matches the rest of the app's idiom (the codebase uses <code>&lt;details&gt;</code> only for top-level Settings sections and territory zones, never for action-bearing rows). <strong>Scope boundaries.</strong> Pure replacement of <code>openSeatTradeModal</code>'s row-render loop. The function signature, the modal it reuses (<code>ov-assign-squad</code>), the qpSpend → unassign → assign trade path, the busy-set integration, the cancel and "Back to squad picker" footer, and every call site of <code>openSeatTradeModal</code> are untouched. <strong>No SQL change. No data-model change. No new state fields, no persistence work.</strong> Pure additive UX layer.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7078</strong> &mdash; Fill Role: free-path donor click silently failed when the target squad was full. <strong>User report.</strong> In the Squad Manager &rarr; Fill Role flow, target = Solarians (already at 10/10), donor = Aukan (Hireling, unassigned, unlocked, free move). The modal showed a 1/1 match badge and "Move: Unassigned &rarr; Solarians" with no cost. Tapping the row opened the confirm dialog ("Move Aukan into Solarians?"); pressing OK appeared to do nothing &mdash; no alert, no error, no roster change, no UI feedback at all. <strong>Root cause.</strong> The v1.7076b donor click handler at <code>[data-focus-move]</code> ships three explicit branches for locked-source, busy-source, and free + unlocked donors. The free + unlocked branch (the original v1.7049 code path) calls <code>sqmgrAssignChar(ci, targetName)</code> unconditionally without checking whether the target has roster capacity. <code>sqmgrAssignChar</code> itself <em>does</em> have a capacity guard (refuses to add if <code>memberIdxs.length &gt;= SQUAD_MAX_SIZE</code>) and was supposed to surface the refusal via two visual paths: (a) a red-flash + count animation on the target's tile in <code>#sqmgr-grid</code>, and (b) a crimson message on <code>#sqmgr-hint</code> via <code>updateSqmgrHint()</code>. <strong>Both feedback surfaces were deleted in v1.7075</strong> when the legacy bottom-of-modal Squad Manager DOM was stripped (the v1.7075 changelog correctly noted that the deleted render functions <em>safely</em> no-op via <code>getElementById</code> null-guards &mdash; which is true for rendering, but the v1.6943 capacity-rejection feedback path got silently neutered as collateral damage). With both feedback paths null-guarded out, <code>sqmgrAssignChar</code> rejected the move and returned with zero user-visible signal. The v1.7076b changelog explicitly noted "No changes to <code>sqmgrAssignChar</code>, <code>computeDonorRankings</code>, or any other helper outside of the new <code>_recallCharFromActivity</code> + the donor click handler" &mdash; correct as a scope statement, but it meant the dependency on the deleted feedback DOM was carried forward without being noticed. <strong>(1) Free-path target-capacity check.</strong> The donor click handler's free + unlocked branch now computes <code>targetMembers</code> at click time and, if <code>targetMembers.length &gt;= SQUAD_MAX_SIZE</code> AND the donor isn't already in the target, reroutes to the seat-trade flow before the move ever fires. Routes directly to <code>openSeatTradeModal(ciIncoming, targetSquadName)</code> &mdash; the v1.6943 second-stage modal that lists the target squad's current members with bumpable indicators &mdash; because we already know the target squad and don't need <code>openAssignSquadModal</code>'s intermediate full-squad picker. Falls back to <code>openAssignSquadModal</code> if <code>openSeatTradeModal</code> isn't available (defensive). <strong>(2) Pre-routing dead-end protection.</strong> Before opening the seat-trade picker, two pre-checks: (a) if every current member of the target is on a quest, grind, or downtime job (via <code>_buildBusySet</code>), the picker would render with all rows disabled &mdash; show an explanatory alert instead of opening the dead-end UI; (b) if QP is enabled and balance is below <code>costSquadSwap</code>, refuse with a "need N QP, have M" alert before opening the picker. The picker itself also surfaces these refusals on each row, but pre-checking lets us skip a useless modal-open + close round-trip when no productive action is possible. <strong>(3) Backstop alert in <code>sqmgrAssignChar</code>.</strong> Even with the click-handler pre-check, a future caller or a race condition (e.g., another tab/session adds the 10th member between confirm-render and confirm-click) could still hit the capacity-full branch in <code>sqmgrAssignChar</code>. Added an <code>alert()</code> at the top of that branch so users always get user-visible feedback when this rejection fires, regardless of where it was called from. The legacy red-flash + count-animate code is kept untouched below the alert &mdash; it's a no-op when <code>#sqmgr-grid</code> is absent (Fill Role mode), and a useful animation when it's present (other call sites that render the legacy grid). Defense in depth. <strong>Why the seat-trade flow rather than just blocking.</strong> The v1.7076b free + unlocked branch was philosophically a "fast path" &mdash; donors with no friction get a single confirm and then the move completes. But "target is full" is a friction the player needs to know about and resolve via the same trade-into-full-squad path that the character peek's "join squad" picker (v1.6943) and the per-row &#x21C4; transfer button (v1.7047) already provide. Routing into <code>openSeatTradeModal</code> reuses the existing flow rather than introducing a Fill-Role-specific dead-end. The seat-trade picker also handles the implicit cost disclosure (10 QP) and the busy-member-can't-be-bumped semantics that this branch was missing. <strong>Scope boundaries.</strong> Two surgical edits inside <code>renderSqmgrFocusPanel</code>'s click handler (~33519) and one alert insertion in <code>sqmgrAssignChar</code>'s capacity branch (~32779). No changes to <code>computeDonorRankings</code>, <code>openSeatTradeModal</code>, <code>openAssignSquadModal</code>, <code>renderSqmgrFocusPanel</code> below the click handler, or any of the v1.7076b locked/busy paths. The v1.7076b LOCKED-source-to-UNLOCKED-target branch already routes to <code>openAssignSquadModal</code> which handles full-target via its own seat-trade hand-off, so it's correct without changes. The v1.7076b LOCKED-to-LOCKED branch routes to <code>openSwapModal</code> which performs a 1-for-1 swap by definition and can't overflow. The v1.7076b BUSY branch was already QP-gated and capacity-aware (the <code>sqmgrAssignChar</code> tail-call could still hit the silent-rejection in the rare case that the target filled up between the recall confirm and the assign call &mdash; the new alert backstop now catches that). <strong>Pre-existing issue noted, not fixed.</strong> The same v1.7075-deleted-feedback-DOM problem may affect other call sites of <code>sqmgrAssignChar</code> that pass through Fill Role mode but don't pre-check capacity. The alert backstop catches all of them now, so this is no longer silent &mdash; but the legacy red-flash animation still runs against null DOM in those paths. Worth a future cleanup pass to remove the dead animation code entirely; not in scope for this version because removing it changes behavior on the legacy non-Fill-Role entry points where the DOM still exists. <strong>No SQL change. No data-model change. No new state fields.</strong> Three small JS edits, ~30 lines total.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7077</strong> &mdash; Server-side snapshot history (data-loss recovery system). <strong>Why.</strong> User reported losing a full day of progress with no backup; the existing JSON Export was a manual all-or-nothing tool, and the in-incognito session left no localStorage forensic trail when the tab eventually closed. The v1.7041 self-test passes, the v1.7052 sync diagnostic logger has no error trace, and the v1.7054 unpushed-changes flag system was working as designed — yet a day of state still got lost. Diagnosis is incomplete, but the recovery story matters more than the root cause: even a perfect push/pull system needs a rollback surface for the bugs you haven&rsquo;t found yet, the mis-routed writes you didn&rsquo;t know about, and the accidental destructive actions the user takes in good faith. <strong>What landed.</strong> A new Supabase table <code>franchise_snapshots</code> stores the full <code>S</code> blob as a jsonb row, with <code>user_id</code>, <code>created_at</code>, <code>label</code>, <code>client_version</code>, <code>byte_size</code>, and <code>is_manual</code> columns plus a <code>(user_id, created_at DESC)</code> index. RLS policies restrict each user to their own snapshots (SELECT/INSERT/DELETE keyed to <code>auth.uid() = user_id</code>). <strong>(1) Auto-snapshot at every successful push.</strong> The <code>sbPush</code> success branch fires <code>_snapshotAfterPush()</code> as a fire-and-forget side effect after <code>_markAllPushed()</code>. The helper is throttled by <code>S.settings.snapshotIntervalMin</code> (default 15 min): if the most recent snapshot is younger than the interval, skip. Snapshot insert errors are swallowed entirely &mdash; a failed snapshot never propagates back to throw on sbPush, because the push is the source of truth and a missing snapshot just means we don&rsquo;t have that particular recovery point. <strong>(2) Manual snapshot.</strong> <code>takeSnapshotNow(label)</code> bypasses the throttle and accepts an optional label string (max 200 chars, trimmed). Exposed on <code>window</code> for console use. <strong>(3) Retention enforcement.</strong> After every successful insert, <code>_snapshotEnforceRetention()</code> queries the user&rsquo;s rows ordered newest-first, and if count exceeds <code>S.settings.snapshotRetention</code> (default 50, valid range 5&ndash;500), deletes everything beyond the cap in chunks of 50 (keeps URLs short). The SQL also includes a commented-out trigger function for a hard server-side ceiling at 200 rows per user as a backstop &mdash; left commented because client enforcement is sufficient and triggers add migration complexity. <strong>(4) UI: Settings &rarr; Data section.</strong> New <code>&#x1F570; Snapshot History</code> button below View Ledger, plus two select dropdowns for the two settings knobs (auto-snapshot every: 0/5/15/30/60/240 min; keep last: 25/50/100/200). The selectors auto-snap to the nearest available option when reading values that came from another device or were edited via console, so non-canonical settings don&rsquo;t silently break. <strong>(5) Snapshot list modal (<code>ov-snapshot-list</code>).</strong> Newest-first list of every stored snapshot for the current user. Each row shows label (with optional <code>manual</code> badge for is_manual rows), formatted creation time (Today / Yesterday / Mon DD format), relative age (Xs/Xm/Xh/Xd ago), byte size (B/KB/MB), and client version. Per-row buttons: <code>Restore</code> (opens preview modal) and <code>&times;</code> (delete with confirm). Footer: a label input + <code>&#x1F4BE; Take Snapshot Now</code> button to take a manual snapshot from inside the modal. <strong>(6) Restore preview modal (<code>ov-snapshot-preview</code>, z:520).</strong> Before any restore commits, the user sees a metadata block (label, creation time, size, client version) and a diff block listing 10 key state metrics: gold, QP balance, active contracts, archived, pinned, party characters, squads, party assets, quests completed, quests pending. Each line shows <em>current</em> &rarr; <em>snapshot</em> values with green/crimson delta arrows for numeric changes. Two confirms before restore actually fires. <strong>(7) Restore mechanics.</strong> <code>restoreSnapshot(id)</code> first creates a &ldquo;pre-restore safety&rdquo; auto-snapshot of the <em>current</em> state (so the restore itself is reversible), then deserializes the chosen blob through <code>createDefaultState</code> as a base (so older snapshots that lack newer fields get sensible defaults), wipes every key on the live <code>S</code> in place, copies in the new keys, calls <code>saveLocalState</code>, then forces a manual <code>sbPush(true)</code> to make the restored state authoritative on the server. In-place mutation rather than reassignment because v1.7052 made <code>window.S</code> a getter against the closure-scoped variable; reassigning would orphan the diagnostic surface. Render every visible screen post-restore so the player sees the new state immediately. <strong>(8) Console API.</strong> All five entry points are exposed on <code>window</code> for power-user access: <code>takeSnapshotNow(label)</code>, <code>listSnapshots(limit)</code>, <code>fetchSnapshot(id)</code>, <code>restoreSnapshot(id)</code>, <code>deleteSnapshot(id)</code>. Useful for scripted recovery: e.g., copy the latest snapshot id from <code>listSnapshots()</code>, inspect it via <code>fetchSnapshot(id)</code>, then <code>restoreSnapshot(id)</code> if it&rsquo;s the one you want. <strong>SQL migration required:</strong> run <code>v1_7077_snapshots.sql</code> in the Supabase SQL editor before deploying. Idempotent (CREATE TABLE / INDEX / POLICY all use IF NOT EXISTS or DROP IF EXISTS). <strong>Scope boundaries.</strong> Pure additive recovery system. Push/pull mechanics, debounce timing, RLS on existing tables, sync diagnostic logger &mdash; all unchanged. The snapshot system is a backstop on top of the existing pipeline, not a replacement. The new fields ride in <code>S.settings</code> which itself round-trips through the franchise settings blob &mdash; no changes to existing tables. <strong>What this does NOT solve.</strong> The root cause of the user&rsquo;s lost day is still unknown; this version doesn&rsquo;t prevent the loss, it just guarantees you can roll back from one. If the underlying mechanism is a stale-tab overwrite, a bad pull, or a buggy migration, the snapshot from before the corruption is still there to roll back to &mdash; and the safety snapshot taken before the restore is also there in case the rollback target itself is corrupt. Two-deep rollback floor.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7076b</strong> &mdash; Fill Role: locked + busy donor click actions land. Second half of the v1.7076 build (v1.7076a shipped the visibility readouts; this version wires up the actions). <strong>Why.</strong> v1.7076a made all matching donors visible in the Fill Role list with locked/busy state readouts, but the rows themselves were inert \u2014 click warnings led to a deferred-feature alert. This version lights up those clicks with the full cost-flow paths the user specified: locked rows open the existing paid-move modals (Territory Swap Zone for locked-to-locked, Assign-to-Squad for locked-to-unlocked); busy rows confirm a per-character recall with QP cost + impact preview, then complete the move atomically. <strong>(1) New QP knob: <code>costRecallFromActivity</code>.</strong> Default 15. Sits between <code>costSquadSwap</code> (10, the seat-trade fee) and <code>costRecall</code> (25, the abort-the-whole-quest fee). New default added to <code>normalizeSettings</code>; new input field added to the QP Manager labeled \u201CRecall single character from activity (Fill Role)\u201D, slotted right after the existing \u201CCancel / recall quest\u201D row. Load + save handlers wired through <code>openQpManager</code> and the manager\u2019s save block, both with the standard <code>parseInt(value)||15</code> fallback. <strong>(2) New helper: <code>_recallCharFromActivity(ci)</code>.</strong> Pulls a single character out of every active engagement they\u2019re on without affecting other characters on those same engagements. For quests + grinds, routes through v1.6922\u2019s <code>getPendingEngagementsForChar</code> + <code>applyAbandonImpact</code> so the existing prereq_fail vs support semantics govern (quest aborts entirely if removing this char breaks prereqs; otherwise the quest continues short-handed and the char\u2019s share is forfeited). For downtime, splices every <code>S.downtimeJobs</code> entry where <code>j.ci===ci</code> and <code>endsAt&gt;now</code> with its own adventure-log entry (<code>applyAbandonImpact</code> doesn\u2019t cover downtime). Returns the count of engagements removed for caller feedback. Caller is responsible for the QP cost \u2014 this function only mutates state, so it can be reused by the v1.7077 scheduled-move path which uses no QP. <strong>(3) Donor click handler: three-branch flow.</strong> The single click handler at <code>[data-focus-move]</code> now branches on donor state:<br>&bull; <strong>Locked source \u2192 locked target</strong> (both on cycles) opens <code>openSwapModal(curSq, sourceTerr, targetSq)</code>. Cross-territory check refuses if the two squads are in different territories \u2014 cycle integrity makes that swap unsupported (consistent with the existing v1.572 swap-zone semantics). Cost: <code>costSquadSwap</code> per character moved.<br>&bull; <strong>Locked source \u2192 unlocked target</strong> (donor leaving a deployed squad to join a non-deployed one) opens <code>openAssignSquadModal(ci)</code>, which already handles the v1.6943 cost ladder (5 QP open seat / 10 QP full-squad trade) plus the v1.6944 <code>allowLocked=true</code> bypass.<br>&bull; <strong>Busy</strong> (on quest/grind/downtime) confirms the recall: dialog shows kind + time-until-free + <code>costRecallFromActivity</code> + per-engagement impact lines (\u201C\u2717 Quest will FAIL\u201D vs \u201C\u26a0 Quest will continue \u2014 share forfeited\u201D from <code>classifyAbandonImpact</code>, plus a downtime cancellation line if applicable). On confirm: <code>qpSpend</code>, <code>_recallCharFromActivity</code>, then <code>sqmgrAssignChar</code> to the target. The QP gate refuses if balance &lt; cost or QP system disabled \u2014 standard pattern. Edge case: if another tab/session completes the engagement between confirm-render and confirm-click (so <code>_recallCharFromActivity</code> returns 0), the user is informed the cost was spent and the move proceeds anyway \u2014 cleaner than a refund-and-fail loop, and rare enough not to warrant transactional rollback.<br>&bull; <strong>Free + unlocked</strong>: original v1.7049 free-move path, unchanged. <strong>(4) CSS: blocked rows are clickable now.</strong> The v1.7076a <code>cursor:default</code> on <code>.sqmgr-focus-result-blocked</code> is removed; rows inherit the parent\u2019s pointer cursor so the affordance is honest. <code>:active</code> opacity drops to .55 (from .7) so taps register visually. <strong>(5) Legend updated.</strong> The hint line below the donor list now reads \u201CTap any donor to move them into [target]. \uD83D\uDD12 (locked) and \u2694/\u2692/\uD83D\uDD6F (busy) rows show a confirm with cost &amp; impact preview before committing\u201D \u2014 reflects that all rows are now actionable. <strong>What\u2019s next \u2014 v1.7077.</strong> The schedule-the-move alternative (queue a transfer for when the busy character becomes free, with an inbox notification on completion). Spec already drafted: new <code>S.scheduledMoves[]</code> array, polling check piggybacked on the existing v1.7004 30-second inbox poll, persistence through <code>sbPush</code>/<code>sbPull</code> with the v1.7041 self-test whitelists updated, plus cleanup edge cases for severed source chars and disbanded target squads. <strong>Scope boundaries.</strong> No changes to <code>sqmgrAssignChar</code>, <code>computeDonorRankings</code>, or any other helper outside of the new <code>_recallCharFromActivity</code> + the donor click handler. <code>applyAbandonImpact</code> is unchanged \u2014 the v1.6922 contract is reused as-is. The seat-trade modal (<code>openAssignSquadModal</code>) is unchanged; it works correctly for the locked-source-to-unlocked-target case because allowLocked=true is already its default for full-trade moves. <strong>No SQL change.</strong> The new <code>costRecallFromActivity</code> field rides the existing <code>S.settings.qp</code> jsonb blob \u2014 same path every other QP knob takes. <strong>No data-model change beyond the additive QP knob.</strong> Existing saves without the field fall through to the default 15 and get the field stamped on next save.</div>
@@ -20376,8 +20377,127 @@ function openSeatTradeModal(ciIncoming,targetSquadName){
       (qpOn?(' Cost: <strong>'+swapCost+' QP</strong> · Balance: <strong>'+bal+' QP</strong>'):'');
   }
   if(!listEl)return;
+  // v1.7079 — Per-row collapsible attribute panel + expand/collapse-all controls.
+  // Each row in the trade-seat picker now hides a <details>-style panel that
+  // shows the candidate's full skills/tools/lang/faith inventory. Auto-collapsed
+  // by default. Pills are color-coded against the SQUAD's coverage map so the
+  // user can see, before bumping, which attributes the squad would LOSE (sole
+  // source, crimson) vs which are covered by other members (shared, muted).
+  // When called from the v1.7076b Fill Role flow, sqmgrFocusPicks (module-
+  // scoped) is consulted opportunistically: matched pills get a gold "★ pick"
+  // highlight so the user can spot "is this person here for the same reasons
+  // I'm trying to fill?" — useful for deciding whether to bump.
   var busy=_buildBusySet();
   var members=(sq.memberIdxs||[]).filter(function(mi){return S.party[mi];});
+  // Pre-compute, for each axis, the count of squad members covering each value.
+  // Used to decide whether bumping a member would leave the squad without that
+  // attribute (count==1 → sole source).
+  var AXES=['skills','tools','lang','rel'];
+  var squadCoverageCount={skills:{},tools:{},lang:{},rel:{}};
+  members.forEach(function(mi){
+    var m=S.party[mi]; if(!m)return;
+    AXES.forEach(function(ax){
+      _charAttrsOnAxis(m,ax).forEach(function(v){
+        squadCoverageCount[ax][v]=(squadCoverageCount[ax][v]||0)+1;
+      });
+    });
+  });
+  // Set of (axis|value) keys that the active Fill Role picks point at, if any.
+  var pickKeys={};
+  try{
+    if(typeof sqmgrFocusPicks!=='undefined' && sqmgrFocusPicks && sqmgrFocusPicks.length){
+      sqmgrFocusPicks.forEach(function(p){
+        if(p&&p.axis&&p.value)pickKeys[p.axis+'|'+p.value]=true;
+      });
+    }
+  }catch(e){}
+  // Tabulate per-member sole-source counts so we can show a quick badge in the
+  // collapsed row ("loses N capabilities") before the user even expands.
+  function _memberSoloCount(c){
+    var n=0;
+    AXES.forEach(function(ax){
+      _charAttrsOnAxis(c,ax).forEach(function(v){
+        if(squadCoverageCount[ax][v]===1)n++;
+      });
+    });
+    return n;
+  }
+
+  // Color tokens for the attribute pills (matches the v1.7044 axis colors).
+  var AXIS_COLORS={
+    skills:{ bg:'rgba(26,107,138,.10)', border:'var(--teal)',     text:'var(--teal)'    },
+    tools: { bg:'rgba(122, 76, 30,.10)', border:'#7a4c1e',        text:'#5a3914'        },
+    lang:  { bg:'rgba(64, 75, 99,.10)',  border:'#404b63',        text:'#404b63'        },
+    rel:   { bg:'rgba(201,146,42,.10)',  border:'var(--gold-dark)', text:'var(--gold-dark)' }
+  };
+
+  function _attrPillHtml(axis,value,isSolo,isPick){
+    var col=AXIS_COLORS[axis]||AXIS_COLORS.skills;
+    var bg=col.bg, border=col.border, txt=col.text;
+    var extra='';
+    var prefix='';
+    if(isPick){
+      // Gold = "this is what Fill Role is looking for"
+      bg='rgba(201,146,42,.18)'; border='var(--gold-dark)'; txt='var(--gold-dark)';
+      prefix='★ ';
+      extra=';font-weight:700';
+    } else if(isSolo){
+      // Crimson = bumping this character removes this attribute from the squad
+      bg='rgba(192,57,43,.10)'; border='var(--crimson)'; txt='var(--crimson)';
+      prefix='⚠ ';
+      extra=';font-weight:600';
+    }
+    return '<span class="seat-attr-pill" style="display:inline-block;padding:2px 7px;margin:2px 3px 2px 0;'+
+      'border:1px solid '+border+';background:'+bg+';color:'+txt+';border-radius:10px;'+
+      'font-size:.72em;line-height:1.4;white-space:nowrap'+extra+'">'+prefix+esc(value)+'</span>';
+  }
+
+  function _renderMemberDetails(m){
+    var blocks='';
+    AXES.forEach(function(ax){
+      var vals=_charAttrsOnAxis(m,ax);
+      if(!vals.length)return;
+      // Sort: solo-source first (most actionable), then picks, then alpha.
+      vals=vals.slice().sort(function(a,b){
+        var aSolo=squadCoverageCount[ax][a]===1, bSolo=squadCoverageCount[ax][b]===1;
+        var aPick=!!pickKeys[ax+'|'+a],         bPick=!!pickKeys[ax+'|'+b];
+        if(aSolo!==bSolo)return aSolo?-1:1;
+        if(aPick!==bPick)return aPick?-1:1;
+        return a<b?-1:a>b?1:0;
+      });
+      var pills=vals.map(function(v){
+        var solo=squadCoverageCount[ax][v]===1;
+        var pick=!!pickKeys[ax+'|'+v];
+        return _attrPillHtml(ax,v,solo,pick);
+      }).join('');
+      blocks+='<div style="margin-bottom:6px"><div style="font-size:.68em;color:var(--ink-light);'+
+        'font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">'+
+        esc(_axisLabel(ax))+'</div><div>'+pills+'</div></div>';
+    });
+    if(!blocks){
+      blocks='<div style="font-size:.78em;color:var(--ink-light);font-style:italic">No catalogued attributes.</div>';
+    }
+    return blocks;
+  }
+
+  // Toolbar: expand-all / collapse-all + brief legend.
+  var toolbar='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;'+
+    'padding:6px 8px;margin-bottom:8px;background:var(--parchment);'+
+    'border:1px solid var(--parchment-deep);border-radius:6px;font-size:.78em">'+
+    '<button type="button" data-seat-expand-all="1" style="padding:4px 10px;'+
+      'border:1px solid var(--teal);background:#fff;color:var(--teal);'+
+      'border-radius:4px;font-size:.92em;cursor:pointer">▾ Expand all</button>'+
+    '<button type="button" data-seat-collapse-all="1" style="padding:4px 10px;'+
+      'border:1px solid var(--parchment-deep);background:#fff;color:var(--ink);'+
+      'border-radius:4px;font-size:.92em;cursor:pointer">▸ Collapse all</button>'+
+    '<span style="flex:1;min-width:0"></span>'+
+    '<span style="font-size:.85em;color:var(--ink-light)">'+
+      '<span style="color:var(--crimson);font-weight:700">⚠</span> = sole source · '+
+      (Object.keys(pickKeys).length?'<span style="color:var(--gold-dark);font-weight:700">★</span> = Fill Role pick'
+                                   :'tap row to expand')+
+    '</span>'+
+    '</div>';
+
   var rows=members.map(function(mi){
     var m=S.party[mi];
     var isBusy=!!busy[mi];
@@ -20386,29 +20506,86 @@ function openSeatTradeModal(ciIncoming,targetSquadName){
     if(isBusy)reasonBits.push('on quest/grind/downtime');
     if(qpOn&&bal<swapCost)reasonBits.push('need '+swapCost+' QP');
     var reason=reasonBits.join(' · ');
-    return '<button type="button" data-trade-bump="'+mi+'" '+(disabled?'disabled':'')+' '+
-      'style="display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--parchment-deep);'+
-      'background:#fff;color:var(--ink);border-radius:6px;cursor:'+(disabled?'not-allowed':'pointer')+';'+
-      'text-align:left;font-size:.86em;opacity:'+(disabled?'.5':'1')+'">'+
-      '<span style="font-size:1.1em">'+esc(m.hireling?'🪓':(m.contact?'🤝':'👤'))+'</span>'+
-      '<div style="flex:1;min-width:0">'+
-        '<div style="font-weight:700">'+esc(m.name||'')+'</div>'+
-        '<div style="font-size:.68em;color:var(--ink-light)">'+esc(m.cls||'')+' · Lv '+(m.level||0)+(reason?(' · '+esc(reason)):'')+'</div>'+
+    var soloN=_memberSoloCount(m);
+    var soloBadge=soloN>0?'<span title="Bumping this character would leave the squad without '+soloN+' capability'+(soloN===1?'':'ies')+'" '+
+      'style="display:inline-block;font-size:.62em;padding:1px 6px;margin-left:6px;'+
+      'background:rgba(192,57,43,.12);color:var(--crimson);border:1px solid var(--crimson);'+
+      'border-radius:8px;font-weight:700;white-space:nowrap">⚠ −'+soloN+'</span>':'';
+    var detailsHtml=_renderMemberDetails(m);
+    return '<div class="seat-trade-row" data-seat-row="'+mi+'" '+
+      'style="border:1px solid var(--parchment-deep);border-radius:6px;background:#fff;'+
+      'margin-bottom:6px;overflow:hidden">'+
+      // Summary row: chevron toggles details, → HQ button commits trade.
+      '<div style="display:flex;align-items:center;gap:8px;padding:9px 11px">'+
+        '<button type="button" data-seat-toggle="'+mi+'" '+
+          'aria-label="Show attributes for '+esc(m.name||'')+'" '+
+          'style="background:none;border:none;cursor:pointer;padding:2px 4px;'+
+          'font-size:.95em;color:var(--ink-light);flex-shrink:0">▸</button>'+
+        '<span style="font-size:1.1em;flex-shrink:0">'+esc(m.hireling?'🪓':(m.contact?'🤝':'👤'))+'</span>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="font-weight:700">'+esc(m.name||'')+soloBadge+'</div>'+
+          '<div style="font-size:.68em;color:var(--ink-light)">'+esc(m.cls||'')+' · Lv '+(m.level||0)+(reason?(' · '+esc(reason)):'')+'</div>'+
+        '</div>'+
+        '<button type="button" data-trade-bump="'+mi+'" '+(disabled?'disabled':'')+' '+
+          'style="padding:6px 11px;border:1px solid var(--crimson);'+
+          'background:'+(disabled?'rgba(192,57,43,.05)':'rgba(192,57,43,.10)')+';'+
+          'color:'+(disabled?'var(--ink-light)':'var(--crimson)')+';border-radius:5px;'+
+          'cursor:'+(disabled?'not-allowed':'pointer')+';font-size:.78em;font-weight:700;'+
+          'white-space:nowrap;opacity:'+(disabled?'.5':'1')+'">'+(disabled?'—':'→ HQ')+'</button>'+
       '</div>'+
-      '<span style="font-size:.7em;color:var(--crimson);font-weight:700;white-space:nowrap">'+(disabled?'':'→ HQ')+'</span>'+
-      '</button>';
+      // Collapsed-by-default details panel.
+      '<div data-seat-details="'+mi+'" style="display:none;padding:8px 12px 10px 38px;'+
+        'border-top:1px dashed var(--parchment-deep);background:rgba(44,26,14,.02)">'+
+        detailsHtml+
+      '</div>'+
+      '</div>';
   }).join('');
   // Back-to-assign button at the bottom
   rows+='<button type="button" data-trade-back="1" '+
     'style="display:flex;align-items:center;gap:10px;padding:8px 11px;border:1px dashed var(--parchment-deep);'+
     'background:rgba(44,26,14,.04);color:var(--ink-light);border-radius:6px;cursor:pointer;'+
-    'text-align:left;font-size:.82em;margin-top:4px">'+
+    'text-align:left;font-size:.82em;margin-top:4px;width:100%">'+
     '<span style="font-size:1.05em">←</span>'+
     '<span style="flex:1">Back to squad picker</span>'+
     '</button>';
-  listEl.innerHTML=rows;
+  listEl.innerHTML=toolbar+rows;
+
+  // ── Wire interactions ─────────────────────────────────────────────────
+  // Per-row toggle (chevron button). Flips ▸/▾ glyph and shows/hides the
+  // details panel. Stops propagation so any future ancestor click handlers
+  // don't fire on the same tap.
+  function _setRowExpanded(mi, expanded){
+    var btn=listEl.querySelector('[data-seat-toggle="'+mi+'"]');
+    var det=listEl.querySelector('[data-seat-details="'+mi+'"]');
+    if(btn)btn.textContent=expanded?'▾':'▸';
+    if(det)det.style.display=expanded?'block':'none';
+  }
+  listEl.querySelectorAll('[data-seat-toggle]').forEach(function(btn){
+    btn.addEventListener('click',function(ev){
+      ev.stopPropagation();
+      var mi=btn.getAttribute('data-seat-toggle');
+      var det=listEl.querySelector('[data-seat-details="'+mi+'"]');
+      var isOpen=det&&det.style.display!=='none';
+      _setRowExpanded(mi,!isOpen);
+    });
+  });
+  // Expand-all / collapse-all toolbar buttons.
+  var expandAllBtn=listEl.querySelector('[data-seat-expand-all]');
+  if(expandAllBtn)expandAllBtn.addEventListener('click',function(){
+    listEl.querySelectorAll('[data-seat-toggle]').forEach(function(b){
+      _setRowExpanded(b.getAttribute('data-seat-toggle'),true);
+    });
+  });
+  var collapseAllBtn=listEl.querySelector('[data-seat-collapse-all]');
+  if(collapseAllBtn)collapseAllBtn.addEventListener('click',function(){
+    listEl.querySelectorAll('[data-seat-toggle]').forEach(function(b){
+      _setRowExpanded(b.getAttribute('data-seat-toggle'),false);
+    });
+  });
+  // Bump → HQ buttons. Same trade logic as before; behaviour unchanged.
   listEl.querySelectorAll('[data-trade-bump]').forEach(function(btn){
-    btn.addEventListener('click',function(){
+    btn.addEventListener('click',function(ev){
+      ev.stopPropagation();
       if(btn.disabled)return;
       var bumpCi=parseInt(btn.getAttribute('data-trade-bump'),10);
       var bumpChar=S.party[bumpCi];if(!bumpChar)return;
@@ -29635,7 +29812,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7078';
+var RQ_CLIENT_VERSION='v1.7079';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
