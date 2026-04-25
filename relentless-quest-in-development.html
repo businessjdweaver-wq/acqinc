@@ -2955,6 +2955,8 @@ body.dev-active #app{margin-top:36px;}
         <label>Auto-rebalance (locked surcharge)</label><input id="qpm-cost-auto-rebal-locked" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Cancel / recall quest</label><input id="qpm-cost-recall" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Recall single character from activity (Fill Role)</label><input id="qpm-cost-recall-from-activity" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
+        <label>Cross-territory move (Fill Role surcharge)</label><input id="qpm-cost-cross-territory" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
+        <label>Pull from cycle-locked squad (Fill Role surcharge)</label><input id="qpm-cost-cycle-lock" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Advance downtime (per job)</label><input id="qpm-cost-downtime" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Grind auto-assign</label><input id="qpm-cost-grind-auto" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Fast-forward collect all</label><input id="qpm-cost-fast-forward" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
@@ -3621,7 +3623,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7079
+      Version 1.7080
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3661,6 +3663,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7080</strong> &mdash; Fill Role: sliding-cost transfer ladder + locked-donor first-class flow. <strong>User report.</strong> The v1.7076b locked-donor click handler refused to commit a move directly &mdash; it bounced the user out to the Territory Swap Zone (locked&harr;locked) or the Assign-to-Squad modal (locked&rarr;unlocked) for the cost step. That's a modal-hop without a clear cost preview at the decision point. User asked for: (a) keep the option open even when the donor is locked, (b) sliding cost scale based on friction (same-territory unlocked = free; cross-territory; cycle-locked; busy on activity), (c) explicit warning when pulling the donor would cause a quest to fail prereqs (logic that already exists in <code>classifyAbandonImpact</code> from v1.6922, just not surfaced in this flow). <strong>What landed.</strong> <strong>(1) Two new QP knobs.</strong> <code>costCrossTerritory</code> (default 5, half of <code>costSquadSwap</code>) and <code>costCycleLock</code> (default 10, matches <code>costSquadSwap</code>). Both default in <code>normalizeSettings</code>; both surface in the QP Manager UI under Fill Role surcharges, slotted right below the existing v1.7076b "Recall single character from activity" field. Save/load handlers wired through both <code>openQpManager</code> and the manager's save block, with the standard <code>parseInt(value)||default</code> fallback shape. Defaults sit on a deliberate ladder: same-territory unlocked free &rarr; cross-territory 5 QP &rarr; cycle-locked 10 QP &rarr; busy 15 QP &rarr; combinations stack additively. Worst-case (cross-territory + cycle-locked + busy) costs 30 QP for the move plus the impact warnings for any quest the busy donor was on. <strong>(2) New helper: <code>computeFillRoleMoveCost(ci, targetName)</code>.</strong> Returns one structured object describing every component cost, every warning, and any hard blockers for moving the given donor into the given target. Components are tagged with <code>key</code> + <code>label</code> + <code>cost</code> so the confirm dialog can render a breakdown rather than a single opaque number. Warnings include per-engagement <code>classifyAbandonImpact</code> verdicts ("&#x2717; Quest will FAIL" vs "&#x26a0; share forfeited") for busy donors plus a generic deployed-roster note for non-busy locked donors. The <code>blockers</code> array carries the v1.572 cross-territory locked&harr;locked refusal as a hard stop &mdash; consumers abort when blockers is non-empty. Exposed on <code>window</code> for console use and future UI surfaces (e.g., a hover tooltip on the donor row showing the cost preview before the click). <strong>(3) Donor click handler rewrite.</strong> Replaced the v1.7076b three-branch (LOCKED / BUSY / Free+unlocked) dispatch with one unified flow:<br>&bull; Defensive same-target check (no-op if donor already in target)<br>&bull; Target-full reroute to <code>openSeatTradeModal</code> (v1.7078, unchanged &mdash; the seat-trade fee is its own concern)<br>&bull; Single <code>computeFillRoleMoveCost</code> call &rarr; one confirm dialog showing every component cost, every warning, and the running total against current QP balance<br>&bull; Pre-confirm balance check (saves the user a click when the answer is obviously "no")<br>&bull; On confirm: <code>qpSpend(total)</code> with composite reason string listing every tier, then <code>_recallCharFromActivity</code> if busy, then <code>sqmgrAssignChar(ci, targetName, true)</code> with <code>allowLocked=true</code> since we just paid the cycle-lock cost explicitly.<br>The locked-source case no longer redirects the user to <code>openSwapModal</code> or <code>openAssignSquadModal</code> &mdash; the move commits in-place. Same-territory locked&harr;locked Territory Swap Zone is still reachable from the squad panel for users who want the swap UX; we just don't force them through it for a Fill Role move. <strong>(4) Stacked-cost confirm format.</strong> The confirm dialog renders as: a one-line target/source summary, a "COST BREAKDOWN" section listing each tier with its label and QP cost (e.g., "&bull; Cross-territory move (Minsaka &rarr; Stellani) &mdash; 5 QP"), a total line, the current balance, then a "WARNINGS" section listing every quest-fail / share-forfeit / downtime-cancel impact, then an extra-prominent callout if any quest would FAIL ("&#x26a0;&#x26a0;  N quests will fail if you proceed"). Free moves show a "Free move (same territory, no cycle, not busy)" line instead of the breakdown. <strong>(5) Updated legend.</strong> The hint line below the donor list now reads: "Costs scale with friction: same-territory free; cross-territory + cycle-locked + busy donors stack QP costs (and may surface quest-fail warnings). Confirm dialog shows the full breakdown before committing." Replaces the v1.7076b "&#x1F512; (locked) and &#x2694;/&#x2692;/&#x1F56F; (busy) rows show a confirm" line that under-described the new ladder. <strong>(6) QP ledger entries.</strong> Composite spend uses <code>qpSpend(total, 'fill_role_move', reason)</code> where <code>reason</code> lists every tier key (e.g., "Fill Role: Aukan &rarr; Solarians [crossTerritory+cycleLock]"). One ledger entry per move regardless of how many tiers stacked, so the ledger remains scannable. <strong>Hard blockers preserved.</strong> The v1.572 cross-territory locked&harr;locked refusal is still enforced &mdash; cycle integrity won't allow a 1-for-1 swap between two squads in different territories that are both deployed. Surfaces as a blocker alert with the explanation. <strong>What this version does NOT change.</strong> <code>openSeatTradeModal</code>, <code>openSwapModal</code>, <code>openAssignSquadModal</code>, <code>_recallCharFromActivity</code>, <code>classifyAbandonImpact</code>, <code>applyAbandonImpact</code>, <code>computeDonorRankings</code>, <code>sqmgrAssignChar</code> &mdash; all unchanged. The v1.7078 target-full seat-trade reroute is unchanged. The v1.7079 collapsible attribute panel inside the seat-trade picker is unchanged. The legend below the donor list is the only render-path edit. Edge case left for a future version: when a donor is busy/locked AND the target is full, the user goes through two consecutive confirms (the cost ladder, then the seat-trade modal). Composing those into one dialog would require <code>openSeatTradeModal</code> to accept pre-paid context, which is more invasive than this version's scope. <strong>Scope boundaries.</strong> Two new QP knob defaults, two new QP Manager input fields, one new helper function (<code>computeFillRoleMoveCost</code>), one rewritten click handler in <code>renderSqmgrFocusPanel</code>, one updated legend string. <strong>No SQL change. No data-model change.</strong> The two new fields ride in the existing <code>S.settings.qp</code> jsonb blob &mdash; same path every other QP knob takes; existing saves without the fields fall through to defaults and stamp them on next save.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7079</strong> &mdash; Trade-seat picker: per-row collapsible attribute panel + expand/collapse-all toolbar. <strong>User report.</strong> The v1.7078 trade-seat picker (the "pick a member to bump to HQ" modal that opens when Fill Role lands on a full target squad) showed only name + class + level for each candidate. Not enough information to make a useful decision &mdash; bumping someone could silently delete capabilities the squad relies on. <strong>What landed.</strong> Each member row in <code>openSeatTradeModal</code> is now a collapsible card. Auto-collapsed by default; tapping the chevron expands the card to show that member's full skills / tools / lang / faith inventory. The "→ HQ" button stays where it was, on the right, and is a separate tap target so expanding doesn't accidentally bump anyone. Toolbar across the top of the picker has <strong>▾ Expand all</strong> and <strong>▸ Collapse all</strong> buttons. <strong>(1) Squad coverage analysis at modal open.</strong> Before rendering rows, the function tabulates a coverage map per axis: <code>squadCoverageCount[axis][value] = N</code>, where N is how many current squad members have that attribute. Used to identify <em>sole-source</em> attributes per member: any value where <code>squadCoverageCount[ax][v]===1</code> means this member is the only person in the squad covering it &mdash; bumping them deletes that capability. <strong>(2) Sole-source warning on the collapsed row.</strong> Each row's name shows a crimson <strong>⚠ &minus;N</strong> badge listing how many capabilities the squad would lose if that member were bumped. Hover/long-press tooltip says "Bumping this character would leave the squad without N capability/ies." Provides actionable signal without requiring expansion. Members with no sole-source attributes show no badge. <strong>(3) Pill color coding inside the expanded panel.</strong> Three states: (a) <span style="color:var(--crimson)">crimson with ⚠ prefix</span> for sole-source attributes (this member is the only carrier in the squad); (b) <span style="color:var(--gold-dark)">gold with ★ prefix</span> for attributes that match the active Fill Role picks (read opportunistically from <code>sqmgrFocusPicks</code> if non-empty &mdash; means "this person is here for the same reason you're trying to fill, so bumping them is doubly costly"); (c) muted axis-colored pills (teal Skills / brown Tools / slate Lang / gold Faith) for attributes that other members of the squad also cover &mdash; safe to bump. Pills sort within each axis: solo first, then picks, then alphabetical. <strong>(4) Toolbar legend.</strong> The toolbar's right side shows a one-line legend: "⚠ = sole source" plus, when picks are active, "★ = Fill Role pick". Reading the legend gives the user the decision rubric in one glance. <strong>(5) Cross-entry-point compatibility.</strong> <code>openSeatTradeModal</code> is also called from the v1.6943 character peek "join squad" picker (when the user picks a full squad), and the v1.7047 per-row &#x21C4; transfer button. Both entry points now also benefit from the expanded view &mdash; <code>sqmgrFocusPicks</code> is empty in those flows so no gold pills appear, but the sole-source crimson highlighting is always meaningful regardless of how the modal was opened. <strong>(6) Wiring.</strong> Each row carries its own <code>data-seat-toggle</code> chevron button; click handler reads <code>data-seat-details</code> sibling and flips its <code>display</code>. Toolbar buttons walk all chevrons and call the same toggle helper for each. <code>stopPropagation</code> on the chevron prevents future ancestor handlers from acting on the same tap. The <code>data-trade-bump</code> button is a separate child element so its click flow is unaffected by the new chevron &mdash; the original v1.7078 trade logic (qpSpend → unassign → assign → log → close) is untouched. <strong>Implementation note: native <code>&lt;details&gt;</code> avoided.</strong> A native <code>&lt;details&gt;</code> would have been simpler but would have made the entire summary row a toggle target &mdash; meaning tapping anywhere on the row, including the "→ HQ" button area, would expand/collapse instead of triggering the trade. Bespoke chevron + manual show/hide gives explicit control over which sub-elements toggle vs. commit. Matches the rest of the app's idiom (the codebase uses <code>&lt;details&gt;</code> only for top-level Settings sections and territory zones, never for action-bearing rows). <strong>Scope boundaries.</strong> Pure replacement of <code>openSeatTradeModal</code>'s row-render loop. The function signature, the modal it reuses (<code>ov-assign-squad</code>), the qpSpend → unassign → assign trade path, the busy-set integration, the cancel and "Back to squad picker" footer, and every call site of <code>openSeatTradeModal</code> are untouched. <strong>No SQL change. No data-model change. No new state fields, no persistence work.</strong> Pure additive UX layer.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7078</strong> &mdash; Fill Role: free-path donor click silently failed when the target squad was full. <strong>User report.</strong> In the Squad Manager &rarr; Fill Role flow, target = Solarians (already at 10/10), donor = Aukan (Hireling, unassigned, unlocked, free move). The modal showed a 1/1 match badge and "Move: Unassigned &rarr; Solarians" with no cost. Tapping the row opened the confirm dialog ("Move Aukan into Solarians?"); pressing OK appeared to do nothing &mdash; no alert, no error, no roster change, no UI feedback at all. <strong>Root cause.</strong> The v1.7076b donor click handler at <code>[data-focus-move]</code> ships three explicit branches for locked-source, busy-source, and free + unlocked donors. The free + unlocked branch (the original v1.7049 code path) calls <code>sqmgrAssignChar(ci, targetName)</code> unconditionally without checking whether the target has roster capacity. <code>sqmgrAssignChar</code> itself <em>does</em> have a capacity guard (refuses to add if <code>memberIdxs.length &gt;= SQUAD_MAX_SIZE</code>) and was supposed to surface the refusal via two visual paths: (a) a red-flash + count animation on the target's tile in <code>#sqmgr-grid</code>, and (b) a crimson message on <code>#sqmgr-hint</code> via <code>updateSqmgrHint()</code>. <strong>Both feedback surfaces were deleted in v1.7075</strong> when the legacy bottom-of-modal Squad Manager DOM was stripped (the v1.7075 changelog correctly noted that the deleted render functions <em>safely</em> no-op via <code>getElementById</code> null-guards &mdash; which is true for rendering, but the v1.6943 capacity-rejection feedback path got silently neutered as collateral damage). With both feedback paths null-guarded out, <code>sqmgrAssignChar</code> rejected the move and returned with zero user-visible signal. The v1.7076b changelog explicitly noted "No changes to <code>sqmgrAssignChar</code>, <code>computeDonorRankings</code>, or any other helper outside of the new <code>_recallCharFromActivity</code> + the donor click handler" &mdash; correct as a scope statement, but it meant the dependency on the deleted feedback DOM was carried forward without being noticed. <strong>(1) Free-path target-capacity check.</strong> The donor click handler's free + unlocked branch now computes <code>targetMembers</code> at click time and, if <code>targetMembers.length &gt;= SQUAD_MAX_SIZE</code> AND the donor isn't already in the target, reroutes to the seat-trade flow before the move ever fires. Routes directly to <code>openSeatTradeModal(ciIncoming, targetSquadName)</code> &mdash; the v1.6943 second-stage modal that lists the target squad's current members with bumpable indicators &mdash; because we already know the target squad and don't need <code>openAssignSquadModal</code>'s intermediate full-squad picker. Falls back to <code>openAssignSquadModal</code> if <code>openSeatTradeModal</code> isn't available (defensive). <strong>(2) Pre-routing dead-end protection.</strong> Before opening the seat-trade picker, two pre-checks: (a) if every current member of the target is on a quest, grind, or downtime job (via <code>_buildBusySet</code>), the picker would render with all rows disabled &mdash; show an explanatory alert instead of opening the dead-end UI; (b) if QP is enabled and balance is below <code>costSquadSwap</code>, refuse with a "need N QP, have M" alert before opening the picker. The picker itself also surfaces these refusals on each row, but pre-checking lets us skip a useless modal-open + close round-trip when no productive action is possible. <strong>(3) Backstop alert in <code>sqmgrAssignChar</code>.</strong> Even with the click-handler pre-check, a future caller or a race condition (e.g., another tab/session adds the 10th member between confirm-render and confirm-click) could still hit the capacity-full branch in <code>sqmgrAssignChar</code>. Added an <code>alert()</code> at the top of that branch so users always get user-visible feedback when this rejection fires, regardless of where it was called from. The legacy red-flash + count-animate code is kept untouched below the alert &mdash; it's a no-op when <code>#sqmgr-grid</code> is absent (Fill Role mode), and a useful animation when it's present (other call sites that render the legacy grid). Defense in depth. <strong>Why the seat-trade flow rather than just blocking.</strong> The v1.7076b free + unlocked branch was philosophically a "fast path" &mdash; donors with no friction get a single confirm and then the move completes. But "target is full" is a friction the player needs to know about and resolve via the same trade-into-full-squad path that the character peek's "join squad" picker (v1.6943) and the per-row &#x21C4; transfer button (v1.7047) already provide. Routing into <code>openSeatTradeModal</code> reuses the existing flow rather than introducing a Fill-Role-specific dead-end. The seat-trade picker also handles the implicit cost disclosure (10 QP) and the busy-member-can't-be-bumped semantics that this branch was missing. <strong>Scope boundaries.</strong> Two surgical edits inside <code>renderSqmgrFocusPanel</code>'s click handler (~33519) and one alert insertion in <code>sqmgrAssignChar</code>'s capacity branch (~32779). No changes to <code>computeDonorRankings</code>, <code>openSeatTradeModal</code>, <code>openAssignSquadModal</code>, <code>renderSqmgrFocusPanel</code> below the click handler, or any of the v1.7076b locked/busy paths. The v1.7076b LOCKED-source-to-UNLOCKED-target branch already routes to <code>openAssignSquadModal</code> which handles full-target via its own seat-trade hand-off, so it's correct without changes. The v1.7076b LOCKED-to-LOCKED branch routes to <code>openSwapModal</code> which performs a 1-for-1 swap by definition and can't overflow. The v1.7076b BUSY branch was already QP-gated and capacity-aware (the <code>sqmgrAssignChar</code> tail-call could still hit the silent-rejection in the rare case that the target filled up between the recall confirm and the assign call &mdash; the new alert backstop now catches that). <strong>Pre-existing issue noted, not fixed.</strong> The same v1.7075-deleted-feedback-DOM problem may affect other call sites of <code>sqmgrAssignChar</code> that pass through Fill Role mode but don't pre-check capacity. The alert backstop catches all of them now, so this is no longer silent &mdash; but the legacy red-flash animation still runs against null DOM in those paths. Worth a future cleanup pass to remove the dead animation code entirely; not in scope for this version because removing it changes behavior on the legacy non-Fill-Role entry points where the DOM still exists. <strong>No SQL change. No data-model change. No new state fields.</strong> Three small JS edits, ~30 lines total.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7077</strong> &mdash; Server-side snapshot history (data-loss recovery system). <strong>Why.</strong> User reported losing a full day of progress with no backup; the existing JSON Export was a manual all-or-nothing tool, and the in-incognito session left no localStorage forensic trail when the tab eventually closed. The v1.7041 self-test passes, the v1.7052 sync diagnostic logger has no error trace, and the v1.7054 unpushed-changes flag system was working as designed — yet a day of state still got lost. Diagnosis is incomplete, but the recovery story matters more than the root cause: even a perfect push/pull system needs a rollback surface for the bugs you haven&rsquo;t found yet, the mis-routed writes you didn&rsquo;t know about, and the accidental destructive actions the user takes in good faith. <strong>What landed.</strong> A new Supabase table <code>franchise_snapshots</code> stores the full <code>S</code> blob as a jsonb row, with <code>user_id</code>, <code>created_at</code>, <code>label</code>, <code>client_version</code>, <code>byte_size</code>, and <code>is_manual</code> columns plus a <code>(user_id, created_at DESC)</code> index. RLS policies restrict each user to their own snapshots (SELECT/INSERT/DELETE keyed to <code>auth.uid() = user_id</code>). <strong>(1) Auto-snapshot at every successful push.</strong> The <code>sbPush</code> success branch fires <code>_snapshotAfterPush()</code> as a fire-and-forget side effect after <code>_markAllPushed()</code>. The helper is throttled by <code>S.settings.snapshotIntervalMin</code> (default 15 min): if the most recent snapshot is younger than the interval, skip. Snapshot insert errors are swallowed entirely &mdash; a failed snapshot never propagates back to throw on sbPush, because the push is the source of truth and a missing snapshot just means we don&rsquo;t have that particular recovery point. <strong>(2) Manual snapshot.</strong> <code>takeSnapshotNow(label)</code> bypasses the throttle and accepts an optional label string (max 200 chars, trimmed). Exposed on <code>window</code> for console use. <strong>(3) Retention enforcement.</strong> After every successful insert, <code>_snapshotEnforceRetention()</code> queries the user&rsquo;s rows ordered newest-first, and if count exceeds <code>S.settings.snapshotRetention</code> (default 50, valid range 5&ndash;500), deletes everything beyond the cap in chunks of 50 (keeps URLs short). The SQL also includes a commented-out trigger function for a hard server-side ceiling at 200 rows per user as a backstop &mdash; left commented because client enforcement is sufficient and triggers add migration complexity. <strong>(4) UI: Settings &rarr; Data section.</strong> New <code>&#x1F570; Snapshot History</code> button below View Ledger, plus two select dropdowns for the two settings knobs (auto-snapshot every: 0/5/15/30/60/240 min; keep last: 25/50/100/200). The selectors auto-snap to the nearest available option when reading values that came from another device or were edited via console, so non-canonical settings don&rsquo;t silently break. <strong>(5) Snapshot list modal (<code>ov-snapshot-list</code>).</strong> Newest-first list of every stored snapshot for the current user. Each row shows label (with optional <code>manual</code> badge for is_manual rows), formatted creation time (Today / Yesterday / Mon DD format), relative age (Xs/Xm/Xh/Xd ago), byte size (B/KB/MB), and client version. Per-row buttons: <code>Restore</code> (opens preview modal) and <code>&times;</code> (delete with confirm). Footer: a label input + <code>&#x1F4BE; Take Snapshot Now</code> button to take a manual snapshot from inside the modal. <strong>(6) Restore preview modal (<code>ov-snapshot-preview</code>, z:520).</strong> Before any restore commits, the user sees a metadata block (label, creation time, size, client version) and a diff block listing 10 key state metrics: gold, QP balance, active contracts, archived, pinned, party characters, squads, party assets, quests completed, quests pending. Each line shows <em>current</em> &rarr; <em>snapshot</em> values with green/crimson delta arrows for numeric changes. Two confirms before restore actually fires. <strong>(7) Restore mechanics.</strong> <code>restoreSnapshot(id)</code> first creates a &ldquo;pre-restore safety&rdquo; auto-snapshot of the <em>current</em> state (so the restore itself is reversible), then deserializes the chosen blob through <code>createDefaultState</code> as a base (so older snapshots that lack newer fields get sensible defaults), wipes every key on the live <code>S</code> in place, copies in the new keys, calls <code>saveLocalState</code>, then forces a manual <code>sbPush(true)</code> to make the restored state authoritative on the server. In-place mutation rather than reassignment because v1.7052 made <code>window.S</code> a getter against the closure-scoped variable; reassigning would orphan the diagnostic surface. Render every visible screen post-restore so the player sees the new state immediately. <strong>(8) Console API.</strong> All five entry points are exposed on <code>window</code> for power-user access: <code>takeSnapshotNow(label)</code>, <code>listSnapshots(limit)</code>, <code>fetchSnapshot(id)</code>, <code>restoreSnapshot(id)</code>, <code>deleteSnapshot(id)</code>. Useful for scripted recovery: e.g., copy the latest snapshot id from <code>listSnapshots()</code>, inspect it via <code>fetchSnapshot(id)</code>, then <code>restoreSnapshot(id)</code> if it&rsquo;s the one you want. <strong>SQL migration required:</strong> run <code>v1_7077_snapshots.sql</code> in the Supabase SQL editor before deploying. Idempotent (CREATE TABLE / INDEX / POLICY all use IF NOT EXISTS or DROP IF EXISTS). <strong>Scope boundaries.</strong> Pure additive recovery system. Push/pull mechanics, debounce timing, RLS on existing tables, sync diagnostic logger &mdash; all unchanged. The snapshot system is a backstop on top of the existing pipeline, not a replacement. The new fields ride in <code>S.settings</code> which itself round-trips through the franchise settings blob &mdash; no changes to existing tables. <strong>What this does NOT solve.</strong> The root cause of the user&rsquo;s lost day is still unknown; this version doesn&rsquo;t prevent the loss, it just guarantees you can roll back from one. If the underlying mechanism is a stale-tab overwrite, a bad pull, or a buggy migration, the snapshot from before the corruption is still there to roll back to &mdash; and the safety snapshot taken before the restore is also there in case the rollback target itself is corrupt. Two-deep rollback floor.</div>
@@ -6242,6 +6245,21 @@ function normalizeSettings(raw){
   // mid-tier QP sink reflecting the "interrupt their current activity"
   // friction without being prohibitive.
   if(cfg.qp.costRecallFromActivity===undefined)cfg.qp.costRecallFromActivity=15;
+  // v1.7080 — Sliding-cost ladder for Fill Role moves. Two new tiers compose
+  // additively with each other and with costRecallFromActivity to produce the
+  // total move cost shown in the v1.7080 Fill Role transfer confirm dialog.
+  //   costCrossTerritory: applies when the donor's home territory differs
+  //     from the target squad's home territory. Default 5 — half of
+  //     costSquadSwap, reflecting the friction of stretching operations
+  //     across territories without committing to a permanent relocation.
+  //   costCycleLock: applies when the donor's current squad is locked to an
+  //     active cycle (squadIsLockedByCycle returns true). Default 10 —
+  //     matches costSquadSwap, since pulling someone from a deployed squad
+  //     mid-cycle is a real disruption to that cycle's roster.
+  // Both costs are skipped when qpEnabled() is false (QP system disabled
+  // globally), matching the same contract every other QP tier follows.
+  if(cfg.qp.costCrossTerritory===undefined)cfg.qp.costCrossTerritory=5;
+  if(cfg.qp.costCycleLock===undefined)cfg.qp.costCycleLock=10;
   // v1.6978 — Contracts screen column count (desktop ≥1024px). Valid: 1|2|3.
   // 1 = single-column (default, classic layout); 2 = two-column flex-wrap;
   // 3 = three-column flex-wrap. Below 1024px this is ignored (always 1 col).
@@ -24296,6 +24314,11 @@ function openQpManager(){
   // v1.7076b — per-character recall from activity (Fill Role busy-donor click).
   var _crfaEl=document.getElementById('qpm-cost-recall-from-activity');
   if(_crfaEl)_crfaEl.value=cfg.costRecallFromActivity||15;
+  // v1.7080 — Fill Role cost-ladder surcharges.
+  var _xtEl=document.getElementById('qpm-cost-cross-territory');
+  if(_xtEl)_xtEl.value=(typeof cfg.costCrossTerritory==='number'?cfg.costCrossTerritory:5);
+  var _clEl=document.getElementById('qpm-cost-cycle-lock');
+  if(_clEl)_clEl.value=(typeof cfg.costCycleLock==='number'?cfg.costCycleLock:10);
   document.getElementById('qpm-cost-downtime').value=cfg.costDowntime||5;
   document.getElementById('qpm-cost-grind-auto').value=cfg.costGrindAuto||50;
   document.getElementById('qpm-cost-fast-forward').value=cfg.costFastForward||50;
@@ -24362,6 +24385,17 @@ document.getElementById('qpm-save').addEventListener('click',function(){
   // v1.7076b
   var _crfaSaveEl=document.getElementById('qpm-cost-recall-from-activity');
   if(_crfaSaveEl)S.settings.qp.costRecallFromActivity=parseInt(_crfaSaveEl.value)||15;
+  // v1.7080 — Fill Role cost-ladder surcharges.
+  var _xtSaveEl=document.getElementById('qpm-cost-cross-territory');
+  if(_xtSaveEl){
+    var _xtVal=parseInt(_xtSaveEl.value);
+    S.settings.qp.costCrossTerritory=isFinite(_xtVal)&&_xtVal>=0?_xtVal:5;
+  }
+  var _clSaveEl=document.getElementById('qpm-cost-cycle-lock');
+  if(_clSaveEl){
+    var _clVal=parseInt(_clSaveEl.value);
+    S.settings.qp.costCycleLock=isFinite(_clVal)&&_clVal>=0?_clVal:10;
+  }
   S.settings.qp.costDowntime=parseInt(document.getElementById('qpm-cost-downtime').value)||5;
   S.settings.qp.costGrindAuto=parseInt(document.getElementById('qpm-cost-grind-auto').value)||50;
   S.settings.qp.costFastForward=parseInt(document.getElementById('qpm-cost-fast-forward').value)||50;
@@ -29812,7 +29846,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7079';
+var RQ_CLIENT_VERSION='v1.7080';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -33533,7 +33567,7 @@ function renderSqmgrFocusPanel(){
       // v1.7076b — legend updated: blocked rows are now actionable. The
       // click flow surfaces a confirm dialog with cost + impact before
       // committing, so tapping a 🔒 or ⚔/⚒/🕯 row is safe to explore.
-      html+='<div style="font-size:.62em;color:var(--ink-light);font-style:italic;margin-top:4px;padding:0 2px">Tap any donor to move them into '+esc(targetSq.name)+'. \uD83D\uDD12 (locked) and \u2694/\u2692/\uD83D\uDD6F (busy) rows show a confirm with cost &amp; impact preview before committing.</div>';
+      html+='<div style="font-size:.62em;color:var(--ink-light);font-style:italic;margin-top:4px;padding:0 2px">Tap any donor to move them into '+esc(targetSq.name)+'. Costs scale with friction: same-territory free; cross-territory + cycle-locked + busy donors stack QP costs (and may surface quest-fail warnings). Confirm dialog shows the full breakdown before committing.</div>';
     }
   }
   html+='</div>';
@@ -33611,126 +33645,41 @@ function renderSqmgrFocusPanel(){
       var c=S.party[ci];if(!c)return;
       var targetName=sqmgrFocusSquad;
       var targetSq=(S.squads||[]).filter(function(sq){return sq.name===targetName;})[0];
-      // Find current squad
-      var curSqName='';
-      (S.squads||[]).forEach(function(sq){
-        if((sq.memberIdxs||[]).indexOf(ci)!==-1)curSqName=sq.name;
-      });
-      var curSq=curSqName?(S.squads||[]).filter(function(sq){return sq.name===curSqName;})[0]:null;
-      // ─── v1.7076b: LOCKED donor path ────────────────────────────────
-      // The donor's current squad is on a cycle. The free-move path is
-      // unsafe (would yank a deployed character mid-quest). Two routes
-      // depending on whether the TARGET squad is also locked:
-      //   (a) target locked too → true Territory Swap (openSwapModal)
-      //       since both squads are deployed; the swap modal preserves
-      //       cycle integrity by trading 1-for-1.
-      //   (b) target unlocked   → Assign-to-Squad modal (openAssignSquadModal)
-      //       which handles the seat-trade math (5 QP open seat / 10 QP
-      //       full-squad trade) and uses allowLocked=true to bypass the
-      //       sqmgrAssignChar lock guard.
-      // Either way: confirm with the user, close Fill Role, open the
-      // cost-flow modal pre-targeted to the donor's character index.
-      if(curSqName&&squadIsLockedByCycle(curSqName)){
-        var targetLocked=targetSq&&squadIsLockedByCycle(targetName);
-        if(targetLocked){
-          // Both locked → true Territory Swap. Same-territory check
-          // matches the existing v1.572 swap zone semantics.
-          var sourceTerr=(typeof squadTerritory==='function')?squadTerritory(curSq):'';
-          var targetTerr=(typeof squadTerritory==='function')?squadTerritory(targetSq):'';
-          if(sourceTerr!==targetTerr){
-            alert(c.name+' is locked to '+curSqName+' ('+sourceTerr+'). The target squad '+targetName+' is in '+targetTerr+'. Cross-territory swaps aren\u2019t supported \u2014 wait for the cycle to finish.');
-            return;
-          }
-          if(!confirm('Open the Territory Swap Zone to trade '+c.name+' from '+curSqName+' into '+targetName+'? Cost: '+(qpCfg().costSquadSwap||10)+' QP per character moved.'))return;
-          closeOv('ov-squad-mgr');
-          if(typeof openSwapModal==='function')openSwapModal(curSq,sourceTerr||'__any__',targetSq);
-          return;
-        } else {
-          // Source locked, target unlocked → Assign-to-Squad modal which
-          // already handles the cost ladder (5 QP open seat, 10 QP full
-          // trade) and supports allowLocked=true at confirm time.
-          if(!confirm(c.name+' is in '+curSqName+', which is on an active cycle. Open the cost flow to move them into '+targetName+'?'))return;
-          closeOv('ov-squad-mgr');
-          if(typeof openAssignSquadModal==='function')openAssignSquadModal(ci);
-          return;
-        }
-      }
-      // ─── v1.7076b: BUSY donor path ──────────────────────────────────
-      // Character is on a quest / grind / downtime job. Confirm with the
-      // QP cost (costRecallFromActivity) plus a per-engagement impact
-      // preview from classifyAbandonImpact so the player knows whether
-      // a quest will fail vs. just lose this char's share.
-      var avail=(typeof _msUntilFreeGlobal==='function')?_msUntilFreeGlobal(ci):{ms:0};
-      if(avail.ms>0){
-        var recallCost=qpCfg().costRecallFromActivity||15;
-        if(!qpEnabled()){
-          alert('QP system is disabled. Cannot recall '+c.name+' from their current activity.');
-          return;
-        }
-        if((S.qpBalance||0)<recallCost){
-          alert('Not enough QP. Need '+recallCost+' QP to recall '+c.name+' (have '+(S.qpBalance||0)+').');
-          return;
-        }
-        // Build impact preview. classifyAbandonImpact tells us, per
-        // engagement, whether removing this char would fail prereqs
-        // (quest aborts) vs forfeit-only (quest continues short-handed).
-        var engagements=(typeof getPendingEngagementsForChar==='function')?getPendingEngagementsForChar(ci):[];
-        var impactLines=engagements.map(function(e){
-          var verdict=(typeof classifyAbandonImpact==='function')?classifyAbandonImpact(e,ci):'support';
-          var qLabel=e.q?(e.q.title||e.q.id||(e.kind==='grind'?'Grind':'Quest')):(e.kind==='grind'?'Grind':'Quest');
-          if(verdict==='prereq_fail')return '\u2717 "'+qLabel+'" will FAIL (roster cannot meet requirements without '+c.name+')';
-          return '\u26a0 "'+qLabel+'" will continue \u2014 '+c.name+'\u2019s share forfeited';
-        });
-        // Downtime (handled separately by _recallCharFromActivity but
-        // surface it in the preview so the user sees it).
-        (S.downtimeJobs||[]).forEach(function(j){
-          if(j&&j.ci===ci&&(j.endsAt||0)>Date.now()){
-            var lbl=j.type?(j.type+(j.target?(' \u2192 '+j.target):'')):'Downtime';
-            impactLines.push('\u26a0 Downtime "'+lbl+'" will be cancelled \u2014 in-progress benefit lost');
-          }
-        });
-        var kindLabel=avail.kind==='downtime'?'downtime':(avail.kind==='grind'?'grind':'quest');
-        var msg='Recall '+c.name+' from their '+kindLabel+' (free in '+_fmtAvailGlobal(avail.ms)+') and move them into '+targetName+'?\n\nCost: '+recallCost+' QP\n\n'+impactLines.join('\n')+'\n\nProceed?';
-        if(!confirm(msg))return;
-        if(!qpSpend(recallCost,'recall_from_activity','Recalled '+c.name+' to fill role in '+targetName))return;
-        var n=_recallCharFromActivity(ci);
-        if(n===0){
-          // Edge case: someone else recalled them in another tab/session
-          // between confirm-render and confirm-click. Refund won't be
-          // automatic since qpSpend already committed; warn the user.
-          alert('Couldn\u2019t find an active engagement for '+c.name+' to recall \u2014 they may have completed it in the last moment. The '+recallCost+' QP cost was spent. Continuing the move anyway.');
-        }
-        sqmgrAssignChar(ci,targetName);
-        renderSqmgrFocusPanel();
+
+      // ─── v1.7080: unified Fill Role transfer flow ──────────────────────
+      // Replaces the v1.7076b three-branch (LOCKED / BUSY / Free+unlocked)
+      // dispatch with one cost-ladder confirm dialog. Tiers compose:
+      //   • cross-territory   (costCrossTerritory, default 5)
+      //   • cycle-lock        (costCycleLock,      default 10)
+      //   • recall-from-busy  (costRecallFromActivity, default 15)
+      // Plus impact warnings (prereq-fail vs share-forfeit vs downtime-cancel)
+      // are surfaced regardless of cost tiers.
+      //
+      // Two pre-flow gates remain unchanged from v1.7078:
+      //   1. Already in target → no-op.
+      //   2. Target full → reroute to openSeatTradeModal (separate flow);
+      //      the cost ladder doesn't apply because seat-trade is its own
+      //      thing. The user sees ONE confirm at a time; if they wanted to
+      //      pull a busy/locked donor INTO a full target, they'll pay both
+      //      the ladder and the seat-trade fee across two consecutive dialogs.
+      //      This is the simplest mental model that doesn't require rewriting
+      //      openSeatTradeModal to know about cross-territory/cycle-lock.
+
+      // Defensive: donor already in target (can happen if computeDonorRankings
+      // misses an edge case, or a stale render).
+      if(targetSq&&(targetSq.memberIdxs||[]).indexOf(ci)!==-1){
+        alert(c.name+' is already in '+targetName+'.');
         return;
       }
-      // ─── Free + unlocked: original v1.7049 free-move path ────────────
-      // v1.7078 — Target-capacity check. Previously the free path called
-      // sqmgrAssignChar(ci,targetName) unconditionally; if the target was
-      // already at SQUAD_MAX_SIZE (10), sqmgrAssignChar returned silently
-      // because its only feedback paths (red-flash on #sqmgr-grid tile and
-      // updateSqmgrHint() on #sqmgr-hint) target DOM that v1.7075 deleted
-      // when the modal entered Fill Role mode. Symptom: tap donor, OK the
-      // confirm, nothing happens. Fix: detect full-target before the move
-      // call and route DIRECTLY to openSeatTradeModal(ci, targetName) —
-      // skipping openAssignSquadModal's intermediate squad-picker because
-      // we already know which squad the user is filling. This drops the
-      // user straight onto the v1.6943 "pick a member to bump to HQ"
-      // picker for the target squad. The seat-trade flow itself spends
-      // costSquadSwap (10 QP) and uses allowLocked=true on the incoming
-      // assignment, so locked targets are also handled correctly.
+
+      // Target-full → seat-trade rerouting (v1.7078, unchanged).
       var targetMembers=targetSq?(targetSq.memberIdxs||[]).filter(function(x){return S.party[x];}):[];
-      var alreadyInTarget=targetSq&&(targetSq.memberIdxs||[]).indexOf(ci)!==-1;
-      if(targetSq&&!alreadyInTarget&&targetMembers.length>=SQUAD_MAX_SIZE){
+      if(targetSq&&targetMembers.length>=SQUAD_MAX_SIZE){
         var swapCost=qpCfg().costSquadSwap||10;
-        // Pre-check: are there any non-busy members on the target to bump?
-        // If every current member is on a quest/grind/downtime, the seat-
-        // trade picker would render with all rows disabled — better to tell
-        // the user up front than dump them into a dead-end UI.
         var busy=(typeof _buildBusySet==='function')?_buildBusySet():{};
         var bumpable=targetMembers.filter(function(mi){return !busy[mi];});
         if(bumpable.length===0){
-          alert(targetName+' is full ('+targetMembers.length+'/'+SQUAD_MAX_SIZE+') and every current member is on a quest, grind, or downtime job. No one can be bumped to HQ right now \\u2014 try again after one of them frees up.');
+          alert(targetName+' is full ('+targetMembers.length+'/'+SQUAD_MAX_SIZE+') and every current member is on a quest, grind, or downtime job. No one can be bumped to HQ right now \u2014 try again after one of them frees up.');
           return;
         }
         if(qpEnabled()&&(S.qpBalance||0)<swapCost){
@@ -33740,13 +33689,85 @@ function renderSqmgrFocusPanel(){
         if(!confirm(targetName+' is full ('+targetMembers.length+'/'+SQUAD_MAX_SIZE+'). Open the seat-trade flow to bump a current member to HQ and move '+c.name+' in for '+swapCost+' QP?'))return;
         closeOv('ov-squad-mgr');
         if(typeof openSeatTradeModal==='function')openSeatTradeModal(ci,targetName);
-        else if(typeof openAssignSquadModal==='function')openAssignSquadModal(ci); // fallback: full picker
+        else if(typeof openAssignSquadModal==='function')openAssignSquadModal(ci);
         return;
       }
-      if(!confirm('Move '+c.name+' into '+targetName+'?'+(curSqName?' (Currently in '+curSqName+'.)':' (Currently unassigned.)'))){
+
+      // ─── Cost ladder ─────────────────────────────────────────────────
+      var cost=computeFillRoleMoveCost(ci,targetName);
+
+      // Hard blockers: surface and abort.
+      if(cost.blockers.length){
+        alert(cost.blockers.join('\n\n'));
         return;
       }
-      sqmgrAssignChar(ci,targetName);
+
+      // Build the unified confirm message.
+      var confirmLines=[];
+      confirmLines.push('Move '+cost.donor.name+' into '+cost.target.name+(cost.donor.curSqName?(' (currently in '+cost.donor.curSqName+')'):' (currently unassigned)')+'?');
+      if(cost.components.length){
+        confirmLines.push('');
+        confirmLines.push('COST BREAKDOWN');
+        cost.components.forEach(function(c){
+          confirmLines.push('  • '+c.label+' \u2014 '+c.cost+' QP');
+        });
+        confirmLines.push('  ─────────────────');
+        confirmLines.push('  Total: '+cost.total+' QP');
+        confirmLines.push('  Balance: '+(S.qpBalance||0)+' QP');
+      } else if(qpEnabled()){
+        confirmLines.push('');
+        confirmLines.push('Free move (same territory, no cycle, not busy).');
+      }
+      if(cost.warnings.length){
+        confirmLines.push('');
+        confirmLines.push('WARNINGS');
+        cost.warnings.forEach(function(w){ confirmLines.push('  '+w); });
+      }
+      // Extra-prominent prereq-fail callout when a quest would actually fail.
+      if(cost.prereqFailQuests.length){
+        confirmLines.push('');
+        confirmLines.push('\u26a0\u26a0  '+cost.prereqFailQuests.length+' quest'+
+          (cost.prereqFailQuests.length===1?' will fail':'s will fail')+
+          ' if you proceed. Pulling '+cost.donor.name+' breaks prereqs that no remaining roster can cover.');
+      }
+      confirmLines.push('');
+      confirmLines.push('Proceed?');
+
+      // QP balance check before opening the confirm — saves the user a click
+      // when the answer is obviously "no". The same check fires inside
+      // qpSpend below as a backstop.
+      if(qpEnabled()&&cost.total>0&&(S.qpBalance||0)<cost.total){
+        alert('Not enough QP. This move costs '+cost.total+' QP and you have '+(S.qpBalance||0)+'.');
+        return;
+      }
+
+      if(!confirm(confirmLines.join('\n')))return;
+
+      // ─── Execute the move ───────────────────────────────────────────
+      // Spend the composite total in one ledger entry. Reason string lists
+      // each tier so the QP ledger remains auditable.
+      if(cost.total>0&&qpEnabled()){
+        var reasonParts=cost.components.map(function(c){return c.key;});
+        var reasonStr='Fill Role: '+cost.donor.name+' \u2192 '+cost.target.name+' ['+reasonParts.join('+')+']';
+        if(!qpSpend(cost.total,'fill_role_move',reasonStr))return;
+      }
+      // If the donor is busy, recall them first. _recallCharFromActivity
+      // walks getPendingEngagementsForChar + applyAbandonImpact for quests
+      // and grinds, plus splices downtime jobs. Caller (us) already paid;
+      // a no-op return here just means a race condition completed the
+      // engagement between confirm-render and confirm-click — surface it
+      // but proceed with the move since the QP was already committed.
+      if(cost.donor.busy){
+        var n=(typeof _recallCharFromActivity==='function')?_recallCharFromActivity(ci):0;
+        if(n===0){
+          alert('Couldn\u2019t find an active engagement for '+cost.donor.name+' to recall \u2014 they may have just completed one. Continuing the move anyway.');
+        }
+      }
+      // Finalize: assign to target. allowLocked=true bypasses the
+      // sqmgrAssignChar lock-guard since we just paid the cycle-lock cost
+      // explicitly (the guard exists for the legacy free-drag flow that
+      // had no cost gate).
+      sqmgrAssignChar(ci,targetName,true);
       renderSqmgrFocusPanel();
     });
   });
@@ -37139,6 +37160,138 @@ function _recallCharFromActivity(ci){
   }
   return removed;
 }
+
+// ── v1.7080 — Sliding-cost ladder for Fill Role moves ──────────────────────
+// One source of truth for "what does it cost to move character ci into the
+// target squad, and what should the user be warned about?". Composes four
+// independent tiers additively:
+//   • cross-territory   — donor's home territory ≠ target's home territory
+//   • cycle-lock        — donor's current squad is locked to an active cycle
+//   • recall-from-busy  — donor is on a quest / grind / downtime
+//   • (ambient)         — squad-swap or cap-trade costs are NOT included here;
+//                         those are owned by openSeatTradeModal which fires
+//                         if the target is full at click-time.
+// The returned object is rendered into a single confirm dialog by the v1.7080
+// click handler. Each component carries a label, cost, and (for warnings) a
+// detail string. The `blockers` array surfaces hard-stop conditions like
+// "cross-territory swap into a locked target" that v1.572 still refuses.
+//
+// Returns: {
+//   total:            int, sum of all component costs (0 when QP disabled)
+//   components:       [{key, label, cost, detail?}, ...]   ordered by tier
+//   warnings:         [string, ...]                        rendered as bullet list
+//   prereqFailQuests: [string, ...]                        quests that would FAIL
+//   blockers:         [string, ...]                        hard refusals; non-empty = abort
+//   donor:            {ci, name, curSqName, curTerr, locked, busy, busyKind}
+//   target:           {name, terr, locked}
+// }
+function computeFillRoleMoveCost(ci,targetName){
+  var out={total:0,components:[],warnings:[],prereqFailQuests:[],blockers:[],
+    donor:{ci:ci,name:'',curSqName:'',curTerr:'',locked:false,busy:false,busyKind:''},
+    target:{name:targetName||'',terr:'',locked:false}};
+  var c=S.party[ci];
+  if(!c){ out.blockers.push('Character not found.'); return out; }
+  out.donor.name=c.name||('#'+ci);
+  // Resolve donor's current squad (if any) and territory.
+  var squads=S.squads||[];
+  var curSq=null;
+  for(var i=0;i<squads.length;i++){
+    if(((squads[i].memberIdxs||[]).indexOf(ci))!==-1){ curSq=squads[i]; break; }
+  }
+  if(curSq){
+    out.donor.curSqName=curSq.name||'';
+    out.donor.locked=(typeof squadIsLockedByCycle==='function')&&!!squadIsLockedByCycle(curSq.name);
+    out.donor.curTerr=(typeof squadTerritory==='function')?(squadTerritory(curSq)||curSq.homeTerritory||''):(curSq.homeTerritory||'');
+    if(!out.donor.curTerr)out.donor.curTerr=c.homeTerritory||'';
+  } else {
+    // Unassigned: territory comes off c.homeTerritory (v1.7006 backfilled this).
+    out.donor.curTerr=c.homeTerritory||'';
+  }
+  // Resolve target.
+  var targetSq=squads.filter(function(s){return s.name===targetName;})[0];
+  if(targetSq){
+    out.target.terr=(typeof squadTerritory==='function')?(squadTerritory(targetSq)||targetSq.homeTerritory||''):(targetSq.homeTerritory||'');
+    out.target.locked=(typeof squadIsLockedByCycle==='function')&&!!squadIsLockedByCycle(targetName);
+  }
+  // Donor busy state — quest, grind, or downtime.
+  var busyInfo=(typeof _msUntilFreeGlobal==='function')?_msUntilFreeGlobal(ci):{ms:0,kind:''};
+  out.donor.busy=(busyInfo&&busyInfo.ms>0);
+  out.donor.busyKind=busyInfo&&busyInfo.kind||'';
+
+  // ── Hard blockers ──────────────────────────────────────────────────────
+  // Locked-source ↔ locked-target across territories: v1.572's swap-zone
+  // semantics refuse cross-territory swaps for cycle-integrity reasons.
+  // (Same-territory locked↔locked is handled by openSwapModal, not here.)
+  if(out.donor.locked&&out.target.locked&&out.donor.curTerr&&out.target.terr&&out.donor.curTerr!==out.target.terr){
+    out.blockers.push(out.donor.name+' is locked to '+out.donor.curSqName+' ('+out.donor.curTerr+'). '+
+      out.target.name+' is locked to a cycle in '+out.target.terr+'. Cross-territory swaps between two cycle-locked squads aren\u2019t supported \u2014 wait for one of the cycles to finish.');
+  }
+
+  // ── Cost tiers ─────────────────────────────────────────────────────────
+  // All tiers no-op when the franchise's QP system is globally disabled,
+  // matching every other QP-spend contract in the app.
+  var qpOn=(typeof qpEnabled==='function')&&qpEnabled();
+  if(qpOn){
+    // Tier 1: cross-territory. Compares donor's effective territory to
+    // target's. Skipped when either side has no territory string (legacy
+    // saves before v1.7006, or grind/virtual squads with no homeTerritory).
+    if(out.donor.curTerr&&out.target.terr&&out.donor.curTerr!==out.target.terr){
+      var ctCost=qpCfg().costCrossTerritory||5;
+      out.components.push({key:'crossTerritory',label:'Cross-territory move ('+out.donor.curTerr+' \u2192 '+out.target.terr+')',cost:ctCost});
+      out.total+=ctCost;
+    }
+    // Tier 2: cycle-lock. Donor's source squad is on an active cycle.
+    if(out.donor.locked){
+      var lkCost=qpCfg().costCycleLock||10;
+      out.components.push({key:'cycleLock',label:'Pull from cycle-locked squad ('+out.donor.curSqName+')',cost:lkCost});
+      out.total+=lkCost;
+    }
+    // Tier 3: recall-from-busy. Reuses the v1.7076b cost knob.
+    if(out.donor.busy){
+      var rcCost=qpCfg().costRecallFromActivity||15;
+      var kindLabel=out.donor.busyKind==='downtime'?'downtime':(out.donor.busyKind==='grind'?'grind':'quest');
+      var freeIn=(typeof _fmtAvailGlobal==='function')?_fmtAvailGlobal(busyInfo.ms):'';
+      out.components.push({key:'recall',label:'Recall from '+kindLabel+(freeIn?(' (free in '+freeIn+')'):''),cost:rcCost});
+      out.total+=rcCost;
+    }
+  }
+
+  // ── Warnings ───────────────────────────────────────────────────────────
+  // Per-engagement impact for busy donors: classifyAbandonImpact tells us
+  // whether removing this char would fail prereqs (quest aborts) vs
+  // forfeit-only (quest continues short-handed). Same logic the v1.7076b
+  // busy-branch confirm shows; lifted here so the unified confirm covers
+  // the locked-AND-busy and cross-territory-AND-busy cases too.
+  if(out.donor.busy){
+    var engagements=(typeof getPendingEngagementsForChar==='function')?getPendingEngagementsForChar(ci):[];
+    engagements.forEach(function(e){
+      var verdict=(typeof classifyAbandonImpact==='function')?classifyAbandonImpact(e,ci):'support';
+      var qLabel=e.q?(e.q.title||e.q.id||(e.kind==='grind'?'Grind':'Quest')):(e.kind==='grind'?'Grind':'Quest');
+      if(verdict==='prereq_fail'){
+        out.warnings.push('\u2717 "'+qLabel+'" will FAIL — roster cannot meet requirements without '+out.donor.name);
+        out.prereqFailQuests.push(qLabel);
+      } else {
+        out.warnings.push('\u26a0 "'+qLabel+'" will continue — '+out.donor.name+'\u2019s share forfeited');
+      }
+    });
+    (S.downtimeJobs||[]).forEach(function(j){
+      if(j&&j.ci===ci&&(j.endsAt||0)>Date.now()){
+        var lbl=j.type?(j.type+(j.target?(' \u2192 '+j.target):'')):'Downtime';
+        out.warnings.push('\u26a0 Downtime "'+lbl+'" will be cancelled — in-progress benefit lost');
+      }
+    });
+  }
+  // Cycle-lock warning: even without busy state, pulling from a deployed
+  // squad mid-cycle changes that squad's roster, which can affect future
+  // pendings inside the same cycle. classifyAbandonImpact handles this for
+  // the busy case; for non-busy locked-source we surface a generic note.
+  if(out.donor.locked&&!out.donor.busy){
+    out.warnings.push('\u2139 '+out.donor.curSqName+' is currently deployed on an active cycle — its roster will change immediately.');
+  }
+
+  return out;
+}
+window.computeFillRoleMoveCost=computeFillRoleMoveCost; // expose for console + future UI
 
 // ══════════════════════════════════════════════════════════════════════════
 // v1.7006 — TERRITORY PROGRESSION SYSTEM
