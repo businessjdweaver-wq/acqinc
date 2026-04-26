@@ -3294,6 +3294,21 @@ body.dev-active #app{margin-top:36px;}
   </div>
 </div></div>
 
+<!-- v1.7091 — STALE-DEVICE PROMPT MODAL -->
+<div class="ov" id="ov-stale-device" style="z-index:530"><div class="modal" style="max-width:480px">
+  <h3 style="margin-bottom:6px;font-size:1em">🔄 Another device updated this account</h3>
+  <p class="hint" style="margin-bottom:10px">A different device pushed updates to your account since this one last synced. Pull those updates to catch up, or keep working with this device's local state — but be aware that future edits here will overwrite the other device's newer work.</p>
+  <div id="ov-stale-meta" style="background:var(--parchment);border:1px solid var(--parchment-deep);border-radius:6px;padding:8px;margin-bottom:10px;font-size:.85em"></div>
+  <div id="ov-stale-diff" style="background:rgba(26,107,138,.06);border:1px solid var(--teal);border-radius:6px;padding:8px;margin-bottom:12px;font-size:.85em"></div>
+  <div style="display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">
+    <button class="btn bg sm" id="ov-stale-cancel">Decide later</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn sm" id="ov-stale-keep" style="background:var(--gold-dark);color:#fff" title="Take a safety snapshot, then keep working with this device's local state">⚠ Keep this device</button>
+      <button class="btn bink sm" id="ov-stale-pull" style="background:var(--teal);color:#fff">⬇ Pull from server</button>
+    </div>
+  </div>
+</div></div>
+
 <!-- ARCHIVE -->
 <!-- PROJECTS -->
 <div class="scr" id="s-projects">
@@ -3751,7 +3766,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7090m
+      Version 1.7091
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3791,6 +3806,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7091</strong> &mdash; Cross-device staleness prompt: catch &quot;the other device pushed while I was away&quot; before it becomes data loss. <strong>Why.</strong> The user routinely switches between phone and desktop, and a long-running tab on the laptop could silently overwrite the phone&apos;s recent work the next time the laptop saved anything &mdash; the laptop&apos;s autopush would write whatever its local state was, last-write-wins. The v1.7077 snapshot system gives a recovery path AFTER data is lost; this version is prevention. <strong>What landed.</strong> A modal that pops up on the device that&apos;s been idle longer than 60 seconds when it becomes visible (tab refocus, switching back to the app, etc.). The modal shows a <em>this device &rarr; server</em> diff with seven key counts (gold, QP balance, adventurers, contracts, archived, pinned, squads) and three buttons: <strong>&#x2B07; Pull from server</strong> (runs a fresh sbPull, this device catches up), <strong>&#x26A0; Keep this device</strong> (auto-takes a labelled safety snapshot of the other device&apos;s state via takeSnapshotNow(&apos;pre-keep-stale-device&apos;), then dismisses and suppresses further prompts for the session, allowing the user&apos;s next save to overwrite the server with this device&apos;s state), and <strong>Decide later</strong> (dismisses without action, will re-prompt on next focus). <strong>Detection mechanism.</strong> Two new fields piggyback on the franchise.settings jsonb blob: <code>_lastPushTab</code> (the tabId of the last device that pushed, sourced from <code>RQ_SYNCDIAG.getTabId()</code> which has been generating a per-tab UUID since v1.7052) and <code>_lastPushAt</code> (wall-clock ms of the push). On every successful sbPush, these get stamped into cleanSettings. On every successful sbPull, they get read out and stored in module-scoped state along with this device&apos;s &quot;last in sync&quot; timestamp. On every successful sbPush, this device&apos;s &quot;last in sync&quot; also updates (since the device just wrote the latest data). <strong>Trigger.</strong> A <code>visibilitychange</code> event listener wired in initSession after the first successful pull. When the tab becomes visible AND it&apos;s been more than 60 seconds since the last visibility-becomes-visible event, the listener calls <code>_staleQuickCheck</code>, which fetches just the franchise row&apos;s <code>gold</code>, <code>qp_balance</code>, <code>settings</code>, <code>last_sync</code>, and <code>pinned</code>, plus four parallel COUNT-only requests for party/active_tasks/squads/archived_tasks via PostgREST&apos;s <code>Prefer:count=exact, Range:0-0</code> idiom. Total payload is small (hundreds of bytes) &mdash; the diff modal shows everything we need to make a decision without a full pull. <strong>The 60-second idle threshold.</strong> Below 60s, refocus is treated as normal tab-switching and no check fires. Above 60s, the device is presumed to have been &quot;walked away from&quot; and we want to verify it&apos;s still authoritative. The threshold is conservative enough to avoid prompting on every alt-tab but tight enough to catch realistic device-switch patterns (you used your phone for a few minutes while the desktop sat there). Easy to tune via the <code>STALE_IDLE_THRESHOLD_MS</code> module constant if 60s turns out to be too short or too long. <strong>Staleness check.</strong> The conservative version: returns true only if <em>all</em> of (a) we&apos;re signed in, (b) the modal isn&apos;t already showing, (c) the modal isn&apos;t suppressed for the session, (d) we have a baseline sync timestamp (skips on initial login while sbPull is still settling), (e) the server&apos;s last-pusher tab differs from ours, (f) the server&apos;s timestamp is non-zero, (g) the server&apos;s timestamp is greater than this device&apos;s last sync. Multiple guards make false positives extremely unlikely. <strong>Auto-snapshot on &quot;Keep this device&quot;.</strong> The dangerous case is the user choosing &quot;Keep this device&quot; when the other device&apos;s newer work is genuinely valuable. To make this reversible, we call <code>takeSnapshotNow(&apos;pre-keep-stale-device&apos;)</code> BEFORE dismissing the modal &mdash; capturing the OTHER device&apos;s state-on-server as a snapshot the user can restore from later. Note that the snapshot is taken from the local state, not the server &mdash; so if the local state has already been overwritten by a partial sync, the snapshot might not cleanly capture the other device&apos;s work. Future improvement: take the snapshot from the server-fetched data directly. For v1.7091, the local-snapshot is a meaningful safety net but not a complete one. <strong>Suppression.</strong> Once the user picks &quot;Keep this device&quot;, the modal won&apos;t fire again for the rest of the session (page reload clears it). &quot;Decide later&quot; does NOT suppress &mdash; the next visibility check will re-prompt. &quot;Pull from server&quot; doesn&apos;t suppress either, since the server pull resets the staleness state to in-sync. <strong>Cross-device choreography.</strong> When device A pushes, the server records (A&apos;s tabId, A&apos;s timestamp). When device B becomes visible after &gt;60s idle, B&apos;s check sees (A&apos;s tabId, A&apos;s timestamp) on the server vs (B&apos;s tabId, B&apos;s last-sync) locally, finds them mismatched, prompts. If B chooses Pull, B&apos;s sbPull updates B&apos;s baseline so the next focus is no-op. If B chooses Keep, B&apos;s next save will push (B&apos;s tabId, current timestamp) overwriting A&apos;s. Now if A becomes visible later, A&apos;s check sees (B&apos;s tabId, recent timestamp) on the server and prompts A. The baton passes naturally. <strong>What this doesn&apos;t solve.</strong> Doesn&apos;t prevent overwrite if the user actively works on the stale device WITHOUT going through a focus event &mdash; e.g., if they&apos;re continuously typing, no visibilitychange fires and no check happens. The 4-second debounced auto-push then writes their stale state when their save() fires. Mitigation: the 60-second threshold is short enough that any real-world &quot;came back to a device after using another&quot; pattern triggers the check. Future improvement: also check on every save() before the push debounces, with a similar lightweight server poll &mdash; but that adds latency to every user action and the 60-second focus check covers the common case. <strong>Code-session users not yet supported.</strong> The class-code login path uses a single blob in login_codes.player_data, not the multi-table push pattern. Adding staleness check there requires reading the blob&apos;s metadata fields, which works but is a separate plumbing job. Email-login users (the dominant deployment) get the full feature in v1.7091. <strong>Scope boundaries.</strong> No SQL change &mdash; the two new metadata fields piggyback on the existing franchise.settings jsonb. No data-model change to S &mdash; the staleness state lives in module-scoped variables (_staleServerLastPushTab, _staleServerLastPushAt, _staleThisDevSyncAt, _staleModalSuppressed, _staleLastVisibleAt) that don&apos;t round-trip through saveLocalState or restoreSnapshot &mdash; these are pure sync metadata. One new modal HTML block (<code>ov-stale-device</code>, z:530), one new module-scoped JS block (~200 lines), four hooks into existing code: sbPush write site (line ~32049), sbPull read site (line ~32700), sbPush success branch (line ~32636), initSession post-pull arm site. Consoles `_staleMaybeCheck()` and `_staleArmVisibilityListener()` exposed on window for debugging. <strong>Versioning note.</strong> This version returns to integer-only naming after the v1.7090a&hellip;v1.7090m suffix run. Future versions ship as v1.7092, v1.7093, etc.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7090m</strong> &mdash; Fresh-incognito-login data loss: <code>checkFavourites</code> stamp transition no longer sets the unpushed flag. <strong>User report.</strong> Repro: take snapshot on phone &rarr; manual push (sees ✅) &rarr; close phone tab &rarr; SQL confirms server has full data (party=48, active_tasks=28, squads=4) &rarr; open fresh incognito tab on laptop &rarr; log in to stable@stable.com &rarr; observe 150 gold, 0 contracts, 0 adventurers &rarr; SQL re-check shows server tables now empty (party=0, active_tasks=0, squads=0). Restore from snapshot fixes everything but loses any work done since the last snapshot. <strong>Diagnostic.</strong> The user's <code>RQ_SYNCDIAG</code> log captured the smoking gun: at boot_sync the laptop logged <code>unpushedFlag: TRUE</code>, which triggered the v1.7054 push-before-pull path. The push wrote the empty default <code>S</code> (createDefaultState) to Supabase, deleting all rows from the multi-table push tables (party, active_tasks, squads, party_assets, etc., each of which uses delete-then-insert with an empty-array skip in sbPush). The subsequent pull came back with an empty diff (server now matched the empty laptop state), explaining why the user saw 150 gold / 0 everything: 150 is the createDefaultState gold default, never overwritten by a populated franchise row because the row on the server now matched what the laptop pushed. <strong>Root cause.</strong> The v1.7090 fix for the favorited-archive auto-revival bug added a <code>save()</code> call at line ~33370 of <code>checkFavourites</code> in the no-op stamp-transition branch, intended to persist <code>S.lastFavCheck</code> to Supabase even when no tasks reactivated. <code>save()</code> calls <code>_markUnpushed()</code> which sets <code>localStorage.setItem(&apos;rq_unpushed:&apos;+uid(), &apos;1&apos;)</code>. On a fresh incognito tab, <code>initSession</code> calls <code>checkFavourites</code> at line 36127 &mdash; BEFORE the boot_sync flag check at line 36158, BEFORE sbPull has run. The stamp transition fires (<code>_prevStamp===&apos;&apos;</code>, <code>stamp===&apos;2026-04-26@06:00&apos;</code>, not equal), <code>save()</code> fires, the unpushed flag gets set on the empty default <code>S</code>. 33ms later, boot_sync reads the flag (now TRUE) and triggers push-before-pull. The push wipes the server. <strong>Fix.</strong> Replace the <code>save()</code> at line 33370 with <code>saveLocalState()</code>. The stamp persists to localStorage so the next 15-second checkFavourites tick doesn&apos;t re-fire reactivation, but the unpushed flag is NOT set. The stamp will reach Supabase on the next legitimate save()-triggered push (any user action, an auto-debounced push from a save elsewhere, or the next manual push button); sbPush already writes <code>cleanSettings._lastFavCheck</code> and <code>cleanSettings._lastFavCheckTs</code> into the franchise row regardless of which <code>save()</code> triggered the push. The original v1.7090 fix&apos;s correctness is preserved because the lastFavCheck now persists to localStorage immediately, so the early-return guard at line 33275 (<code>if(S.lastFavCheck===stamp)return</code>) still fires correctly on the next checkFavourites tick. <strong>Why this didn&apos;t surface earlier.</strong> The bug requires (a) v1.7090&apos;s no-op-stamp-save() change, (b) a fresh-context login (incognito or a freshly-cleared device, where localStorage has no <code>lastFavCheck</code> key for this user), and (c) the subsequent boot_sync to read the unpushed flag and execute push-before-pull. Same-device repeats don&apos;t trigger because <code>S.lastFavCheck</code> is preserved in localStorage from the prior session. The user encountered it specifically by deliberately opening incognito to test the snapshot system. <strong>Why the v1.7090 push of the stamp was unnecessary.</strong> The stamp&apos;s job is to prevent <em>same-device</em> double-reactivation within a single day. Cross-device propagation matters for the OPPOSITE problem &mdash; preventing the new device from re-firing reactivation against the old device&apos;s already-reactivated archives. But the new device&apos;s sbPull at boot already populates S.lastFavCheck from <code>rawSettings._lastFavCheck</code> (the v1.7090 plumbing). So the cross-device scenario reads correctly without needing every stamp transition to immediately push. The v1.7090 author&apos;s defensive immediate-push instinct was wrong here &mdash; it created the much worse bug of empty-state pushes on first login. <strong>Lesson banked.</strong> Any code path that calls <code>save()</code> during <code>initSession</code> before <code>sbPull</code> resolves is a latent data-loss vector on fresh-login boots. The unpushed flag mechanism (v1.7054) is correct in design, but it depends on <code>save()</code> only firing in response to genuine user actions, not housekeeping. The fix discipline going forward: audit every <code>save()</code> call that fires during initSession&apos;s pre-pull phase &mdash; those should be <code>saveLocalState()</code> instead, with the cross-device propagation provided by the next genuine push. Future occurrences of this pattern should be caught by an audit grep before deploy: any <code>save()</code> call in code reachable from <code>initSession</code> lines 36083&ndash;36158 is suspicious. <strong>Scope boundaries.</strong> One-character edit: <code>save()</code> &rarr; <code>saveLocalState()</code> on line 33370. No CSS change. No HTML emit change. No SQL change. No data-model change. The v1.7090 favorited-archive fix is preserved &mdash; the stamp still persists, just without the unpushed-flag side effect. Tenth occurrence of the round-trip-strip pattern&apos;s consequences in the catalogue.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7090l</strong> &mdash; Suppress swipe gesture on virtual HQ/unassigned panels. <strong>User report.</strong> After v1.7090k fixed the closed-panel drawer-invisibility on real squads, the same broken visual still appeared when swiping a Headquarters / unassigned-bucket panel header. <strong>Root cause.</strong> Virtual panels have <code>isVirt===true</code> in the panel emit. The drawer IIFE early-returns empty string for those panels (line ~20003: <code>if(isVirt)return ''</code>) because HQ buckets have no Edit / Fill Role / Relocate / Shopping actions to surface. So virtual panels rendered with the new <code>.sq-panel-wrap</code> wrapper but NO drawer DOM inside. The swipe-handler never checked virtuality &mdash; touchstart latched onto the panel, touchend committed the swipe, the summary translated off-screen, and the wrapper revealed the empty space behind where the summary used to be. Same visible symptom as v1.7090k&apos;s closed-<code>&lt;details&gt;</code> bug, different cause: the drawer is genuinely missing rather than hidden by the cascade. <strong>Fix.</strong> Touchstart-on-summary handler now reads the panel&apos;s <code>data-panel-key</code> and early-returns if it starts with <code>__unassigned__::</code> (the canonical virtual-panel marker established by v1.7006&apos;s territory bucketing, v1.7011&apos;s collapse persistence, and v1.7018&apos;s collapse-all button). The gesture state never initializes, so touchmove and touchend exit immediately on their existing null-state guards. Net effect on a virtual panel: tapping the summary still toggles the <code>&lt;details&gt;</code> open/closed (the v1.7011 native click path is unchanged); swiping is a no-op. <strong>Why not just emit empty-but-visible drawers on virtual panels.</strong> Considered. We could let the IIFE return colorless drawer divs that translate but show nothing useful. Two reasons against: (1) the visual would still be confusing &mdash; user swipes, header translates, reveals empty parchment band, no clear signal that the panel offers no actions. (2) The v1.7089a in-drawer-tap-to-close gesture would have nothing meaningful to tap. Disabling the swipe entirely on virtual panels matches user intent better &mdash; swiping the squad headers does something; swiping the HQ panel doesn&apos;t. <strong>Why detect via <code>data-panel-key</code> instead of <code>isVirt</code> directly.</strong> <code>isVirt</code> is a closure variable inside the panel emit function; it&apos;s not on the rendered DOM. The handler runs at gesture time, after render, so it needs a DOM-readable signal. <code>data-panel-key</code> is already on every panel and starts with <code>__unassigned__::</code> for virtual ones, established by v1.7006 territory bucketing and used as a stable identifier by v1.7011 and v1.7018. No new attributes needed. <strong>Scope boundaries.</strong> One JS edit, four lines added inside the touchstart handler. No CSS change. No HTML emit change. No SQL change. No data-model change. The v1.7090k structural change (drawers as siblings of <code>&lt;details&gt;</code> inside <code>.sq-panel-wrap</code>) is unchanged and continues to handle real squad panels correctly. The native <code>&lt;details&gt;</code> open/close click on virtual panel summaries continues to work for collapse persistence.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7090k</strong> &mdash; Swipe drawer invisible on collapsed panels: relocated drawers OUTSIDE <code>&lt;details&gt;</code>. <strong>User report.</strong> After v1.7090i fixed the cancel-then-reswipe interaction, a new failure mode surfaced: when a squad panel is collapsed, swiping its header revealed the drawer area as empty parchment with no buttons or colored band &mdash; the drawer DOM appeared to be missing. The same swipe on an OPEN panel worked correctly. <strong>Root cause &mdash; native <code>&lt;details&gt;</code> content hiding.</strong> When <code>&lt;details&gt;</code> is closed (no <code>open</code> attribute), the browser&apos;s user-agent stylesheet effectively applies <code>display:none</code> to every descendant that isn&apos;t the <code>&lt;summary&gt;</code> element. This is implemented via internal slot logic in WebKit/Blink and via <code>::details-content</code> in Gecko, but the observable effect is the same: closed-<code>&lt;details&gt;</code> hides all non-summary content. The v1.7089 swipe drawers were emitted as DOM siblings of <code>&lt;summary&gt;</code> INSIDE <code>&lt;details&gt;</code>: <pre style="background:rgba(26,107,138,.06);padding:6px 10px;border-radius:4px;font-size:.82em;margin:4px 0;overflow-x:auto">&lt;details&gt;
@@ -31612,7 +31628,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7090m';
+var RQ_CLIENT_VERSION='v1.7091';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -31849,6 +31865,277 @@ function deleteSnapshot(id){
 window.deleteSnapshot = deleteSnapshot;
 /* ───────────────────── end v1.7077 SNAPSHOTS ──────────────────────── */
 
+/* ──────────── v1.7091 CROSS-DEVICE STALENESS DETECTION ──────────── */
+/*
+ * Goal: if the user goes back and forth between phone and desktop, the
+ * device that's been idle for a while shouldn't silently overwrite the
+ * other one's recent work. On focus/visibility-change, the idle device
+ * polls Supabase for the franchise row's last-pusher metadata. If a
+ * different tab pushed since this device last synced, we prompt the
+ * user to either pull (catch up) or keep (auto-snapshot first, then
+ * proceed to overwrite the other device's work on next push) or
+ * decide later (no-op, will re-prompt on next focus).
+ *
+ * Implementation notes:
+ * - Tab ID comes from RQ_SYNCDIAG.getTabId() (already exists).
+ * - Server fields piggyback on franchise.settings as _lastPushTab and
+ *   _lastPushAt — written in sbPush above, read in sbPull above.
+ * - This-device's "last in sync" timestamp is updated on every successful
+ *   sbPull AND every successful sbPush (since we wrote the latest data).
+ * - Staleness check fires on document.visibilitychange after >60s idle.
+ *   Below that threshold, refocus is treated as normal tab-switching.
+ * - The modal is suppressed for the rest of the session if the user
+ *   picks "Keep this device" (so we don't pester them).
+ * - Modal does not show on initial login — sbPull already populated S
+ *   from the server, so by definition the device is in sync at that
+ *   moment.
+ */
+
+// Module-scoped state. Not on S — these are sync metadata, not data.
+var _staleServerLastPushTab = '';   // tabId of the last device that pushed
+var _staleServerLastPushAt = 0;     // wall-clock ms of that push
+var _staleThisDevSyncAt = 0;        // wall-clock ms of this device's last successful pull or push
+var _staleModalSuppressed = false;  // user chose "keep this device" this session
+var _staleLastVisibleAt = 0;        // wall-clock ms of last visibility-becomes-visible event
+var _staleArmed = false;            // visibility listener is wired
+var _staleCheckInFlight = false;    // prevent overlapping checks
+var STALE_IDLE_THRESHOLD_MS = 60 * 1000; // 60s — minimum idle before we even check
+var _stalePendingDiff = null;       // diff object held for the modal render
+
+// Called from sbPull when we successfully read the server row. Records
+// the server's last-pusher metadata AND marks this device as freshly
+// in-sync (since we just pulled). Idempotent on repeated calls.
+function _staleRecordPullSync(serverTab, serverAt){
+  _staleServerLastPushTab = serverTab || '';
+  _staleServerLastPushAt = (typeof serverAt === 'number' && serverAt > 0) ? serverAt : 0;
+  _staleThisDevSyncAt = Date.now();
+}
+
+// Called from sbPush success branch. We just wrote to the server, so
+// the server's last-pusher is now us, and this device is in sync.
+function _staleRecordPushSync(){
+  var myTab = '';
+  try{ if(window.RQ_SYNCDIAG && typeof RQ_SYNCDIAG.getTabId === 'function')myTab = RQ_SYNCDIAG.getTabId(); }catch(e){}
+  _staleServerLastPushTab = myTab;
+  _staleServerLastPushAt = Date.now();
+  _staleThisDevSyncAt = Date.now();
+}
+
+// Lightweight server poll — fetches just the fields we need to decide
+// staleness, plus a small set of summary fields for the diff display.
+// One row, ~20 fields, no joins. Returns a Promise resolving to a
+// staleness summary or null on error / no row.
+function _staleQuickCheck(){
+  if(!uid())return Promise.resolve(null);
+  if(_staleCheckInFlight)return Promise.resolve(null);
+  _staleCheckInFlight = true;
+  var url = SB_URL+'/rest/v1/franchise'+
+    '?user_id=eq.'+encodeURIComponent(uid())+
+    '&select=gold,qp_balance,settings,last_sync,pinned'+
+    '&limit=1';
+  return sbFetch(url, { method: 'GET' })
+    .then(function(r){ if(!r.ok)throw new Error('quick-check status '+r.status); return r.json(); })
+    .then(function(rows){
+      _staleCheckInFlight = false;
+      var row = rows && rows[0];
+      if(!row)return null;
+      var s = row.settings || {};
+      // Also fetch counts of the per-table tables in parallel so the
+      // diff can show party / contracts / squads counts. These are
+      // small head-only requests using the count=exact preference.
+      return Promise.all([
+        sbFetch(SB_URL+'/rest/v1/party?user_id=eq.'+encodeURIComponent(uid())+'&select=id', { method:'GET', headers: Object.assign({}, SB_HDR, { 'Prefer':'count=exact', 'Range':'0-0' }) })
+          .then(function(r){
+            var cr = (r.headers.get('Content-Range')||'').split('/')[1];
+            return cr ? parseInt(cr,10)||0 : 0;
+          }).catch(function(){return 0;}),
+        sbFetch(SB_URL+'/rest/v1/active_tasks?user_id=eq.'+encodeURIComponent(uid())+'&select=id', { method:'GET', headers: Object.assign({}, SB_HDR, { 'Prefer':'count=exact', 'Range':'0-0' }) })
+          .then(function(r){
+            var cr = (r.headers.get('Content-Range')||'').split('/')[1];
+            return cr ? parseInt(cr,10)||0 : 0;
+          }).catch(function(){return 0;}),
+        sbFetch(SB_URL+'/rest/v1/squads?user_id=eq.'+encodeURIComponent(uid())+'&select=id', { method:'GET', headers: Object.assign({}, SB_HDR, { 'Prefer':'count=exact', 'Range':'0-0' }) })
+          .then(function(r){
+            var cr = (r.headers.get('Content-Range')||'').split('/')[1];
+            return cr ? parseInt(cr,10)||0 : 0;
+          }).catch(function(){return 0;}),
+        sbFetch(SB_URL+'/rest/v1/archived_tasks?user_id=eq.'+encodeURIComponent(uid())+'&select=id', { method:'GET', headers: Object.assign({}, SB_HDR, { 'Prefer':'count=exact', 'Range':'0-0' }) })
+          .then(function(r){
+            var cr = (r.headers.get('Content-Range')||'').split('/')[1];
+            return cr ? parseInt(cr,10)||0 : 0;
+          }).catch(function(){return 0;})
+      ]).then(function(counts){
+        return {
+          serverTab: typeof s._lastPushTab === 'string' ? s._lastPushTab : '',
+          serverAt: typeof s._lastPushAt === 'number' ? s._lastPushAt : 0,
+          gold: typeof row.gold === 'number' ? row.gold : 0,
+          qpBalance: typeof row.qp_balance === 'number' ? row.qp_balance : 0,
+          partyLen: counts[0],
+          activeLen: counts[1],
+          squadsLen: counts[2],
+          archivedLen: counts[3],
+          pinnedLen: Array.isArray(row.pinned) ? row.pinned.length : 0,
+          lastSyncIso: row.last_sync || ''
+        };
+      });
+    })
+    .catch(function(err){
+      _staleCheckInFlight = false;
+      try{ RQ_SYNCDIAG.log('stale_check_fail',{ error: (err&&err.message)||String(err) }); }catch(e){}
+      return null;
+    });
+}
+
+// True if the server's last-pusher tab differs from ours AND that push
+// happened after this device's last sync. Conservative: if either the
+// server timestamp or our local sync timestamp is missing/zero, we say
+// not stale (no false positives — we'd rather miss a prompt than show
+// a confusing one).
+function _staleIsDeviceStale(summary){
+  if(!summary)return false;
+  if(_staleModalSuppressed)return false;
+  var myTab = '';
+  try{ if(window.RQ_SYNCDIAG && typeof RQ_SYNCDIAG.getTabId === 'function')myTab = RQ_SYNCDIAG.getTabId(); }catch(e){}
+  if(!summary.serverTab)return false; // server has no last-pusher metadata yet — pre-v1.7091 row
+  if(summary.serverTab === myTab)return false; // we ARE the last pusher
+  if(!summary.serverAt)return false; // missing timestamp — bail
+  if(!_staleThisDevSyncAt)return false; // we never recorded a baseline — bail
+  return summary.serverAt > _staleThisDevSyncAt;
+}
+
+// Render the diff modal for the current S vs the server summary.
+function _staleRenderModal(summary){
+  if(!summary)return;
+  _stalePendingDiff = summary;
+  var meta = document.getElementById('ov-stale-meta');
+  if(meta){
+    var ageS = Math.max(0, Math.floor((Date.now() - summary.serverAt) / 1000));
+    var ageStr = ageS < 60 ? ageS+'s ago' : ageS < 3600 ? Math.floor(ageS/60)+'m ago' : ageS < 86400 ? Math.floor(ageS/3600)+'h ago' : Math.floor(ageS/86400)+'d ago';
+    var serverTimeStr = '';
+    try{ serverTimeStr = new Date(summary.serverAt).toLocaleString(); }catch(e){ serverTimeStr = String(summary.serverAt); }
+    meta.innerHTML =
+      '<div><strong>Server last updated:</strong> '+_escapeHtml(serverTimeStr)+' &middot; <span style="color:var(--ink-light)">'+_escapeHtml(ageStr)+'</span></div>'+
+      '<div style="margin-top:4px;color:var(--ink-light);font-size:.92em">From a different device than this one.</div>';
+  }
+  var diff = document.getElementById('ov-stale-diff');
+  if(diff){
+    var rows = [];
+    function _line(label, here, there){
+      var deltaHTML = '';
+      if(typeof here === 'number' && typeof there === 'number'){
+        var delta = there - here;
+        if(delta > 0)deltaHTML = ' <span style="color:var(--forest)">+'+delta+'</span>';
+        else if(delta < 0)deltaHTML = ' <span style="color:var(--crimson)">'+delta+'</span>';
+        else deltaHTML = ' <span style="color:var(--ink-light)">=</span>';
+      }
+      rows.push('<div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0">'+
+        '<span style="color:var(--ink-light)">'+_escapeHtml(label)+'</span>'+
+        '<span><span style="color:var(--ink-light)">'+_escapeHtml(String(here))+'</span> &rarr; <strong>'+_escapeHtml(String(there))+'</strong>'+deltaHTML+'</span>'+
+      '</div>');
+    }
+    _line('Gold', S.gold||0, summary.gold);
+    _line('QP balance', S.qpBalance||0, summary.qpBalance);
+    _line('Adventurers', (S.party||[]).length, summary.partyLen);
+    _line('Contracts', (S.active||[]).length, summary.activeLen);
+    _line('Archived', (S.archived||[]).length, summary.archivedLen);
+    _line('Pinned', (S.pinned||[]).length, summary.pinnedLen);
+    _line('Squads', (S.squads||[]).length, summary.squadsLen);
+    diff.innerHTML = '<div style="font-weight:bold;margin-bottom:6px">This device &rarr; Server</div>' + rows.join('');
+  }
+  openOv('ov-stale-device');
+}
+
+// Bind the three modal buttons exactly once.
+var _staleButtonsBound = false;
+function _staleBindButtons(){
+  if(_staleButtonsBound)return;
+  _staleButtonsBound = true;
+  var btnPull = document.getElementById('ov-stale-pull');
+  var btnKeep = document.getElementById('ov-stale-keep');
+  var btnCancel = document.getElementById('ov-stale-cancel');
+  if(btnPull){
+    btnPull.addEventListener('click', function(){
+      closeOv('ov-stale-device');
+      _stalePendingDiff = null;
+      sbPull(true).catch(function(err){
+        console.error('[Stale] pull failed:',err);
+      });
+    });
+  }
+  if(btnKeep){
+    btnKeep.addEventListener('click', function(){
+      // Auto-snapshot first so the other device's work isn't permanently lost.
+      // The snapshot captures THIS device's local state; the user can roll
+      // back from it later if "keep this device" turns out to be wrong.
+      btnKeep.disabled = true;
+      btnKeep.textContent = '\u23F3 Taking snapshot…';
+      var lbl = 'pre-keep-stale-device';
+      var p = (typeof takeSnapshotNow === 'function') ? takeSnapshotNow(lbl) : Promise.resolve(false);
+      p.then(function(){
+        _staleModalSuppressed = true;
+        try{ logAdd('Kept this device as authoritative; safety snapshot saved.','task'); }catch(e){}
+        try{ RQ_SYNCDIAG.log('stale_keep_local',{ snapshotLabel: lbl }); }catch(e){}
+        closeOv('ov-stale-device');
+        _stalePendingDiff = null;
+        btnKeep.disabled = false;
+        btnKeep.textContent = '\u26A0 Keep this device';
+      }).catch(function(){
+        btnKeep.disabled = false;
+        btnKeep.textContent = '\u26A0 Keep this device';
+      });
+    });
+  }
+  if(btnCancel){
+    btnCancel.addEventListener('click', function(){
+      closeOv('ov-stale-device');
+      _stalePendingDiff = null;
+      // Don't set _staleModalSuppressed — the next focus will re-check.
+    });
+  }
+}
+
+// Run a check now if (a) signed in, (b) we're not currently in the modal,
+// (c) we have a baseline sync timestamp (skip on initial login). Called
+// from the visibilitychange listener.
+function _staleMaybeCheck(){
+  if(!uid())return;
+  if(_staleModalSuppressed)return;
+  if(!_staleThisDevSyncAt)return; // no baseline yet — initial login still settling
+  var modal = document.getElementById('ov-stale-device');
+  if(modal && modal.classList.contains('show'))return; // already showing
+  _staleQuickCheck().then(function(summary){
+    if(!summary)return;
+    if(_staleIsDeviceStale(summary)){
+      try{ RQ_SYNCDIAG.log('stale_detected',{ serverTab: summary.serverTab, serverAt: summary.serverAt, mySyncAt: _staleThisDevSyncAt }); }catch(e){}
+      _staleRenderModal(summary);
+    }
+  });
+}
+
+// Wire visibilitychange (fires on tab refocus, not just app focus).
+function _staleArmVisibilityListener(){
+  if(_staleArmed)return;
+  _staleArmed = true;
+  _staleBindButtons();
+  document.addEventListener('visibilitychange', function(){
+    if(document.hidden){
+      // Tab going to background — just record the moment.
+      // (Nothing to check here; the check fires on the BECOMES-VISIBLE side.)
+      return;
+    }
+    var now = Date.now();
+    var idleMs = _staleLastVisibleAt ? (now - _staleLastVisibleAt) : Number.MAX_SAFE_INTEGER;
+    _staleLastVisibleAt = now;
+    if(idleMs < STALE_IDLE_THRESHOLD_MS)return; // brief tab switch — don't bother
+    _staleMaybeCheck();
+  });
+  // Also seed the visible-at marker so a pageshow-to-visible event has a baseline.
+  if(!document.hidden)_staleLastVisibleAt = Date.now();
+}
+window._staleArmVisibilityListener = _staleArmVisibilityListener; // expose for boot wiring
+window._staleMaybeCheck = _staleMaybeCheck; // expose for debugging
+/* ──────────── end v1.7091 STALENESS ──────────── */
+
 /* ── PUSH ── */
 function sbPush(manual){
   if(!uid()){
@@ -32021,6 +32308,17 @@ function sbPush(manual){
     // occurrence of the round-trip-strip pattern.
     cleanSettings._lastFavCheck=typeof S.lastFavCheck==='string'?S.lastFavCheck:'';
     cleanSettings._lastFavCheckTs=typeof S.lastFavCheckTs==='string'?S.lastFavCheckTs:'';
+    // v1.7091 — Cross-device staleness detection. Stamp every push with the
+    // tabId that did it and the wall-clock time. The next time any device
+    // becomes visible after >60s idle, it does a lightweight check of these
+    // two fields against its own last-sync state; if a different tab pushed
+    // more recently than this tab last synced, the device is stale and we
+    // prompt the user to pull. Persisted via the same underscore-prefix
+    // piggyback pattern as _qpPending / _lastFavCheck / etc.
+    var _myTabId='';
+    try{ if(window.RQ_SYNCDIAG&&typeof window.RQ_SYNCDIAG.getTabId==='function')_myTabId=window.RQ_SYNCDIAG.getTabId(); }catch(e){}
+    cleanSettings._lastPushTab=_myTabId||'';
+    cleanSettings._lastPushAt=Date.now();
     return sbUpsert('franchise',[{
       user_id:userId,
       gold:S.gold,
@@ -32335,6 +32633,10 @@ function sbPush(manual){
       // v1.7077 — fire-and-forget snapshot. Throttled internally; never
       // throws back to the caller; logs success/fail to RQ_SYNCDIAG.
       try{ _snapshotAfterPush(); }catch(e){}
+      // v1.7091 — Update this device's cross-device staleness baseline:
+      // we just wrote to the server so we ARE the latest pusher and we
+      // are in sync as of right now.
+      try{ _staleRecordPushSync(); }catch(e){}
       return true;
     })
     .catch(function(err){
@@ -32657,6 +32959,21 @@ function sbPull(manual){
       if(typeof rawSettings._lastFavCheckTs==='string'){
         S.lastFavCheckTs=rawSettings._lastFavCheckTs;
       }
+      // v1.7091 — Cross-device staleness: read last-pusher metadata so the
+      // staleness checker knows which tab last wrote to the server and when.
+      // Stored in module-scoped state (not on S) so they don't round-trip
+      // through restoreSnapshot or saveLocalState. The setter helper records
+      // both the server's last-pusher tab/time AND updates this device's
+      // own "last in sync" timestamp so the next visibility check has a
+      // valid baseline.
+      try{
+        if(typeof _staleRecordPullSync==='function'){
+          _staleRecordPullSync(
+            (typeof rawSettings._lastPushTab==='string')?rawSettings._lastPushTab:'',
+            (typeof rawSettings._lastPushAt==='number')?rawSettings._lastPushAt:0
+          );
+        }
+      }catch(e){}
       // v1.7039 — read territory progression state from the settings blob.
       // Fall back to the in-memory value (from localStorage) for saves made
       // before this version, so we don't wipe an existing unlocked list on
@@ -32696,7 +33013,11 @@ function sbPull(manual){
        // don't leak into S.settings as a duplicate source of truth — the
        // canonical reads happen above, lifting them onto S.lastFavCheck /
        // S.lastFavCheckTs directly.
-       '_lastFavCheck','_lastFavCheckTs'].forEach(function(k){delete cleanSettings[k];});
+       '_lastFavCheck','_lastFavCheckTs',
+       // v1.7091 — Cross-device staleness metadata. Strip from settings
+       // since these are sync metadata (not application state) and live
+       // in module-scoped state via _staleRecordPullSync above.
+       '_lastPushTab','_lastPushAt'].forEach(function(k){delete cleanSettings[k];});
       S.settings=normalizeSettings(cleanSettings);
     }
     if(party&&party.length){
@@ -36256,6 +36577,10 @@ function initSession(pullFromCloud){
       renderDowntimeRibbon(); // v1.6904 — surface any queued rolls from prior sessions
       if(typeof renderInboxBadge==='function')renderInboxBadge();
       checkLoginLoyalty();
+      // v1.7091 — Arm the cross-device staleness listener now that the
+      // initial pull is complete and S is fully populated. The listener
+      // will fire on every subsequent visibilitychange after >60s idle.
+      try{ if(typeof _staleArmVisibilityListener==='function')_staleArmVisibilityListener(); }catch(e){}
       updateQpDisplay();
       saveLocalState();
       suppressAutoPush=false;
