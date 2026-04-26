@@ -2845,7 +2845,12 @@ body.dev-active #app{margin-top:36px;}
   }
   .sq-drawer-btn:active{background:rgba(255,255,255,.35);}
   .sq-drawer-meta{
-    font-family:'Cinzel',serif;font-size:.82em;line-height:1.4;
+    /* v1.7089a — Append system emoji fonts to the family stack so the
+       \uD83D\uDCB0 money-bag glyph (and any future emoji in this drawer)
+       renders. Without these, Cinzel has no emoji coverage and the
+       browser drew nothing for the 💰 character on the user's iPhone. */
+    font-family:'Cinzel',serif,'Apple Color Emoji','Segoe UI Emoji','Segoe UI Symbol','Noto Color Emoji',sans-serif;
+    font-size:.82em;line-height:1.4;
     display:flex;flex-direction:column;align-items:flex-end;gap:2px;
   }
   .sq-drawer-meta .meta-line{white-space:nowrap;}
@@ -19619,9 +19624,13 @@ function renderParty(){
             '</div>';
           var leftMeta='<span class="meta-line">'+_drawerMemberCnt+' member'+(_drawerMemberCnt!==1?'s':'')+'</span>';
           if(_drawerGoldOut>0){
-            leftMeta+='<span class="meta-line meta-gold">\uD83D\uDCB0 ~'+_drawerGoldOut.toLocaleString()+' incoming</span>';
+            // v1.7089a — Trimmed from "\uD83D\uDCB0 ~48 incoming" to
+            // "\uD83D\uDCB0 ~48 gp" so the line fits inside the 170px
+            // drawer without overflow-clipping the leading emoji on
+            // narrow phones.
+            leftMeta+='<span class="meta-line meta-gold">\uD83D\uDCB0 ~'+_drawerGoldOut.toLocaleString()+' gp</span>';
           }else{
-            leftMeta+='<span class="meta-line" style="opacity:.7;font-size:.92em">No pending rewards</span>';
+            leftMeta+='<span class="meta-line" style="opacity:.7;font-size:.92em">No pending</span>';
           }
           var leftHtml='<div class="sq-drawer-left" aria-hidden="true"><div class="sq-drawer-meta">'+leftMeta+'</div></div>';
           return rightHtml+leftHtml;
@@ -20411,6 +20420,24 @@ function renderParty(){
       // We want the existing tap behavior to win for those targets.
       if(e.target.closest('.sqmgr-edit-btn'))return;
       if(e.target.closest('.sq-drawer-btn'))return;
+      // v1.7089a — If the touch starts on a revealed drawer's empty area
+      // (not a button), treat it as a swipe-back-to-close. This is the
+      // ONLY grab affordance the user has once a drawer is open, since
+      // the summary is mostly translated off-screen at that point.
+      var _openDrawer=e.target.closest('.sq-drawer-right, .sq-drawer-left');
+      if(_openDrawer){
+        var _detD=_openDrawer.closest('details.sq-inv-section');
+        if(_detD&&(_detD.classList.contains('sq-show-right')||_detD.classList.contains('sq-show-left'))){
+          _sqDetailsEl=_detD;
+          _sqSummaryEl=_detD.querySelector('summary');
+          _sqStartX=e.touches[0].clientX;
+          _sqStartY=e.touches[0].clientY;
+          _sqMoved=false;
+          // Mark the gesture so touchend knows this is a close-intent.
+          _sqDetailsEl.dataset.sqStartedFromDrawer='1';
+        }
+        return;
+      }
       if(e.target.closest('button'))return;
       if(e.target.closest('a'))return;
       // Only act on touches that start inside a squad summary header.
@@ -20423,6 +20450,7 @@ function renderParty(){
       _sqStartX=e.touches[0].clientX;
       _sqStartY=e.touches[0].clientY;
       _sqMoved=false;
+      delete detEl.dataset.sqStartedFromDrawer;
     },{passive:true});
     el.addEventListener('touchmove',function(e){
       if(_sqStartX===null||!_sqDetailsEl)return;
@@ -20456,10 +20484,26 @@ function renderParty(){
       var dx=endX-_sqStartX;
       var detEl=_sqDetailsEl;
       var summaryEl=_sqSummaryEl;
+      // v1.7089a — Was the gesture initiated on a revealed drawer's
+      // empty area? If so, ANY committed swipe closes the drawer
+      // (regardless of direction); a small swipe falls through to the
+      // click handler which also closes via the tap-to-close logic.
+      var startedFromDrawer=detEl&&detEl.dataset.sqStartedFromDrawer==='1';
+      if(detEl)delete detEl.dataset.sqStartedFromDrawer;
       // Reset state immediately so we don't carry stale refs through
       // the work below.
       _sqStartX=null;_sqStartY=null;_sqDetailsEl=null;_sqSummaryEl=null;
       var moved=_sqMoved;_sqMoved=false;
+      if(startedFromDrawer){
+        if(moved&&Math.abs(dx)>=_SQ_SWIPE_THRESHOLD){
+          detEl.classList.remove('sq-show-right');
+          detEl.classList.remove('sq-show-left');
+          _sqClearAutoClose();
+        }
+        // If they barely moved, the click handler will still close
+        // via the in-drawer-tap path.
+        return;
+      }
       if(!moved||Math.abs(dx)<_SQ_SWIPE_THRESHOLD){
         // Below threshold or no horizontal movement \u2014 let the native
         // <summary> click handle the panel toggle (for taps) or snap
@@ -20508,12 +20552,11 @@ function renderParty(){
     if(!document.body.dataset.sqDrawerOutsideBound){
       document.body.dataset.sqDrawerOutsideBound='1';
       document.addEventListener('click',function(ev){
-        // If the click was on a drawer button, let it through but reset
-        // the auto-close timer so the user has time to tap a sibling.
-        var inDrawer=ev.target.closest('.sq-drawer-right, .sq-drawer-left');
-        if(inDrawer){
-          // The button's action will be handled by the existing #plist
-          // delegator. Schedule a close after the action fires.
+        // v1.7089a — Drawer-button click: let the action fire, then
+        // close the drawer after a short delay so the user sees the
+        // action commit before the close.
+        var drawerBtn=ev.target.closest('.sq-drawer-btn');
+        if(drawerBtn){
           setTimeout(function(){
             var plist=document.getElementById('plist');
             if(!plist)return;
@@ -20521,14 +20564,28 @@ function renderParty(){
               d.classList.remove('sq-show-right');
               d.classList.remove('sq-show-left');
             });
+            _sqClearAutoClose();
           },50);
           return;
         }
-        // If click is on a summary that has a drawer open, leave it
-        // alone (the user is interacting with the open drawer's parent).
-        // Outside everything \u2014 close all drawers.
+        // Tap on a drawer's empty (non-button) area \u2014 close that drawer
+        // immediately. This is one of the two ways to dismiss a drawer
+        // (the other being swipe-back on the drawer or outside-tap).
+        var drawerArea=ev.target.closest('.sq-drawer-right, .sq-drawer-left');
+        if(drawerArea){
+          var detD=drawerArea.closest('details.sq-inv-section');
+          if(detD){
+            detD.classList.remove('sq-show-right');
+            detD.classList.remove('sq-show-left');
+          }
+          _sqClearAutoClose();
+          return;
+        }
+        // Outside everything \u2014 close all drawers (if any are open).
         var plist=document.getElementById('plist');
         if(!plist)return;
+        var anyOpen=plist.querySelector('details.sq-inv-section.sq-show-right,details.sq-inv-section.sq-show-left');
+        if(!anyOpen)return;
         plist.querySelectorAll('details.sq-inv-section.sq-show-right,details.sq-inv-section.sq-show-left').forEach(function(d){
           d.classList.remove('sq-show-right');
           d.classList.remove('sq-show-left');
