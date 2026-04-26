@@ -3751,7 +3751,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7090k
+      Version 1.7090l
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3791,6 +3791,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7090l</strong> &mdash; Suppress swipe gesture on virtual HQ/unassigned panels. <strong>User report.</strong> After v1.7090k fixed the closed-panel drawer-invisibility on real squads, the same broken visual still appeared when swiping a Headquarters / unassigned-bucket panel header. <strong>Root cause.</strong> Virtual panels have <code>isVirt===true</code> in the panel emit. The drawer IIFE early-returns empty string for those panels (line ~20003: <code>if(isVirt)return ''</code>) because HQ buckets have no Edit / Fill Role / Relocate / Shopping actions to surface. So virtual panels rendered with the new <code>.sq-panel-wrap</code> wrapper but NO drawer DOM inside. The swipe-handler never checked virtuality &mdash; touchstart latched onto the panel, touchend committed the swipe, the summary translated off-screen, and the wrapper revealed the empty space behind where the summary used to be. Same visible symptom as v1.7090k&apos;s closed-<code>&lt;details&gt;</code> bug, different cause: the drawer is genuinely missing rather than hidden by the cascade. <strong>Fix.</strong> Touchstart-on-summary handler now reads the panel&apos;s <code>data-panel-key</code> and early-returns if it starts with <code>__unassigned__::</code> (the canonical virtual-panel marker established by v1.7006&apos;s territory bucketing, v1.7011&apos;s collapse persistence, and v1.7018&apos;s collapse-all button). The gesture state never initializes, so touchmove and touchend exit immediately on their existing null-state guards. Net effect on a virtual panel: tapping the summary still toggles the <code>&lt;details&gt;</code> open/closed (the v1.7011 native click path is unchanged); swiping is a no-op. <strong>Why not just emit empty-but-visible drawers on virtual panels.</strong> Considered. We could let the IIFE return colorless drawer divs that translate but show nothing useful. Two reasons against: (1) the visual would still be confusing &mdash; user swipes, header translates, reveals empty parchment band, no clear signal that the panel offers no actions. (2) The v1.7089a in-drawer-tap-to-close gesture would have nothing meaningful to tap. Disabling the swipe entirely on virtual panels matches user intent better &mdash; swiping the squad headers does something; swiping the HQ panel doesn&apos;t. <strong>Why detect via <code>data-panel-key</code> instead of <code>isVirt</code> directly.</strong> <code>isVirt</code> is a closure variable inside the panel emit function; it&apos;s not on the rendered DOM. The handler runs at gesture time, after render, so it needs a DOM-readable signal. <code>data-panel-key</code> is already on every panel and starts with <code>__unassigned__::</code> for virtual ones, established by v1.7006 territory bucketing and used as a stable identifier by v1.7011 and v1.7018. No new attributes needed. <strong>Scope boundaries.</strong> One JS edit, four lines added inside the touchstart handler. No CSS change. No HTML emit change. No SQL change. No data-model change. The v1.7090k structural change (drawers as siblings of <code>&lt;details&gt;</code> inside <code>.sq-panel-wrap</code>) is unchanged and continues to handle real squad panels correctly. The native <code>&lt;details&gt;</code> open/close click on virtual panel summaries continues to work for collapse persistence.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7090k</strong> &mdash; Swipe drawer invisible on collapsed panels: relocated drawers OUTSIDE <code>&lt;details&gt;</code>. <strong>User report.</strong> After v1.7090i fixed the cancel-then-reswipe interaction, a new failure mode surfaced: when a squad panel is collapsed, swiping its header revealed the drawer area as empty parchment with no buttons or colored band &mdash; the drawer DOM appeared to be missing. The same swipe on an OPEN panel worked correctly. <strong>Root cause &mdash; native <code>&lt;details&gt;</code> content hiding.</strong> When <code>&lt;details&gt;</code> is closed (no <code>open</code> attribute), the browser&apos;s user-agent stylesheet effectively applies <code>display:none</code> to every descendant that isn&apos;t the <code>&lt;summary&gt;</code> element. This is implemented via internal slot logic in WebKit/Blink and via <code>::details-content</code> in Gecko, but the observable effect is the same: closed-<code>&lt;details&gt;</code> hides all non-summary content. The v1.7089 swipe drawers were emitted as DOM siblings of <code>&lt;summary&gt;</code> INSIDE <code>&lt;details&gt;</code>: <pre style="background:rgba(26,107,138,.06);padding:6px 10px;border-radius:4px;font-size:.82em;margin:4px 0;overflow-x:auto">&lt;details&gt;
   &lt;summary&gt;...&lt;/summary&gt;
   &lt;div class="sq-drawer-right"&gt;...&lt;/div&gt;
@@ -20521,6 +20522,13 @@ function renderParty(){
       if(!summaryEl)return;
       var detEl=summaryEl.parentElement;
       if(!detEl||!detEl.classList.contains('sq-inv-section'))return;
+      // v1.7090l — Skip virtual HQ/unassigned panels. They have no drawer
+      // DOM (the drawer IIFE early-returns for isVirt buckets), so a swipe
+      // would translate the summary off-screen and reveal an empty wrapper
+      // with no buttons. Identified by the __unassigned__:: prefix on
+      // data-panel-key (the v1.7011/v1.7018 canonical virtual-panel marker).
+      var _pk=detEl.getAttribute('data-panel-key')||'';
+      if(_pk.indexOf('__unassigned__::')===0)return;
       _sqDetailsEl=detEl;
       _sqSummaryEl=summaryEl;
       _sqStartX=e.touches[0].clientX;
@@ -31603,7 +31611,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7090k';
+var RQ_CLIENT_VERSION='v1.7090l';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
