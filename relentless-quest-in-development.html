@@ -2986,7 +2986,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7109</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7110</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3861,7 +3861,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7109
+      Version 1.7110
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3901,6 +3901,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7110</strong> &mdash; Presence ribbon &ldquo;tap to compare&rdquo; now provides feedback for every outcome instead of silently doing nothing. <strong>User report.</strong> On both desktop and mobile, tapping the &ldquo;[device] is currently active &middot; tap to compare&rdquo; ribbon often did nothing visible &mdash; no modal opened, no console output, no feedback of any kind. <strong>Diagnosis.</strong> The ribbon&apos;s onclick at line ~32672 called <code>_staleMaybeCheck()</code> directly. That function has six short-circuit branches that all return silently: <em>(1)</em> not signed in, <em>(2)</em> session-suppressed (user previously picked &ldquo;Keep this device&rdquo;), <em>(3)</em> no sync baseline yet (initial login still settling), <em>(4)</em> modal already open, <em>(5)</em> <code>_staleQuickCheck</code> returned no summary (network error), <em>(6)</em> <code>_staleIsDeviceStale</code> returned false. Branch 6 is the most common case in practice: another tab is heartbeating (so the ribbon shows up), but it hasn&apos;t pushed anything newer than this device&apos;s last sync &mdash; the v1.7092 changelog actually documented this as design (&ldquo;The modal handles the no-stale-detected case gracefully (just doesn&apos;t open, since the staleness check returns false)&rdquo;), but in practice it surfaces as a non-responsive button. <strong>Why <code>_staleMaybeCheck</code> stays silent &mdash; deliberately.</strong> That function is ALSO called from the visibilitychange handler at line ~32542. Surfacing a toast on every tab refocus would be obnoxious. The silent-on-no-change behavior is correct for the auto-fired path. Manual taps on the ribbon are different: explicit user actions deserve explicit feedback. <strong>Fix &mdash; new <code>_staleManualCheck()</code> helper.</strong> Branches on each of the six guards and surfaces a small inline toast positioned just under the presence ribbon explaining what happened. <em>Branch 1 (not signed in):</em> &ldquo;Not signed in &mdash; please reload.&rdquo; (warn-styled toast). <em>Branch 2 (suppressed):</em> &ldquo;Comparison suppressed for this session &mdash; reload to re-enable.&rdquo; <em>Branch 3 (no baseline):</em> &ldquo;Sync still settling &mdash; try again in a few seconds.&rdquo; <em>Branch 4 (modal open):</em> no toast (the modal IS the feedback). <em>Branch 5 (network):</em> &ldquo;Couldn&apos;t reach the server. Check your connection&hellip;&rdquo; <em>Branch 6 (in sync):</em> the most common case &mdash; the toast says &ldquo;\u2713 In sync. The other device&apos;s last push was Xm ago &mdash; already on this device.&rdquo; The age string (Xs / Xm / Xh ago) is computed from <code>summary.serverAt</code> so the user immediately sees how recent the other device&apos;s last save was, even when there&apos;s nothing to do. The toast also color-keys by kind: gold-bordered for ok, gold-dark-bordered for info, crimson-bordered for warn. <strong>Console logging on every branch.</strong> Each guard now also logs its branch via <code>console.log</code> with a <code>[v1.7110]</code> prefix, so future debugging from the console is one click away. The user requested explicit access to the console; this makes that path productive instead of a dead end. <strong>Concurrency guard.</strong> While the fetch is in flight, the ribbon is dimmed to 70% opacity and pointer-events are disabled, so a quick double-tap doesn&apos;t fire two parallel <code>_staleQuickCheck</code> calls. Re-enabled in the .then and .catch (defensive against fetch throwing rather than returning a falsy summary). <strong>Toast styling and lifecycle.</strong> Mirrors the .pin-from-toast pattern from v1.6961 (the &ldquo;from: ParentTaskName&rdquo; toast on pinned rows): position:fixed, fade in via opacity 0\u21921, auto-dismiss after 3.5 seconds (vs. v1.6961&apos;s 2.5s &mdash; these messages are full sentences and need more read time), removed-then-replaced if a second toast fires before the first fades. The toast positions itself centered horizontally under the ribbon&apos;s bounding rect with a 6px gap, clamped to the viewport on both sides so it doesn&apos;t spill off-screen on narrow phones. <strong>Auto-fired path unchanged.</strong> The visibilitychange listener at line ~32542 still calls <code>_staleMaybeCheck()</code>, not the new manual variant. Tab refocus events that don&apos;t surface a stale state continue to be silent (no toast). Only deliberate ribbon taps go through the new feedback path. <strong>Boot mode unchanged.</strong> v1.7105&apos;s <code>_stalePromptBoot</code> path uses its own modal-open path with a hidden Cancel button. It doesn&apos;t go through <code>_staleMaybeCheck</code> or <code>_staleManualCheck</code>, so the boot-time stale prompt continues to work exactly as before. <strong>Scope boundaries.</strong> Two new JS functions (<code>_staleManualCheck</code> and <code>_presenceShowToast</code>, ~120 lines total). One JS edit at the click handler (~5 lines, swap the function name with a fallback). Both functions exposed on <code>window</code> for console use (<code>window._staleManualCheck()</code> simulates a ribbon tap, <code>window._presenceShowToast(&apos;hi&apos;,&apos;ok&apos;)</code> tests the toast in isolation). No CSS rule added (the toast carries inline styles), no HTML element added (the toast is created on demand and removed on fade), no data-model change, no persistence change, no SQL change, no migration. The <code>.presence-toast</code> class name is referenced only by the cleanup query selector (<code>document.querySelectorAll(&apos;.presence-toast&apos;)</code>) to clear stacked toasts &mdash; no stylesheet rule depends on it. <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean. Six paths through the new helper, each with a console.log and a user-visible toast (or the modal). Tests for the user to run after deploy: (1) tap the ribbon when another device is just open but hasn&apos;t pushed anything new \u2192 toast says &ldquo;\u2713 In sync. The other device&apos;s last push was Xm ago&rdquo;; (2) disconnect Wi-Fi, tap \u2192 toast says &ldquo;Couldn&apos;t reach the server&rdquo;; (3) on the other device, push a save, then on this device tap \u2192 modal opens with the diff, behavior unchanged from v1.7109.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7109</strong> &mdash; HQ hire-cap enforcement (closes a v1.7006 deferred gap). <strong>User report.</strong> A test account (<code>restart2@restart.com</code>) reached more than 10 unassigned characters in HQ, despite the v1.7006 design declaring <code>UNASSIGNED_PER_TERRITORY_MAX=10</code> as the per-territory cap on unassigned characters. <strong>Diagnosis.</strong> The v1.7006 changelog explicitly stated under "What's deferred to v1.7007": <em>"Hard enforcement of the unassigned bucket cap at hire time (currently display-only; over-cap states are grandfathered)."</em> That deferred enforcement never shipped. The cap lived on for three years as a render-time visual cue only &mdash; line 19641 painted the fraction crimson when over, line 20270 printed "N unassigned" in the territory header &mdash; but none of the four user-facing hire paths consulted it. The only place in the codebase that consulted <code>UNASSIGNED_PER_TERRITORY_MAX</code> for an actual gate was <code>resolveBackToHQDestination</code> at line ~40296, which handles sending an existing character home from a squad &mdash; not hiring. So restart2 didn't bypass anything; there was no fence to bypass. <strong>The four user-initiated hire sites that needed the gate.</strong> <em>(1)</em> Standard adventurer recruit (<code>#rbox</code> click handler, line ~23839): <code>goldSpend(...)</code> then <code>S.party.push(newChar)</code> &mdash; no cap check. <em>(2)</em> Free hireling hire (<code>#hir-box</code> click handler, line ~24122): same pattern, no cap check. <em>(3)</em> Custom mercenary (line ~24805): same pattern, no cap check. <em>(4)</em> In-quest hireling (<code>.qhp-hire</code>, line ~23958): does check the assigned squad's <code>_sqSize&lt;10</code> for auto-add, but if no active-cycle squad has room the hire still completes and the new character lands unassigned with no cap check. <strong>Two sites deliberately left exempt.</strong> Capstone reward NPC contact (line ~25823) and capstone random reward generated contact (line ~25870) are quest rewards, not user-driven hires. Refusing a hard-earned capstone reward because HQ is one over cap would feel hostile and would make the cap leak into combat-progression. They bypass the new check. <strong>Fix &mdash; one shared guard helper, four wirings.</strong> New helper <code>_hqHireCheck()</code> sits next to <code>territoriesWithSquadCapacity</code> at line ~40392. Returns <code>{ok:true}</code> when origin's unassigned bucket is below cap, or <code>{ok:false, count, cap, territory, message}</code> when at or over cap. The message is a complete user-facing string ready to drop into <code>alert()</code> &mdash; tells the user the count/cap, names the territory, and lists three specific things they can do to free space (assign characters to squads, send unassigned chars to a non-origin HQ, or hire directly into a squad via the in-quest flow). Centralizing one helper avoids four near-identical inline checks drifting over time and ensures one consistent message across all hire surfaces. <strong>Wiring.</strong> All four hire sites now call <code>_hqHireCheck()</code> BEFORE <code>goldSpend()</code> &mdash; a refused hire never charges the user. Sites 1, 2, 3 add the same three-line snippet (one var declaration, one ok-check, one alert+return). Site 4 (in-quest) adds a slightly larger gating block that first determines whether the hire would land in a squad (active-cycle squad with <code>_sqSize&lt;10</code>) or unassigned, and applies the cap check only in the unassigned case &mdash; preserving the v1.7006 in-quest design intent of allowing field hires that go directly into the active squad. <strong>Why origin territory.</strong> New hires arrive without a squad assignment, and the v1.7006 backfill at line ~19238 sets a freshly-pushed character's <code>homeTerritory</code> to either their squad's territory (none for new hires) or <code>S.originTerritory</code>. So new hires always land in origin's HQ, and origin is the territory the cap should be checked against &mdash; regardless of which territory the player is currently looking at in the UI. <strong>Grandfathering.</strong> Existing accounts that are already over cap from pre-v1.7109 hires (the bug this fix closes) keep their characters &mdash; <code>_hqHireCheck</code> compares <em>current</em> count to cap and only refuses NEW additions. An over-cap franchise sees its next hire blocked at the same cap as a fresh franchise would; once they drop to 9 unassigned via squad assignment, Back-to-HQ-elsewhere, or downtime promotions, hires resume normally. No retroactive boot, no compulsory cleanup. <strong>Scope boundaries.</strong> One new helper (~30 lines), four wirings (~3-12 lines each, ~25 lines total). No CSS change, no HTML change, no data-model change, no persistence change, no SQL change, no migration. The four hire sites' downstream behavior (logAdd entries, navTo, renderParty, hire-ribbon animation, focus scroll) is byte-identical when the check passes. The two capstone reward sites are byte-identical regardless. <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean. The new <code>_hqHireCheck</code> name appears five times: definition, exposure on <code>window</code>, and four call sites &mdash; one per gated hire surface. <code>UNASSIGNED_PER_TERRITORY_MAX</code> is now consulted by code (not just render) at the four hire sites plus the one Back-to-HQ resolver, matching the original v1.7006 design intent.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7108</strong> &mdash; Stale-detection diff modal showed misleading &ldquo;48&nbsp;&rarr;&nbsp;0&rdquo; counts because the count requests were authenticated with the anon key instead of the user&apos;s session token. <strong>User report.</strong> After spending 5 minutes on phone updating tasks and earning gold, opened the desktop and saw the v1.7091 stale-detection modal. The diff displayed correct values for Gold (46&nbsp;&rarr;&nbsp;86) and QP (368&nbsp;&rarr;&nbsp;368) and Pinned (3&nbsp;&rarr;&nbsp;3), but absurd values for Adventurers (48&nbsp;&rarr;&nbsp;0&nbsp;<em>-48</em>), Contracts (17&nbsp;&rarr;&nbsp;0&nbsp;<em>-17</em>), Archived (53&nbsp;&rarr;&nbsp;0&nbsp;<em>-53</em>), and Squads (5&nbsp;&rarr;&nbsp;0&nbsp;<em>-5</em>) &mdash; suggesting that pulling from server would wipe nearly everything. Choosing Pull from Server actually preserved the data correctly; the displayed numbers were wrong, not the underlying server state. <strong>The pattern.</strong> Right-side values that came back correct (gold, qp_balance, pinned) all live on the franchise table itself &mdash; either as columns or in the jsonb settings/pinned blobs. The franchise-row fetch in <code>_staleQuickCheck()</code> at line 32199 is <code>sbFetch(url, { method:'GET' })</code>, no <code>options.headers</code>, so <code>sbFetch</code>&apos;s built-in <code>sbHeaders()</code> supplied the user&apos;s session token unimpeded. Right-side values that came back as 0 (partyLen, activeLen, archivedLen, squadsLen) all came from four separate count requests against the per-row tables (<code>party</code>, <code>active_tasks</code>, <code>squads</code>, <code>archived_tasks</code>). Those calls passed <code>headers: Object.assign({}, SB_HDR, { 'Prefer':'count=exact', 'Range':'0-0' })</code> as <code>options.headers</code>. <strong>The bug.</strong> <code>SB_HDR</code> is the module-level static constant defined at line 31150 with <code>'Authorization':'Bearer '+SB_KEY</code> (the Supabase anon key, not the user token). Inside <code>sbFetch</code> at line 31334, header assembly is <code>req.headers = Object.assign({}, sbHeaders(), options.headers || {})</code> &mdash; so <code>options.headers</code> wins the cascade. The static anon-key Authorization in SB_HDR therefore <em>overrode</em> the user&apos;s access_token Authorization that <code>sbHeaders()</code> would have provided. Result: the four count requests flew out authenticated only by the anon key. RLS on <code>party</code>/<code>active_tasks</code>/<code>squads</code>/<code>archived_tasks</code> tables filters every row by <code>auth.uid()</code>; with no user session, <code>auth.uid()</code> is null, so RLS returned zero rows. The <code>Content-Range</code> header came back as <code>*/0</code>, which the parser at <code>(r.headers.get('Content-Range')||'').split('/')[1]</code> read as the string <code>&quot;0&quot;</code>, parsed as integer <code>0</code>, returned as the count. <strong>Why the franchise-row fetch worked.</strong> Same network mechanism, but the franchise-row fetch passes no <code>options.headers</code> at all &mdash; so <code>sbFetch</code>&apos;s <code>sbHeaders()</code> wins by default and provides the user&apos;s access_token. RLS on franchise sees <code>auth.uid()</code> matching the row&apos;s <code>user_id</code> and returns the row correctly. The asymmetry between the franchise fetch and the count fetches is what produced the asymmetry in the diff modal. <strong>Fix.</strong> Removed <code>SB_HDR</code> from the count requests&apos; <code>options.headers</code>. Caller now passes only the request-specific <code>'Prefer':'count=exact'</code> and <code>'Range':'0-0'</code> headers; <code>sbFetch</code>&apos;s <code>sbHeaders()</code> supplies the correct user-session Authorization. All four count requests updated identically. <strong>Why this wasn&apos;t caught before.</strong> The v1.7091 stale-detection feature was authored and tested with light data sets where 0&apos;s on the right side of the diff didn&apos;t scream &ldquo;something is wrong&rdquo; &mdash; a fresh test account legitimately has 0 in most of those columns. The error mode only becomes obviously wrong when the franchise has substantial party/contract/archive/squad populations, which is exactly the case where stale-detection prompts most need to be trustworthy. <strong>Other SB_HDR usage audit.</strong> Two other live call sites use <code>SB_HDR</code> after my fix: <code>presence_unbind</code> at line 32671 (uses raw <code>fetch</code> not <code>sbFetch</code>, so no header-merge bug; SB_HDR is the only auth source it has &mdash; this is a best-effort beacon-style cleanup that doesn&apos;t need user auth) and the code-login push path at line 32793 (only fires when <code>currentUser._codeLogin</code> is set, which means the user authenticated against <code>login_codes</code> rather than Supabase auth and has no <code>access_token</code> &mdash; so <code>sbHeaders()</code> already falls back to the anon key per line 31294 and the override is functionally a no-op). Both are unaffected by the fix and unaffected by the bug. <strong>Scope boundaries.</strong> One JS edit (~30 lines, four parallel requests) inside <code>_staleQuickCheck()</code>. No CSS, no HTML, no data-model, no persistence, no SQL, no schema changes. The user&apos;s previous Pull from Server action was correct &mdash; the misleading diff just made it look risky. After v1.7108, the diff numbers reflect actual server state. <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean. The remaining <code>SB_HDR</code> reference inside the count-request area is now only inside the explanatory comment block, not in any live <code>options.headers</code> assignment.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7107</strong> &mdash; Store Buy button silently failed when the displayed item wasn&apos;t in the active tab&apos;s current stock rotation. <strong>User report.</strong> Attempted to buy a Bag of Holding through the store interface. Sufficient gold available, button rendered with the correct <code>data-a=&quot;buy&quot; data-name=&quot;Bag of Holding&quot;</code> attributes (and notably no <code>disabled</code> attribute), but clicking did nothing &mdash; no modal opened, no console output, no visible state change. <strong>Diagnosis.</strong> The user almost certainly had a search query active in the store. The store&apos;s <code>renderStore()</code> at line ~28586 has special search handling: when a search query is non-empty, it builds the rendered <code>items</code> array by filtering the GLOBAL catalog (<code>GEAR + VEHICLES + BUILDINGS + PETS + ADVENTURING_GEAR</code>) by name/desc match, regardless of which tab is active. So a user on the Magic tab who searches &quot;bag&quot; sees the Bag of Holding card surface in the rendered list even though today&apos;s <code>S.stock.magicUncommon</code> rotation (a random 5-of-N pick from <code>buildStock()</code>) didn&apos;t include the bag. The rendered card claims <code>data-name=&quot;Bag of Holding&quot;</code> correctly. <strong>The bug.</strong> The Buy-button click dispatcher at line 28665 only searched <code>getStoreItems()</code> (the active tab&apos;s items, search-unaware) for the clicked item. When the user clicked on a search-surfaced card whose name wasn&apos;t in the active tab&apos;s stock rotation, the lookup at <code>items.filter(function(x){return x&amp;&amp;x.name===_buyName;})[0]</code> returned <code>undefined</code>, and the next line <code>if(!item)return;</code> silently bailed. No error thrown, no console output, no visible feedback &mdash; exactly matching the user&apos;s symptom. <strong>The fix already existed&hellip; in the wrong place.</strong> The Yes-confirm handler in the <code>ov-buyitem</code> modal at line ~28775 already had the right pattern: build <code>_allItems</code> from <code>[].concat(GEAR||[], VEHICLES||[], BUILDINGS||[], PETS||[])</code> and look up by name in the global catalog first, falling back to the tab&apos;s items. The comment on line 28767 even labels it &quot;Name-based lookup (search-safe).&quot; So at the modal commit step the lookup was robust, but the outer dispatcher never adopted the same pattern. A search-surfaced item couldn&apos;t even reach the modal. <strong>Fix.</strong> Updated the outer dispatcher to look up the clicked item across the global catalog first (<code>GEAR + VEHICLES + BUILDINGS + PETS + ADVENTURING_GEAR</code>), falling back to <code>getStoreItems()</code> if the global lookup misses (covers any custom DB item or runtime-injected entry that only surfaces via the tab&apos;s stock pipeline, e.g. <code>S.stock.magicUncommon</code> entries that came from a homebrew row). Same pattern as the Yes-confirm handler, brought into parity. Includes <code>ADVENTURING_GEAR</code> in the global pool because v1.7107&apos;s adventuring-tab branch at line 28672 routes those items via <code>P5.item=&apos;__questitem__&apos;</code>; the global pool needs to surface them so a search-result click on an adventuring item still resolves cleanly. <strong>Why this wasn&apos;t caught before.</strong> The store search (v1.7037 era) was tested without crossing tab boundaries &mdash; if you search a term whose results all happen to live in the active tab, the dispatcher&apos;s tab-only lookup works fine. The bug only surfaces when (a) a search query is active and (b) a result card is for an item that isn&apos;t in the active tab&apos;s current rotation. The Magic tab&apos;s <code>magicUncommon</code> stock is a random 5-of-N pick from the daily <code>buildStock()</code>, so the Bag of Holding (one of many uncommon-magic items) is in the rotation only some days &mdash; making this an intermittent bug, hard to repro on demand. <strong>What this does NOT change.</strong> The Yes-confirm handler is unchanged (it was already correct). The disabled-state logic is unchanged (button still grays out and doesn&apos;t fire when <code>S.gold &lt; item.price</code>). The render-side search behavior is unchanged. The buildStock rotation is unchanged. Only the click dispatcher&apos;s lookup is widened. <strong>Scope boundaries.</strong> One JS edit (~7 lines) at the click dispatcher. No CSS, no HTML, no data-model, no persistence, no SQL changes. <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean. The fix preserves existing behavior for in-stock items (the global-pool lookup finds them just as well as the tab-pool lookup did) and adds resolution for out-of-rotation items. Test path: enable dev-mode (or wait for a day where Bag of Holding appears in <code>magicUncommon</code>), search &quot;bag&quot; on a non-Magic tab (e.g. Adventuring), click Buy on the surfaced Bag of Holding card &mdash; modal now opens correctly.</div>
@@ -31870,7 +31871,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7109';
+var RQ_CLIENT_VERSION='v1.7110';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -32468,6 +32469,160 @@ function _staleMaybeCheck(){
   });
 }
 
+// v1.7110 — Manual variant of _staleMaybeCheck() with user-visible feedback.
+// Called from the presence ribbon's onclick (line ~32673) and exposed on
+// window for console debugging. Differs from _staleMaybeCheck in that EVERY
+// branch produces visible feedback — either the staleness modal opens, or
+// a small toast surfaces above the ribbon explaining why nothing happened.
+//
+// Why this exists: pre-v1.7110, the presence ribbon called _staleMaybeCheck
+// directly. That function silently returns on six different short-circuit
+// branches (no uid, suppressed, no baseline, modal already open, fetch
+// failed, server isn't actually newer). The most common case in practice
+// was the sixth: another tab is heartbeating (so the ribbon shows up) but
+// hasn't pushed anything newer than this device's last sync — _staleIsDeviceStale
+// returns false and the function returns silently. From the user's point
+// of view, "tap to compare" did nothing with no feedback. This helper
+// closes that UX gap by branching on each guard and surfacing an honest
+// explanation when there's nothing to do.
+//
+// Visibilitychange-driven checks still use _staleMaybeCheck (silent path)
+// — surfacing a toast on every tab refocus would be obnoxious. Manual taps
+// on the ribbon are explicit user actions and deserve explicit feedback.
+function _staleManualCheck(){
+  if(!uid()){
+    console.log('[v1.7110] manual stale check: not signed in');
+    _presenceShowToast('Not signed in — please reload.', 'warn');
+    return;
+  }
+  if(_staleModalSuppressed){
+    console.log('[v1.7110] manual stale check: suppressed for session (user picked "Keep this device")');
+    _presenceShowToast('Comparison suppressed for this session — reload the page to re-enable.', 'info');
+    return;
+  }
+  if(!_staleThisDevSyncAt){
+    console.log('[v1.7110] manual stale check: no sync baseline yet (initial login still settling)');
+    _presenceShowToast('Sync still settling — try again in a few seconds.', 'info');
+    return;
+  }
+  var modal = document.getElementById('ov-stale-device');
+  if(modal && modal.classList.contains('show')){
+    console.log('[v1.7110] manual stale check: modal already open');
+    // No toast — the modal IS the feedback.
+    return;
+  }
+  // Disable the ribbon briefly so a double-tap doesn't fire two parallel
+  // fetches. Re-enabled in the .then or .catch.
+  var ribbon = document.getElementById('presence-ribbon');
+  if(ribbon){ ribbon.style.pointerEvents = 'none'; ribbon.style.opacity = '.7'; }
+  _staleQuickCheck().then(function(summary){
+    if(ribbon){ ribbon.style.pointerEvents = ''; ribbon.style.opacity = ''; }
+    if(!summary){
+      console.log('[v1.7110] manual stale check: _staleQuickCheck returned no summary (network or fetch issue)');
+      _presenceShowToast('Couldn\u2019t reach the server. Check your connection and try again.', 'warn');
+      return;
+    }
+    if(_staleIsDeviceStale(summary)){
+      console.log('[v1.7110] manual stale check: server is newer — opening modal', summary);
+      try{ RQ_SYNCDIAG.log('stale_detected_manual',{ serverTab: summary.serverTab, serverAt: summary.serverAt, mySyncAt: _staleThisDevSyncAt }); }catch(e){}
+      _staleRenderModal(summary);
+      return;
+    }
+    // Not stale — figure out WHY for the toast text. The branches inside
+    // _staleIsDeviceStale are mutually-exclusive, so we re-derive the
+    // specific reason here for human-readable feedback.
+    var reason = '';
+    var myTab = '';
+    try{ if(window.RQ_SYNCDIAG && typeof RQ_SYNCDIAG.getTabId === 'function')myTab = RQ_SYNCDIAG.getTabId(); }catch(e){}
+    if(!summary.serverTab){
+      reason = 'Server has no last-pusher metadata yet (legacy or first-push state).';
+    } else if(summary.serverTab === myTab){
+      reason = 'This device is the last to push. The other tab hasn\u2019t saved anything new yet.';
+    } else if(!summary.serverAt){
+      reason = 'Server is missing a push timestamp (legacy state). Nothing to compare.';
+    } else if(summary.serverAt <= _staleThisDevSyncAt){
+      // Compute a short "X minutes ago" hint for the in-sync case so the
+      // user can see roughly when the other device last pushed.
+      var ageS = Math.max(0, Math.floor((Date.now() - summary.serverAt) / 1000));
+      var ageStr = (ageS < 60) ? (ageS + 's ago') :
+                   (ageS < 3600) ? (Math.floor(ageS/60) + 'm ago') :
+                                   (Math.floor(ageS/3600) + 'h ago');
+      reason = '\u2713 In sync. The other device\u2019s last push was ' + ageStr + ' \u2014 already on this device.';
+    } else {
+      reason = 'In sync. Nothing new to pull.';
+    }
+    console.log('[v1.7110] manual stale check: not stale \u2014 ' + reason, summary);
+    _presenceShowToast(reason, 'ok');
+  }).catch(function(err){
+    if(ribbon){ ribbon.style.pointerEvents = ''; ribbon.style.opacity = ''; }
+    console.warn('[v1.7110] manual stale check: fetch threw', err);
+    _presenceShowToast('Couldn\u2019t reach the server (' + ((err && err.message) || String(err)) + ').', 'warn');
+  });
+}
+window._staleManualCheck = _staleManualCheck; // expose for debugging
+
+// v1.7110 — Lightweight toast positioned just under the presence ribbon.
+// Used to provide feedback for "tap to compare" clicks that don't open the
+// staleness modal. Mirrors the .pin-from-toast pattern from v1.6961 but is
+// keyed off the ribbon's bounding rect so it tracks the ribbon's position
+// across viewport widths. kind: 'ok' (gold-tinted), 'info' (neutral),
+// 'warn' (crimson-tinted).
+function _presenceShowToast(msg, kind){
+  // Remove any existing presence toast to prevent stacking.
+  var _ext = document.querySelectorAll('.presence-toast');
+  _ext.forEach(function(el){ el.remove(); });
+  var ribbon = document.getElementById('presence-ribbon');
+  if(!ribbon){
+    // Fallback: ribbon isn't visible (shouldn't happen if user is clicking
+    // it, but be defensive). Just log; the console message is the
+    // remaining feedback channel.
+    console.log('[v1.7110] presence toast (no ribbon visible):', msg);
+    return;
+  }
+  var toast = document.createElement('div');
+  toast.className = 'presence-toast';
+  toast.textContent = msg;
+  // Color-key by kind. All three styles use the same dark-on-light combo
+  // (parchment background, ink text) so they read clearly against the
+  // page parchment behind the ribbon. The accent border is the kind hint.
+  var borderColor = (kind === 'warn') ? 'var(--crimson)' :
+                    (kind === 'ok')   ? 'var(--forest)'  :
+                                        'var(--gold-dark)';
+  toast.style.cssText = [
+    'position:fixed','z-index:900',
+    'background:var(--parchment)','color:var(--ink)',
+    'border:2px solid '+borderColor,'border-radius:6px',
+    'padding:8px 12px','font-size:.82em','font-family:inherit',
+    'font-weight:500','line-height:1.35','max-width:340px',
+    'box-shadow:0 4px 14px rgba(0,0,0,.28)',
+    'transition:opacity .25s ease-out, transform .25s ease-out',
+    'opacity:0','transform:translateY(-4px)','pointer-events:none',
+    'word-break:break-word','white-space:normal','text-align:left'
+  ].join(';');
+  document.body.appendChild(toast);
+  // Position centered horizontally under the ribbon, with a 6px gap.
+  var rect = ribbon.getBoundingClientRect();
+  var tw = toast.offsetWidth;
+  var top = rect.bottom + 6;
+  var left = rect.left + (rect.width / 2) - (tw / 2);
+  if(left < 6) left = 6;
+  if(left + tw > window.innerWidth - 6) left = window.innerWidth - tw - 6;
+  toast.style.top = top + 'px';
+  toast.style.left = left + 'px';
+  // Fade in.
+  requestAnimationFrame(function(){
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateY(0)';
+  });
+  // Auto-dismiss after 3.5 seconds (longer than the .pin-from-toast 2.5s
+  // because the messages here are full sentences that need reading time).
+  setTimeout(function(){
+    toast.style.opacity = '0';
+    setTimeout(function(){ if(toast.parentNode) toast.parentNode.removeChild(toast); }, 300);
+  }, 3500);
+}
+window._presenceShowToast = _presenceShowToast; // expose for debugging
+
 // v1.7105 — Open the stale modal in boot mode. Returns a Promise resolving
 // to the user's choice: 'pull' (skip push, just pull from server) or 'keep'
 // (snapshot local, then push-then-pull as the boot chain originally
@@ -32669,8 +32824,12 @@ function _presenceUpdateRibbon(){
   document.body.classList.add('has-presence-ribbon');
   ribbon.title = label + ' has been active recently. Tap to see what changed and decide whether to pull.';
   // Wire (or re-wire) the click handler. Direct assignment so we don't stack.
+  // v1.7110 — Use _staleManualCheck() (with feedback) instead of
+  // _staleMaybeCheck() (silent). Manual taps deserve explicit feedback;
+  // see the helper definition near line ~32475 for rationale.
   ribbon.onclick = function(){
-    if(typeof _staleMaybeCheck === 'function')_staleMaybeCheck();
+    if(typeof _staleManualCheck === 'function')_staleManualCheck();
+    else if(typeof _staleMaybeCheck === 'function')_staleMaybeCheck();
   };
 }
 
