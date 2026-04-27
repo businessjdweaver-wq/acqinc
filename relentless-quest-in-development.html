@@ -2986,7 +2986,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7104</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7105</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3861,7 +3861,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7104
+      Version 1.7105
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3901,6 +3901,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7105</strong> &mdash; Boot-time stale-cache protection: prompt before pushing if the server has been updated by another device since this device's last successful push. <strong>User report.</strong> Accidentally logged into <code>stable@stable.com</code> in a regular (non-incognito) browser. localStorage from a much-earlier session for that account was still cached, and the v1.7054 push-before-pull boot path silently uploaded it &mdash; clobbering newer Supabase data that had been written from a different device in the interim. Asked: can we prevent super-stale data from being pushed without user input. <strong>Diagnosis.</strong> v1.7054's <code>_hasUnpushedChanges()</code> flag tracks whether the local cache contains user-action writes that haven't synced yet. It does not check whether those local writes are <em>fresher than the server</em>. v1.7091's cross-device staleness detection runs only on visibility-change (tab refocus) and requires a <code>_staleThisDevSyncAt</code> baseline that's zero at fresh login. So the boot push-first path had a gap: no staleness check fired before <code>sbPush(false)</code> at line ~37051, even when the local cache was 30 days older than the server's most recent push. <strong>Fix &mdash; pre-push freshness check at boot.</strong> A new helper <code>_stalePrePushBootCheck()</code> reuses the existing <code>_staleQuickCheck()</code> infrastructure to read the server's <code>_lastPushAt</code> (written into <code>franchise.settings._lastPushAt</code> by every v1.7091+ push), compares it against this device's locally-persisted "last successful push" timestamp, and returns <code>{stale: true}</code> when the server is more recent by more than a 60-second clock-skew window. The boot push-first branch in <code>initSession</code> awaits this check before calling <code>sbPush</code>; if stale, the existing <code>ov-stale-device</code> modal opens in a new <em>boot mode</em> with two choices. <strong>(1) localStorage baseline.</strong> Two new helpers <code>_readLastSuccessfulPushAt(uid)</code> / <code>_writeLastSuccessfulPushAt(uid, ts)</code> persist a per-user timestamp under key <code>rq_lastpush:&lt;uid&gt;</code>. The write helper takes <code>max(existing, incoming)</code> so a freshly-stamped local value isn't clobbered by an older server value (e.g. a mid-flight push from another tab). Written from <code>sbPush</code>'s franchise success branch alongside <code>_staleRecordPushSync()</code>. Also bootstrapped from <code>sbPull</code>'s franchise success branch using the server's <code>_lastPushAt</code>, so pre-v1.7105 users get protection on their first pull after upgrade rather than waiting for their next push. <strong>(2) Conservative-on-missing-data.</strong> The pre-push check returns <code>stale: false</code> in any of three ambiguous cases: (a) server has no <code>_lastPushAt</code> stamp (pre-v1.7091 row, can't compare), (b) local has no baseline (pre-v1.7105 user with no prior push or pull from this device, can't compare), (c) network error during the check (don't block on transient failures). All three fall through to the original push-first path. The new prompt only appears when there is hard evidence of a stale cache: server timestamp present, local timestamp present, and server is meaningfully newer. False positives would be more harmful than missed catches here &mdash; users would lose trust if they saw the prompt during legitimate first-device sync. <strong>(3) Modal in boot mode.</strong> Reuses the v1.7091 <code>ov-stale-device</code> modal but with three small tweaks via <code>_stalePromptBoot()</code>: (a) header changes to "&#x26A0; Stale local data detected at login"; (b) body copy explains the boot-time situation specifically (this device's unpushed work would overwrite newer server work); (c) the "Decide later" Cancel button is hidden &mdash; the boot chain is paused waiting for a real choice, leaving the user in limbo would mean their data never loads. The original copy and the Cancel button are restored when the modal closes so the v1.7091 visibility-change use of the same modal isn't affected. <strong>(4) Boot-mode button branches.</strong> The three existing modal button handlers gain a <code>if(_staleBootMode)</code> early branch. <em>Pull</em> resolves a Promise with <code>'pull'</code>; the boot chain calls <code>_markAllPushed()</code> (explicitly discarding the local unpushed work) and proceeds with <code>sbPull</code> only, skipping the would-be-stale push. <em>Keep this device</em> takes a manual safety snapshot of the local state (labeled <code>pre-keep-boot-stale</code>) and resolves with <code>'keep'</code>; the boot chain proceeds with the original <code>sbPush</code>-then-<code>sbPull</code> sequence. <em>Cancel</em>, even though the button is hidden at boot, defensively treats any boot-mode click as <code>'pull'</code> (safe default) so the boot chain can't get stuck. <strong>(5) Resurrection block also gated.</strong> The v1.7054 resurrection logic at line ~37106 (which restores <code>localPending</code> / <code>localGrind</code> snapshots into <code>S.questState</code> when push-first didn't make it to the server) is now also gated on <code>!_skipResurrection</code>. Without this guard, a user who picked "Pull from server" would have their just-discarded local quest pending data restored a few lines later by resurrection &mdash; defeating their explicit choice. <strong>(6) Snapshot strategy.</strong> "Keep this device" snapshots only the local state. The server's pre-clobber state was already auto-snapshotted by the previous device's <code>_snapshotAfterPush()</code> per v1.7077, so a two-deep rollback floor still applies: <em>(a)</em> the local-state snapshot from this boot prompt, <em>(b)</em> the server-state snapshot from whatever device most recently pushed before this login. <strong>Scope boundaries.</strong> Email-login (franchise) path only. The code-login (<code>_codeLogin</code>) path uses a different storage backend (<code>login_codes.player_data</code>) and a different sync model; if a parallel report comes in for that path it can be handled separately. No SQL migration. No data-model change. <code>franchise.settings._lastPushAt</code> already exists from v1.7091 so no new server columns. The new localStorage keys (<code>rq_lastpush:&lt;uid&gt;</code>) are per-user and self-cleaning when the user logs out and back in elsewhere. <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean. Boot-mode flag <code>_staleBootMode</code> is reset to <code>false</code> on every modal-button-click branch so a subsequent visibility-change use of the same modal works normally. The 60-second slop window prevents the prompt from firing on legitimate near-simultaneous multi-tab sessions where one tab pushed a few seconds before another tab booted.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7104</strong> &mdash; Contracts toolbar grid trimmed to 2 rows × 2 cols. <strong>User ask.</strong> Move the cols 1|2|3 segmented control + ↻ Rebalance button into the space below the action buttons (⟲ Undo, The Archive, ⭐ Kudos, ℹ help) instead of having them occupy their own grid row in the right column. <strong>What landed.</strong> The v1.7102 grid had three rows (R1: search | composer; R2: actions | hints; R3: empty | cols-toggle). Restructured to two rows: R2C1 now holds a vertical flex stack with the action buttons on top and the cols-toggle + Rebalance below them, sharing the same grid cell. R3 is gone entirely &mdash; the right column ends at R2 with the gp-per-tick + budget readout cell unchanged. Net: the toolbar got one row shorter on desktop, and the cols-toggle now sits visually below the actions row it belongs with rather than orphaned across the page in an otherwise-empty third row. <strong>Mobile behavior preserved.</strong> The cols-toggle&apos;s base CSS keeps <code>display:none</code> below 1024px (per v1.6978&apos;s <code>#cols-toggle-wrap</code> rule) and only gets <code>display:inline-flex !important</code> at &ge;1024px via the existing media query. So on phones R2C1 just renders the action buttons row alone &mdash; no visual gap left behind by the now-hidden cols-toggle row, since flex column items at <code>display:none</code> take zero layout. <strong>Grid alignment tweak.</strong> Switched grid <code>align-items</code> from <code>center</code> to <code>start</code>. R2C1 is now taller than R2C2 (it has both the action-buttons sub-row and the cols-toggle sub-row stacked); top-aligning keeps both R2 cells anchored at their tops rather than vertically centered, which would have visually offset the gp-per-tick hint downward to match R2C1&apos;s midpoint. <strong>Mobile collapse rule retained.</strong> The v1.7102 <code>@media (max-width:640px)</code> override that flips the grid to a single column on phones still applies; the <code>div:empty{display:none}</code> rule from v1.7102 (which previously hid R3C1&apos;s empty placeholder on mobile) becomes a no-op now that R3 doesn&apos;t exist, but stays in place &mdash; harmless dead-CSS, removing it would generate merge noise without functional benefit. <strong>Element IDs unchanged.</strong> All twenty surface IDs that the existing JS depends on survive the restructure intact &mdash; <code>contract-search-wrap</code>, <code>contract-search-input</code>, <code>contract-search-clear</code>, <code>contract-search-results</code>, <code>cols-toggle-wrap</code>, <code>cols-toggle</code>, <code>btn-cols-rebalance</code>, <code>btn-undo</code>, <code>btn-nav-archive</code>, <code>btn-kudos</code>, <code>new-tname</code>, <code>new-tgp</code>, <code>btn-addtask</code>, <code>btn-contracts-help</code>, <code>task-budget-readout</code>, the legacy hidden stubs (<code>tsort</code> / <code>btn-newgrp</code> / <code>btn-nav-projects</code>), <code>tlist</code>, and the wrapper <code>contracts-toolbar-grid</code> all present exactly once. <code>bindContractSearch</code>, <code>applyContractsColumns</code>, the addtask handler at line ~12044, the contracts-help binding at line ~12585, and every other consumer continues to find its target via <code>getElementById</code>. <strong>Scope boundaries.</strong> One pure HTML restructure (the toolbar markup). No CSS rule added, no JS change, no data-model change, no persistence change, no SQL change. Every element keeps its class and inline style; only their nesting changed. <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean. <code>s-tasks</code> balances at lines 3234/3301; <code>s-settings</code> balances at 3820/4574 (no regression from the changelog addition). Structural guard simulation finds 16 set-sec elements with 0 orphans.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7103</strong> &mdash; &quot;+ Squad&quot; button restored to the Party screen. <strong>User report.</strong> Somewhere in the v1.7044&ndash;v1.7073 consolidation series, the &quot;+ Squad&quot; button that used to live in the <code>#party-tagbar</code> got dropped. The dispatch handler at line ~20905 (<code>else if(a===&apos;sqnew&apos;)openSquadNew();</code>) survived intact and is still wired to the tagbar&apos;s delegated click listener, but no button on the page emits <code>data-a=&quot;sqnew&quot;</code> anymore &mdash; so users had no surface for creating a new squad outside of legacy paths (the dev console, the empty-downtime panel hint at line ~9111, or the Squad Manager modal which itself isn&apos;t reachable from any UI now per v1.7073). <strong>Fix.</strong> Added <code>&lt;button id=&quot;btn-party-sqnew&quot;&gt;+ Squad&lt;/button&gt;</code> to the sticky Assets / Stats / Recruit row at the top of <code>#s-party</code>, as the fourth button after Recruit. Same <code>flex:1;min-height:30px;font-size:.65em;padding:.25em .4em</code> sizing as its three rowmates so all four buttons share equal width and the row balance redistributes from thirds to quarters. Uses <code>.btn.bg.sm</code> styling (gold-bright) matching Recruit and matching the legacy Squad Manager modal&apos;s own &quot;+ Squad&quot; button at line 4934 &mdash; both are creation actions, both warrant the primary CTA color. <strong>Wiring.</strong> Direct click listener via <code>getElementById(&apos;btn-party-sqnew&apos;)</code> bound right next to the existing <code>btn-party-jump-assets</code> and <code>btn-party-stats</code> bindings, calling <code>openSquadNew()</code>. Direct rather than going through the <code>#party-tagbar</code> delegator since this button now lives in the Assets/Stats/Recruit row, outside the tagbar. The tagbar&apos;s <code>sqnew</code> dispatch branch is preserved unchanged so that future tagbar-internal buttons or console calls can still route through it. <strong>Why this position.</strong> The Assets / Stats / Recruit row is the natural &quot;party-level actions&quot; surface &mdash; it&apos;s the first interactive cluster on the screen, sticky-positioned so it stays visible during scroll. Squad creation is a peer action to recruiting (both add to the franchise&apos;s adventurer organization). Putting &quot;+ Squad&quot; here puts the four primary party-management actions in one tight row at consistent visual weight rather than scattered across the screen. <strong>Scope boundaries.</strong> One HTML element added (~1 line of markup), one JS click handler added (~3 lines including the safety-check). No CSS rule added, no data-model change, no persistence change, no SQL change. <code>openSquadNew()</code> itself unchanged. The <code>#party-tagbar</code> delegated <code>sqnew</code> handler and every other route into the new-squad modal are unchanged. <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean. <code>btn-party-sqnew</code> ID present exactly once in the HTML, <code>getElementById(&apos;btn-party-sqnew&apos;)</code> referenced exactly once in JS. <code>s-party</code> balances at lines 3592/3628; <code>s-settings</code> balances at 3820/4573 (no regression).</div>
         <div style="margin-bottom:9px"><strong>Version 1.7102</strong> &mdash; Contracts toolbar revised to a 3-row × 2-column CSS grid. <strong>User feedback.</strong> The v1.7101 layout (search left, action-cluster + new-contract stacked right) didn&apos;t read well. Replacement spec given as <code>tr/td</code> pseudo-markup: <em>row 1</em> [search] | [new contract input + gp value + + Add]; <em>row 2</em> [⟲ Undo + The Archive + ⭐ Kudos + ℹ] | [gp-per-tick hint + daily task budget x/y]; <em>row 3</em> [empty] | [cols 1|2|3 + ↻ Rebalance]. <strong>What landed.</strong> Replaced <code>#contracts-toolbar-row</code> (the v1.7101 flex container) with <code>#contracts-toolbar-grid</code>, a CSS grid with <code>grid-template-columns:1fr 1fr</code> and three implicit rows. Six grid cells map exactly to the user&apos;s spec: <em>(R1C1)</em> the search wrap with its absolutely-positioned dropdown unchanged from v1.7002; <em>(R1C2)</em> the <code>.addrow</code> composer (new-tname input + new-tgp number + + Add button); <em>(R2C1)</em> a flex row of ⟲ Undo + The Archive + ⭐ Kudos + ℹ help; <em>(R2C2)</em> a vertical stack of two <code>.hint</code> spans (gp-per-tick line + the live <code>#task-budget-readout</code>); <em>(R3C1)</em> an empty placeholder div that preserves grid alignment so R3C2 stays in the right column; <em>(R3C2)</em> the cols-toggle segmented control + ↻ Rebalance button. <code>align-items:center</code> on the grid keeps each row visually anchored across both columns; <code>gap:6px 10px</code> gives 6px between rows and 10px between columns. <strong>Mobile collapse.</strong> Below 640px the grid switches to <code>grid-template-columns:1fr</code> via a media query, so each cell becomes its own row in document order: search → new-contract → action buttons → hints → cols-toggle. The empty R3C1 placeholder gets <code>display:none</code> via <code>div:empty</code> on mobile so it doesn&apos;t leave a visual gap. Reading order on phones: search, then composer, then small action buttons, then hint text, then cols toggle (only visible at ≥1024px so this row is empty on phones anyway). <strong>Element IDs unchanged.</strong> All twenty surface IDs that the existing JS depends on &mdash; the contract-search-* group, cols-toggle / cols-toggle-wrap / btn-cols-rebalance, btn-undo / btn-nav-archive / btn-kudos, new-tname / new-tgp / btn-addtask, btn-contracts-help, task-budget-readout, plus the legacy hidden stubs (tsort / btn-newgrp / btn-nav-projects) and tlist &mdash; survive the restructure intact. <code>bindContractSearch</code>, <code>applyContractsColumns</code>, the addtask handler at line ~12044, and the contracts-help binding at line ~12585 all continue to find their targets via <code>getElementById</code>. <strong>Search dropdown still anchors correctly.</strong> The dropdown is <code>position:absolute</code> relative to <code>#contract-search-wrap</code> which retains <code>position:relative</code>. It hangs from the search input regardless of cell width or grid layout. <strong>Scope boundaries.</strong> One HTML restructure (the toolbar markup) plus one small media-query CSS rule (~5 lines, mobile collapse). No JS change, no data-model change, no persistence change, no SQL change. <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean. All 20 critical IDs verified present exactly once; the v1.7101 <code>contracts-toolbar-row</code> wrapper is fully removed (zero occurrences). <code>s-tasks</code> balances at lines 3234/3301; <code>s-settings</code> balances at 3819/4571; structural guard simulation finds 16 set-sec elements with 0 orphans.</div>
@@ -7940,6 +7941,28 @@ function _markAllPushed(){
 }
 function _markUnpushed(){
   try{ localStorage.setItem('rq_unpushed:'+(uid()||'guest'),'1'); }catch(e){}
+}
+
+// v1.7105 — Per-user "last successful push" timestamp persisted in localStorage.
+// Used to detect stale-cache pushes at login: if the server's _lastPushAt is
+// greater than this device's last successful push, another device wrote in
+// between, so pushing our local state would clobber that newer server data.
+// Bootstrapped from sbPull as well (taking max of existing and server's
+// _lastPushAt) so pre-v1.7105 users get immediate protection on first pull.
+function _readLastSuccessfulPushAt(userId){
+  try{
+    var v = localStorage.getItem('rq_lastpush:'+(userId||uid()||'guest'));
+    var n = v ? parseInt(v, 10) : 0;
+    return (isFinite(n) && n > 0) ? n : 0;
+  } catch(e){ return 0; }
+}
+function _writeLastSuccessfulPushAt(userId, ts){
+  try{
+    var key = 'rq_lastpush:'+(userId||uid()||'guest');
+    var existing = _readLastSuccessfulPushAt(userId);
+    var next = Math.max(existing, ts || 0);
+    if(next > 0) localStorage.setItem(key, String(next));
+  } catch(e){}
 }
 
 function load(){
@@ -31769,7 +31792,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7104';
+var RQ_CLIENT_VERSION='v1.7105';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -32043,6 +32066,59 @@ var _staleCheckInFlight = false;    // prevent overlapping checks
 var STALE_IDLE_THRESHOLD_MS = 60 * 1000; // 60s — minimum idle before we even check
 var _stalePendingDiff = null;       // diff object held for the modal render
 
+// v1.7105 — Boot-mode state. When the modal is open in boot-mode (because
+// the boot push-first path detected a stale local cache), the three button
+// handlers branch on _staleBootMode and resolve _staleBootResolve with the
+// user's choice ('pull' | 'keep') so the boot chain can resume.
+var _staleBootMode = false;
+var _staleBootResolve = null;
+var STALE_PREPUSH_SLOP_MS = 60 * 1000; // 60s clock-skew allowance
+
+// v1.7105 — Boot-time pre-push stale-cache check. Returns a Promise resolving
+// to a summary object including {stale, serverAt, myLastPushAt} so the boot
+// chain can decide whether to (a) push our local data anyway, (b) prompt
+// the user, or (c) skip the push and just pull. Conservative on missing
+// data: if either timestamp is unavailable, returns stale:false.
+function _stalePrePushBootCheck(){
+  if(!uid())return Promise.resolve({stale:false, summary:null});
+  return _staleQuickCheck().then(function(summary){
+    if(!summary){
+      return {stale:false, summary:null, reason:'no-summary'};
+    }
+    var serverAt = summary.serverAt || 0;
+    var myLast = _readLastSuccessfulPushAt(uid());
+    if(!serverAt){
+      // Pre-v1.7091 server row — no last-pusher metadata. Can't compare;
+      // don't block. The boot push proceeds normally.
+      return {stale:false, summary:summary, reason:'no-server-stamp'};
+    }
+    if(!myLast){
+      // We have no local baseline — either pre-v1.7105 user (first login
+      // since deploy and they haven't pulled yet, so localStorage is the
+      // ONLY source of truth and pushing is the right call), or this
+      // device has never pushed. Don't block — this is the conservative
+      // direction since a false positive here would prevent legitimate
+      // first-time syncs.
+      return {stale:false, summary:summary, reason:'no-local-baseline'};
+    }
+    // Server is stale-relative-to-local if its last push is OLDER than ours
+    // — that means we're the latest. NOT stale, push proceeds.
+    // Server is FRESHER than our last push (by more than the slop window)
+    // means another device wrote in between. Pushing our local now would
+    // overwrite that newer data. Block + prompt.
+    var stale = (serverAt > myLast + STALE_PREPUSH_SLOP_MS);
+    return {
+      stale: stale,
+      summary: summary,
+      serverAt: serverAt,
+      myLastPushAt: myLast
+    };
+  }).catch(function(err){
+    try{ RQ_SYNCDIAG.log('prepush_check_fail',{ error:(err&&err.message)||String(err) }); }catch(e){}
+    return {stale:false, summary:null, reason:'error'};
+  });
+}
+
 // Called from sbPull when we successfully read the server row. Records
 // the server's last-pusher metadata AND marks this device as freshly
 // in-sync (since we just pulled). Idempotent on repeated calls.
@@ -32196,6 +32272,17 @@ function _staleBindButtons(){
   var btnCancel = document.getElementById('ov-stale-cancel');
   if(btnPull){
     btnPull.addEventListener('click', function(){
+      // v1.7105 — in boot mode, resolve the boot promise so the boot chain
+      // can resume with pull-only (skipping the would-be-stale push).
+      if(_staleBootMode){
+        _staleBootMode = false;
+        closeOv('ov-stale-device');
+        _stalePendingDiff = null;
+        try{ RQ_SYNCDIAG.log('prepush_boot_choice',{ choice:'pull' }); }catch(e){}
+        var r = _staleBootResolve; _staleBootResolve = null;
+        if(typeof r === 'function') r('pull');
+        return;
+      }
       closeOv('ov-stale-device');
       _stalePendingDiff = null;
       sbPull(true).catch(function(err){
@@ -32205,6 +32292,33 @@ function _staleBindButtons(){
   }
   if(btnKeep){
     btnKeep.addEventListener('click', function(){
+      // v1.7105 — in boot mode, take a snapshot of the (about-to-be-discarded
+      // server state by virtue of pulling first into a temporary buffer) is
+      // unnecessary because the OTHER device's _snapshotAfterPush already
+      // saved the server state to franchise_snapshots. We snapshot the
+      // local state instead, then resolve the boot promise so the chain
+      // proceeds with push-then-pull as originally planned.
+      if(_staleBootMode){
+        btnKeep.disabled = true;
+        btnKeep.textContent = '\u23F3 Taking snapshot…';
+        var lblBoot = 'pre-keep-boot-stale';
+        var pBoot = (typeof takeSnapshotNow === 'function') ? takeSnapshotNow(lblBoot) : Promise.resolve(false);
+        pBoot.then(function(){
+          _staleBootMode = false;
+          closeOv('ov-stale-device');
+          _stalePendingDiff = null;
+          btnKeep.disabled = false;
+          btnKeep.textContent = '\u26A0 Keep this device';
+          try{ logAdd('Kept this device at login; safety snapshot saved.','task'); }catch(e){}
+          try{ RQ_SYNCDIAG.log('prepush_boot_choice',{ choice:'keep', snapshotLabel:lblBoot }); }catch(e){}
+          var rk = _staleBootResolve; _staleBootResolve = null;
+          if(typeof rk === 'function') rk('keep');
+        }).catch(function(){
+          btnKeep.disabled = false;
+          btnKeep.textContent = '\u26A0 Keep this device';
+        });
+        return;
+      }
       // Auto-snapshot first so the other device's work isn't permanently lost.
       // The snapshot captures THIS device's local state; the user can roll
       // back from it later if "keep this device" turns out to be wrong.
@@ -32228,6 +32342,21 @@ function _staleBindButtons(){
   }
   if(btnCancel){
     btnCancel.addEventListener('click', function(){
+      // v1.7105 — Cancel is risky at boot because the boot chain is paused
+      // waiting for a decision; "Decide later" without resuming would leave
+      // the user without their data loaded. So at boot we treat Cancel as
+      // the safe default — same as Pull. The cancel button is also hidden
+      // when we open the modal in boot mode (see _stalePromptBoot below),
+      // but this handler stays defensive in case the user manually shows it.
+      if(_staleBootMode){
+        _staleBootMode = false;
+        closeOv('ov-stale-device');
+        _stalePendingDiff = null;
+        try{ RQ_SYNCDIAG.log('prepush_boot_choice',{ choice:'cancel-treated-as-pull' }); }catch(e){}
+        var rc = _staleBootResolve; _staleBootResolve = null;
+        if(typeof rc === 'function') rc('pull');
+        return;
+      }
       closeOv('ov-stale-device');
       _stalePendingDiff = null;
       // Don't set _staleModalSuppressed — the next focus will re-check.
@@ -32249,6 +32378,62 @@ function _staleMaybeCheck(){
     if(_staleIsDeviceStale(summary)){
       try{ RQ_SYNCDIAG.log('stale_detected',{ serverTab: summary.serverTab, serverAt: summary.serverAt, mySyncAt: _staleThisDevSyncAt }); }catch(e){}
       _staleRenderModal(summary);
+    }
+  });
+}
+
+// v1.7105 — Open the stale modal in boot mode. Returns a Promise resolving
+// to the user's choice: 'pull' (skip push, just pull from server) or 'keep'
+// (snapshot local, then push-then-pull as the boot chain originally
+// intended). At boot, "Decide later" is dangerous because the boot chain
+// is paused waiting on this; we hide the Cancel button so the user must
+// make a real choice. If the modal can't be opened for any reason, the
+// promise resolves to 'pull' as the safe default.
+function _stalePromptBoot(summary){
+  return new Promise(function(resolve){
+    try{
+      _staleBindButtons(); // idempotent
+      _staleBootMode = true;
+      _staleBootResolve = resolve;
+      // Render diff using the existing helper (it stamps the modal body).
+      _staleRenderModal(summary);
+      // Customize the header copy so the modal is unambiguous about the
+      // boot situation: it's not "another device updated since last sync",
+      // it's "your local data may be stale, choose carefully before we
+      // push." Reverted by the next regular use of the modal because
+      // _staleRenderModal replaces #ov-stale-meta on every call.
+      var h3 = document.querySelector('#ov-stale-device h3');
+      if(h3) h3.innerHTML = '\u26A0 Stale local data detected at login';
+      var hint = document.querySelector('#ov-stale-device p.hint');
+      if(hint) hint.innerHTML = 'This device has unpushed changes from a previous session, but the server has been updated more recently from a different device. Pushing this device\u2019s data now would overwrite that newer work. Pull from server to discard this device\u2019s pending changes (recommended), or keep this device and overwrite the server (a safety snapshot is saved first).';
+      // Hide the Cancel button at boot — the boot chain is paused, the user
+      // can't be allowed to "decide later" or they'd be stuck.
+      var btnCancel = document.getElementById('ov-stale-cancel');
+      if(btnCancel) btnCancel.style.display = 'none';
+      // Restore Cancel visibility and original header text when the modal
+      // closes (boot-mode handlers all clear _staleBootMode and close
+      // ov-stale-device, so this fires on whichever path the user picked).
+      // We do the restore now so future regular-use openings of the modal
+      // get the original copy back. The DOM querySelector above changes
+      // are harmless to leave in place if the user never sees the modal
+      // again, but we restore for tidiness.
+      var _restoreModal = function(){
+        if(h3) h3.innerHTML = '\ud83d\udd04 Another device updated this account';
+        if(hint) hint.innerHTML = 'A different device pushed updates to your account since this one last synced. Pull those updates to catch up, or keep working with this device\u2019s local state \u2014 but be aware that future edits here will overwrite the other device\u2019s newer work.';
+        if(btnCancel) btnCancel.style.display = '';
+      };
+      // Wrap resolve so the restore happens regardless of which button fires.
+      var origResolve = resolve;
+      _staleBootResolve = function(choice){
+        try{ _restoreModal(); }catch(e){}
+        origResolve(choice);
+      };
+    } catch(err){
+      console.warn('[v1.7105] boot stale prompt failed to open:', err);
+      try{ RQ_SYNCDIAG.log('prepush_boot_prompt_fail',{ error:(err&&err.message)||String(err) }); }catch(e){}
+      _staleBootMode = false;
+      _staleBootResolve = null;
+      resolve('pull'); // safe default
     }
   });
 }
@@ -32976,6 +33161,10 @@ function sbPush(manual){
       // we just wrote to the server so we ARE the latest pusher and we
       // are in sync as of right now.
       try{ _staleRecordPushSync(); }catch(e){}
+      // v1.7105 — persist last-successful-push timestamp to localStorage so
+      // the boot-time stale-cache check can compare it against the server's
+      // _lastPushAt the next time this device logs in.
+      try{ _writeLastSuccessfulPushAt(uid(), Date.now()); }catch(e){}
       return true;
     })
     .catch(function(err){
@@ -33312,6 +33501,16 @@ function sbPull(manual){
             (typeof rawSettings._lastPushAt==='number')?rawSettings._lastPushAt:0
           );
         }
+      }catch(e){}
+      // v1.7105 — bootstrap the local last-successful-push baseline from
+      // the server's _lastPushAt. Important for pre-v1.7105 users who don't
+      // have the localStorage key yet — first pull after upgrade gives
+      // them an immediate baseline. The helper takes max(existing, ts) so
+      // a freshly-stamped local value isn't clobbered by an older server
+      // value (e.g. mid-flight push in another tab).
+      try{
+        var _serverPushAt = (typeof rawSettings._lastPushAt==='number')?rawSettings._lastPushAt:0;
+        if(_serverPushAt > 0) _writeLastSuccessfulPushAt(uid(), _serverPushAt);
       }catch(e){}
       // v1.7039 — read territory progression state from the settings blob.
       // Fall back to the in-memory value (from localStorage) for saves made
@@ -36831,18 +37030,57 @@ function initSession(pullFromCloud){
     var _hasLocalWork = _hasUnpushedChanges();
     var localPending=(S.questState&&S.questState.pending&&S.questState.pending.length)?S.questState.pending.slice():[];
     var localGrind=(S.questState&&S.questState.grindPending&&S.questState.grindPending.length)?S.questState.grindPending.slice():[];
+    // v1.7105 — set when the user picks "Pull from server" at the boot-time
+    // staleness modal, so the resurrection block later in the chain doesn't
+    // restore the local pending/grind they just intentionally discarded.
+    var _skipResurrection = false;
     try{ RQ_SYNCDIAG.log('boot_sync', { unpushedFlag: _hasLocalWork, localPending: localPending.length, localGrind: localGrind.length }); }catch(e){}
     var _startupChain;
     if(_hasLocalWork){
-      // Push first. If it fails (offline), the .catch swallows the error
-      // and we still pull so the user gets cached server data. Their local
-      // unpushed work remains in localStorage for the next online push.
-      _startupChain = sbPush(false)
-        .catch(function(err){
+      // v1.7105 — Pre-push staleness check. Before letting the boot push-first
+      // path fire, ask the server: was there a more recent push from another
+      // device than this device's last successful push? If so, our localStorage
+      // is stale-relative-to-server and pushing would clobber that newer
+      // server data. Show the modal in boot mode, await the user's choice,
+      // and either push (if they pick "Keep this device") or skip the push
+      // (if they pick "Pull from server").
+      //
+      // The check is conservative: any missing data (pre-v1.7091 server row,
+      // first-login no-baseline, network error during the check) returns
+      // stale:false and falls through to the original push-first path. So
+      // this only prompts when we have hard evidence of a stale cache.
+      _startupChain = _stalePrePushBootCheck().then(function(checkRes){
+        if(checkRes && checkRes.stale){
+          try{ RQ_SYNCDIAG.log('prepush_boot_stale_detected', {
+            serverAt: checkRes.serverAt, myLastPushAt: checkRes.myLastPushAt
+          }); }catch(e){}
+          return _stalePromptBoot(checkRes.summary).then(function(choice){
+            if(choice === 'pull'){
+              // User chose pull-only — skip the push entirely. localStorage
+              // unpushed flag stays set, but the upcoming sbPull will hydrate
+              // S from the server, then the next save() will replace any
+              // residual stale local fields with server-derived ones. As a
+              // belt-and-braces measure, clear the flag explicitly: we are
+              // intentionally discarding the local unpushed work in favor
+              // of the server's authoritative state.
+              try{ _markAllPushed(); }catch(e){}
+              _skipResurrection = true;
+              try{ RQ_SYNCDIAG.log('prepush_boot_skipped_push',{}); }catch(e){}
+              return null; // skip push, go to sbPull below
+            }
+            // 'keep' — proceed with original push-first behavior.
+            return sbPush(false).catch(function(err){
+              console.warn('[initSession] Startup push-after-keep-stale failed; proceeding to pull.',err);
+              try{ RQ_SYNCDIAG.log('boot_push_fail', { error: (err&&err.message)||String(err) }); }catch(e){}
+            });
+          });
+        }
+        // Not stale (or check inconclusive) — original push-first path.
+        return sbPush(false).catch(function(err){
           console.warn('[initSession] Startup push-before-pull failed; proceeding to pull.',err);
           try{ RQ_SYNCDIAG.log('boot_push_fail', { error: (err&&err.message)||String(err) }); }catch(e){}
-        })
-        .then(function(){ return sbPull(false); });
+        });
+      }).then(function(){ return sbPull(false); });
     } else {
       _startupChain = sbPull(false);
     }
@@ -36866,7 +37104,10 @@ function initSession(pullFromCloud){
       // genuine unpushed work at boot. For a device that boots with no
       // unpushed work, the server's empty values are trusted and the
       // ghost-pending bug does not recur.
-      if(_hasLocalWork && S.questState){
+      // v1.7105 — also gated on !_skipResurrection so the user's "pull from
+      // server" choice at the boot-time staleness modal isn't undone by
+      // resurrecting the local pending/grind they just chose to discard.
+      if(_hasLocalWork && S.questState && !_skipResurrection){
         if((!S.questState.pending||!S.questState.pending.length)&&localPending.length){
           // Filter out any quests already collected during the first autoCollectExpired pass
           var _done=S.questState.done||[];
