@@ -3009,7 +3009,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7112</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7113</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3906,7 +3906,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7112
+      Version 1.7113
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -3946,6 +3946,7 @@ body.dev-active #app{margin-top:36px;}
       <summary class="set-sec-ttl" style="cursor:pointer;list-style:none">📜 Change Log</summary>
       <div style="margin-top:10px">
         <div class="hint" style="margin-bottom:8px">Tap to review notable stable updates.</div>
+        <div style="margin-bottom:9px"><strong>Version 1.7113</strong> &mdash; Hireling graduation: full class-distribution rebalance + duplicate-stats-key bug fix. <strong>User audit request.</strong> Investigate why graduation appeared to favor Rogue over other classes. <strong>Audit findings.</strong> The pre-v1.7113 graduation logic had three compounding bias sources. <strong>(1) Branch 1 walked CLASS_SKILLS mandatory in <code>Object.keys</code> order, first-match-wins.</strong> 13 of 18 D&amp;D skills directly map to a class&apos;s mandatory skill (Athletics→Fighter, Stealth→Rogue, etc.). The other 5 are orphan: Animal Handling, Insight, Medicine, Perception, Sleight of Hand. <strong>(2) Branch 2 stat fallback walked <code>str→dex→con→int→wis→cha</code> with strict-greater comparison.</strong> When stats are tied at the max (which is the common case with default-12 stats), <code>str</code> always wins because it&apos;s evaluated first and the strict <code>&gt;</code> only overrides on values strictly greater. <strong>(3) Hirelings get <code>rollStats(&apos;default&apos;)</code> (all 12&plusmn;1).</strong> Each stat is independently 11 or 13 with 50/50 odds, so ties are rampant &mdash; exposing the order bias. <strong>Computed per-class graduation rate from random hirelings under the old logic:</strong> Fighter 19.7% (Athletics + ~half of Branch 2 ties), Rogue 12.5% (Stealth + ~25% of Branch 2), Barbarian 9.0%, Wizard 7.3%, Cleric 6.4%, Bard 6.0%, and 7 tail classes at exactly 5.6% each. Ratio max:min = 3.5&times;. Why the user reported Rogue rather than Fighter: Fighter feels generic and blends into the roster, Rogue is a distinctive class identity that stands out as &quot;another rogue&quot; in a roster of 30 hirelings. Both were over-represented. <strong>Bonus latent bug found.</strong> <code>makeHireling()</code> declared <code>stats:</code> twice in the same object literal: first <code>rollStats(&apos;Fighter&apos;)</code> with a comment claiming &quot;hirelings get average spread,&quot; then immediately <code>rollStats(&apos;default&apos;)</code>. JavaScript silently uses the last value, so the Fighter line was dead code and the comment was wrong. Hirelings have always gotten default stats; the comment misled future maintainers. <strong>Fix &mdash; option C from the audit (full rebalance).</strong> <strong>(1) New <code>SKILL_TO_CLASSES</code> table.</strong> Every one of the 18 D&amp;D skills now maps to one or two plausible classes, hand-authored for thematic fit. Each skill contributes equally to graduation outcomes, with multi-class skills randomly resolving among the listed classes (uniform). The 5 orphan skills now have meaningful destinations: Insight&rarr;{Cleric, Monk}, Medicine&rarr;{Cleric, Druid}, Perception&rarr;{Ranger, Fighter}, Sleight of Hand&rarr;{Rogue, Monk}, Animal Handling&rarr;{Druid, Ranger}. The full table covers all 13 classes; every class has a meaningful front door (no tail at exactly 5.6%), and the most-represented classes (Ranger, Rogue) have natural multi-skill claims that match D&amp;D archetypes. <strong>(2) Branch 1 replaced.</strong> The new <code>_resolveGradClass(c)</code> helper consults <code>SKILL_TO_CLASSES</code> for the hireling&apos;s first skill (hirelings always have exactly one skill at hire time). If the skill maps to multiple classes, it picks uniformly at random. The result is stamped on <code>c.gradClass</code> at first call so subsequent calls return the same value &mdash; the preview modal and the actual graduation can never disagree. <strong>(3) Branch 2 replaced with weighted-random by stat profile.</strong> Defensive fallback only (shouldn&apos;t fire with the new table covering all 18 skills, but guards against a hireling without a recognized skill). Scores every class against the hireling&apos;s stats by sum-of-absolute-differences against <code>CLASS_STATS</code>, then picks weighted-randomly with weights inverted from score (lower score = higher weight, but every class retains some probability so no single profile collapses to one class). <strong>(4) Duplicate <code>stats:</code> key fixed in <code>makeHireling</code>.</strong> Dropped the dead <code>rollStats(&apos;Fighter&apos;)</code> line and the misleading comment. The single remaining declaration is <code>stats:rollStats(&apos;default&apos;)</code>, matching documented behavior. Trailing comma cleaned up so the literal stays valid. <strong>New per-class distribution (simulated, 1M random hirelings):</strong> Ranger 13.9%, Rogue 11.1%, then six classes clustered at 8.3% (Wizard, Druid, Monk, Fighter, Cleric), then six at 5.6% (Barbarian, Bard, Warlock, Runesmith, Sorcerer, Paladin). Ratio max:min = 2.5&times; (down from 3.5&times;). More importantly, every class now has a meaningful front door, and Fighter dropped from 19.7% to 8.3% &mdash; exactly the &quot;default class&quot; over-representation the audit was meant to reduce. <strong>Stamping plumbing.</strong> The new <code>c.gradClass</code> field rides through Supabase via the v1.7040 stats-jsonb piggyback pattern (reserved underscore key <code>_gradClass</code> alongside <code>_homeTerritory</code> and <code>_statsClass</code>). Four sites updated: <em>(a)</em> <code>_serializePartyRow</code> at line 16111 (self-test serialize), <em>(b)</em> <code>_deserializePartyRow</code> at line 16206 (self-test deserialize), <em>(c)</em> the real sbPush stats construction at line ~33375, <em>(d)</em> the real sbPull stats lifter at line ~34070. Code-session blob path is unchanged because the entire <code>S.party</code> array rides via <code>_keys</code> in <code>player_data</code>; <code>c.gradClass</code> survives in the JSON-stringified blob automatically. Self-test arrays (<code>FRANCHISE_FIELDS</code>, <code>EXPECTED_CODE_KEYS</code>) audit S-level fields only; <code>c.gradClass</code> is character-level and is covered by the <code>_serializePartyRow</code>&rlarr;<code>_deserializePartyRow</code> round-trip directly. <strong>Backwards compatibility.</strong> Existing pre-v1.7113 hirelings without <code>c.gradClass</code> stamps roll the new logic on first observation (preview render or graduation click) and stamp the result. Once stamped, the value is stable forever. Players whose v1.6975 prediction modal showed &quot;Class preview: Fighter&quot; for a particular hireling may now see &quot;Class preview: Barbarian&quot; for the same hireling under the new rules &mdash; this is the rebalance working as designed. The graduation cost (200 gp), the post-graduation skill/tool/language/weapon grants (which read <code>CLASS_SKILLS</code> + <code>classEssentials</code> for the assigned class), and every other downstream system are byte-identical. <strong>Preview modal copy update.</strong> The reason text in <code>_renderHirelingClassPreview</code> previously read &quot;Top stat: STR &rarr; Fighter&quot; for Branch 2 cases. The new resolver doesn&apos;t expose a single &quot;top stat&quot; (the weighted-random fallback considers all six stats simultaneously), so the copy now reads &quot;Best fit by stat profile &rarr; <em>Class</em>&quot;. This case is rare in practice &mdash; only fires when a hireling has no skill in <code>SKILL_TO_CLASSES</code>, which means data corruption or a custom-loaded hireling with an unrecognized skill string. <strong>Scope boundaries.</strong> Three function bodies replaced (<code>_bestCls</code> IIFE, <code>predictHirelingGraduationClass</code>, hireling skill-class match), one new constant (<code>SKILL_TO_CLASSES</code>), three new helpers (<code>_gradClassStatScore</code>, <code>_pickGradClassByStatProfile</code>, <code>_resolveGradClass</code>), one duplicate-key fix in <code>makeHireling</code>, four plumbing wirings for <code>c.gradClass</code>, one preview-copy tweak. No SQL change, no schema change, no migration. <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean. The plumbing pattern follows v1.7040 exactly so the v1.7041 self-test (if run on a save with at least one hireling) will exercise the new piggyback alongside <code>_homeTerritory</code> and <code>_statsClass</code> and will surface drift if either side of the round-trip diverges in the future.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7112</strong> &mdash; Party screen header consolidated to fewer rows on mobile. <strong>User report.</strong> Screenshot from a phone showed the Party screen&apos;s upper toolbar consuming more than half the visible viewport: a 4-button action row (ASSETS / STATS / RECRUIT / + SQUAD), a full-width search input, a giant &ldquo;\u2696 REBALANCE (25 QP)&rdquo; button on its own line, a giant &ldquo;\u25b4 COLLAPSE ALL&rdquo; button on its own line, and two chip rows (axis chips + Overlap/Unique). Five sticky rows of header chrome before the user could see any roster content. <strong>Fix &mdash; three-row header instead of five.</strong> <strong>(1) Title row hosts the search input.</strong> The <code>.stitle</code> &ldquo;\u2729 The Adventuring Party&rdquo; row now uses <code>display:flex</code> with the title pinned left and the search input filling the remainder. The input bounds at <code>flex:1 1 200px;min-width:160px</code> &mdash; grows to fill but never collapses below typeable width &mdash; so on phones the row reads &ldquo;Title \u00b7 Search&rdquo; on one line, and on very narrow viewports the search wraps below via <code>flex-wrap:wrap</code>. The standalone search row that lived between the action toolbar and the tagbar in v1.7098 is gone. The search input itself drops from <code>.88em</code> to <code>.78em</code> font and from <code>7px 34px 7px 10px</code> to <code>5px 28px 5px 8px</code> padding so the row matches the title&apos;s vertical rhythm; the placeholder copy is shortened from &ldquo;Search name, species, class, skill, item, squad\u2026&rdquo; to &ldquo;Search name, species, class\u2026&rdquo; so it doesn&apos;t overflow on narrow widths. <strong>(2) Rebalance joins the 4-button action row.</strong> The action row goes from 4 to 5 buttons: Assets / Stats / Recruit / + Squad / Rebalance. Each gets <code>flex:1 1 0;min-width:60px</code> so they share width equally, with a 60px floor that prevents overcrowding. The Rebalance button&apos;s label drops the inline QP-cost suffix (was &ldquo;\u2696 Rebalance (25 QP)&rdquo;, now &ldquo;\u2696 Rebalance&rdquo;) so the label fits at the new narrower width &mdash; the cost still surfaces in the title tooltip on long-press AND in the confirm dialog before any QP is spent. <strong>(3) Collapse-all moves into the view-mode panel.</strong> The bordered panel that previously hosted Overlap / Unique / (Scope) on the right end of the chip row now also holds Collapse-all/Expand-all as its rightmost button. Thematically: all three are pill-and-panel view-mode controls, governing how the squad roster is presented. The chip row collapses from a wide multi-element line ([Rebalance][Collapse-all][Skills][Tools][Lang][Faith][Overlap-panel]) to a tight two-cluster line ([Skills][Tools][Lang][Faith][Overlap-panel-with-Collapse]). <strong>Plumbing.</strong> The Rebalance button is now static markup at <code>#btn-party-rebalance</code> in the action row; <code>renderParty</code> writes its label, disabled state, and title attribute on every render, and a one-time direct click handler (gated by <code>dataset.rbBound</code> to prevent stacking on re-renders) calls <code>runAutoRebalance</code>. The previous click route via the <code>#party-tagbar</code> delegator&apos;s <code>data-a=&quot;party-rebalance&quot;</code> branch still exists in case any other surface emits the same data attr, but the action-row button no longer goes through it. The Collapse-all button keeps its <code>data-a=&quot;sqcollapse-all&quot;</code> attribute and continues to dispatch through the tagbar delegator since it now lives inside the tagbar emit. <strong>Search-results dropdown still anchors correctly.</strong> The dropdown is <code>position:absolute</code> with <code>top:100%</code> inside the <code>position:relative</code> <code>#party-search-wrap</code>. The wrap moved from the standalone search row into the title row but kept its <code>position:relative</code>, so the dropdown still hangs from the input regardless of viewport size or layout reflow. <strong>What didn&apos;t change.</strong> The bottom nav (Contracts / Party / Quest / Store), the territory zones, the squad panels and rosters, the per-squad headers and members, the search query parsing and result scoring, and every click handler downstream of the dispatcher are byte-identical to v1.7111. The action button click handlers (<code>btn-party-jump-assets</code>, <code>btn-party-stats</code>, <code>btn-nav-recruit</code>, <code>btn-party-sqnew</code>) keep their bindings unchanged &mdash; only their layout container moved. <strong>Scope boundaries.</strong> One HTML restructure (Party screen header), three small JS edits inside <code>renderParty</code> (<code>_overlapHtml</code> now includes Collapse-all, <code>tagBar</code> drops Rebalance and Collapse-all, new static-Rebalance update block next to the tagbar write site), one Rebalance-label simplification. No CSS rule added or removed. No data-model change, no persistence change, no SQL change, no migration. <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean. All five action buttons keep their existing IDs (<code>btn-party-jump-assets</code>, <code>btn-party-stats</code>, <code>btn-nav-recruit</code>, <code>btn-party-sqnew</code>, plus the new <code>btn-party-rebalance</code>). Search input ID (<code>party-search</code>), wrap ID (<code>party-search-wrap</code>), clear button ID (<code>party-search-clear</code>), and results dropdown ID (<code>party-search-results</code>) are all preserved. The deleted ID <code>party-search-row</code> had no JS references &mdash; it was only a CSS-less wrapper.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7111</strong> &mdash; Stale-device modal: hint and diff sections collapse on mobile so the action buttons stay above the fold. <strong>User report.</strong> On mobile in a browser, the v1.7091 stale-device modal&apos;s action buttons (&ldquo;Decide later&rdquo; / &ldquo;Keep this device&rdquo; / &ldquo;Pull from server&rdquo;) often rendered beneath the browser&apos;s URL bar &mdash; especially when the URL bar was showing during page interaction. Combined with the modal&apos;s explanatory hint paragraph (3 sentences) and the 7-row field-by-field diff, total content height could exceed the constrained mobile viewport (browser chrome eats 60-80px from the bottom on iOS Safari, ~50px on Android Chrome with the URL bar visible). The modal&apos;s <code>max-height:86vh; overflow-y:auto</code> meant content could be scrolled to reach the buttons, but users frequently didn&apos;t realize the buttons existed below the fold and just gave up. <strong>Fix.</strong> The hint paragraph and the diff box are now wrapped in <code>&lt;details&gt;</code> elements with a custom rotating-chevron summary. JS in <code>_staleRenderModal</code> sets the <code>open</code> attribute based on viewport width: <em>&gt;640px (desktop)</em> &rarr; both sections start expanded (matches pre-v1.7111 behavior); <em>&le;640px (mobile)</em> &rarr; both sections start collapsed. With the diff and hint collapsed, the modal collapses to roughly: header (~30px) + hint summary row (~30px) + meta box (~50px) + diff summary row (~38px) + button row (~50px) &asymp; 200px of content &mdash; well under any realistic mobile viewport even with the URL bar showing. Users can still tap to expand either section if they want the detail. The summary row stays informative in either state: the diff summary updates dynamically to read &ldquo;tap to view &middot; 4 differ&rdquo; or &ldquo;tap to view &middot; all match&rdquo; based on a live count of fields where the local-vs-server values diverge, computed in <code>_staleRenderModal</code> while the diff rows are being built. So even when collapsed, mobile users see the gist (&ldquo;4 fields differ&rdquo;) and can decide whether the per-field detail is worth expanding. <strong>Boot mode override.</strong> v1.7105&apos;s <code>_stalePromptBoot</code> path uses the same modal but for a more dangerous situation (local cache is stale and a push would clobber newer server work). The boot-mode hint copy is critical &mdash; users need to read the warning before choosing Pull or Keep. Boot mode now force-opens the hint <code>&lt;details&gt;</code> on every viewport width, overriding the responsive default. The diff section keeps its responsive behavior because boot users care about the warning copy more than per-field counts. <strong>Cosmetic chevron.</strong> The native browser disclosure triangle is suppressed via <code>list-style:none</code> on the <code>summary</code> elements plus <code>::-webkit-details-marker{display:none}</code> for Safari. A custom <code>\u25B8</code> pointer rendered via the <code>::before</code> pseudo-element rotates 90&deg; on open via a <code>.15s</code> ease-out transition. The triangle reads clearly on both touch and pointer input, and the rotation gives users feedback that the tap registered. <code>-webkit-tap-highlight-color:transparent</code> on the summary suppresses iOS&apos;s blue flash so the rotating chevron is the only visual feedback, which feels more polished than competing visual cues. <strong>What didn&apos;t change.</strong> The desktop-default UX is byte-identical to v1.7110 because both <code>&lt;details&gt;</code> sections start with <code>open</code> at desktop widths. The diff data, the meta box (server age + &ldquo;from a different device&rdquo;), and the three action buttons all render at the same positions with the same styles. The button bindings, the modal HTML element ID (<code>ov-stale-device</code>), the <code>_staleQuickCheck</code>/<code>_staleIsDeviceStale</code>/<code>_staleRenderModal</code>/<code>_staleBindButtons</code> function shapes, the boot-mode flag, the v1.7110 manual-check helper &mdash; all unchanged. The pre-existing <code>p.hint</code> class on the hint paragraph is preserved so the boot-mode <code>querySelector</code> at line ~32698 still finds it for content replacement. <strong>Scope boundaries.</strong> One HTML restructure (modal body), four CSS rules (~16 lines), one JS edit in <code>_staleRenderModal</code> (~30 lines covering the diff count, the responsive open-state, and the summary hint update), one JS edit in <code>_stalePromptBoot</code> (~5 lines for the boot-mode force-open). No data-model change, no persistence change, no SQL change, no migration. <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean. The <code>open</code> attribute is set/removed defensively inside a <code>try/catch</code> so a render against a torn-down modal element doesn&apos;t throw. The diff-count computation reuses the existing <code>_line</code> closure&apos;s delta calculation &mdash; no separate diffing pass needed. <strong>Test path.</strong> On a phone in a browser with the URL bar showing, trigger the modal (tap the presence ribbon, or have another device push while you walk away &gt;60s and switch back). Modal should now show with the hint and diff collapsed; the action buttons should be visible without scrolling. Tap a section header to expand. On desktop, behavior should match v1.7110 exactly &mdash; both sections open by default.</div>
         <div style="margin-bottom:9px"><strong>Version 1.7110</strong> &mdash; Presence ribbon &ldquo;tap to compare&rdquo; now provides feedback for every outcome instead of silently doing nothing. <strong>User report.</strong> On both desktop and mobile, tapping the &ldquo;[device] is currently active &middot; tap to compare&rdquo; ribbon often did nothing visible &mdash; no modal opened, no console output, no feedback of any kind. <strong>Diagnosis.</strong> The ribbon&apos;s onclick at line ~32672 called <code>_staleMaybeCheck()</code> directly. That function has six short-circuit branches that all return silently: <em>(1)</em> not signed in, <em>(2)</em> session-suppressed (user previously picked &ldquo;Keep this device&rdquo;), <em>(3)</em> no sync baseline yet (initial login still settling), <em>(4)</em> modal already open, <em>(5)</em> <code>_staleQuickCheck</code> returned no summary (network error), <em>(6)</em> <code>_staleIsDeviceStale</code> returned false. Branch 6 is the most common case in practice: another tab is heartbeating (so the ribbon shows up), but it hasn&apos;t pushed anything newer than this device&apos;s last sync &mdash; the v1.7092 changelog actually documented this as design (&ldquo;The modal handles the no-stale-detected case gracefully (just doesn&apos;t open, since the staleness check returns false)&rdquo;), but in practice it surfaces as a non-responsive button. <strong>Why <code>_staleMaybeCheck</code> stays silent &mdash; deliberately.</strong> That function is ALSO called from the visibilitychange handler at line ~32542. Surfacing a toast on every tab refocus would be obnoxious. The silent-on-no-change behavior is correct for the auto-fired path. Manual taps on the ribbon are different: explicit user actions deserve explicit feedback. <strong>Fix &mdash; new <code>_staleManualCheck()</code> helper.</strong> Branches on each of the six guards and surfaces a small inline toast positioned just under the presence ribbon explaining what happened. <em>Branch 1 (not signed in):</em> &ldquo;Not signed in &mdash; please reload.&rdquo; (warn-styled toast). <em>Branch 2 (suppressed):</em> &ldquo;Comparison suppressed for this session &mdash; reload to re-enable.&rdquo; <em>Branch 3 (no baseline):</em> &ldquo;Sync still settling &mdash; try again in a few seconds.&rdquo; <em>Branch 4 (modal open):</em> no toast (the modal IS the feedback). <em>Branch 5 (network):</em> &ldquo;Couldn&apos;t reach the server. Check your connection&hellip;&rdquo; <em>Branch 6 (in sync):</em> the most common case &mdash; the toast says &ldquo;\u2713 In sync. The other device&apos;s last push was Xm ago &mdash; already on this device.&rdquo; The age string (Xs / Xm / Xh ago) is computed from <code>summary.serverAt</code> so the user immediately sees how recent the other device&apos;s last save was, even when there&apos;s nothing to do. The toast also color-keys by kind: gold-bordered for ok, gold-dark-bordered for info, crimson-bordered for warn. <strong>Console logging on every branch.</strong> Each guard now also logs its branch via <code>console.log</code> with a <code>[v1.7110]</code> prefix, so future debugging from the console is one click away. The user requested explicit access to the console; this makes that path productive instead of a dead end. <strong>Concurrency guard.</strong> While the fetch is in flight, the ribbon is dimmed to 70% opacity and pointer-events are disabled, so a quick double-tap doesn&apos;t fire two parallel <code>_staleQuickCheck</code> calls. Re-enabled in the .then and .catch (defensive against fetch throwing rather than returning a falsy summary). <strong>Toast styling and lifecycle.</strong> Mirrors the .pin-from-toast pattern from v1.6961 (the &ldquo;from: ParentTaskName&rdquo; toast on pinned rows): position:fixed, fade in via opacity 0\u21921, auto-dismiss after 3.5 seconds (vs. v1.6961&apos;s 2.5s &mdash; these messages are full sentences and need more read time), removed-then-replaced if a second toast fires before the first fades. The toast positions itself centered horizontally under the ribbon&apos;s bounding rect with a 6px gap, clamped to the viewport on both sides so it doesn&apos;t spill off-screen on narrow phones. <strong>Auto-fired path unchanged.</strong> The visibilitychange listener at line ~32542 still calls <code>_staleMaybeCheck()</code>, not the new manual variant. Tab refocus events that don&apos;t surface a stale state continue to be silent (no toast). Only deliberate ribbon taps go through the new feedback path. <strong>Boot mode unchanged.</strong> v1.7105&apos;s <code>_stalePromptBoot</code> path uses its own modal-open path with a hidden Cancel button. It doesn&apos;t go through <code>_staleMaybeCheck</code> or <code>_staleManualCheck</code>, so the boot-time stale prompt continues to work exactly as before. <strong>Scope boundaries.</strong> Two new JS functions (<code>_staleManualCheck</code> and <code>_presenceShowToast</code>, ~120 lines total). One JS edit at the click handler (~5 lines, swap the function name with a fallback). Both functions exposed on <code>window</code> for console use (<code>window._staleManualCheck()</code> simulates a ribbon tap, <code>window._presenceShowToast(&apos;hi&apos;,&apos;ok&apos;)</code> tests the toast in isolation). No CSS rule added (the toast carries inline styles), no HTML element added (the toast is created on demand and removed on fade), no data-model change, no persistence change, no SQL change, no migration. The <code>.presence-toast</code> class name is referenced only by the cleanup query selector (<code>document.querySelectorAll(&apos;.presence-toast&apos;)</code>) to clear stacked toasts &mdash; no stylesheet rule depends on it. <strong>Verification.</strong> <code>node --check</code> on the extracted script body passes clean. Six paths through the new helper, each with a console.log and a user-visible toast (or the modal). Tests for the user to run after deploy: (1) tap the ribbon when another device is just open but hasn&apos;t pushed anything new \u2192 toast says &ldquo;\u2713 In sync. The other device&apos;s last push was Xm ago&rdquo;; (2) disconnect Wi-Fi, tap \u2192 toast says &ldquo;Couldn&apos;t reach the server&rdquo;; (3) on the other device, push a save, then on this device tap \u2192 modal opens with the diff, behavior unchanged from v1.7109.</div>
@@ -16113,6 +16114,12 @@ window.rqPersistenceTest=function(){
     var _statsWithMeta=Object.assign({},c.stats||{});
     if(c.homeTerritory)_statsWithMeta._homeTerritory=c.homeTerritory;
     if(c.statsClass)_statsWithMeta._statsClass=c.statsClass;
+    // v1.7113 — Piggyback c.gradClass on the stats jsonb using the same
+    // reserved-underscore-key pattern as _homeTerritory and _statsClass.
+    // The graduation-class stamp is set at first observation by
+    // _resolveGradClass and must round-trip across devices so the preview
+    // and the actual graduation always agree.
+    if(c.gradClass)_statsWithMeta._gradClass=c.gradClass;
     return {
       name:c.name,species:c.species||'',cls:c.cls||'',bg:c.bg||'',
       rel:c.rel||'',age:c.age||0,height:c.height||'',weight:c.weight||'',
@@ -16206,15 +16213,19 @@ window.rqPersistenceTest=function(){
   function _deserializePartyRow(row){
     var _cHomeTerritory='';
     var _cStatsClass='';
+    var _cGradClass='';
     var _rawStats=row.stats||{};
     var _cleanStats=_rawStats;
     if(_rawStats&&typeof _rawStats==='object'&&
-       (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined)){
+       (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined)){
       _cleanStats=Object.assign({},_rawStats);
       if(typeof _cleanStats._homeTerritory==='string'&&_cleanStats._homeTerritory)_cHomeTerritory=_cleanStats._homeTerritory;
       if(typeof _cleanStats._statsClass==='string'&&_cleanStats._statsClass)_cStatsClass=_cleanStats._statsClass;
+      // v1.7113 — Lift _gradClass off the stats blob and onto c.gradClass.
+      if(typeof _cleanStats._gradClass==='string'&&_cleanStats._gradClass)_cGradClass=_cleanStats._gradClass;
       delete _cleanStats._homeTerritory;
       delete _cleanStats._statsClass;
+      delete _cleanStats._gradClass;
     }
     var c={
       name:row.name,species:row.species,cls:row.cls,bg:row.bg,rel:row.rel,
@@ -16231,6 +16242,7 @@ window.rqPersistenceTest=function(){
     };
     if(_cHomeTerritory)c.homeTerritory=_cHomeTerritory;
     if(_cStatsClass)c.statsClass=_cStatsClass;
+    if(_cGradClass)c.gradClass=_cGradClass;
     return c;
   }
   function _deserializeSquadRow(row,party){
@@ -22691,23 +22703,16 @@ document.getElementById('ov-lv-yes').addEventListener('click',function(){
     c.formerHireling=true;
     c.hireling=false;
     var existSk=c.skills||[],existTl=c.tools||[],existLa=c.lang||[];
-    // Grant class-appropriate skills for the new level 1 adventurer
-    // Pick best class based on hireling's existing skill + stat alignment
-    var _bestCls=(function(){
-      var statMap={str:'Athletics',dex:'Stealth',con:'Intimidation',int:'Arcana',wis:'Perception',cha:'Persuasion'};
-      var bestStat='str',bestVal=0;
-      if(c.stats){Object.keys(statMap).forEach(function(s){if((c.stats[s]||10)>bestVal){bestVal=c.stats[s]||10;bestStat=s;}});}
-      var bestSkill=statMap[bestStat];
-      // Match to class whose mandatory skill matches, or choose by best stat
-      var statClsMap={str:'Fighter',dex:'Rogue',con:'Barbarian',int:'Wizard',wis:'Cleric',cha:'Bard'};
-      // Check if existing hireling skill matches any class mandatory
-      var existSkills=c.skills||[];
-      var matched=Object.keys(CLASS_SKILLS).filter(function(cls){
-        return existSkills.indexOf(CLASS_SKILLS[cls].mandatory)!==-1;
-      });
-      if(matched.length)return matched[0];
-      return statClsMap[bestStat]||'Fighter';
-    })();
+    // Grant class-appropriate skills for the new level 1 adventurer.
+    // v1.7113 — Replaced the pre-v1.7113 _bestCls IIFE (which walked
+    // CLASS_SKILLS in Object.keys order with first-match-wins, then fell
+    // through to a stat map with strict-greater str-favoring tiebreaks)
+    // with the new _resolveGradClass helper. The helper consults the
+    // hand-authored SKILL_TO_CLASSES table (every skill maps to 1-2
+    // plausible classes) and uses weighted-random stat-profile matching
+    // as a defensive fallback. Stamps c.gradClass at first call so the
+    // preview modal and this graduation site always agree.
+    var _bestCls=_resolveGradClass(c).cls;
     if(!c.cls||c.cls==='Hireling')c.cls=_bestCls;
     var fullSkills=pickClassSkills(c.cls||'Fighter');
     // v1.6956 — Merge class essentials into the graduation grants so a
@@ -24132,9 +24137,15 @@ function makeHireling(){
     weight:rndInt(100,220)+' lbs',
     lang:[rnd(DND.lang)],skills:[rnd(DND.skills)],
     tools:[rnd(DND.tools)],weapons:[rnd(DND.weapons)],
-    stats:rollStats('Fighter'), // hirelings get average spread
-    level:0,inv:["Hireling's Pack"],hireCost:50,hireling:true,
-    stats:rollStats('default')
+    // v1.7113 — Single stats: declaration. The pre-v1.7113 makeHireling
+    // declared stats: TWICE in the same object literal — first with
+    // rollStats('Fighter') (commented "average spread"), then immediately
+    // overwritten with rollStats('default'). JS silently used the last
+    // value (default), so the Fighter line was dead code and the comment
+    // was wrong. Hirelings always got default stats (all 12 ±1) anyway,
+    // so behavior is unchanged. The duplicate-key bug is now resolved.
+    stats:rollStats('default'),
+    level:0,inv:["Hireling's Pack"],hireCost:50,hireling:true
   };
 }
 
@@ -24311,6 +24322,124 @@ var CLASS_STATS={
   'Runesmith':{str:10,dex:14,con:13,int:15,wis:12,cha:8 },
   'default':  {str:12,dex:12,con:12,int:12,wis:12,cha:12}
 };
+
+/* v1.7113 — Graduation-class resolution: hand-authored 18-skill-to-class
+   map plus a weighted-random stat fallback. Replaces the v1.6975 logic
+   that walked CLASS_SKILLS mandatory in Object.keys order (deterministic,
+   first-match-wins) and fell through to a stat map with a strict-greater
+   tiebreak that always favored str → dex → con. The old logic produced
+   Fighter ~19.7% / Rogue ~12.5% / six tail classes ~5.6% from random
+   hirelings; the new logic gives every class a meaningful front door
+   keyed off skill identity, with random tiebreaks for skills that fit
+   multiple classes.
+
+   Each skill maps to one or more classes. When a hireling graduates,
+   its single skill picks one class from the corresponding list at
+   random (uniform). The result is stamped on c.gradClass at first
+   observation so the preview modal and the actual graduation always
+   agree, and so the player sees a stable answer across re-renders. */
+var SKILL_TO_CLASSES={
+  'Acrobatics':     ['Monk','Rogue'],
+  'Animal Handling':['Druid','Ranger'],
+  'Arcana':         ['Sorcerer','Wizard'],
+  'Athletics':      ['Fighter','Barbarian'],
+  'Deception':      ['Warlock','Rogue'],
+  'History':        ['Wizard','Runesmith'],
+  'Insight':        ['Cleric','Monk'],
+  'Intimidation':   ['Barbarian','Warlock'],
+  'Investigation':  ['Runesmith','Wizard'],
+  'Medicine':       ['Cleric','Druid'],
+  'Nature':         ['Druid','Ranger'],
+  'Perception':     ['Ranger','Fighter'],
+  'Performance':    ['Bard','Sorcerer'],
+  'Persuasion':     ['Paladin','Bard'],
+  'Religion':       ['Cleric','Paladin'],
+  'Sleight of Hand':['Rogue','Monk'],
+  'Stealth':        ['Rogue','Ranger'],
+  'Survival':       ['Ranger','Fighter']
+};
+
+// v1.7113 — Score how well a hireling's stats match a class's ideal stat
+// profile (CLASS_STATS). Lower score = better match (sum of absolute
+// differences across the six abilities). Used by the weighted-random stat
+// fallback when no skill match is available (defensive — shouldn't trigger
+// with the SKILL_TO_CLASSES table covering all 18 skills, but a hireling
+// without a skills array would land here).
+function _gradClassStatScore(stats, cls){
+  var base=CLASS_STATS[cls]||CLASS_STATS['default'];
+  var sum=0;
+  ['str','dex','con','int','wis','cha'].forEach(function(k){
+    sum += Math.abs((stats[k]||10) - (base[k]||10));
+  });
+  return sum;
+}
+
+// v1.7113 — Weighted-random pick from the 13 real classes based on stat
+// similarity. Each class gets a weight inversely proportional to its
+// score (lower score = higher weight), so a hireling with rogue-like
+// stats has a higher probability of becoming a Rogue, but every class
+// retains some probability so all-12 stat profiles don't collapse to a
+// single class. Excludes 'default' (not a real class).
+function _pickGradClassByStatProfile(stats){
+  if(!stats)return 'Fighter';
+  var classes=Object.keys(CLASS_STATS).filter(function(k){return k!=='default';});
+  // Score every class. Lower score = better match. Convert to weights so
+  // best matches get highest weight. Add 1 to the score before inverting
+  // to avoid div-by-zero and to soften the distribution (a perfect match
+  // doesn't completely starve the others).
+  var weights=classes.map(function(cls){
+    return 1/(1 + _gradClassStatScore(stats, cls));
+  });
+  var total=weights.reduce(function(a,b){return a+b;}, 0);
+  if(total<=0)return classes[Math.floor(Math.random()*classes.length)];
+  var r=Math.random()*total;
+  for(var i=0;i<classes.length;i++){
+    r -= weights[i];
+    if(r<=0)return classes[i];
+  }
+  return classes[classes.length-1]; // floating-point fallback
+}
+
+// v1.7113 — Resolve a hireling's graduation class. The result is stamped
+// on c.gradClass on first call so subsequent calls (preview render, the
+// actual ov-lv-yes click handler, etc.) all return the same class. The
+// stamp rides through Supabase via the stats jsonb piggyback (see
+// _serializePartyRow / _deserializePartyRow for _gradClass handling).
+//
+// Returns {cls, reason, reasonDetail} mirroring the v1.6975 contract so
+// _renderHirelingClassPreview consumes the result without changes.
+//
+// Resolution order:
+//   1. If c.gradClass is already stamped (a real class name), return it.
+//      Reason 'stamped' with the source skill if known.
+//   2. If c.skills[0] is in SKILL_TO_CLASSES, pick uniformly from its
+//      class list. Stamp the result and return with reason 'skill-match'.
+//   3. Defensive fallback: weighted-random by stat profile.
+function _resolveGradClass(c){
+  if(!c)return null;
+  // Honor existing stamp (already-rolled, persisted across sessions).
+  if(c.gradClass && CLASS_STATS[c.gradClass]){
+    var _stampSkill=(c.skills||[])[0]||'';
+    return {cls:c.gradClass, reason:'skill-match', reasonDetail:_stampSkill||c.gradClass};
+  }
+  // Branch 1: skill-driven.
+  var existSkills=c.skills||[];
+  var sourceSkill='';
+  for(var i=0;i<existSkills.length;i++){
+    var sk=existSkills[i];
+    if(SKILL_TO_CLASSES[sk]){
+      sourceSkill=sk;
+      var pool=SKILL_TO_CLASSES[sk];
+      var picked=pool[Math.floor(Math.random()*pool.length)];
+      c.gradClass=picked; // stamp so future calls are deterministic
+      return {cls:picked, reason:'skill-match', reasonDetail:sk};
+    }
+  }
+  // Branch 2 (defensive — no recognizable skill): stat-profile weighted random.
+  var fb=_pickGradClassByStatProfile(c.stats||{});
+  c.gradClass=fb;
+  return {cls:fb, reason:'stat-fallback', reasonDetail:'stats'};
+}
 
 function rollStats(cls){
   var base=CLASS_STATS[cls]||CLASS_STATS['default'];
@@ -24578,34 +24707,22 @@ function classEssentials(cls){
 // is either 'skill-match' or 'stat-fallback'; reasonDetail is the skill
 // name or stat letter that drove the choice. Returns null if the character
 // is not eligible for graduation (not a hireling, a contact, or not at
-// level 0). Deterministic: does not roll any randomness.
+// level 0). Deterministic on second-and-later calls because the result
+// is stamped on c.gradClass at first call (see _resolveGradClass).
+//
+// v1.7113 — Body replaced with a call to _resolveGradClass. The previous
+// implementation duplicated the v1.6975 _bestCls logic (CLASS_SKILLS
+// mandatory walk + str-first-wins stat fallback) and could disagree
+// with the actual graduation if the class lists collided. The new
+// helper is the single source of truth: both the preview path (this
+// function) and the graduation path (ov-lv-yes click handler) now read
+// the same stamped value.
 function predictHirelingGraduationClass(c){
   if(!c)return null;
   if(!c.hireling)return null;
   if(c.contact)return null; // Contacts carry hireling:true but don't graduate
   if((c.level||0)!==0)return null;
-  // Branch 1: existing-skill match against CLASS_SKILLS mandatories. First
-  // match wins, in Object.keys(CLASS_SKILLS) order (Barbarian → Runesmith).
-  var existSkills=c.skills||[];
-  var keys=Object.keys(CLASS_SKILLS||{});
-  for(var i=0;i<keys.length;i++){
-    var cls=keys[i];
-    var mand=CLASS_SKILLS[cls]&&CLASS_SKILLS[cls].mandatory;
-    if(mand&&existSkills.indexOf(mand)!==-1){
-      return {cls:cls, reason:'skill-match', reasonDetail:mand};
-    }
-  }
-  // Branch 2: stat-map fallback. Initial bestStat='str', bestVal=0 means
-  // a hireling with no stats resolves to Fighter via the 'str' default.
-  var statMap={str:'Fighter',dex:'Rogue',con:'Barbarian',int:'Wizard',wis:'Cleric',cha:'Bard'};
-  var bestStat='str',bestVal=0;
-  if(c.stats){
-    Object.keys(statMap).forEach(function(s){
-      if((c.stats[s]||10)>bestVal){bestVal=c.stats[s]||10;bestStat=s;}
-    });
-  }
-  var fallbackCls=statMap[bestStat]||'Fighter';
-  return {cls:fallbackCls, reason:'stat-fallback', reasonDetail:bestStat.toUpperCase()};
+  return _resolveGradClass(c);
 }
 
 // v1.6975 — Distinctive kit items per class for the graduation preview.
@@ -24642,9 +24759,15 @@ function _renderHirelingClassPreview(c){
   var kitEl=document.getElementById('ov-lv-preview-kit');
   if(head)head.textContent='Class preview: '+prediction.cls;
   if(reasonEl){
+    // v1.7113 — Reason copy now reflects the new resolver. For skill-match
+    // (the common case), the detail is the source skill — same as before.
+    // For stat-fallback (defensive — fires only when c.skills is empty or
+    // unrecognized), we surface a clearer message than the old "Top stat:
+    // STR" since the new fallback is weighted-random across all classes
+    // by stat profile, not a strict best-stat lookup.
     reasonEl.textContent = prediction.reason==='skill-match'
       ? 'Matched existing skill: '+prediction.reasonDetail+' → '+prediction.cls
-      : (c.stats?'Top stat: '+prediction.reasonDetail+' → '+prediction.cls
+      : (c.stats?'Best fit by stat profile → '+prediction.cls
                 :'No stats yet — defaults to '+prediction.cls);
   }
   if(kitEl){
@@ -31944,7 +32067,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7112';
+var RQ_CLIENT_VERSION='v1.7113';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -33252,6 +33375,10 @@ function sbPush(manual){
         var _statsWithMeta=Object.assign({},c.stats||{});
         if(c.homeTerritory)_statsWithMeta._homeTerritory=c.homeTerritory;
         if(c.statsClass)_statsWithMeta._statsClass=c.statsClass;
+        // v1.7113 — Piggyback c.gradClass alongside the v1.7040 territory
+        // and statsClass packs. Same reserved-underscore-key pattern; the
+        // pull side at line ~34050 lifts it back to c.gradClass.
+        if(c.gradClass)_statsWithMeta._gradClass=c.gradClass;
         return {user_id:userId,sort_order:i,
           name:c.name,species:c.species||'',cls:c.cls||'',bg:c.bg||'',
           rel:c.rel||'',age:c.age||0,height:c.height||'',weight:c.weight||'',
@@ -33936,12 +34063,15 @@ function sbPull(manual){
         // object ends up clean (just str/dex/con/int/wis/cha). Empty
         // string when absent; migrateToTerritoryV1_7006 backfills
         // homeTerritory for any missing values later in this .then chain.
+        // v1.7113 — Same pattern extended for c.gradClass (the new
+        // graduation-class stamp). Reserved key is _gradClass.
         var _cHomeTerritory='';
         var _cStatsClass='';
+        var _cGradClass='';
         var _rawStats=c.stats||legacyMeta.stats||{};
         var _cleanStats=_rawStats;
         if(_rawStats&&(typeof _rawStats==='object')&&
-           (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined)){
+           (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined)){
           _cleanStats=Object.assign({},_rawStats);
           if(typeof _cleanStats._homeTerritory==='string'&&_cleanStats._homeTerritory){
             _cHomeTerritory=_cleanStats._homeTerritory;
@@ -33949,8 +34079,12 @@ function sbPull(manual){
           if(typeof _cleanStats._statsClass==='string'&&_cleanStats._statsClass){
             _cStatsClass=_cleanStats._statsClass;
           }
+          if(typeof _cleanStats._gradClass==='string'&&_cleanStats._gradClass){
+            _cGradClass=_cleanStats._gradClass;
+          }
           delete _cleanStats._homeTerritory;
           delete _cleanStats._statsClass;
+          delete _cleanStats._gradClass;
         }
         // Proper columns take priority; legacy meta is fallback
         var _rebuilt={_sbId:c.id,name:c.name,species:c.species,cls:c.cls,bg:c.bg,rel:c.rel,
@@ -33993,6 +34127,7 @@ function sbPull(manual){
         // characters created before these fields were introduced).
         if(_cHomeTerritory)_rebuilt.homeTerritory=_cHomeTerritory;
         if(_cStatsClass)_rebuilt.statsClass=_cStatsClass;
+        if(_cGradClass)_rebuilt.gradClass=_cGradClass;
         return _rebuilt;
       });
     }
