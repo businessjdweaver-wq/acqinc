@@ -3280,7 +3280,7 @@ body.dev-active #app{margin-top:36px;}
         <label>Cross-territory move (Fill Role surcharge)</label><input id="qpm-cost-cross-territory" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Pull from cycle-locked squad (Fill Role surcharge)</label><input id="qpm-cost-cycle-lock" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Advance downtime (per job)</label><input id="qpm-cost-downtime" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
-        <label>Grind auto-assign</label><input id="qpm-cost-grind-auto" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
+        <label>Grind auto-assign (per territory)</label><input id="qpm-cost-grind-auto" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Fast-forward collect all</label><input id="qpm-cost-fast-forward" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Short rest (pre-earn gp, quest continues)</label><input id="qpm-cost-short-rest" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Early completion (skip timer, full reward)</label><input id="qpm-cost-early-completion" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
@@ -5678,6 +5678,23 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS qp_price INT DEFAULT 0;</code><strong
   <div id="ov-grinds-body" style="flex:1;overflow-y:auto;padding:12px 14px 16px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain"></div>
 </div></div>
 
+<!-- v1.7133: Auto-Assign Grind territory chooser. Opened from the
+     ⚡ Auto-Assign Grind button when more than one territory has eligible
+     characters available. Charges costGrindAuto QP per territory the user
+     opts to cover. The body is rebuilt by openGrindAutoChoice() each time
+     it opens so the labels and counts reflect the current state. Sits at
+     z-index 520 to stack above ov-grinds-list (z:510). -->
+<div class="ov" id="ov-grind-auto-choice" style="z-index:520"><div class="modal" style="max-width:420px;max-height:92vh;display:flex;flex-direction:column;padding:0;overflow:hidden;border-radius:12px">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 12px;border-bottom:2px solid var(--parchment-deep);flex-shrink:0;background:var(--parchment)">
+    <div>
+      <h3 style="margin:0;font-family:'Cinzel',serif;font-size:1.05em">⚡ Auto-Assign Grind</h3>
+      <div id="ov-grind-auto-sub" style="font-size:.72em;color:var(--ink-light);margin-top:2px"></div>
+    </div>
+    <button id="ov-grind-auto-close" style="width:32px;height:32px;border-radius:50%;background:rgba(44,26,14,.08);border:1px solid var(--parchment-deep);font-size:1em;cursor:pointer;color:var(--ink);display:flex;align-items:center;justify-content:center;flex-shrink:0" title="Close">✕</button>
+  </div>
+  <div id="ov-grind-auto-body" style="padding:14px 16px 16px"></div>
+</div></div>
+
 <!-- v1.6910: REAL ESTATE CATALOG — buy a curated building and assign to a completed cycle -->
 <!-- v1.6922: Quest Log — read-only listing of all quests in a completed
      cycle with done/not-done status. Reached from the 📜 Quest Log button
@@ -6859,7 +6876,13 @@ function normalizeSettings(raw){
   // costShortRest, costEarlyCompletion all previously missing.
   if(cfg.qp.costDowntime===undefined)cfg.qp.costDowntime=5;
   if(cfg.qp.costRecall===undefined)cfg.qp.costRecall=25;
-  if(cfg.qp.costGrindAuto===undefined)cfg.qp.costGrindAuto=50;
+  // v1.7133 — costGrindAuto is now PER TERRITORY (was a flat franchise-wide
+  // cost). Default lowered from 50 to 10. The Auto-Assign Grind button in the
+  // Grinds modal now charges this amount times the number of territories the
+  // user opts to cover (1 for current-territory-only, N for all-territories
+  // sweep). The QP Manager field's label was updated to "Grind auto-assign
+  // (per territory)" to make this explicit.
+  if(cfg.qp.costGrindAuto===undefined)cfg.qp.costGrindAuto=10;
   if(cfg.qp.costFastForward===undefined)cfg.qp.costFastForward=50;
   if(cfg.qp.costShortRest===undefined)cfg.qp.costShortRest=5;
   if(cfg.qp.costEarlyCompletion===undefined)cfg.qp.costEarlyCompletion=10;
@@ -10359,7 +10382,13 @@ function renderGrindsList(){
   var _grindPool=_elig.pool;
   var _grindAvail=_elig.avail;
   var _grindNow=Date.now();
-  var _grindAutoCost=qpCfg().costGrindAuto||50;
+  // v1.7133 — costGrindAuto is now per-territory (default 10, was 50).
+  // _canAutoGrind still gates on the current territory having ≥1 eligible
+  // character — if Gojimura has no one to grind, the button is hidden even
+  // if Minsaka does (the user can switch territories to auto-assign there).
+  // The button's label shows the per-territory cost; if the user opts for
+  // an all-territories sweep, the chooser modal recomputes the total.
+  var _grindAutoCost=qpCfg().costGrindAuto||10;
   var _canAutoGrind=qpEnabled()&&(S.qpBalance||0)>=_grindAutoCost&&_grindAvail.length>0;
 
   var now=Date.now();
@@ -26594,7 +26623,7 @@ function openQpManager(){
   var _clEl=document.getElementById('qpm-cost-cycle-lock');
   if(_clEl)_clEl.value=(typeof cfg.costCycleLock==='number'?cfg.costCycleLock:10);
   document.getElementById('qpm-cost-downtime').value=cfg.costDowntime||5;
-  document.getElementById('qpm-cost-grind-auto').value=cfg.costGrindAuto||50;
+  document.getElementById('qpm-cost-grind-auto').value=cfg.costGrindAuto||10;
   document.getElementById('qpm-cost-fast-forward').value=cfg.costFastForward||50;
   document.getElementById('qpm-cost-short-rest').value=cfg.costShortRest||5;
   document.getElementById('qpm-cost-early-completion').value=(typeof cfg.costEarlyCompletion==='number'?cfg.costEarlyCompletion:10);
@@ -26690,7 +26719,7 @@ document.getElementById('qpm-save').addEventListener('click',function(){
     S.settings.qp.costCycleLock=isFinite(_clVal)&&_clVal>=0?_clVal:10;
   }
   S.settings.qp.costDowntime=parseInt(document.getElementById('qpm-cost-downtime').value)||5;
-  S.settings.qp.costGrindAuto=parseInt(document.getElementById('qpm-cost-grind-auto').value)||50;
+  S.settings.qp.costGrindAuto=parseInt(document.getElementById('qpm-cost-grind-auto').value)||10;
   S.settings.qp.costFastForward=parseInt(document.getElementById('qpm-cost-fast-forward').value)||50;
   S.settings.qp.costShortRest=parseInt(document.getElementById('qpm-cost-short-rest').value)||5;
   S.settings.qp.costEarlyCompletion=parseInt(document.getElementById('qpm-cost-early-completion').value)||10;
@@ -27271,53 +27300,192 @@ document.getElementById('ov-grinds-close').addEventListener('click',function(){
 // or the new Grinds modal (ov-grinds-list). After any grind mutation we
 // also re-render the Grinds modal so it stays current. renderAdv is still
 // called for party-page and other-screen knock-on effects.
+
+// v1.7133 — Helpers extracted from the grind-auto click handler so the
+// auto-assign flow can be invoked from either the direct path (single-
+// territory) or the chooser path (per-territory cost ladder, optionally
+// covering all eligible territories). Pricing is per-territory; each call
+// to _grindAutoAssignForTerritory bumps the cost ledger by costGrindAuto.
+
+// Returns the list of territories that have at least one eligible character
+// available right now. "Eligible" means: a clocked-in grind squad member or
+// a truly-unassigned character whose homeTerritory matches, AND not busy on
+// some pending engagement. Used by the chooser modal to compute which
+// territories are worth offering — and the multi-territory total cost.
+function _grindAutoEligibleTerritories(){
+  var terrs=(S.unlockedTerritories||[]).slice();
+  return terrs.filter(function(t){
+    if(!t)return false;
+    var elig=computeGrindEligibility(t);
+    return elig&&elig.avail&&elig.avail.length>0;
+  });
+}
+
+// Runs the auto-assignment loop for ONE territory. Mutates S.questState.
+// Returns the number of grinds started. Does NOT spend QP — the caller is
+// responsible for charging the per-territory cost up front (or the total
+// multi-territory cost in a single qpSpend call). This separation lets the
+// chooser charge once and run the loop N times without re-prompting.
+function _grindAutoAssignForTerritory(terr){
+  var qs=S.questState;
+  if(!qs)return 0;
+  var elig=terr?computeGrindEligibility(terr):computeGrindEligibility();
+  var avail=elig.avail.slice();
+  var busy=elig.busy;
+  var now=Date.now();
+  var assigned=0;
+  if(!qs.grindPending)qs.grindPending=[];
+  (GRIND||[]).forEach(function(g){
+    if(avail.length<1)return;
+    // v1.7013: only skip if ALREADY in-progress in this same territory.
+    // A territory can have its own instance of the same grind template.
+    if((qs.grindPending||[]).some(function(gp){return gp.id===g.id&&(gp.territory||'')===(terr||'');}))return;
+    var roster=grindRosterStatus(avail,g);
+    if(!roster.ok)return;
+    var missing=questPrereqCheck(g,avail);
+    if(missing.length>2)return;
+    var toAssign=[];
+    var nonHire=avail.filter(function(ci){return !S.party[ci].hireling;});
+    var hire=avail.filter(function(ci){return S.party[ci].hireling;});
+    if(nonHire.length>=1)toAssign=[nonHire[0]];
+    else if(hire.length>=2)toAssign=[hire[0],hire[1]];
+    else return;
+    var reward=grindCalcReward(g);
+    qs.grindPending.push({id:g.id,title:g.title,chars:toAssign,squadName:'',reward:reward,territory:(terr||''),doneAt:now+questDuration(g)});
+    toAssign.forEach(function(ci){avail=avail.filter(function(x){return x!==ci;});busy[ci]=true;});
+    var terrTag=terr?(' ['+terr+']'):'';
+    logAdd('⚡ Auto-grind'+terrTag+': "'+g.title+'" started — '+toAssign.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', '),'adv');
+    assigned++;
+  });
+  return assigned;
+}
+
+// Spends the QP cost for the territory list, runs the per-territory loop
+// for each, and refreshes every UI surface that surfaces grind state. The
+// chooser-modal close happens before the per-territory loop runs so the
+// user sees the work happen on the underlying Grinds modal. If any
+// territory yielded zero assignments, the user gets a per-territory
+// breakdown rather than a generic "nothing happened" message.
+function _grindAutoCommit(territories){
+  var perTerrCost=qpCfg().costGrindAuto||10;
+  var totalCost=perTerrCost*Math.max(1,territories.length);
+  var noteScope=territories.length===1?('Auto-assigned in '+(territories[0]||'all')):('Auto-assigned across '+territories.length+' territories');
+  if(!qpSpend(totalCost,'grind_auto_assign',noteScope))return;
+  var perTerr=[];
+  territories.forEach(function(t){
+    var n=_grindAutoAssignForTerritory(t);
+    perTerr.push({terr:t||'(all)',n:n});
+  });
+  saveActiveSetProgress();
+  save();
+  renderAdv();
+  if(typeof renderCycleMapCards==='function')renderCycleMapCards();
+  if(typeof renderGrindsList==='function'&&document.getElementById('ov-grinds-list')&&document.getElementById('ov-grinds-list').classList.contains('on'))renderGrindsList();
+  var totalAssigned=perTerr.reduce(function(s,r){return s+r.n;},0);
+  if(!totalAssigned){
+    alert('No grind missions could be auto-assigned with the available squad members.');
+  } else if(territories.length>1){
+    var lines=perTerr.map(function(r){return '• '+r.terr+': '+r.n+' grind'+(r.n===1?'':'s');}).join('\n');
+    alert('⚡ Auto-assigned '+totalAssigned+' grind'+(totalAssigned===1?'':'s')+' across '+territories.length+' territories:\n\n'+lines);
+  }
+}
+
+// Populates and opens the territory chooser. currentTerr is the territory
+// the Grinds modal is currently showing; eligibleTerrs is the list of
+// territories with ≥1 eligible char (computed by the caller, includes
+// currentTerr when it qualifies). The chooser is only shown when
+// eligibleTerrs.length > 1 — otherwise the caller skips straight to commit.
+function openGrindAutoChoice(currentTerr,eligibleTerrs){
+  var perTerrCost=qpCfg().costGrindAuto||10;
+  var allCost=perTerrCost*eligibleTerrs.length;
+  var sub=document.getElementById('ov-grind-auto-sub');
+  if(sub)sub.textContent='Pick the scope of this assignment.';
+  var body=document.getElementById('ov-grind-auto-body');
+  if(!body)return;
+  var thisLabel=currentTerr?esc(currentTerr):'Current shift';
+  // The "all" button enumerates eligible territories so the user knows
+  // exactly what the QP is buying.
+  var terrList=eligibleTerrs.map(function(t){return esc(t||'(unspecified)');}).join(', ');
+  body.innerHTML=
+    '<div style="font-size:.86em;color:var(--ink);margin-bottom:14px;line-height:1.5">'+
+      'Auto-assign costs <strong>'+perTerrCost+' QP per territory</strong>. Choose how wide a sweep you want:'+
+    '</div>'+
+    '<div style="display:flex;flex-direction:column;gap:10px">'+
+      '<button class="btn bpur" data-a="grind-auto-go-current" style="padding:12px 14px;text-align:left">'+
+        '<div style="font-weight:700;margin-bottom:3px">⚡ This territory only</div>'+
+        '<div style="font-size:.78em;opacity:.85">'+thisLabel+' &middot; <strong>'+perTerrCost+' QP</strong></div>'+
+      '</button>'+
+      '<button class="btn bg" data-a="grind-auto-go-all" style="padding:12px 14px;text-align:left">'+
+        '<div style="font-weight:700;margin-bottom:3px">🗺 All eligible territories ('+eligibleTerrs.length+')</div>'+
+        '<div style="font-size:.78em;opacity:.85">'+terrList+' &middot; <strong>'+allCost+' QP</strong></div>'+
+      '</button>'+
+      '<button class="btn bink sm" data-a="grind-auto-cancel" style="margin-top:6px">Cancel</button>'+
+    '</div>';
+  openOv('ov-grind-auto-choice');
+}
+
 document.addEventListener('click',function(e){
   // ── Auto-assign grind ─────────────────────────────────────────────
   var gauto=e.target.closest('[data-a="grind-auto"]');
   if(gauto){
-    if(!qpSpend(qpCfg().costGrindAuto||50,'grind_auto_assign','Auto-assigned squad to grind missions'))return;
-    var _qs2=S.questState;
-    // v1.6923: canonical eligibility helper. Previously this handler
-    // duplicated the pool logic and leaked members of squads committed
-    // to non-active cycles.
-    // v1.7013: scope to whichever territory the Grinds modal is currently
-    // showing. _grindsListTerritory is set by openGrindsList and is '' when
-    // opened without a territory — in that case pass no arg to keep the
-    // legacy all-territories behaviour.
-    var _autoTerr=_grindsListTerritory||'';
-    var _e2=_autoTerr?computeGrindEligibility(_autoTerr):computeGrindEligibility();
-    var _busy2=_e2.busy;
-    var _avail2=_e2.avail.slice();
-    var _now2=Date.now();
-    var _assigned=0;
-    if(!_qs2.grindPending)_qs2.grindPending=[];
-    (GRIND||[]).forEach(function(g){
-      if(_avail2.length<1)return;
-      // v1.7013: only skip if ALREADY in-progress in this same territory.
-      // A territory can have its own instance of the same grind template.
-      if((_qs2.grindPending||[]).some(function(gp){return gp.id===g.id&&(gp.territory||'')===_autoTerr;}))return;
-      var roster=grindRosterStatus(_avail2,g);
-      if(!roster.ok)return;
-      var missing=questPrereqCheck(g,_avail2);
-      if(missing.length>2)return;
-      var _toAssign=[];
-      var _nonHire=_avail2.filter(function(ci){return !S.party[ci].hireling;});
-      var _hire=_avail2.filter(function(ci){return S.party[ci].hireling;});
-      if(_nonHire.length>=1)_toAssign=[_nonHire[0]];
-      else if(_hire.length>=2)_toAssign=[_hire[0],_hire[1]];
-      else return;
-      var _reward=grindCalcReward(g);
-      // v1.7013: stamp territory on the pending entry so the Grinds modal
-      // can filter in-progress entries to the current territory's view.
-      _qs2.grindPending.push({id:g.id,title:g.title,chars:_toAssign,squadName:'',reward:_reward,territory:_autoTerr,doneAt:_now2+questDuration(g)});
-      _toAssign.forEach(function(ci){_avail2=_avail2.filter(function(x){return x!==ci;});_busy2[ci]=true;});
-      logAdd('⚡ Auto-grind: "'+g.title+'" started — '+_toAssign.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', '),'adv');
-      _assigned++;
-    });
-    saveActiveSetProgress();
-    save();renderAdv();
-    if(typeof renderGrindsList==='function'&&document.getElementById('ov-grinds-list')&&document.getElementById('ov-grinds-list').classList.contains('on'))renderGrindsList();
-    if(!_assigned)alert('No grind missions could be auto-assigned with the available squad members.');
+    // v1.7133: per-territory pricing + optional all-territories sweep.
+    // Behavior:
+    //  - If only ONE territory (the current one, or any single one in the
+    //    legacy '' scope) has eligible chars, run the single-territory
+    //    assignment immediately at 1× costGrindAuto.
+    //  - If MULTIPLE territories have eligible chars, open the chooser
+    //    modal so the user can pick "this one" vs "all eligible".
+    // _grindsListTerritory is set by openGrindsList; '' = legacy unscoped.
+    var _curTerr=(typeof _grindsListTerritory==='string')?(_grindsListTerritory||''):'';
+    var _eligTerrs=_grindAutoEligibleTerritories();
+    // Edge case: the current territory has the only eligible chars.
+    // We don't need a chooser; just run it.
+    if(_eligTerrs.length<=1){
+      // If _curTerr is empty (legacy unscoped Grinds modal) AND the eligible
+      // list has exactly one territory, target THAT territory rather than
+      // the empty string — keeps grindPending entries correctly tagged.
+      var _targetTerr=_curTerr||_eligTerrs[0]||'';
+      _grindAutoCommit([_targetTerr]);
+      return;
+    }
+    // Multiple eligible territories: chooser. The current territory always
+    // appears first as the "this one" option even when there's no current
+    // scope (legacy unscoped path) — in that case "this one" is meaningless,
+    // so just default the chooser's primary action to all-territories and
+    // skip the modal.
+    if(!_curTerr){
+      _grindAutoCommit(_eligTerrs);
+      return;
+    }
+    openGrindAutoChoice(_curTerr,_eligTerrs);
+    return;
+  }
+  // ── Auto-assign chooser: this territory only ─────────────────────
+  var gaCur=e.target.closest('[data-a="grind-auto-go-current"]');
+  if(gaCur){
+    var _cur=(typeof _grindsListTerritory==='string')?(_grindsListTerritory||''):'';
+    closeOv('ov-grind-auto-choice');
+    _grindAutoCommit([_cur]);
+    return;
+  }
+  // ── Auto-assign chooser: all eligible territories ────────────────
+  var gaAll=e.target.closest('[data-a="grind-auto-go-all"]');
+  if(gaAll){
+    var _all=_grindAutoEligibleTerritories();
+    closeOv('ov-grind-auto-choice');
+    _grindAutoCommit(_all);
+    return;
+  }
+  // ── Auto-assign chooser: cancel ──────────────────────────────────
+  var gaCancel=e.target.closest('[data-a="grind-auto-cancel"]');
+  if(gaCancel){
+    closeOv('ov-grind-auto-choice');
+    return;
+  }
+  // ── Auto-assign chooser: ✕ close button ──────────────────────────
+  var gaCloseBtn=e.target.closest('#ov-grind-auto-close');
+  if(gaCloseBtn){
+    closeOv('ov-grind-auto-choice');
     return;
   }
   // ── Collect a ready grind ─────────────────────────────────────────
@@ -27447,7 +27615,11 @@ document.addEventListener('click',function(e){
     if(totalPre2>0&&S.party.length){
       // v1.6923: exclude non-eligible chars from the best-fit suggestion
       // so we don't advertise picks the user isn't allowed to make.
-      var _eligGa=computeGrindEligibility().pool;
+      // v1.7133: scope to the territory the Grinds modal is showing —
+      // _grindsListTerritory is set by openGrindsList. Without this scope,
+      // a Gojimura grind would suggest Minsaka characters as best-fit.
+      var _gaTerr=(typeof _grindsListTerritory==='string')?(_grindsListTerritory||''):'';
+      var _eligGa=(_gaTerr?computeGrindEligibility(_gaTerr):computeGrindEligibility()).pool;
       var scoredG=S.party.map(function(c,ci){return{ci:ci,sc:_scoreG(c),name:c.name};})
         .filter(function(x){return !busyG[x.ci]&&!S.party[x.ci].hireling&&!!_eligGa[x.ci];})
         .sort(function(a,b2){return b2.sc-a.sc;});
@@ -28320,8 +28492,17 @@ function populateQuestSquadPicker(){
   // before any member is grind-eligible.
   if(P4&&P4.grind){
     var seen={};
+    // v1.7133 — Scope clocked-in grind squads to the current territory.
+    // Without this, opening a Gojimura grind would offer Minsaka squads in
+    // the squad-picker dropdown alongside Gojimura's, breaking the v1.7013
+    // territory lock. _grindsListTerritory is set by openGrindsList; '' is
+    // the legacy all-territories scope.
+    var _pkTerr=(typeof _grindsListTerritory==='string')?(_grindsListTerritory||''):'';
     var grindSquads=(S.squads||[]).filter(function(sq){
-      return sq&&sq.name&&isSquadClockedInToGrinds(sq.name);
+      if(!sq||!sq.name)return false;
+      if(!isSquadClockedInToGrinds(sq.name))return false;
+      if(_pkTerr&&squadGrindTerritory(sq.name)!==_pkTerr)return false;
+      return true;
     });
     // v1.6977 — "All eligible" option is now the default, replacing the
     // previous "🧭 Unassigned (ad-hoc)" default and the behavior of
@@ -28332,7 +28513,9 @@ function populateQuestSquadPicker(){
     // left free for ad-hoc picking) — only the label changed.
     // Pool size includes every clocked-in grind squad member + truly
     // unassigned chars, matching computeGrindEligibility().pool.
-    var _allEligibleCount=Object.keys((computeGrindEligibility()||{}).pool||{}).length;
+    // v1.7133 — count now reflects the current territory's pool, not the
+    // all-territories union.
+    var _allEligibleCount=Object.keys(((_pkTerr?computeGrindEligibility(_pkTerr):computeGrindEligibility())||{}).pool||{}).length;
     opts.push('<option value="__unassigned__">\u2b50 All eligible ('+_allEligibleCount+')</option>');
     grindSquads.forEach(function(sq){
       if(seen[sq.name])return;
@@ -28413,7 +28596,12 @@ function renderQuestAssignmentList(extraChecked){
     if(totalPreG>0&&S.party.length){
       // v1.6923: best-fit recommendation also respects the grind-eligibility
       // rule so we don't suggest characters the user can't actually pick.
-      var _eligScore=computeGrindEligibility().pool;
+      // v1.7133: scope to the territory the Grinds modal is showing —
+      // _grindsListTerritory is set by openGrindsList. Without this scope,
+      // a Gojimura grind would suggest Minsaka characters as best-fit.
+      var _ralTerr=(typeof _grindsListTerritory==='string')?(_grindsListTerritory||''):'';
+      var _ralElig=_ralTerr?computeGrindEligibility(_ralTerr):computeGrindEligibility();
+      var _eligScore=_ralElig.pool;
       var scoredG=S.party.map(function(c,ci){return{ci:ci,sc:scoreG(c),name:c.name};})
         .filter(function(x){return !busyG[x.ci]&&!S.party[x.ci].hireling&&!!_eligScore[x.ci];})
         .sort(function(a,b){return b.sc-a.sc;});
@@ -28435,7 +28623,10 @@ function renderQuestAssignmentList(extraChecked){
     // or they belong to no squad at all. Members of squads committed to
     // non-active cycles are excluded entirely (not just greyed out) so
     // the user can't select them.
-    var _grindElig=computeGrindEligibility();
+    // v1.7133: scope to the territory the Grinds modal is showing so a
+    // Gojimura grind doesn't surface Minsaka characters in the picker.
+    var _ralTerr2=(typeof _grindsListTerritory==='string')?(_grindsListTerritory||''):'';
+    var _grindElig=_ralTerr2?computeGrindEligibility(_ralTerr2):computeGrindEligibility();
     charListG=charListG.filter(function(entry){return !!_grindElig.pool[entry.ci];});
 
     box.innerHTML=charListG.length?
@@ -40334,7 +40525,16 @@ function qddRender(questLike,isGrind){
   var partyEntries;
   var _carLabel='Your Party';
   if(_isGrind){
-    var _gElig = computeGrindEligibility();
+    // v1.7133: scope eligibility to the territory the Grinds modal is showing
+    // — _grindsListTerritory is set by openGrindsList. Without this scope,
+    // a Gojimura grind would surface Minsaka characters in the carousel.
+    // This was the last v1.7013 territory-lock leak: the picker, best-fit,
+    // commit-side check, and auto-assign were all already scoped, but the
+    // carousel pre-filter inside updateQuestModal silently fell back to
+    // all-territories. Sister sites: Start-Grind best-fit, populateQuestSquadPicker
+    // dropdown + count, renderQuestAssignmentList best-fit + filter.
+    var _uqmTerr=(typeof _grindsListTerritory==='string')?(_grindsListTerritory||''):'';
+    var _gElig = _uqmTerr?computeGrindEligibility(_uqmTerr):computeGrindEligibility();
     // If a clocked-in grind squad is selected in ov-q-squad, further narrow to
     // that squad's roster. If __unassigned__ is selected (or nothing yet), show
     // the full eligibility pool (all clocked-in squads' members + truly
