@@ -22,13 +22,22 @@ body::before{content:'';position:fixed;inset:0;
   radial-gradient(ellipse at 20% 20%,rgba(201,146,42,.12) 0%,transparent 60%),
   radial-gradient(ellipse at 80% 80%,rgba(139,26,26,.08) 0%,transparent 60%),#f4e8c1;
   z-index:0;pointer-events:none;}
-#app{position:relative;z-index:1;max-width:480px;margin:0 auto;padding:calc(var(--hdr-h) + 14px) 0 104px;min-height:100vh;font-size:var(--fs);}
+#app{position:relative;z-index:1;max-width:480px;margin:0 auto;padding:0 0 104px;min-height:100vh;font-size:var(--fs);}
 
 /* HEADER */
-#hdr{position:fixed;background:linear-gradient(135deg,var(--ink) 0%,#3d1f0a 100%);color:var(--gold-bright);
+/* v1.7132 — #hdr is position:sticky inside #app instead of position:fixed.
+   The fixed-position approach required #app's padding-top to reserve
+   vertical space matching the header's height, but the header's height
+   varies (with ribbon, with compact-hdr, with iOS Safari font metrics);
+   the JS-measured --hdr-h was racy on iOS and the title/buttons of every
+   page kept ending up under the ribbon's gold border. Sticky positioning
+   keeps the header visually pinned to viewport top during scroll while
+   leaving it in the document flow, so page content takes its natural
+   place beneath the header — overlap is physically impossible. */
+#hdr{position:sticky;top:0;background:linear-gradient(135deg,var(--ink) 0%,#3d1f0a 100%);color:var(--gold-bright);
   padding:7px 16px 6px;text-align:center;border-bottom:3px solid var(--gold);
-  top:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;z-index:220;box-shadow:0 2px 12px var(--shadow);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  z-index:220;box-shadow:0 2px 12px var(--shadow);
+  display:flex;flex-direction:column;align-items:center;}
 #hdr h1{color:#fff;font-family:\'Cinzel\',serif;font-size:1em;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-bright);margin:0 auto;text-align:center;width:100%;}
 #hdr .sub{display:none;}
 #gold-disp{display:inline-flex;align-items:center;gap:0;background:rgba(201,146,42,.15);
@@ -61,8 +70,20 @@ body.compact-hdr #btn-hdr-settings{min-width:32px !important;padding-left:6px !i
    provides the red-dot notification badge that overlays the button when
    pending items exist. v1.7004's #subnav bar was removed; its vertical
    space is reclaimed for screen content. */
-:root{--hdr-h:62px;}
+/* v1.7132 — --hdr-h is now set entirely via CSS based on body classes.
+   No JS measurement of #hdr.offsetHeight; that approach was racy on iOS.
+   Used only by the Party screen's sticky tagbar (top:var(--hdr-h,56px))
+   so it pins below the header. #app's padding-top no longer references
+   --hdr-h because #hdr is now position:sticky and lives in document
+   flow — content can't overlap it. Values are static estimates of the
+   visible header height in each state; the tagbar's clearance only
+   needs to be approximately right (a few px of overlap or gap is fine
+   for a sticky chip row, very different from the previous content-
+   overlap bug). */
+:root{--hdr-h:56px;}
 body.compact-hdr{--hdr-h:48px;}
+body.has-presence-ribbon{--hdr-h:102px;}
+body.compact-hdr.has-presence-ribbon{--hdr-h:94px;}
 #btn-inbox{position:relative;}
 .inbox-dot{position:absolute;top:-3px;right:-3px;width:10px;height:10px;border-radius:50%;
   background:#e63946;border:1.5px solid #1a0d04;box-shadow:0 0 6px rgba(230,57,70,.85);
@@ -1017,7 +1038,10 @@ button,select,input,textarea{
   }
   #app{
     max-width:none;
-    padding:86px 0 116px;
+    /* v1.7132 — was padding:86px 0 116px (a legacy hardcoded reservation
+       for the previously-fixed header). With #hdr now position:sticky in
+       flow it takes its own space; no top reservation needed. */
+    padding:0 0 116px;
   }
   .scr{
     padding:12px 10px;
@@ -33455,10 +33479,14 @@ function _presenceUpdateRibbon(){
     // the vertical space.
     ribbon.style.display = 'none';
     document.body.classList.remove('has-presence-ribbon');
-    // v1.7130 — Ribbon is now an in-flow child of #hdr; hiding/showing
-    // it changes #hdr's rendered height. Re-measure so --hdr-h tracks
-    // the new height and #app's padding-top reflows correctly.
-    if(typeof updateHeaderCompactState==='function')updateHeaderCompactState();
+    // v1.7132 — Removed updateHeaderCompactState() call here. The
+    // previous architecture used JS-measured #hdr.offsetHeight to drive
+    // #app's padding-top reservation, so ribbon show/hide had to
+    // re-trigger the measurement. v1.7132 makes #hdr position:sticky
+    // in flow; the ribbon contributes its height naturally and content
+    // reflows automatically with no JS coordination required. The
+    // body class toggle is preserved because the --hdr-h CSS variable
+    // (used by the Party screen's sticky tagbar) keys off it.
     return;
   }
   // Pick the most recent other tab as the headline label. (Sort already
@@ -33476,10 +33504,10 @@ function _presenceUpdateRibbon(){
   }
   ribbon.style.display = 'block';
   document.body.classList.add('has-presence-ribbon');
-  // v1.7130 — Ribbon is now an in-flow child of #hdr; hiding/showing
-  // it changes #hdr's rendered height. Re-measure so --hdr-h tracks
-  // the new height and #app's padding-top reflows correctly.
-  if(typeof updateHeaderCompactState==='function')updateHeaderCompactState();
+  // v1.7132 — Removed updateHeaderCompactState() call here. See the
+  // hide branch above for rationale: header is now position:sticky in
+  // flow, so ribbon show/hide reflows content automatically with no
+  // JS coordination required.
   ribbon.title = label + ' has been active recently. Tap to see what changed and decide whether to pull.';
   // Wire (or re-wire) the click handler. Direct assignment so we don't stack.
   // v1.7110 — Use _staleManualCheck() (with feedback) instead of
@@ -35534,36 +35562,26 @@ function updateKeyboardNavState(){
 function updateHeaderCompactState(){
   var y=window.scrollY||window.pageYOffset||0;
   document.body.classList.toggle('compact-hdr',y>34);
-  // v1.7129 — Measure actual rendered header height and write to
-  // --hdr-h. The static 62px / 48px-compact values in CSS are useful
-  // as fallbacks for the first paint before JS runs, but they don't
-  // account for the actual rendered header on iOS Safari, which can
-  // run ~96-105px tall due to button heights, font metrics, and
-  // safe-area handling. With the lie left in place, the presence
-  // ribbon sits behind the visible header bottom and page content
-  // starts behind the visible ribbon bottom — title/buttons get
-  // clipped. By measuring #hdr.offsetHeight and pushing the real
-  // value into --hdr-h, the ribbon's top:var(--hdr-h) anchor lands
-  // at the actual header bottom, and #app's padding-top calc adds
-  // the actual ribbon height to the actual header height for a
-  // correct content-start position. Runs on every scroll/resize so
-  // it tracks compact-hdr transitions and orientation changes.
-  var h=document.getElementById('hdr');
-  if(h){
-    var realH=h.offsetHeight;
-    if(realH>0)document.documentElement.style.setProperty('--hdr-h',realH+'px');
-  }
+  // v1.7132 — Removed offsetHeight measurement of #hdr that wrote
+  // --hdr-h. The previous architecture used position:fixed on #hdr
+  // and a JS-measured --hdr-h to drive #app's padding-top reservation.
+  // That race-prone approach kept letting iOS Safari paint content
+  // before the measurement caught up, so the title and buttons of
+  // every page kept ending up tucked under the presence ribbon's
+  // gold border. v1.7132 makes #hdr position:sticky in flow, so
+  // content sits naturally below it and overlap is physically
+  // impossible. --hdr-h is now set purely via CSS body classes for
+  // the Party screen's sticky tagbar; no measurement required.
 }
 document.addEventListener('focusin',updateKeyboardNavState);
 document.addEventListener('focusout',function(){setTimeout(updateKeyboardNavState,0);});
 window.addEventListener('scroll',updateHeaderCompactState,{passive:true});
 window.addEventListener('resize',updateHeaderCompactState);
-// v1.7129 — Font load can change header rendered height (Cinzel
-// metrics differ from system serif fallback). Re-run the measurement
-// once fonts are ready so --hdr-h tracks the post-font-load reality.
-// Also re-run on the next animation frame after DOMContentLoaded,
-// since some browsers report stale dimensions during the initial
-// synchronous DOMContentLoaded handlers.
+// v1.7132 — These triggers used to refresh the JS measurement of
+// #hdr.offsetHeight; with v1.7132's switch to position:sticky in flow
+// that measurement is no longer used. Calls retained because they're
+// cheap and the function still toggles body.compact-hdr on scroll
+// (independent UX feature).
 if(document.fonts&&document.fonts.ready)document.fonts.ready.then(updateHeaderCompactState);
 requestAnimationFrame(updateHeaderCompactState);
 window.addEventListener('resize',function(){_baseViewportH=Math.max(_baseViewportH,window.innerHeight);});
