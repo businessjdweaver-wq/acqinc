@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Quest Editor v1.693</title>
+<title>Quest Editor v1.694</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -402,7 +402,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 
 <div id="app">
   <div id="hdr">
-    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.693</span></h1>
+    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.694</span></h1>
     <div id="login-area">
       <span id="user-email"></span>
       <button class="hbtn" id="btn-push" style="display:none" title="Push all local changes to Supabase">☁ Push</button>
@@ -423,6 +423,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
         <button class="icon-btn" id="btn-new-condition" title="New condition (admin only)" style="display:none">+ Condition</button>
         <button class="icon-btn" id="btn-new-outcome" title="New outcome template (admin only)" style="display:none">+ Outcome</button>
         <button class="icon-btn" id="btn-new-monster" title="New monster" style="display:none">+ Monster</button>
+        <button class="icon-btn" id="btn-new-territory" title="New territory weights" style="display:none">+ Territory</button>
         <button class="icon-btn" id="btn-dupe-cycle" title="Duplicate a cycle">⧉</button>
       </div>
       <div id="tab-bar" style="display:flex;border-bottom:1px solid var(--border2);flex-shrink:0;flex-wrap:wrap">
@@ -434,6 +435,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
         <button class="tab-btn" data-tab="conditions" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">🩹 Conditions</button>
         <button class="tab-btn" data-tab="outcomes" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">🎲 Outcomes</button>
         <button class="tab-btn" data-tab="monsters" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">👹 Monsters</button>
+        <button class="tab-btn" data-tab="territories" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">🌍 Territories</button>
         <button class="tab-btn" data-tab="difficulty" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">📊 Difficulty</button>
       </div>
       <div id="list-scroll">
@@ -999,6 +1001,7 @@ var conditions        = [];   // condition rows from content_items
 var gameRules         = [];   // game_rules rows from content_items (expect 1)
 var outcomeTemplates  = [];   // outcome_template rows from content_items
 var monsters          = [];   // simplified monster rows from content_items
+var territoryWeights  = [];   // v1.7117 per-territory species-weight rows from content_items
 
 // Store type → tab/subtab mapping
 var ITEM_TYPES = [
@@ -1103,6 +1106,15 @@ var DND_REL = ['Mendax, the Pretender','Somnian, the Dreamer','Dicentis, the Per
   'Castigare, the Avenger','Gloriosus, the Bold','Protean Way','Medio','Texere Dragons',
   'Deity Unknown','Atheist'];
 
+// v1.7117 — Playable species list. Mirrors the main game's DND.species
+// post-v1.7114 rename. Used by the Territories tab to render per-species
+// numeric multiplier inputs. Keep this list in sync with the main game's
+// DND.species when species are added or renamed.
+var DND_SPECIES = ['Human','Elf (Xigilian)','Elf (Neikean)','Elf (Medion)',
+  'Dwarf (Hill)','Dwarf (Silex)','Halfling (Lightfoot)','Halfling (Harvester)',
+  'Gnome (Spezzakian)','Gnome (Rock)','Half-Elf','Half-Orc','Tiefling',
+  'Dragonborn','Alatean','Gatafolk','Pinnit','Saxumite','Bosfolk','Coneyfolk'];
+
 var VEHICLE_NAMES = [
   'Riding Horse','Warhorse','Mule','Draft Horse','Hippogriff (Trained)',
   'Rowboat','Keelboat','Sailing Ship','Diving Bell',
@@ -1183,18 +1195,20 @@ function pullData() {
   if (!uid()) { setStatus('Not connected.'); return; }
   setStatus('Loading…');
 
-  // Fetch 1: author's own quest/quest_set content (private authoring) + own monsters
+  // Fetch 1: author's own quest/quest_set content (private authoring) + own monsters + own territory weights
   var ownFilter = 'select=*' +
     '&owner_user_id=eq.' + encodeURIComponent(uid()) +
-    '&content_type=in.(quest_set,quest,monster)' +
+    '&content_type=in.(quest_set,quest,monster,territory_weights)' +
     '&order=sort_order.asc';
 
   // Fetch 2: shared vocabulary visible to all authors regardless of owner
   // Monsters: include official+shared from any owner (for Pull-from-Workshop)
   // Traits/terrain/conditions/game_rules/outcome_template: official+shared only
+  // v1.7117 — Territory weights also fetched in vocab scope so an author
+  // can see and adapt weights authored by others (private overrides own).
   var vocabFilter = 'select=*' +
     '&visibility=in.(official,shared)' +
-    '&content_type=in.(trait,terrain,condition,game_rules,outcome_template,monster)' +
+    '&content_type=in.(trait,terrain,condition,game_rules,outcome_template,monster,territory_weights)' +
     '&order=sort_order.asc';
 
   return Promise.all([
@@ -1224,6 +1238,7 @@ function pullData() {
     gameRules = [];
     outcomeTemplates = [];
     monsters = [];
+    territoryWeights = []; // v1.7117
     // pets reset inside the pets table fetch below
     (rows || []).forEach(function(row) {
       var d = row.data || {};
@@ -1265,6 +1280,13 @@ function pullData() {
         if (typeof row.sort_order === 'number') d.sort_order = row.sort_order;
         d.content_key = row.content_key;
         monsters.push(d);
+      } else if (row.content_type === 'territory_weights') {
+        // v1.7117 — content_key is the territory name; data carries
+        // {species:{speciesName:multiplier}}. Stored on the editor's
+        // module-scope `territoryWeights` array, with content_key,
+        // ownership, and visibility metadata preserved for the save path.
+        d.content_key = row.content_key;
+        territoryWeights.push(d);
       }
     });
     // Default: collapse all cycles
@@ -1572,6 +1594,9 @@ function renderList() {
   document.getElementById('btn-new-condition').style.display = (activeTab === 'conditions' && isAdmin()) ? '' : 'none';
   document.getElementById('btn-new-outcome').style.display = (activeTab === 'outcomes' && isAdmin()) ? '' : 'none';
   document.getElementById('btn-new-monster').style.display = (activeTab === 'monsters' && !!uid()) ? '' : 'none';
+  // v1.7117 — New territory weights button. Available to any logged-in author;
+  // sharing semantics (private vs shared vs official) handled at save time.
+  document.getElementById('btn-new-territory').style.display = (activeTab === 'territories' && !!uid()) ? '' : 'none';
   if (activeTab === 'pets')   { renderPetList();   return; }
   if (activeTab === 'items')  { renderItemList();  return; }
   if (activeTab === 'traits') { renderTraitList(); return; }
@@ -1579,6 +1604,7 @@ function renderList() {
   if (activeTab === 'conditions') { renderConditionList(); return; }
   if (activeTab === 'outcomes') { renderOutcomeList(); return; }
   if (activeTab === 'monsters') { renderMonsterList(); return; }
+  if (activeTab === 'territories') { renderTerritoryList(); return; } // v1.7117
   if (activeTab === 'difficulty') { renderDifficultyReference(); return; }
   var el = document.getElementById('list-scroll');
   if (!uid()) {
@@ -3993,6 +4019,286 @@ function showMonsterForm(key) {
 // hit. The matrix itself lives at the top of the file; any tuning edits
 // should happen there and this view will update on next render.
 // ══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
+// TERRITORIES TAB (v1.7117) — Per-territory species weights for the recruit
+// randomizer. The main game's pickSpeciesForTerritory(territory) consults
+// S.territoryWeights[territory].species to bias hireling/adventurer/
+// mercenary species selection. Authors can shape regional demographics
+// (e.g. lots of Dragonborn in Minsaka, Spezzakian Gnomes dominant in
+// Spezzak) by tuning multipliers per species per territory.
+//
+// Data model:
+//   content_type='territory_weights'
+//   content_key=territory name (e.g. 'Minsaka', 'Gojimura', 'Spezzak')
+//   title=territory name (mirrors content_key for list display)
+//   data={species:{speciesName:multiplier, ...}}
+//
+// Multipliers: 1.0 = baseline (uniform random share), 2.0 = double, 0.5 =
+// half, 0 = excluded entirely. Missing entries default to 1.0 in the main
+// game, so authors only need to specify species they want to deviate from
+// the baseline. Empty bucket = uniform random for that territory.
+//
+// Visibility scope: defaults to private at save time. Admin can save as
+// official to ship demographics with the published canon. Sharing widens
+// at save time; the form does not currently surface a scope picker —
+// matches the trait/terrain/condition pattern.
+//
+// Authoring affordance: list view shows all territories from CONTENT_LIB
+// (territoryWeights array) plus territories referenced by cycles that
+// don't yet have a weights row (so authors can spot them and click "+ New
+// Territory" to start tuning).
+// ══════════════════════════════════════════════════
+
+function renderTerritoryList() {
+  var el = document.getElementById('list-scroll');
+  if (!uid()) { el.innerHTML = '<div class="list-empty">Log in to load territories.</div>'; return; }
+  // Union: territories with weights authored, plus territories referenced
+  // by cycles (so authors can see "Gojimura is used by 2 cycles but has
+  // no weights yet — click + Territory to start").
+  var withWeights = {};
+  territoryWeights.forEach(function(tw){
+    if (tw && tw.content_key) withWeights[tw.content_key] = tw;
+  });
+  var fromCycles = {};
+  cycles.forEach(function(c){
+    var t = (c && c.territory || '').trim();
+    if (t && !fromCycles[t]) fromCycles[t] = 0;
+    if (t) fromCycles[t]++;
+  });
+  // Combined list with both sources noted
+  var allKeys = {};
+  Object.keys(withWeights).forEach(function(k){ allKeys[k] = true; });
+  Object.keys(fromCycles).forEach(function(k){ allKeys[k] = true; });
+  var keys = Object.keys(allKeys).sort();
+
+  if (!keys.length) {
+    el.innerHTML = '<div class="list-empty">No territories yet.<br>' +
+      'Either tag a cycle with a territory in the Quests tab, or click "+ Territory" above to author weights for a new territory directly.</div>';
+    return;
+  }
+
+  var html = '<div style="padding:10px 12px;background:rgba(26,107,138,.08);' +
+    'border-bottom:1px solid var(--border2);font-size:.78em;color:var(--ink2);line-height:1.5">' +
+    'Per-territory species weights bias the recruit randomizer (hirelings, adventurers, ' +
+    'mercenaries with Random species). Multiplier 1.0 = baseline; 2.0 = double the chance; ' +
+    '0 = excluded. Missing entries default to 1.0.</div>';
+  keys.forEach(function(name) {
+    var tw = withWeights[name] || null;
+    var cycleCount = fromCycles[name] || 0;
+    var isSel = sel && sel.kind === 'territory' && sel.key === name;
+    var hasWeights = !!tw;
+    var weightCount = hasWeights && tw.species ? Object.keys(tw.species).filter(function(k){
+      var v = tw.species[k];
+      return typeof v === 'number' && v !== 1.0;
+    }).length : 0;
+    var badge;
+    if (hasWeights) {
+      badge = '<span class="qbadge" style="border-color:var(--gold);color:var(--gold)">' +
+        weightCount + ' tuned</span>';
+    } else {
+      badge = '<span class="qbadge">no weights</span>';
+    }
+    var cycleNote = cycleCount ? ('<span style="color:var(--ink2);font-size:.75em;margin-right:6px">' +
+      cycleCount + ' cycle' + (cycleCount === 1 ? '' : 's') + '</span>') : '';
+    html += '<div class="quest-row ' + (isSel ? 'sel' : '') +
+      '" data-sel-territory="' + esc(name) + '">' +
+      '<span class="quest-row-title" style="flex:1">' + esc(name) + '</span>' +
+      cycleNote + badge + '</div>';
+  });
+  el.innerHTML = html;
+  el.onclick = function(e) {
+    var row = e.target.closest('[data-sel-territory]');
+    if (!row) return;
+    var key = row.getAttribute('data-sel-territory');
+    sel = { kind: 'territory', key: key };
+    renderTerritoryList();
+    showTerritoryForm(key);
+  };
+}
+
+function showTerritoryForm(key) {
+  var tw = territoryWeights.filter(function(x){return x.content_key===key;})[0] || null;
+  // territoryWeights from CONTENT_LIB carries _editable; we mirror that
+  // here. If the row exists and is owned by the current user, they can edit;
+  // admins can edit anything. New rows (no tw yet) are always editable.
+  var ownedByUser = !tw || (tw._ownerUserId === uid());
+  var canEdit = isAdmin() || ownedByUser || !tw;
+  var fi = document.getElementById('form-inner');
+
+  // Build inputs for every species in DND_SPECIES. The bucket may have
+  // entries for species not in DND_SPECIES (data drift); we render those
+  // at the bottom in a "stale" group so the author can see and clean up.
+  var bucket = (tw && tw.species && typeof tw.species === 'object') ? tw.species : {};
+  var bucketKeys = Object.keys(bucket);
+  var staleKeys = bucketKeys.filter(function(k){ return DND_SPECIES.indexOf(k) === -1; });
+
+  function speciesRowHtml(sp, isStale) {
+    var raw = bucket[sp];
+    var val = (typeof raw === 'number') ? raw : (typeof raw === 'string' ? parseFloat(raw) : 1.0);
+    if (isNaN(val)) val = 1.0;
+    var isCustom = (val !== 1.0) && !isStale;
+    var labelStyle = isStale
+      ? 'color:var(--ink2);font-style:italic;text-decoration:line-through'
+      : (isCustom ? 'color:var(--gold);font-weight:600' : 'color:var(--ink)');
+    return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border2)">' +
+      '<span style="flex:1;font-size:.88em;' + labelStyle + '">' + esc(sp) + (isStale ? ' (not in current species list)' : '') + '</span>' +
+      (canEdit
+        ? ('<input type="number" step="0.1" min="0" id="tw-sp-' + sp.replace(/[^a-zA-Z0-9]/g, '_') +
+            '" data-species="' + esc(sp) + '" value="' + val.toFixed(2) +
+            '" style="width:64px;padding:3px 5px;font-family:monospace;text-align:right" placeholder="1.00">' +
+          '<button class="btn btn-xs" type="button" data-tw-reset="' + esc(sp) + '" title="Reset to baseline (1.0)" style="padding:2px 6px;font-size:.72em">↺</button>')
+        : ('<span style="font-family:monospace;color:var(--ink2);font-size:.85em">' + val.toFixed(2) + '</span>')
+      ) +
+      '</div>';
+  }
+
+  var speciesRowsHtml = DND_SPECIES.map(function(sp){ return speciesRowHtml(sp, false); }).join('');
+  var staleRowsHtml = staleKeys.length
+    ? '<div style="margin-top:14px;padding-top:8px;border-top:1px dashed var(--border2);font-size:.78em;color:var(--ink2)">' +
+      'Stale entries (species not in the current DND.species list — likely from a pre-rename save). ' +
+      'Their values will not affect recruitment until the species reappears in the list.</div>' +
+      staleKeys.map(function(sp){ return speciesRowHtml(sp, true); }).join('')
+    : '';
+
+  var ownerNote = (tw && tw._ownerUserId)
+    ? ('<div style="font-size:.75em;color:var(--ink2);margin-bottom:8px">' +
+        'Owner: ' + esc(tw._ownerUserId === uid() ? 'you' : tw._ownerUserId) +
+        ' · visibility: ' + esc(tw._visibility || 'private') + '</div>')
+    : '';
+
+  fi.innerHTML =
+    '<h2 style="margin:0 0 6px">' + (tw ? '🌍 ' + esc(key) : '🌍 New Territory') + '</h2>' +
+    ownerNote +
+    '<div class="frow">' +
+      '<label>Territory name <span class="select-hint">(must match the territory string used on quest cycles)</span></label>' +
+      '<input type="text" id="tw-name" value="' + esc(key || '') + '"' + (tw ? ' disabled' : '') + ' placeholder="e.g. Minsaka">' +
+    '</div>' +
+    '<div class="frow">' +
+      '<label>Species multipliers</label>' +
+      '<div style="background:var(--parchment);padding:8px 12px;border:1px solid var(--border2);border-radius:4px">' +
+        '<div style="font-size:.78em;color:var(--ink2);margin-bottom:6px;line-height:1.4">' +
+          'Tune any species&apos;s appearance rate in this territory. Leave at <code>1.00</code> for baseline (uniform random share). ' +
+          'Set to <code>0</code> to exclude entirely. Higher values dominate; lower values become rare.' +
+        '</div>' +
+        speciesRowsHtml +
+        staleRowsHtml +
+      '</div>' +
+    '</div>' +
+    (canEdit ? (
+      '<div style="display:flex;align-items:center;gap:8px;margin-top:14px">' +
+        '<button class="btn btn-save" id="tw-save">Save Territory</button>' +
+        (tw && (isAdmin() || ownedByUser) ? '<button class="btn btn-del" id="tw-del">Delete</button>' : '') +
+        '<button class="btn btn-new" id="tw-reset-all" style="margin-left:auto">↺ Reset all to 1.0</button>' +
+        '<span id="save-flash"></span>' +
+      '</div>'
+    ) : '');
+
+  if (!canEdit) return;
+
+  // Per-species reset buttons
+  fi.querySelectorAll('[data-tw-reset]').forEach(function(btn){
+    btn.onclick = function() {
+      var sp = btn.getAttribute('data-tw-reset');
+      var inpId = 'tw-sp-' + sp.replace(/[^a-zA-Z0-9]/g, '_');
+      var inp = document.getElementById(inpId);
+      if (inp) inp.value = '1.00';
+    };
+  });
+
+  // Reset-all button
+  var resetAll = document.getElementById('tw-reset-all');
+  if (resetAll) {
+    resetAll.onclick = function() {
+      DND_SPECIES.forEach(function(sp){
+        var inpId = 'tw-sp-' + sp.replace(/[^a-zA-Z0-9]/g, '_');
+        var inp = document.getElementById(inpId);
+        if (inp) inp.value = '1.00';
+      });
+    };
+  }
+
+  // Save handler — collect all multipliers, omit values that equal 1.0
+  // (since 1.0 is the implicit default; storing it would just bloat rows).
+  // Stale species values are preserved as-is so admins can clean them up
+  // explicitly if desired.
+  document.getElementById('tw-save').onclick = function() {
+    var name = (document.getElementById('tw-name').value || '').trim();
+    if (!name) { alert('Territory name is required.'); return; }
+    if (!tw && territoryWeights.some(function(x){return x.content_key===name;})) {
+      alert('A territory weights entry for "' + name + '" already exists. Edit it instead.');
+      return;
+    }
+    var newSpecies = {};
+    DND_SPECIES.forEach(function(sp){
+      var inpId = 'tw-sp-' + sp.replace(/[^a-zA-Z0-9]/g, '_');
+      var inp = document.getElementById(inpId);
+      if (!inp) return;
+      var v = parseFloat(inp.value);
+      if (isNaN(v) || v < 0) v = 1.0;
+      // Only persist non-default values to keep rows compact
+      if (v !== 1.0) newSpecies[sp] = v;
+    });
+    // Preserve existing stale entries verbatim
+    staleKeys.forEach(function(sp){
+      newSpecies[sp] = bucket[sp];
+    });
+    // Determine ownership/visibility. Existing rows keep their owner +
+    // visibility unless admin is editing an admin-owned row (admin-owned
+    // is the closest thing this editor has to "official" for territories).
+    // New rows: admin saves as official; non-admin saves as private.
+    var ownerToWrite = tw ? tw._ownerUserId : (isAdmin() ? ADMIN_UID : uid());
+    var visToWrite = tw ? (tw._visibility || 'private') : (isAdmin() ? 'official' : 'private');
+    var row = {
+      content_type: 'territory_weights',
+      content_key:  name,
+      title:        name,
+      owner_user_id: ownerToWrite,
+      visibility:   visToWrite,
+      status:       'published',
+      sort_order:   0,
+      data: { species: newSpecies }
+    };
+    sbUpsert(row).then(function(){
+      flash('✓ Territory saved');
+      return pullData();
+    }).then(function(){
+      sel = { kind: 'territory', key: name };
+      activeTab = 'territories';
+      renderList();
+      showTerritoryForm(name);
+    }).catch(function(err){
+      alert('Save failed: ' + (err.message || err));
+    });
+  };
+
+  // Delete handler — only available on existing rows owned by the user (or admin).
+  if (tw && (isAdmin() || ownedByUser)) {
+    var delBtn = document.getElementById('tw-del');
+    if (delBtn) {
+      delBtn.onclick = function() {
+        if (prompt('Type DELETE to confirm removing the species weights for "' + key + '". ' +
+          'The territory will fall back to uniform random recruitment after the next pull.') !== 'DELETE') {
+          alert('Cancelled.'); return;
+        }
+        var filter = 'content_type=eq.territory_weights' +
+          '&content_key=eq.' + encodeURIComponent(key) +
+          '&owner_user_id=eq.' + encodeURIComponent(tw._ownerUserId || uid());
+        sbDelete(filter).then(function(){
+          flash('✓ Territory weights deleted');
+          return pullData();
+        }).then(function(){
+          sel = null;
+          activeTab = 'territories';
+          renderList();
+          showPlaceholder();
+        }).catch(function(err){
+          alert('Delete failed: ' + (err.message || err));
+        });
+      };
+    }
+  }
+}
+
 function renderDifficultyReference() {
   var el = document.getElementById('list-scroll');
   // List panel stays mostly empty for this tab — the main content goes
@@ -6225,6 +6531,14 @@ document.getElementById('btn-new-monster').onclick = function() {
   sel = { kind: 'monster', key: null };
   activeTab = 'monsters';
   showMonsterForm(null);
+};
+// v1.7117 — New Territory button. Opens an empty territory form so the
+// author can name a new territory and tune its species multipliers.
+document.getElementById('btn-new-territory').onclick = function() {
+  if (!uid()) { alert('Please log in first.'); return; }
+  sel = { kind: 'territory', key: null };
+  activeTab = 'territories';
+  showTerritoryForm(null);
 };
 document.getElementById('btn-new-quest').onclick = function() {
   if (!sel) return;
