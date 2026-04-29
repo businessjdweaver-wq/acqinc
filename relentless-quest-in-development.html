@@ -10966,6 +10966,39 @@ function undoApply(entry){
       if(entry.prevPinned)S.pinned=entry.prevPinned.map(function(p){return clone(p);});
       return true;
     }
+    if(entry.kind==='mergeBreakout'){
+      // v1.7144 — Reverse a sub-task breakout (inverse of mergeAttach).
+      // Find the new top-level task by _tid, splice it out of S.active,
+      // then put the original subtask snapshot back into the parent's
+      // subtasks at its original index (clamped). Restore parent's pct
+      // and the pinned snapshot. If the parent itself was somehow
+      // removed since the breakout, bail — we can't restore the sub
+      // to a parent that no longer exists.
+      if(!S.active)S.active=[];
+      var _bouNewIdx=-1;
+      for(var _boui=0;_boui<S.active.length;_boui++){
+        if(S.active[_boui] && S.active[_boui]._tid===entry.newTid){
+          _bouNewIdx=_boui;
+          break;
+        }
+      }
+      if(_bouNewIdx<0)return false;
+      var _bouParent=_findTaskByTid(entry.parentTid);
+      if(!_bouParent){
+        // Parent gone — refuse to undo rather than leaving an orphan
+        // sub. The new top-level task stays where it is. Returning
+        // false signals to _undo() that this revert couldn't complete.
+        return false;
+      }
+      // Parent exists — proceed with the splice + restore.
+      S.active.splice(_bouNewIdx,1);
+      if(!_bouParent.task.subtasks)_bouParent.task.subtasks=[];
+      var _bouAt=Math.max(0,Math.min(entry.subOrigIdx|0,_bouParent.task.subtasks.length));
+      _bouParent.task.subtasks.splice(_bouAt,0,clone(entry.subSnapshot));
+      _bouParent.task.pct=entry.prevParentPct||0;
+      if(entry.prevPinned)S.pinned=entry.prevPinned.map(function(p){return clone(p);});
+      return true;
+    }
     if(entry.kind==='sgaddmember'){
       // v1.7023 — Reverse a "new split" add. Find the task by _tid and
       // splice it out. If this was the last task in the group, the group
@@ -14634,6 +14667,18 @@ document.getElementById('tlist').addEventListener('click',function(e){
     if(!sub)return;
     var sel=document.getElementById('ov-stmv-dest');
     sel.innerHTML='';
+    // v1.7144 — Breakout option: promote this subtask to a standalone
+    // top-level task (the inverse of v1.7143's attach). Sentinel value
+    // '__breakout__' is checked in the confirm handler. Listed FIRST
+    // (top of dropdown) per spec; visual prefix '\u2934' (upward arrow)
+    // distinguishes it from real task targets. Always available — even
+    // when there are no other tasks (in which case the dropdown only
+    // shows breakout, and the "no other active tasks" alert below is
+    // skipped).
+    var _boOpt=document.createElement('option');
+    _boOpt.value='__breakout__';
+    _boOpt.textContent='\u2934 Break out as its own task';
+    sel.appendChild(_boOpt);
     S.active.forEach(function(t,ti){
       if(ti===i)return; // skip source task
       var opt=document.createElement('option');
@@ -14641,13 +14686,20 @@ document.getElementById('tlist').addEventListener('click',function(e){
       opt.textContent=(ti+1)+'. '+t.name+(t.subtasks&&t.subtasks.length?' ('+t.subtasks.length+' sub-tasks)':'');
       sel.appendChild(opt);
     });
-    if(!sel.options.length){
-      alert('No other active tasks to move this sub-task to. Add another task first.');
-      return;
+    // v1.7144 — alert removed because Breakout always provides a valid
+    // option even when there are no other active tasks. Pre-select the
+    // first task target if any exist (so the default isn't Breakout for
+    // users with multiple tasks who likely want to move, not break out);
+    // otherwise the first option (Breakout) is the only choice anyway.
+    if(sel.options.length>1){
+      sel.selectedIndex=1;
     }
     document.getElementById('ov-stmv-name').textContent='"'+sub.name+'"';
     sel.dataset.srcI=i;
     sel.dataset.srcSi=si;
+    // v1.7144 — sync the confirm-button label to the initial selection
+    // (handler defined below also runs on every change).
+    _syncStmvBtn();
     openOv('ov-stmv');
   } else if(a==='totop'){
     var now4=Date.now();
@@ -30666,16 +30718,133 @@ document.getElementById('ov-pt-confirm').addEventListener('click',function(){
 document.getElementById('ov-stmv-cancel').addEventListener('click',function(){
   closeOv('ov-stmv');
 });
+// v1.7144 — Sync the confirm button label to whichever option is
+// selected. Defined as a global so the open handler can call it once
+// after building the dropdown, and the change listener calls it on
+// every user selection. "Move" reads wrong for the breakout case
+// where nothing is being moved between tasks.
+function _syncStmvBtn(){
+  var _sel=document.getElementById('ov-stmv-dest');
+  var _btn=document.getElementById('ov-stmv-confirm');
+  if(!_sel||!_btn)return;
+  _btn.textContent=(_sel.value==='__breakout__')?'Break out':'Move';
+}
+document.getElementById('ov-stmv-dest').addEventListener('change',_syncStmvBtn);
 document.getElementById('ov-stmv-confirm').addEventListener('click',function(){
   var sel=document.getElementById('ov-stmv-dest');
   var srcI=parseInt(sel.dataset.srcI);
   var srcSi=parseInt(sel.dataset.srcSi);
-  var destI=parseInt(sel.value);
-  if(isNaN(srcI)||isNaN(srcSi)||isNaN(destI))return;
+  if(isNaN(srcI)||isNaN(srcSi))return;
   var srcTask=S.active[srcI];
-  var destTask=S.active[destI];
-  if(!srcTask||!destTask)return;
+  if(!srcTask)return;
   if(!srcTask.subtasks||!srcTask.subtasks[srcSi])return;
+
+  // ─── v1.7144 — Breakout branch ────────────────────────────────────
+  // Promote a subtask to a standalone top-level task. Inverse of the
+  // v1.7143 attach operation. The new task lands immediately after
+  // its former parent in S.active (mirrors the split operation at
+  // line ~12290) so the user sees it adjacent to where it came from.
+  //
+  // What carries over from sub → new task:
+  //   - name, done flag, waiting flag + waitingNote, pct (progress pie)
+  //   - gp inherited from parent (subtasks have no gp of their own;
+  //     the parent's gp is the natural default — user can edit after)
+  //
+  // Pin handling: any sub-pin on this subtask becomes a task-pin on
+  // the new _tid. Inverse of attach's pin retargeting.
+  //
+  // Parent recalc: the parent's pie is recomputed from its remaining
+  // subs (matches the move-to-task path's recalc at line ~30686).
+  // If the parent ends up with zero subs, t.pct is left alone — a
+  // task with no subs uses its own pie independently of any rollup
+  // (per v1.7140's pie/checkbox semantics).
+  if(sel.value==='__breakout__'){
+    // Snapshot parent's pct BEFORE we splice and recalc, so undo can
+    // restore the exact prior value (recalc may produce a different
+    // value than what was there before, e.g. if user manually advanced
+    // the parent pie independent of sub completion).
+    var _boPrevParentPct=srcTask.pct||0;
+    var _boSub=srcTask.subtasks.splice(srcSi,1)[0];
+    if(!_boSub){
+      // Defensive: shouldn't happen because we checked above, but if
+      // somehow the splice returned undefined, bail without further
+      // mutation.
+      return;
+    }
+    // Mint a fresh _tid using the same formula as ensureTaskIds.
+    var _boNewTid='t'+Date.now().toString(36)+Math.random().toString(36).slice(2,8)+'b';
+    // Determine starting pct: if the sub was done, set the pie full
+    // (matches v1.7140's "checkbox checked + pie full" cascade
+    // semantics — keeps the new top-level task visually consistent
+    // with its done state). Otherwise carry the sub's existing pct.
+    var _boPct=(_boSub.done)?6:(_boSub.pct||0);
+    var _boNewTask={
+      _tid:_boNewTid,
+      name:_boSub.name||'',
+      gp:srcTask.gp||5,
+      count:0,
+      pct:_boPct,
+      done:!!_boSub.done,
+      subtasks:[],
+      note:'',
+      desc:'',
+      collapsed:false
+    };
+    if(_boSub.waiting){
+      _boNewTask.waiting=true;
+      if(typeof _boSub.waitingNote==='string')_boNewTask.waitingNote=_boSub.waitingNote;
+    }
+    // Insert immediately after the parent in S.active.
+    S.active.splice(srcI+1,0,_boNewTask);
+    // Recalc parent's pie from remaining subs. If parent now has zero
+    // subs, leave t.pct alone (per design note above).
+    if(srcTask.subtasks.length>0){
+      var _boParentDone=srcTask.subtasks.filter(function(s){return s.done;}).length;
+      srcTask.pct=Math.min(6,Math.round(_boParentDone/srcTask.subtasks.length*6));
+    }
+    // Pin retargeting: sub-pins on _boSub become task-pins on the new
+    // _tid. Snapshot first so undo can restore.
+    if(!S.pinned)S.pinned=[];
+    var _boPinSnapshot=S.pinned.map(function(p){return clone(p);});
+    S.pinned.forEach(function(p){
+      if(p.kind==='sub' && p.tid===srcTask._tid && p.sid===_boSub._sid){
+        p.kind='task';
+        p.tid=_boNewTid;
+        delete p.sid;
+      }
+    });
+    // Dedupe (same pattern as attach at v1.7143)
+    var _boSeen={};
+    S.pinned=S.pinned.filter(function(p){
+      var k=p.kind+'|'+p.tid+'|'+(p.sid||'');
+      if(_boSeen[k])return false;
+      _boSeen[k]=true;return true;
+    });
+    // Undo entry. Restore on revert: splice the new task back out of
+    // S.active (located by _tid), re-insert _boSub into the parent at
+    // its original index, restore parent's pct, restore S.pinned.
+    _pushUndo({
+      kind:'mergeBreakout',
+      newTid:_boNewTid,
+      parentTid:srcTask._tid,
+      subSnapshot:clone(_boSub),
+      subOrigIdx:srcSi,
+      prevParentPct:_boPrevParentPct,
+      prevPinned:_boPinSnapshot,
+      label:'Broke out sub-task "'+(_boSub.name||'')+'" as its own task'
+    });
+    logAdd('Broke out sub-task "'+(_boSub.name||'')+'" \u2192 own task','task');
+    closeOv('ov-stmv');
+    save();
+    renderTasks();
+    return;
+  }
+  // ─── End breakout branch ──────────────────────────────────────────
+
+  var destI=parseInt(sel.value);
+  if(isNaN(destI))return;
+  var destTask=S.active[destI];
+  if(!destTask)return;
   var sub=srcTask.subtasks.splice(srcSi,1)[0];
   if(!destTask.subtasks)destTask.subtasks=[];
   destTask.subtasks.push(sub);
