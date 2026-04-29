@@ -3094,7 +3094,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7136</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7137</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -7779,6 +7779,7 @@ function load(){
   if(typeof migrateSpeciesRenameV1_7114==='function')migrateSpeciesRenameV1_7114(); // v1.7114
   if(typeof migrateMedionToEffigianV1_7118==='function')migrateMedionToEffigianV1_7118(); // v1.7118
   if(typeof migrateInitTerritoryWeightsV1_7116==='function')migrateInitTerritoryWeightsV1_7116(); // v1.7116
+  if(typeof migrateBindOrphanCycleV1_7137==='function')migrateBindOrphanCycleV1_7137(); // v1.7137
   // v1.6995 — dedupe partyAssets that may have accumulated from earlier races.
   // Only runs if the function is already defined (it's defined much later in
   // the file, so this guard handles the ordering during script parse).
@@ -23432,6 +23433,38 @@ function sqSave(){
   if((document.getElementById('ov-q-nosquad').getAttribute('data-ctx')||'')==='cycle'&&P4.cycleSetId){
     openCycleSquadPicker(P4.cycleSetId);
   }
+  // v1.7137 — Capstone first-squad auto-bind. The Root & Branch capstone
+  // trigger (in awardCapstonReward) sets _capstoneFirstSquadBindToSet to
+  // the next cycle's id ('rising-reputation') before opening the squad-
+  // creation modal. After save, we activate that cycle with the just-
+  // created squad bound, then surface a brief explanation to the user.
+  // Only fires when isNew is true (we don't want to re-bind on a rename
+  // edit) and a squad was actually pushed (defensive against the cap
+  // checks above bailing).
+  if(isNew && P4._capstoneFirstSquadBindToSet && S.squads && S.squads.length){
+    var _bindSetId=P4._capstoneFirstSquadBindToSet;
+    P4._capstoneFirstSquadBindToSet=null;
+    var _newSquad=S.squads[S.squads.length-1];
+    if(_newSquad && _newSquad.name){
+      try{
+        cycleSquadMap()[_bindSetId]=_newSquad.name;
+        if(typeof activateQuestCycleSet==='function'){
+          activateQuestCycleSet(_bindSetId);
+        }
+        save();
+        if(typeof renderAdv==='function')renderAdv();
+        if(typeof renderCycleMapCards==='function')renderCycleMapCards();
+        var _setName=((QUESTSETS||[]).filter(function(s){return s.id===_bindSetId;})[0]||{}).name||_bindSetId;
+        logAdd('🎯 First squad "'+_newSquad.name+'" assigned to '+_setName+'.','adv');
+        setTimeout(function(){
+          alert('🎯 Your squad "'+_newSquad.name+'" is now on '+_setName+'!\n\n'+
+            'You can reassign squads to cycles anytime from the Quest Map → "Activate Cycle" button.');
+        },200);
+      }catch(_e){
+        console.warn('[v1.7137 capstone bind]',_e);
+      }
+    }
+  }
 }
 
 function sqUpdateMemberCount(){
@@ -26467,6 +26500,84 @@ function awardCapstonReward(set){
   // Force immediate push so bag persists to Supabase before page reload
   save();
   if(uid())setTimeout(function(){sbPush(false);},200);
+
+  // v1.7137 — First-squad onboarding trigger. The Root & Branch capstone
+  // grants the Longinus Bag of Holding, whose mechanical purpose is to
+  // enable squad creation. This trigger ties that mechanical reward to a
+  // narrative beat: when the user finishes Root & Branch for the first
+  // time, walk them through creating their first squad and auto-bind it
+  // to the next cycle (Rising Reputation).
+  //
+  // Idempotent: gated on S.settings._firstSquadOnboarded, set the moment
+  // we open the modal (NOT when it closes — that way a refresh during
+  // the modal doesn't re-fire). Already-cleared on subsequent calls.
+  //
+  // Skip cases:
+  //   - Not the Root & Branch capstone (any other set hits awardCapstonReward
+  //     too — only the first-cycle one drives this onboarding moment).
+  //   - User already has at least one squad (they're past onboarding;
+  //     just auto-bind their first squad to rising-reputation if no
+  //     binding exists yet, and skip the modal).
+  //   - _firstSquadOnboarded already true (this is a re-run, e.g. after
+  //     a cycle reset that re-awards the capstone — should not re-prompt).
+  //
+  // Defensive: every call is wrapped in try/catch so a UI failure in the
+  // onboarding flow can't disrupt the capstone reward grant itself.
+  try{
+    if(set && set.id==='root-and-branch'){
+      if(!S.settings)S.settings={};
+      if(!S.settings._firstSquadOnboarded){
+        S.settings._firstSquadOnboarded=true;
+        var _nextCycleId='rising-reputation';
+        var _nextCycleName=((QUESTSETS||[]).filter(function(s){return s.id===_nextCycleId;})[0]||{}).name||'Rising Reputation';
+        if((S.squads||[]).length>0){
+          // User already created a squad (explored the UI before completing
+          // Root & Branch). Don't open the creation modal; just auto-bind
+          // their first squad to the next cycle if no binding exists yet.
+          if(!cycleSquadMap()[_nextCycleId]){
+            var _existing=S.squads[0];
+            if(_existing && _existing.name){
+              cycleSquadMap()[_nextCycleId]=_existing.name;
+              activateQuestCycleSet(_nextCycleId);
+              save();
+              if(typeof renderAdv==='function')renderAdv();
+              if(typeof renderCycleMapCards==='function')renderCycleMapCards();
+              logAdd('🎯 Squad "'+_existing.name+'" assigned to '+_nextCycleName+' (first cycle activation).','adv');
+              setTimeout(function(){
+                alert('⚔ Your squad "'+_existing.name+'" has been assigned to '+_nextCycleName+'!\n\n'+
+                  'The Longinus Carpetbag of Holding lets each squad share gear in the field. '+
+                  'Manage assignments from the Quest Map → "Activate Cycle" button.');
+              },300);
+            }
+          }
+        } else {
+          // Standard onboarding: walk the user through creating their
+          // first squad. The auto-bind happens in sqSave's tail when it
+          // sees _capstoneFirstSquadBindToSet set.
+          P4._capstoneFirstSquadBindToSet=_nextCycleId;
+          // Slight delay so the capstone-reward alert has been dismissed
+          // and the user's mental focus is ready for the next prompt.
+          setTimeout(function(){
+            try{
+              alert('🧳 The Longinus Carpetbag of Holding is yours!\n\n'+
+                'This artifact lets you organize your party into SQUADS — small teams that share gear and work together on quests.\n\n'+
+                'Let\'s create your first squad now. They\'ll automatically take on '+_nextCycleName+', your next quest cycle.');
+              if(typeof openSquadNew==='function'){
+                openSquadNew();
+              }
+            }catch(_e){
+              console.warn('[v1.7137 capstone trigger inner]',_e);
+              // Reset the flag so a future attempt can retry
+              if(S.settings)S.settings._firstSquadOnboarded=false;
+              P4._capstoneFirstSquadBindToSet=null;
+            }
+          },400);
+        }
+      }
+    }
+  }catch(_e){
+    console.warn('[v1.7137 capstone trigger]',_e);
+  }
 }
 
 /* ── Quest Log ── */
@@ -27174,6 +27285,25 @@ document.getElementById('ov-cycle-squad-yes').addEventListener('click',function(
   P4.cycleSetId=null;
   save();
   renderCycleMapCards();
+  // v1.7137 — If the user reached this picker via the qassign gate (they
+  // tapped a quest while no squad was bound), resume by re-firing the
+  // assignment-modal open for the quest they were trying to reach.
+  if(typeof P4._pendingQassignAfterBind==='number'){
+    var _resumeQi=P4._pendingQassignAfterBind;
+    P4._pendingQassignAfterBind=null;
+    setTimeout(function(){
+      // Build a synthetic click on the right qassign button if we can find
+      // it on the rendered Adventures page; otherwise fall back to a
+      // direct call by simulating the click target.
+      var _btn=document.querySelector('[data-a="qassign"][data-qi="'+_resumeQi+'"]');
+      if(_btn){_btn.click();return;}
+      // Button isn't currently visible (e.g. the cycle's quest list is
+      // collapsed). Render the Adventures page so the user lands somewhere
+      // reasonable, and surface a hint.
+      if(typeof navTo==='function')navTo('adventure');
+      if(typeof renderAdv==='function')renderAdv();
+    },120);
+  }
 });
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -28245,6 +28375,33 @@ var bc=e.target.closest('[data-a="qcollect"]');
   P4.quest=qi2;
   var q2=questByIdx(set,qi2);if(!q2)return;
   var pr=q2.pre;
+
+  // v1.7137 — Squad-bind gate. Block opening the assignment modal when the
+  // active cycle has no squad bound AND at least one squad exists. Without
+  // this gate, the qddRender pool filter (line ~35509) falls through to
+  // "no squad — show all party," exposing HQ characters in the assignee
+  // pool and letting in-quest hires land in HQ instead of the active
+  // squad. Root cause was test-account restart2@: cycle activated without
+  // ever passing through ov-cycle-squad's bind step.
+  //
+  // First-run carve-out: when S.squads is empty, the user is in pre-squad
+  // onboarding (Root & Branch) and the legacy fallback is correct. The
+  // capstone trigger at end of Root & Branch is the moment they exit this
+  // carve-out by creating their first squad.
+  //
+  // We re-route into openCycleSquadPicker rather than blocking with an
+  // alert so the fix is two taps instead of "go figure it out from the
+  // Quest Map."
+  if(qs.setId && (S.squads||[]).length>0){
+    var _curBind=activeCycleSquadName();
+    if(!_curBind){
+      // Stash the quest the user was trying to open — after they bind a
+      // squad, we'll auto-resume by re-firing this same handler.
+      P4._pendingQassignAfterBind = qi2;
+      openCycleSquadPicker(qs.setId);
+      return;
+    }
+  }
 
   document.getElementById('ov-q-title').textContent=q2.title;
   document.getElementById('ov-q-desc').textContent=q2.desc;
@@ -32909,7 +33066,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7136';
+var RQ_CLIENT_VERSION='v1.7137';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -34699,6 +34856,7 @@ function sbPull(manual){
   if(typeof migrateSpeciesRenameV1_7114==='function')migrateSpeciesRenameV1_7114(); // v1.7114
   if(typeof migrateMedionToEffigianV1_7118==='function')migrateMedionToEffigianV1_7118(); // v1.7118
   if(typeof migrateInitTerritoryWeightsV1_7116==='function')migrateInitTerritoryWeightsV1_7116(); // v1.7116
+  if(typeof migrateBindOrphanCycleV1_7137==='function')migrateBindOrphanCycleV1_7137(); // v1.7137
           setGold();applySettings();renderTasks();renderSettings();renderAdv();
           renderParty();renderArchive();renderLog();updateQpDisplay();
           // v1.7052 — log code-session pull_ok with diff
@@ -35368,7 +35526,28 @@ function sbPull(manual){
       };
       // Proper columns for cycle history/squads
       S.questCycles=qc.quest_cycles_history||asgn._questCyclesHistory||S.questCycles||[];
-      S.questCycleSquads=qc.quest_cycle_squads||asgn._questCycleSquads||S.questCycleSquads||{};
+      // v1.7137 — Defensive merge for quest_cycle_squads. The previous `||`
+      // chain treated an empty object `{}` as truthy, so a DB row with
+      // `quest_cycle_squads: {}` (the corrupted-state shape) would clobber a
+      // populated in-memory map on every pull, persisting the corruption
+      // across sessions. Now we accept the server payload only when it has
+      // at least one own property; otherwise we keep whatever was already in
+      // memory (or fall through to the legacy backup blob, then default).
+      // Symptom this fixed: in test-account `restart2@`, the cycle-to-squad
+      // binding for "rising-reputation" stayed empty across reloads even
+      // after manual repair, because the next sbPull reset it to {}.
+      var _qcs = qc.quest_cycle_squads;
+      var _qcsHasData = _qcs && typeof _qcs === 'object' && !Array.isArray(_qcs)
+                       && Object.keys(_qcs).length > 0;
+      if(_qcsHasData){
+        S.questCycleSquads = _qcs;
+      } else if(asgn && asgn._questCycleSquads
+                && typeof asgn._questCycleSquads === 'object'
+                && Object.keys(asgn._questCycleSquads).length > 0){
+        S.questCycleSquads = asgn._questCycleSquads;
+      } else {
+        S.questCycleSquads = S.questCycleSquads || {};
+      }
       console.log('[QuestPull] restored pending:',JSON.stringify(S.questState.pending));
     } else if(backupQuestState){
       S.questState=Object.assign({},S.questState||{},{
@@ -38551,6 +38730,7 @@ function initSession(pullFromCloud){
       if(typeof migrateSpeciesRenameV1_7114==='function')migrateSpeciesRenameV1_7114(); // v1.7114
       if(typeof migrateMedionToEffigianV1_7118==='function')migrateMedionToEffigianV1_7118(); // v1.7118
       if(typeof migrateInitTerritoryWeightsV1_7116==='function')migrateInitTerritoryWeightsV1_7116(); // v1.7116
+      if(typeof migrateBindOrphanCycleV1_7137==='function')migrateBindOrphanCycleV1_7137(); // v1.7137
       // v1.6901 — backfill ownedItems on existing NPC contacts so their gear
       // shows as 🔒 personal in the char modal Gear tab (matching the rule
       // that new capstone-reward contacts get personal-marked inventory).
@@ -41659,6 +41839,67 @@ function pickSpeciesForTerritory(territory){
 function migrateInitTerritoryWeightsV1_7116(){
   if(!S.territoryWeights||typeof S.territoryWeights!=='object'){
     S.territoryWeights={};
+  }
+}
+
+// v1.7137 — Heal "orphan active cycle" state: an active quest cycle
+// (qs.setId set) with NO squad bound in S.questCycleSquads, despite at
+// least one squad existing in S.squads. This was the corrupted state
+// observed in test-account restart2@ (see DB diagnostic: row had
+// quest_cycle_squads:{} for set_id 'rising-reputation' even though the
+// user had created "Gallow's Grasp"). The original cause was likely an
+// activate-without-bind path; the v1.7137 squad-bind gate at the quest
+// assignment entry point (line ~22922) prevents new occurrences, but
+// existing saves still need to be repaired on next load.
+//
+// Heal logic:
+//   - If qs.setId is empty → nothing active, nothing to heal.
+//   - If qs.setId already has a binding → nothing to heal.
+//   - If S.squads is empty → no candidate squad; let the v1.7137 gate
+//     (or capstone trigger, for first-run users) handle it later.
+//   - If exactly one squad exists → auto-bind it. Unambiguous repair.
+//   - If multiple squads exist → take the first squad whose homeTerritory
+//     matches the active cycle's territory (when known), else the first
+//     squad. Log loudly so the user can see the heal happened. They can
+//     reassign via the Quest Map → Activate Cycle picker if wrong.
+//
+// Idempotent (early-returns when already bound). No sentinel flag —
+// the early-returns make a sentinel redundant and a flag would just
+// be one more piece of state to maintain.
+function migrateBindOrphanCycleV1_7137(){
+  if(!S.questState||!S.questState.setId)return;
+  var setId=S.questState.setId;
+  if(!S.questCycleSquads||typeof S.questCycleSquads!=='object')S.questCycleSquads={};
+  var existing=S.questCycleSquads[setId];
+  // Already bound (string, non-empty)? Nothing to do.
+  if(typeof existing==='string'&&existing.trim())return;
+  // Array values are grind keys; this function only heals cycle keys.
+  if(Array.isArray(existing))return;
+  var squads=(S.squads||[]).filter(function(sq){return sq&&sq.name;});
+  if(!squads.length)return; // first-run user with no squads yet — gate handles it
+  // Resolve the active cycle's territory if the helper is available.
+  // Imported from territoryForCycleSetId, defined elsewhere in this file.
+  var activeTerr='';
+  if(typeof territoryForCycleSetId==='function'){
+    try{activeTerr=territoryForCycleSetId(setId)||'';}catch(e){}
+  }
+  var pick=null;
+  if(squads.length===1){
+    pick=squads[0];
+  } else if(activeTerr){
+    pick=squads.filter(function(sq){return sq.homeTerritory===activeTerr;})[0]||squads[0];
+  } else {
+    pick=squads[0];
+  }
+  if(!pick)return;
+  S.questCycleSquads[setId]=pick.name;
+  // Log via logAdd if available, console otherwise. The log helps the user
+  // discover the heal — it's not silent state mutation.
+  var _msg='Auto-bound squad "'+pick.name+'" to active cycle (was unbound after upgrade or state corruption). You can change this from the Quest Map → Activate Cycle.';
+  if(typeof logAdd==='function'){
+    try{logAdd('⚙ '+_msg,'adv');}catch(e){console.log('[v1.7137 heal] '+_msg);}
+  } else {
+    console.log('[v1.7137 heal] '+_msg);
   }
 }
 
