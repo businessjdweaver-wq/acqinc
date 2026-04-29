@@ -3103,7 +3103,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7139</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7147</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4067,7 +4067,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7146
+      Version 1.7147
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -4985,6 +4985,14 @@ body.dev-active #app{margin-top:36px;}
     <button type="button" id="ov-charpeek-prev" aria-label="Previous squadmate" title="Previous squadmate (swipe right)" style="display:none;position:absolute;top:50%;left:4px;transform:translateY(-50%);background:rgba(26,107,138,.12);border:1px solid var(--teal);color:var(--teal);border-radius:50%;width:30px;height:30px;padding:0;font-size:1em;line-height:1;cursor:pointer;z-index:2">◀</button>
     <button type="button" id="ov-charpeek-next" aria-label="Next squadmate" title="Next squadmate (swipe left)" style="display:none;position:absolute;top:50%;right:4px;transform:translateY(-50%);background:rgba(26,107,138,.12);border:1px solid var(--teal);color:var(--teal);border-radius:50%;width:30px;height:30px;padding:0;font-size:1em;line-height:1;cursor:pointer;z-index:2">▶</button>
     <div id="ov-charpeek-header-inner" style="padding:0 38px;text-align:center">
+      <!-- v1.7147 — Specialty banner. Only visible when effectiveSpecialty(c)
+           returns a non-null value. Populated by _renderCharpeekHeader. The
+           banner sits ABOVE the title since the user identified specialty
+           as "special enough" to live at the top. Style is gold-on-parchment
+           with a subtle border so it reads as a granted badge rather than
+           a clickable control. Item-bestowed specialties get a distinct
+           teal border to signal "via item" vs permanent. -->
+      <div id="ov-charpeek-specialty-banner" style="display:none;font-family:'Cinzel',serif;font-size:.82em;font-weight:700;letter-spacing:.05em;color:var(--gold-dark);background:rgba(201,146,42,.12);border:1px solid var(--gold);border-radius:12px;padding:3px 10px;margin:0 auto 6px;display:none;width:fit-content;max-width:100%;line-height:1.2"></div>
       <h3 id="ov-charpeek-title" style="margin:0;font-family:'Cinzel',serif;font-size:1.35em">🧾 Character</h3>
       <div id="ov-charpeek-subtitle" style="font-size:.82em;color:var(--ink-light);margin-top:3px"></div>
     </div>
@@ -5788,12 +5796,13 @@ function _itemProficiencyLabel(itemName){
 
 // ════════════════════════════════════════════════════════════════════
 // v1.7146 — Class-restriction layer (idea (3) from the v1.7146 spec)
+// v1.7147 — Specialty layer (idea (4) — formerly "subclass" stub)
 // ════════════════════════════════════════════════════════════════════
 // Items loaded from the Supabase items table may carry a
 // restrictedToClasses array (or null/undefined for unrestricted). When
 // present, only characters whose c.cls is in the array — or whose
-// subclass grants an exception (via _charSubclassGrantsAccess) — can use
-// the item to cover a quest prereq.
+// specialty grants an exception (via _charSpecialtyGrantsAccess) — can
+// use the item to cover a quest prereq.
 //
 // Restriction lookup walks the live merged item registries (GEAR,
 // VEHICLES, BUILDINGS) which are populated by applyDB merging built-in
@@ -5825,20 +5834,106 @@ function _itemRestrictedToClasses(itemName){
   return null;
 }
 
-// Subclass-exception hook. (4) will populate a SUBCLASS_GRANTS table
-// keyed by subclass name → list of item names the subclass grants
-// access to. For now this stub always returns false; the gate code
-// path is wired so (4) drops in without rewrites.
-function _charSubclassGrantsAccess(c,itemName){
+// ════════════════════════════════════════════════════════════════════
+// v1.7147 — Specialty registry
+// ════════════════════════════════════════════════════════════════════
+// Departing from D&D 5e subclass conventions, "specialties" in this
+// game are class-agnostic, broadly-applicable Venn-diagram-style tags
+// (closer to Daggerheart domains than to PHB subclasses). A character
+// has at most one specialty at a time. The specialty broadens what
+// items they can use — items normally locked to specific classes (via
+// restrictedToClasses) can be used by any character carrying a
+// specialty whose grantsItemAccess includes the item name.
+//
+// Three grant paths populate c.specialty or contribute live overlays:
+//   1. Dev-tool assignment (character peek modal, dev mode only) →
+//      writes c.specialty directly. Permanent unless dev clears.
+//   2. Capstone reward (capstoneReward.type === 'specialty') →
+//      writes c.specialty on the chosen squad member at award time.
+//      Permanent (does not overwrite an existing specialty — locked).
+//   3. Item bestow (effect_type 'specialty_grant') → live-computed
+//      overlay only; doesn't write c.specialty. While the item is in
+//      the character's inv, they gain the specialty's grants. Removing
+//      the item reverts to whatever was permanently granted (or null).
+//
+// Permanence rule: c.specialty (permanent) wins. If a character has
+// c.specialty='Texere' AND holds an item that bestows a different
+// specialty, the item bestow is ignored for that character. The gate
+// helper effectiveSpecialty(c) implements this resolution.
+
+var SPECIALTIES={
+  'Texere':{
+    label:'Texere',
+    desc:'Bound by oath or blood to a Texere dragon, the bearer channels weave-magic through draconic conduits. Dragon-touched items, scales, and runic foci respond to their hand even when convention would deny them.',
+    // Populated as you author dragon-touched items in the quest editor.
+    // Each entry is the exact item name the specialty unlocks regardless
+    // of restrictedToClasses. Empty on first deploy.
+    grantsItemAccess:[]
+  }
+};
+
+// Returns the specialty label currently effective for this character,
+// or null if none. Resolution order:
+//   1. c.specialty (permanent grant from dev/capstone) — always wins
+//   2. First specialty bestowed by an item in c.inv (effect_type
+//      'specialty_grant', target = specialty key)
+// Item bestowal is per-character only (Q1 design decision): the item
+// has to be in THIS character's inv, not in the franchise pool.
+// Returns the key (e.g. 'Texere') so callers can index SPECIALTIES.
+function effectiveSpecialty(c){
+  if(!c)return null;
+  if(c.specialty&&SPECIALTIES[c.specialty])return c.specialty;
+  // Walk character's inventory looking for a specialty_grant effect.
+  // Items here are flat strings; the effect lookup goes through the
+  // live item registries to find the item object that has effects.
+  var inv=(c.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;});
+  if(!inv.length)return null;
+  var registries=[
+    typeof GEAR!=='undefined'?GEAR:null,
+    typeof VEHICLES!=='undefined'?VEHICLES:null,
+    typeof BUILDINGS!=='undefined'?BUILDINGS:null
+  ];
+  for(var i=0;i<inv.length;i++){
+    var nm=inv[i];
+    for(var r=0;r<registries.length;r++){
+      var reg=registries[r];
+      if(!reg||!reg.length)continue;
+      for(var j=0;j<reg.length;j++){
+        var it=reg[j];
+        if(!it||it.name!==nm)continue;
+        // Item has effects array (loadItemsFromDB) and/or legacy effect
+        // object. Check both for a specialty_grant.
+        if(Array.isArray(it.effects)){
+          for(var e=0;e<it.effects.length;e++){
+            var fx=it.effects[e];
+            if(fx&&fx.effect_type==='specialty_grant'&&fx.target&&SPECIALTIES[fx.target]){
+              return fx.target;
+            }
+          }
+        }
+        if(it.effect&&it.effect.grantSpecialty&&SPECIALTIES[it.effect.grantSpecialty]){
+          return it.effect.grantSpecialty;
+        }
+        break; // matched item by name; don't keep walking same registry
+      }
+    }
+  }
+  return null;
+}
+
+// Specialty-exception hook called by _charCanUseItemByClass. Returns
+// true when the character's effective specialty includes itemName in
+// its grantsItemAccess list. Honors the per-character item-bestow rule
+// because effectiveSpecialty(c) reads only c.inv, not the franchise.
+function _charSpecialtyGrantsAccess(c,itemName){
   if(!c||!itemName)return false;
-  if(typeof SUBCLASS_GRANTS==='undefined')return false;
-  var sub=c.subclass;
-  if(!sub||!SUBCLASS_GRANTS[sub])return false;
-  var grants=SUBCLASS_GRANTS[sub].grantsItemAccess||[];
+  var sp=effectiveSpecialty(c);
+  if(!sp||!SPECIALTIES[sp])return false;
+  var grants=SPECIALTIES[sp].grantsItemAccess||[];
   return grants.indexOf(itemName)!==-1;
 }
 
-// Returns true when the character's class (or subclass exception) is
+// Returns true when the character's class (or specialty exception) is
 // permitted to use this item under the prereq-eligible-classes gate.
 // Items with no restriction always return true.
 function _charCanUseItemByClass(c,itemName){
@@ -5846,7 +5941,7 @@ function _charCanUseItemByClass(c,itemName){
   var restricted=_itemRestrictedToClasses(itemName);
   if(!restricted)return true; // unrestricted
   if(c.cls&&restricted.indexOf(c.cls)!==-1)return true;
-  if(_charSubclassGrantsAccess(c,itemName))return true;
+  if(_charSpecialtyGrantsAccess(c,itemName))return true;
   return false;
 }
 
@@ -16635,6 +16730,12 @@ window.rqPersistenceTest=function(){
     // _resolveGradClass and must round-trip across devices so the preview
     // and the actual graduation always agree.
     if(c.gradClass)_statsWithMeta._gradClass=c.gradClass;
+    // v1.7147 — Specialty piggybacked on stats meta using the same
+    // reserved-underscore-key pattern as _homeTerritory/_statsClass/_gradClass.
+    // Avoids a Supabase column migration. Only set when present so legacy
+    // saves and characters without a specialty round-trip cleanly (no
+    // empty key clutter on every character row).
+    if(c.specialty)_statsWithMeta._specialty=c.specialty;
     return {
       name:c.name,species:c.species||'',cls:c.cls||'',bg:c.bg||'',
       rel:c.rel||'',age:c.age||0,height:c.height||'',weight:c.weight||'',
@@ -16732,18 +16833,22 @@ window.rqPersistenceTest=function(){
     var _cHomeTerritory='';
     var _cStatsClass='';
     var _cGradClass='';
+    var _cSpecialty=''; // v1.7147
     var _rawStats=row.stats||{};
     var _cleanStats=_rawStats;
     if(_rawStats&&typeof _rawStats==='object'&&
-       (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined)){
+       (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined||_rawStats._specialty!==undefined)){
       _cleanStats=Object.assign({},_rawStats);
       if(typeof _cleanStats._homeTerritory==='string'&&_cleanStats._homeTerritory)_cHomeTerritory=_cleanStats._homeTerritory;
       if(typeof _cleanStats._statsClass==='string'&&_cleanStats._statsClass)_cStatsClass=_cleanStats._statsClass;
       // v1.7113 — Lift _gradClass off the stats blob and onto c.gradClass.
       if(typeof _cleanStats._gradClass==='string'&&_cleanStats._gradClass)_cGradClass=_cleanStats._gradClass;
+      // v1.7147 — Lift _specialty off the stats blob and onto c.specialty.
+      if(typeof _cleanStats._specialty==='string'&&_cleanStats._specialty)_cSpecialty=_cleanStats._specialty;
       delete _cleanStats._homeTerritory;
       delete _cleanStats._statsClass;
       delete _cleanStats._gradClass;
+      delete _cleanStats._specialty;
     }
     var c={
       name:row.name,species:row.species,cls:row.cls,bg:row.bg,rel:row.rel,
@@ -16761,6 +16866,7 @@ window.rqPersistenceTest=function(){
     if(_cHomeTerritory)c.homeTerritory=_cHomeTerritory;
     if(_cStatsClass)c.statsClass=_cStatsClass;
     if(_cGradClass)c.gradClass=_cGradClass;
+    if(_cSpecialty)c.specialty=_cSpecialty; // v1.7147
     return c;
   }
   function _deserializeSquadRow(row,party){
@@ -16840,7 +16946,7 @@ window.rqPersistenceTest=function(){
     'hireling','formerHireling','premium','skills','tools','lang','weapons','inv',
     'stats','xp','dtProgress','downtimeBadges','coinPurse','contact','contactBg',
     'exoticTrait','ownedItems','firstHire','questsRemaining','questQuota',
-    'homeTerritory','statsClass'];
+    'homeTerritory','statsClass','specialty']; // v1.7147 added specialty
   (_before.party||[]).forEach(function(c,ci){
     if(!c)return;
     var rebuilt=_partyRebuilt[ci];
@@ -19340,6 +19446,60 @@ function _renderCharpeekHeader(){
   var c=S.party[_charpeekCi];if(!c)return;
   var titleEl=document.getElementById('ov-charpeek-title');
   var subEl=document.getElementById('ov-charpeek-subtitle');
+  // v1.7147 — Specialty banner. Computed via effectiveSpecialty(c) which
+  // resolves the permanent c.specialty first, then falls back to any
+  // item-bestowed specialty in the character's inventory. We distinguish
+  // the two visually: permanent grants get the gold border (full opacity);
+  // item-bestowed grants get a teal border + a "via {item}" tagline so the
+  // player understands the specialty is conditional on continued possession.
+  var bannerEl=document.getElementById('ov-charpeek-specialty-banner');
+  if(bannerEl){
+    var spKey=(typeof effectiveSpecialty==='function')?effectiveSpecialty(c):null;
+    if(spKey&&SPECIALTIES[spKey]){
+      var spDef=SPECIALTIES[spKey];
+      var isPermanent=(c.specialty===spKey);
+      // Find the bestowing item if this is an item-bestowed specialty.
+      var viaItem='';
+      if(!isPermanent){
+        var inv=(c.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;});
+        var registries=[
+          typeof GEAR!=='undefined'?GEAR:null,
+          typeof VEHICLES!=='undefined'?VEHICLES:null,
+          typeof BUILDINGS!=='undefined'?BUILDINGS:null
+        ];
+        outer: for(var i=0;i<inv.length;i++){
+          var nm=inv[i];
+          for(var r=0;r<registries.length;r++){
+            var reg=registries[r];if(!reg)continue;
+            for(var j=0;j<reg.length;j++){
+              var it=reg[j];
+              if(!it||it.name!==nm)continue;
+              var matched=false;
+              if(Array.isArray(it.effects)){
+                matched=it.effects.some(function(fx){return fx&&fx.effect_type==='specialty_grant'&&fx.target===spKey;});
+              }
+              if(!matched&&it.effect&&it.effect.grantSpecialty===spKey)matched=true;
+              if(matched){viaItem=nm;break outer;}
+              break;
+            }
+          }
+        }
+      }
+      var borderCol=isPermanent?'var(--gold)':'var(--teal)';
+      var bgCol=isPermanent?'rgba(201,146,42,.12)':'rgba(26,107,138,.10)';
+      var fgCol=isPermanent?'var(--gold-dark)':'var(--teal)';
+      var labelHtml='\u2728 '+esc(spDef.label||spKey);
+      if(!isPermanent&&viaItem){
+        labelHtml+=' <span style="font-weight:400;font-style:italic;opacity:.85">via '+esc(viaItem)+'</span>';
+      }
+      bannerEl.innerHTML=labelHtml;
+      bannerEl.title=spDef.desc||'';
+      bannerEl.style.cssText='font-family:\'Cinzel\',serif;font-size:.82em;font-weight:700;letter-spacing:.05em;color:'+fgCol+';background:'+bgCol+';border:1px solid '+borderCol+';border-radius:12px;padding:3px 10px;margin:0 auto 6px;display:inline-block;width:fit-content;max-width:100%;line-height:1.2';
+    } else {
+      bannerEl.style.display='none';
+      bannerEl.innerHTML='';
+    }
+  }
   if(titleEl)titleEl.textContent='🧾 '+(c.name||'');
   if(subEl){
     var sqs=(S.squads||[]).filter(function(s){return s.memberIdxs&&s.memberIdxs.indexOf(_charpeekCi)!==-1;}).map(function(s){return s.name;});
@@ -19508,6 +19668,29 @@ function _cpkOverviewHtml(c,ci){
       }())+
     '</div>'
   );
+  // v1.7147 — Dev-only specialty assigner. Visible only in dev mode.
+  // Lets you assign or clear c.specialty without going through a quest
+  // capstone or item bestow. Permanent grant once set (the lock rule
+  // means you'll see the badge persist even without an item). The
+  // dropdown lists EVERY specialty in SPECIALTIES regardless of class —
+  // specialties are class-agnostic in this design.
+  if(typeof isDevModeActive==='function'&&isDevModeActive()){
+    var spKeys=Object.keys(SPECIALTIES||{});
+    var curSp=c.specialty||'';
+    var optsHtml='<option value="">— none —</option>'+
+      spKeys.map(function(k){
+        var sel=(k===curSp)?' selected':'';
+        return '<option value="'+esc(k)+'"'+sel+'>'+esc((SPECIALTIES[k].label||k))+'</option>';
+      }).join('');
+    parts.push(
+      '<div style="margin-bottom:10px;padding:8px 10px;background:rgba(26,107,138,.06);border:1px dashed var(--teal);border-radius:6px">'+
+        '<div style="font-family:\'Cinzel\',serif;font-size:.7em;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">\uD83D\uDD27 Dev: Specialty</div>'+
+        '<select id="cpk-dev-specialty" data-ci="'+ci+'" style="width:100%;padding:5px 7px;font-size:.85em;border:1px solid var(--teal);border-radius:4px;background:#fff">'+optsHtml+'</select>'+
+        (curSp?'<div style="font-size:.7em;color:var(--ink-light);margin-top:4px;font-style:italic">Currently granted permanently. Change to "— none —" to revoke.</div>':
+               '<div style="font-size:.7em;color:var(--ink-light);margin-top:4px;font-style:italic">Pick a specialty to grant permanently.</div>')+
+      '</div>'
+    );
+  }
   // Role / status badges — mirrors what the old party card displayed.
   // Only renders when at least one flag is true, so the row stays tidy.
   (function(){
@@ -21063,8 +21246,24 @@ function renderParty(){
             var _xferBtn=_isBusy?
               '<button type="button" class="prr-xfer is-locked" disabled title="'+esc(_xferTitle)+'">\uD83D\uDD12</button>':
               '<button type="button" class="prr-xfer" data-a="char-transfer" data-ci="'+ci+'" title="'+esc(_xferTitle)+'">\u21C4</button>';
+            // v1.7147 — Specialty chip. Renders inline next to the name
+            // button when the character has an effective specialty (permanent
+            // c.specialty OR an item-bestowed one). Compact ✨ pill — gold
+            // for permanent grants, teal for item-bestowed. Click is no-op
+            // here; full detail surfaces in the character peek banner.
+            var _spChipHtml='';
+            if(typeof effectiveSpecialty==='function'){
+              var _spKey=effectiveSpecialty(c);
+              if(_spKey&&SPECIALTIES[_spKey]){
+                var _spIsPerm=(c.specialty===_spKey);
+                var _spBorder=_spIsPerm?'var(--gold)':'var(--teal)';
+                var _spBg=_spIsPerm?'rgba(201,146,42,.12)':'rgba(26,107,138,.10)';
+                var _spFg=_spIsPerm?'var(--gold-dark)':'var(--teal)';
+                _spChipHtml='<span class="prr-specialty" title="Specialty: '+esc(SPECIALTIES[_spKey].label||_spKey)+(_spIsPerm?' (permanent)':' (via item — see character peek)')+'" style="display:inline-block;font-family:\'Cinzel\',serif;font-size:.62em;font-weight:700;letter-spacing:.04em;color:'+_spFg+';background:'+_spBg+';border:1px solid '+_spBorder+';border-radius:8px;padding:0 5px;margin-left:5px;vertical-align:middle;line-height:1.4">\u2728 '+esc(SPECIALTIES[_spKey].label||_spKey)+'</span>';
+              }
+            }
             return '<div class="party-roster-row" style="grid-template-columns:'+_gridTemplate+'">'+
-              '<button type="button" class="prr-name" data-a="charpeek" data-name="'+esc(c.name||'')+'" title="View '+esc(c.name||'')+' details">'+esc(c.name||'')+'</button>'+
+              '<button type="button" class="prr-name" data-a="charpeek" data-name="'+esc(c.name||'')+'" title="View '+esc(c.name||'')+' details">'+esc(c.name||'')+_spChipHtml+'</button>'+
               '<span class="prr-meta">'+meta+'</span>'+
               axisCellsHtml+
               '<span class="prr-status-cell">'+
@@ -22507,6 +22706,35 @@ document.getElementById('ov-charpeek-close').addEventListener('click',function(e
   e.stopPropagation();
   closeOv('ov-charpeek');
   window._recentModalClose=Date.now();
+});
+// v1.7147 — Dev-mode specialty assignment. Delegated change listener on
+// the body so it survives every _renderCharpeekBody re-render. Writes
+// c.specialty (permanent grant), logs the change to the adventure log,
+// saves, and re-renders header + body so the banner reflects the new
+// state. Tied to dev-mode visibility — the <select> only renders when
+// isDevModeActive() returns true.
+document.addEventListener('change',function(e){
+  var sel=e.target;
+  if(!sel||sel.id!=='cpk-dev-specialty')return;
+  var ci=parseInt(sel.getAttribute('data-ci'),10);
+  if(!isFinite(ci))return;
+  var c=S.party[ci];
+  if(!c)return;
+  var newSp=sel.value||null;
+  var oldSp=c.specialty||null;
+  if(newSp===oldSp)return;
+  if(newSp){
+    if(!SPECIALTIES[newSp]){alert('Unknown specialty: '+newSp);return;}
+    c.specialty=newSp;
+    logAdd('\u2728 '+c.name+': specialty granted ('+SPECIALTIES[newSp].label+')','adv');
+  } else {
+    delete c.specialty;
+    logAdd('\u2728 '+c.name+': specialty cleared'+(oldSp?(' (was '+oldSp+')'):''),'adv');
+  }
+  save();
+  if(typeof _renderCharpeekHeader==='function')_renderCharpeekHeader();
+  if(typeof _renderCharpeekBody==='function')_renderCharpeekBody();
+  if(typeof renderParty==='function')renderParty();
 });
 // Character peek footer: Level Up
 document.getElementById('ov-charpeek-lv').addEventListener('click',function(e){
@@ -27105,6 +27333,10 @@ function awardCapstonReward(set){
           else if(t==='prereq_rel')legacyEff.prereqRel=fx.target;
           else if(t==='prereq_item')legacyEff.prereqItem=fx.target;
           else if(t==='squad_formation')legacyEff.squadFormation=true;
+          // v1.7147 — Specialty bestowal in reskin path. Mirror of the
+          // mapping in loadItemsFromDB so reskinned items also bestow
+          // their bestowed specialty when stacked on top of a source.
+          else if(t==='specialty_grant')legacyEff.grantSpecialty=fx.target;
         });
         // Determine the asset type: inherit source's artifact/vehicle/building-ness.
         // Source's `.type` is a content-type (gear/kit/mount/structure/…);
@@ -27183,6 +27415,68 @@ function awardCapstonReward(set){
       S.party.push(npc);
       logAdd('⭐ Capstone reward: '+npc.name+' (🤝 Contact) joins!','hire');
       msg='🤝 New Contact: '+npc.name+'\n'+(npc.contactBg||'')+(npc.exoticTrait?'\nNote: '+npc.exoticTrait:'');
+    } else if(override.type==='specialty'){
+      // v1.7147 — Specialty capstone reward. Author specifies which
+      // specialty key (override.specialty, e.g. 'Texere') is granted to
+      // ONE squad member. Eligibility is class-agnostic per the design;
+      // the picker shows every member of the cycle's bound squad. If no
+      // squad is bound (shouldn't happen at capstone time), we fall back
+      // to the full party. Granting is permanent (writes c.specialty)
+      // and locked: a character who already has a specialty can't be
+      // overgranted — the picker excludes them and the dispatch warns
+      // if no eligible target exists.
+      var spKey=override.specialty;
+      if(!spKey||!SPECIALTIES[spKey]){
+        console.warn('[Capstone specialty] unknown specialty key:',spKey);
+        override=null; // fall through to random
+      } else {
+        var spDef=SPECIALTIES[spKey];
+        // Resolve eligible character pool.
+        var sqName=(typeof activeCycleSquadName==='function')?activeCycleSquadName():null;
+        var sq=sqName?(S.squads||[]).filter(function(s){return s.name===sqName;})[0]:null;
+        var poolCis=sq?(sq.memberIdxs||[]).filter(function(ci){return S.party[ci];}):
+          (S.party||[]).map(function(_,i){return i;}).filter(function(i){return S.party[i];});
+        // Filter out characters who already carry a permanent specialty
+        // (the lock rule: capstone grants don't overwrite existing).
+        var eligibleCis=poolCis.filter(function(ci){return !(S.party[ci]&&S.party[ci].specialty);});
+        if(!eligibleCis.length){
+          alert('⭐ CAPSTONE REWARD: '+spDef.label+' specialty\n\nBut no eligible characters! Every member of '+
+            (sqName?'squad '+sqName:'the party')+' already has a permanent specialty.\n\n'+
+            'The grant is forfeit. (Specialties are locked: capstone grants do not overwrite existing ones.)');
+          logAdd('⭐ Capstone reward forfeit: no eligible recipient for '+spDef.label,'adv');
+          override=null; // skip dashboard card creation below
+          msg=null;
+        } else {
+          // Build picker prompt. With one eligible character, auto-grant.
+          var chosenCi;
+          if(eligibleCis.length===1){
+            chosenCi=eligibleCis[0];
+          } else {
+            var promptLines=eligibleCis.map(function(ci,idx){
+              var ch=S.party[ci];
+              return (idx+1)+'. '+(ch.name||'?')+' ('+(ch.cls||'?')+', Lv '+(ch.level||0)+')';
+            });
+            var pickStr=prompt('⭐ CAPSTONE REWARD: '+spDef.label+' specialty\n\n'+
+              spDef.desc+'\n\n'+
+              'Which character receives this grant? (enter number 1-'+eligibleCis.length+')\n\n'+
+              promptLines.join('\n'));
+            var pickIdx=parseInt(pickStr,10);
+            if(!isFinite(pickIdx)||pickIdx<1||pickIdx>eligibleCis.length){
+              alert('No valid choice; specialty grant forfeit. (You can dev-assign the specialty later.)');
+              logAdd('⭐ Capstone reward forfeit: no valid pick for '+spDef.label,'adv');
+              override=null;
+              msg=null;
+            } else {
+              chosenCi=eligibleCis[pickIdx-1];
+            }
+          }
+          if(typeof chosenCi==='number'&&S.party[chosenCi]){
+            S.party[chosenCi].specialty=spKey;
+            logAdd('\u2728 Capstone reward: '+S.party[chosenCi].name+' bound as '+spDef.label,'adv');
+            msg='\u2728 '+spDef.label+' Specialty\n\n'+(spDef.desc||'')+'\n\nGranted to: '+S.party[chosenCi].name;
+          }
+        }
+      }
     } else {
       override=null; // unknown type — fall through to random
     }
@@ -27233,7 +27527,11 @@ function awardCapstonReward(set){
     }
   }
 
-  alert('⭐ CAPSTONE REWARD!\n\n'+msg);
+  // v1.7147 — When specialty grant forfeits (no eligible recipient or
+  // user cancellation), msg is null so we already alerted the user with
+  // the forfeit explanation. Skip the master alert in that case to
+  // avoid showing an empty "CAPSTONE REWARD!" popup.
+  if(msg)alert('⭐ CAPSTONE REWARD!\n\n'+msg);
   // Force immediate push so bag persists to Supabase before page reload
   save();
   if(uid())setTimeout(function(){sbPush(false);},200);
@@ -33939,7 +34237,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7139';
+var RQ_CLIENT_VERSION='v1.7147';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -35272,6 +35570,10 @@ function sbPush(manual){
         // and statsClass packs. Same reserved-underscore-key pattern; the
         // pull side at line ~34050 lifts it back to c.gradClass.
         if(c.gradClass)_statsWithMeta._gradClass=c.gradClass;
+        // v1.7147 — Specialty packed alongside the other meta keys. Avoids
+        // a Supabase column migration. Lift side at the deserializer pulls
+        // it back to c.specialty.
+        if(c.specialty)_statsWithMeta._specialty=c.specialty;
         return {user_id:userId,sort_order:i,
           name:c.name,species:c.species||'',cls:c.cls||'',bg:c.bg||'',
           rel:c.rel||'',age:c.age||0,height:c.height||'',weight:c.weight||'',
@@ -35977,10 +36279,11 @@ function sbPull(manual){
         var _cHomeTerritory='';
         var _cStatsClass='';
         var _cGradClass='';
+        var _cSpecialty=''; // v1.7147
         var _rawStats=c.stats||legacyMeta.stats||{};
         var _cleanStats=_rawStats;
         if(_rawStats&&(typeof _rawStats==='object')&&
-           (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined)){
+           (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined||_rawStats._specialty!==undefined)){
           _cleanStats=Object.assign({},_rawStats);
           if(typeof _cleanStats._homeTerritory==='string'&&_cleanStats._homeTerritory){
             _cHomeTerritory=_cleanStats._homeTerritory;
@@ -35991,9 +36294,14 @@ function sbPull(manual){
           if(typeof _cleanStats._gradClass==='string'&&_cleanStats._gradClass){
             _cGradClass=_cleanStats._gradClass;
           }
+          // v1.7147 — Lift _specialty alongside the other meta keys.
+          if(typeof _cleanStats._specialty==='string'&&_cleanStats._specialty){
+            _cSpecialty=_cleanStats._specialty;
+          }
           delete _cleanStats._homeTerritory;
           delete _cleanStats._statsClass;
           delete _cleanStats._gradClass;
+          delete _cleanStats._specialty;
         }
         // Proper columns take priority; legacy meta is fallback
         var _rebuilt={_sbId:c.id,name:c.name,species:c.species,cls:c.cls,bg:c.bg,rel:c.rel,
@@ -36037,6 +36345,7 @@ function sbPull(manual){
         if(_cHomeTerritory)_rebuilt.homeTerritory=_cHomeTerritory;
         if(_cStatsClass)_rebuilt.statsClass=_cStatsClass;
         if(_cGradClass)_rebuilt.gradClass=_cGradClass;
+        if(_cSpecialty)_rebuilt.specialty=_cSpecialty; // v1.7147
         return _rebuilt;
       });
     }
@@ -40383,8 +40692,8 @@ function loadItemsFromDB(){
           // v1.7146 — Prereq-eligible classes. JSONB column on the items
           // table; null/undefined means unrestricted. When populated as an
           // array (e.g. ['Druid','Ranger']) only those classes' characters
-          // can use this item to satisfy a quest prereq, with subclass
-          // exceptions (handled separately, see _charSubclassGrantsAccess).
+          // can use this item to satisfy a quest prereq, with specialty
+          // exceptions (handled separately, see _charSpecialtyGrantsAccess).
           // Defaults to null on rows that haven't been migrated or set yet,
           // so the gate degrades cleanly: pre-migration items behave as
           // unrestricted exactly like ungated items in v1.7146 idea (2).
@@ -40420,6 +40729,12 @@ function loadItemsFromDB(){
             else if(fx.effect_type==='prereq_rel')item.effect.prereqRel=fx.target;
             else if(fx.effect_type==='prereq_item')item.effect.prereqItem=fx.target;
             else if(fx.effect_type==='squad_formation')item.effect.squadFormation=true;
+            // v1.7147 — Specialty bestowal. Reads the target (e.g. 'Texere')
+            // into item.effect.grantSpecialty. effectiveSpecialty(c) checks
+            // both shapes (item.effects array AND item.effect.grantSpecialty)
+            // when a character holds the item, so this legacy mirror is
+            // belt-and-suspenders for code paths that read item.effect.
+            else if(fx.effect_type==='specialty_grant')item.effect.grantSpecialty=fx.target;
           });
         }
         if(VEHICLE_TYPES.indexOf(row.type)!==-1){
@@ -41099,8 +41414,9 @@ function qddCharCoversSlot(c,slot){
     // Ungated items (rope, rations, magic gear, etc.) only need inv
     // possession; gated items (weapons, tool kits) additionally require
     // the matching c.weapons / c.tools entry. Also enforces the
-    // v1.7146 class-restriction layer (only-X-class-can-use), and a
-    // subclass-exception hook stub that (4) will populate.
+    // v1.7146 class-restriction layer (only-X-class-can-use), with the
+    // v1.7147 specialty layer providing per-character exceptions (Texere
+    // and others — see SPECIALTIES + effectiveSpecialty above).
     var _inv=(c.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;});
     if(!inventoryHasPrereqItem(_inv,slot.value))return false;
     if(!charHasProficiencyForItem(c,slot.value))return false;
@@ -43845,6 +44161,18 @@ function _autoCreateDashCard(quest,scope){
   }
   else if(cr.type==='pet'){ic=cr.ic||'🐾';name=cr.name||'Companion';desc=cr.desc||'';colors=['#1a4a2a','#2e7a45','#40a060'];}
   else if(cr.type==='npc'){ic='🤝';name=cr.name||'Contact';desc=cr.contactBg||cr.bg||'';colors=['#1a3a4a','#2a6070','#3a8090'];}
+  // v1.7147 — Specialty dashboard card. Distinct teal/gold gradient so
+  // it visually separates from items (purple), reskins (bronze), pets
+  // (green) and NPCs (slate-blue). Title shows the specialty label;
+  // description shows the lore blurb from SPECIALTIES, falling back to
+  // the author-supplied desc field if present.
+  else if(cr.type==='specialty'){
+    ic='\u2728';
+    var spDef=(typeof SPECIALTIES!=='undefined'&&SPECIALTIES[cr.specialty])?SPECIALTIES[cr.specialty]:null;
+    name=(spDef&&spDef.label)||cr.specialty||'Specialty';
+    desc=(spDef&&spDef.desc)||cr.desc||'';
+    colors=['#3a2a4a','#7a5a3a','#c8a85a']; // dusk-violet to gold
+  }
   // Find the source cycle and any cycles this unlocks
   var sourceCycleName='';
   var unlockedCycleNames=[];

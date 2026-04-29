@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Quest Editor v1.696</title>
+<title>Quest Editor v1.697</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -386,7 +386,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 <body>
 <div id="login-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--parch);border:2px solid var(--gold);border-radius:10px;padding:24px;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.5)">
-    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.696</span></h2>
+    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.697</span></h2>
     <div style="margin-bottom:12px">
       <label style="display:block;font-size:.8em;color:var(--ink2);margin-bottom:4px">Email</label>
       <input type="text" id="email" autocomplete="email" style="width:100%;padding:8px;border:1px solid var(--gold);border-radius:5px;background:var(--parch);font-size:.9em;box-sizing:border-box">
@@ -402,7 +402,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 
 <div id="app">
   <div id="hdr">
-    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.696</span></h1>
+    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.697</span></h1>
     <div id="login-area">
       <span id="user-email"></span>
       <button class="hbtn" id="btn-push" style="display:none" title="Push all local changes to Supabase">☁ Push</button>
@@ -1048,7 +1048,14 @@ var EFFECT_TYPES = [
   { value:'prereq_lang',      label:'Counts as Language Prereq',   hasTarget:true,  targetType:'lang',    hasValue:false },
   { value:'prereq_item',      label:'Counts as Item Prereq',       hasTarget:true,  targetType:'text',    hasValue:false },
   { value:'cycle_unlock',     label:'Unlocks Quest Cycle',         hasTarget:true,  targetType:'text',    hasValue:false },
-  { value:'terrain_unlock',   label:'Unlocks Terrain',             hasTarget:true,  targetType:'terrain', hasValue:false }
+  { value:'terrain_unlock',   label:'Unlocks Terrain',             hasTarget:true,  targetType:'terrain', hasValue:false },
+  // v1.697 — Bestow a specialty while the item is held by a character.
+  // target is the specialty key (e.g. 'Texere') as defined in the main
+  // game's SPECIALTIES registry. Per-character only: when this item is
+  // in the character's inv, the character's effective specialty becomes
+  // the target value (unless they already have a permanent c.specialty
+  // — those win). Removing the item reverts to whatever was permanent.
+  { value:'specialty_grant',  label:'Grant Specialty (while held)', hasTarget:true,  targetType:'text',    hasValue:false }
 ];
 var STAT_NAMES = ['STR','DEX','CON','INT','WIS','CHA'];
 var TERRAIN_NAMES = ['none','mountain','forest','coastal','arctic','desert','swamp','urban','underdark'];
@@ -1077,6 +1084,19 @@ var CLASS_STATS = {
 };
 var DND_CLS = ['Barbarian','Bard','Cleric','Druid','Fighter','Monk','Paladin',
   'Ranger','Rogue','Sorcerer','Warlock','Wizard','Runesmith'];
+
+// v1.697 — Specialty registry (mirrors SPECIALTIES in the main game).
+// When you add a new specialty in game.html's SPECIALTIES, add the same
+// key + label here so the capstone-reward picker shows it. Description
+// is shown inline in the picker so you don't have to remember which key
+// means what. Item-bestowal effects (effect_type='specialty_grant') use
+// the same key as the target value.
+var SPECIALTIES_QE = {
+  'Texere': {
+    label: 'Texere',
+    desc: 'Bound by oath or blood to a Texere dragon, the bearer channels weave-magic through draconic conduits.'
+  }
+};
 function rollStatsQE(cls) {
   var base = CLASS_STATS[cls] || CLASS_STATS['default'];
   var s = {};
@@ -5604,6 +5624,7 @@ function showQuestForm(setId, idx) {
           '<option value="reskin"'+(crType==='reskin'?' selected':'')+'>🎨 Reskinned Store Item</option>'+
           '<option value="pet"'+(crType==='pet'?' selected':'')+'>🐾 Specific Pet</option>'+
           '<option value="npc"'+(crType==='npc'?' selected':'')+'>🤝 NPC Contact</option>'+
+          '<option value="specialty"'+(crType==='specialty'?' selected':'')+'>✨ Specialty Grant</option>'+
         '</select></div>'+
         // Item panel
         '<div id="qf-cr-item-panel" style="'+itemD+'">'+
@@ -5729,6 +5750,27 @@ function showQuestForm(setId, idx) {
               '<input id="qf-cr-npc-trait" type="text" value="'+esc(crType==='npc'?cr.exoticTrait||'':'')+'" placeholder="e.g. Speaks Primordial; knows the temple layout" style="'+inp+'"></div>'+
           '</div>'+
         '</div>'+
+        // v1.697 — Specialty panel. Author picks one specialty key from
+        // SPECIALTIES_QE; the description renders inline so they don't
+        // have to hold the lore in their head. At award time, the main
+        // game prompts which squad member receives the grant (Q2 design:
+        // all members eligible, no class filter). Lock rule applies:
+        // characters with an existing permanent specialty are excluded.
+        '<div id="qf-cr-specialty-panel" style="'+(crType==='specialty'?'':'display:none')+'">'+
+          '<div style="margin-bottom:8px"><label style="'+lbl+'">Specialty *</label>'+
+            '<select id="qf-cr-specialty-key" style="'+inp+'">'+
+              '<option value="">— select a specialty —</option>'+
+              Object.keys(SPECIALTIES_QE).map(function(k){
+                var selAttr = (crType==='specialty' && cr.specialty === k) ? ' selected' : '';
+                return '<option value="'+esc(k)+'"'+selAttr+'>'+esc(SPECIALTIES_QE[k].label||k)+'</option>';
+              }).join('')+
+            '</select>'+
+            '<div id="qf-cr-specialty-info" style="font-size:.72em;color:#8b6914;margin-top:5px;min-height:1em;font-style:italic"></div>'+
+          '</div>'+
+          '<div style="font-size:.78em;color:var(--ink2);line-height:1.4;padding:6px 10px;background:rgba(26,107,138,.06);border:1px dashed var(--teal);border-radius:5px;margin-top:6px">'+
+            'Specialty grants are <strong>permanent</strong> and <strong>locked</strong> — once assigned to a character, the grant cannot be overwritten by a future capstone. At award time, the player will be prompted to pick which squad member receives this grant. Characters who already carry a permanent specialty are excluded from the picker.'+
+          '</div>'+
+        '</div>'+
       '</div>';
     }()) +
 
@@ -5756,13 +5798,27 @@ function showQuestForm(setId, idx) {
     function updateCrPanel() {
       if (!crType) return;
       var v = crType.value;
-      ['item', 'reskin', 'pet', 'npc'].forEach(function(k) {
+      ['item', 'reskin', 'pet', 'npc', 'specialty'].forEach(function(k) {
         var p = document.getElementById('qf-cr-' + k + '-panel');
         if (p) p.style.display = (v === k ? '' : 'none');
       });
     }
     if (crType) crType.addEventListener('change', updateCrPanel);
     updateCrPanel();
+    // v1.697 — Specialty: live description line so the author sees what
+    // the chosen specialty actually does without bouncing to game.html.
+    (function() {
+      var spSel = document.getElementById('qf-cr-specialty-key');
+      var infoEl = document.getElementById('qf-cr-specialty-info');
+      if (!spSel || !infoEl) return;
+      function renderSpInfo() {
+        var k = spSel.value;
+        if (!k || !SPECIALTIES_QE[k]) { infoEl.textContent = ''; return; }
+        infoEl.textContent = SPECIALTIES_QE[k].desc || '';
+      }
+      spSel.addEventListener('change', renderSpInfo);
+      renderSpInfo();
+    }());
     // Reskin: live info line for the selected source item so the author can
     // see what they're inheriting (type, rarity, price, native effects).
     (function() {
@@ -6066,6 +6122,19 @@ function showQuestForm(setId, idx) {
           }()),
           level: Math.max(0, parseInt(document.getElementById('qf-cr-npc-level').value, 10) || 0),
           hireling: true, contact: true
+        };
+      } else if (t === 'specialty') {
+        // v1.697 — Specialty capstone reward. Validates a specialty key
+        // is selected from SPECIALTIES_QE (the editor-side mirror of the
+        // main game's SPECIALTIES registry). Empty selection treated as
+        // "no reward configured" — saves null so the capstone falls
+        // through to the random pool. Author can switch back to specify
+        // a different reward type without losing earlier panel data.
+        var k = (document.getElementById('qf-cr-specialty-key').value || '').trim();
+        if (!k || !SPECIALTIES_QE[k]) { q.capstoneReward = null; return; }
+        q.capstoneReward = {
+          type: 'specialty',
+          specialty: k
         };
       } else {
         q.capstoneReward = null;
