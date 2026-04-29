@@ -22471,6 +22471,38 @@ function openAssignSquadModal(ci){
       '<span style="font-size:.72em;color:'+(full?'var(--gold-dark)':'var(--forest)')+';font-weight:700;white-space:nowrap">'+esc(actionLabel)+costLabel+'</span>'+
       '</button>';
   }).join('');
+  // v1.7145 — Always offer the "Back to HQ" path when this character is
+  // currently in any squad. Mirrors the character-peek 🏠 Back to HQ button
+  // (line ~22202) so the per-row ⇄ menu surfaces the same option without
+  // needing the user to detour through the character peek modal. Hidden
+  // when the character is already unassigned (nothing to leave). Cost is
+  // resolved live so the label reflects whether a premium will apply.
+  var _bthqInAnySquad=(S.squads||[]).some(function(sq){
+    return sq&&(sq.memberIdxs||[]).indexOf(ci)!==-1;
+  });
+  if(_bthqInAnySquad){
+    var _bthqDestPreview=(typeof resolveBackToHQDestination==='function')?
+      resolveBackToHQDestination(ci):null;
+    var _bthqCostPreview=_bthqDestPreview?_bthqDestPreview.cost:(qpCfg().costBackToHQ||10);
+    var _bthqTargetPreview=_bthqDestPreview&&_bthqDestPreview.target?_bthqDestPreview.target:'';
+    var _bthqPremium=_bthqDestPreview&&_bthqDestPreview.isPremium;
+    var _bthqSubLabel=_bthqTargetPreview?
+      (esc(_bthqTargetPreview)+' HQ'+(_bthqPremium?' · premium':'')):
+      'Leave all squads';
+    rowsHtml+='<button type="button" data-assign-bthq="1" '+
+      'style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--teal);'+
+      'background:rgba(26,107,138,.1);color:var(--teal);border-radius:6px;cursor:pointer;'+
+      'text-align:left;font-size:.88em;margin-top:4px">'+
+      '<span style="font-size:1.3em;flex-shrink:0">🏠</span>'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-weight:700">Back to HQ</div>'+
+        '<div style="font-size:.68em;color:'+(_bthqPremium?'var(--crimson)':'var(--ink-light)')+';margin-top:1px">'+
+          _bthqSubLabel+
+        '</div>'+
+      '</div>'+
+      '<span style="font-size:.72em;color:var(--gold-dark);font-weight:700;white-space:nowrap">'+_bthqCostPreview+' QP</span>'+
+      '</button>';
+  }
   // Always offer the "create new squad" path
   rowsHtml+='<button type="button" data-assign-new="1" '+
     'style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px dashed var(--teal);'+
@@ -22511,6 +22543,49 @@ function openAssignSquadModal(ci){
       closeOv('ov-charpeek');
       window._pendingAssignAfterNewSquad=ci;
       if(typeof openSquadNew==='function')openSquadNew();
+    });
+  }
+  // v1.7145 — Wire the Back-to-HQ option. Mirrors the character-peek
+  // ov-charpeek-rif click handler (line ~22202): resolves destination,
+  // validates QP enabled + balance, routes through the abandon-warning
+  // modal if there are pending engagements, otherwise confirms inline
+  // and calls _completeBackToHQ. We close the assign-squad modal up
+  // front so the confirm dialog / abandon-warn modal isn't stacked
+  // behind it. If the user cancels at confirm/abandon-warn, no state
+  // changes — they can re-open the ⇄ menu to retry.
+  var bthqBtn=listEl.querySelector('[data-assign-bthq]');
+  if(bthqBtn){
+    bthqBtn.addEventListener('click',function(){
+      var cBthq=S.party[ci];
+      if(!cBthq)return;
+      var inAnySq=(S.squads||[]).some(function(sq){
+        return sq&&(sq.memberIdxs||[]).indexOf(ci)!==-1;
+      });
+      if(!inAnySq){alert(cBthq.name+' is already at HQ (not in any squad).');return;}
+      var dest=(typeof resolveBackToHQDestination==='function')?resolveBackToHQDestination(ci):null;
+      var _bthqCost=dest?dest.cost:(qpCfg().costBackToHQ||10);
+      if(!qpEnabled()){alert('Quest Points are not currently enabled. Back to HQ requires '+_bthqCost+' QP.');return;}
+      if((S.qpBalance||0)<_bthqCost){alert('Not enough QP. You need '+_bthqCost+' QP to send '+cBthq.name+' back to HQ.');return;}
+      // Close the picker before any further dialogs/modals fire.
+      closeOv('ov-assign-squad');
+      var engagements=getPendingEngagementsForChar(ci);
+      if(engagements.length){
+        window._bthqDestination=dest;
+        _openAbandonWarn(ci,engagements);
+        return;
+      }
+      var destLabel=dest&&dest.target?(' at '+dest.target+' HQ'):' to HQ';
+      var premiumNote='';
+      if(dest&&dest.isPremium){
+        if(dest.reason==='no-local-hq'){
+          premiumNote='\n\n\u26A0 Their squad\'s territory has no headquarters building yet, so they must travel back to '+dest.target+' (origin). This costs more QP than a local return.';
+        } else if(dest.reason==='local-hq-at-cap'){
+          premiumNote='\n\n\u26A0 The local HQ is at capacity ('+UNASSIGNED_PER_TERRITORY_MAX+'/'+UNASSIGNED_PER_TERRITORY_MAX+'), so '+cBthq.name+' must be rerouted to '+dest.target+' (origin). This costs more QP.';
+        }
+      }
+      if(!confirm('Send '+cBthq.name+' back'+destLabel+' for '+_bthqCost+' QP? They will leave all squads and become unassigned.'+premiumNote))return;
+      window._bthqDestination=dest;
+      _completeBackToHQ(ci,[]);
     });
   }
   openOv('ov-assign-squad');
