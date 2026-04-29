@@ -11641,9 +11641,22 @@ function renderSplitGroupHtml(gid, members, isManual, nbIdxs){
 // targets a top-level task that has zero sub-tasks. The migration in
 // ensureTaskIds ensures only no-sub tasks reach this renderer; if somehow a
 // task with subs slipped through, we return '' so nothing visible breaks.
-// No checkbox (per Q2b — the task is read-only from the Pinned zone for
-// progress except via the pie). Left drawer has 📍 Unpin + ✕ Delete
-// (data-a="taskpindel" — splices from S.pinned AND from S.active, undoable).
+// Left drawer has 📍 Unpin + ✕ Delete (data-a="taskpindel" — splices from
+// S.pinned AND from S.active, undoable).
+//
+// v1.7140 — Checkbox added (reversing the original Q2b "no checkbox"
+// decision). The pie tracks partial progress; the checkbox is the terminal
+// completion signal that claims gold and increments t.count. Both are
+// meaningful and orthogonal — pie==full just means "I've finished the
+// work", checkbox checked means "claim it." A full pie ALSO auto-checks
+// the box as a convenience cascade (see tpct handler). Uncheck stays a
+// manual action — clicking a full pie cycles back to 0 but does NOT
+// uncheck or refund gold (per design: user has Undo for honest mistakes,
+// and we don't want pie-cycling to thrash the budget).
+//
+// Single-task completion does NOT auto-open the archive/delete/recur
+// modal — the user hits ✕ when they're ready, matching the existing
+// ttck handler's behavior on the main list.
 function renderPinnedTaskAsSubRow(t, pi, pinTotal){
   if(!t)return '';
   if((t.subtasks||[]).length>0)return ''; // defense-in-depth
@@ -11651,7 +11664,8 @@ function renderPinnedTaskAsSubRow(t, pi, pinTotal){
   var upDisabled = (pi<=0);
   var downDisabled = (pi>=pinTotal-1);
   var taskGp = t.gp||0;
-  return '<div class="strow strow-pin strow-pin-task" data-pin-idx="'+pi+'">'+
+  var cbId='ttcb-pin-'+i;
+  return '<div class="strow strow-pin'+(t.waiting?' strow-waiting':'')+' strow-pin-task" data-pin-idx="'+pi+'">'+
     // ── Drag handle (v1.6981: moved to far-left)
     '<span class="strow-draghandle" data-draghandle="pinned" title="Drag to reorder pinned items" aria-label="Drag handle">\u22EE\u22EE</span>'+
     // ── Left drawer (Unpin + Delete)
@@ -11666,11 +11680,17 @@ function renderPinnedTaskAsSubRow(t, pi, pinTotal){
     '<button type="button" class="strow-drawer-btn sd-reord" data-a="pinup" data-pi="'+pi+'" title="Move up in Pinned Tasks" aria-label="Move up"'+(upDisabled?' disabled':'')+'>\u2191</button>'+
     '<button type="button" class="strow-drawer-btn sd-reord" data-a="pindn" data-pi="'+pi+'" title="Move down in Pinned Tasks" aria-label="Move down"'+(downDisabled?' disabled':'')+'>\u2193</button>'+
     '</div>'+
-    // ── Main content (visible row): pie + name + ⋯ (NO checkbox per Q2b)
+    // ── Main content (visible row): pie + checkbox(or ⏳) + name + ⋯
+    // v1.7140 — checkbox restored (see header comment). Uses the shared
+    // renderCheckboxOrWaiting helper so the ⏳/checkbox swap matches the
+    // pinned sub-row exactly. Existing ttck handler (line ~14568) catches
+    // the change event via event delegation — no new wiring needed.
     '<div class="strow-main">'+
     '<button type="button" class="pct-tog" data-a="tpct" data-i="'+i+'" data-step="'+(t.pct||0)+'" title="'+Math.round((t.pct||0)/6*100)+'% complete — click to advance">'+pctTogSvg(t.pct||0)+'</button>'+
-    '<label style="flex:1;display:flex;align-items:center;gap:8px;padding:8px 4px;min-height:44px;min-width:0">'+
-    '<span class="stname" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.name||'')+'</span>'+
+    '<label for="'+cbId+'" style="flex:1;display:flex;align-items:center;gap:8px;padding:8px 4px;cursor:pointer;min-height:44px;min-width:0">'+
+    renderCheckboxOrWaiting(t, cbId, i, null, 'task')+
+    '<span class="stname'+(t.done?' stdone':'')+'" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(t.name||'')+'</span>'+
+    (t.waiting?renderWaitingBadge(t,'task',i):'')+
     '</label>'+
     '<button type="button" class="strow-dot" data-a="sttoggle-task" data-i="'+i+'" aria-label="Show actions" title="Show actions">\u22EF</button>'+
     '</div>'+
@@ -14463,7 +14483,47 @@ document.getElementById('tlist').addEventListener('click',function(e){
   var ai=parseInt(tog.getAttribute('data-i'),10);
   var si=tog.getAttribute('data-si');
   if(tog.getAttribute('data-a')==='tpct'&&S.active[ai]){
-    S.active[ai].pct=next;save();
+    var _T=S.active[ai];
+    _T.pct=next;
+    // v1.7140 — Pie→checkbox cascade. When the pie reaches full (next===6)
+    // on a single-task (no sub-tasks) AND the task isn't already marked
+    // done, auto-flip t.done and run the same gold/count/undo path the
+    // ttck handler at line ~14568 uses. Two design choices, per spec:
+    //   1. Does NOT auto-open the archive/delete/recur (ov-done) modal —
+    //      the user hits ✕ when they're ready to retire the contract,
+    //      matching ttck's behavior on the main list.
+    //   2. Cycling the pie back to 0 (next===0 from cur===6) does NOT
+    //      uncheck or refund gold. Pie cycling is for visual progress;
+    //      undoing a completion is a deliberate user action via the
+    //      checkbox or the Undo button. Keeps budget arithmetic clean.
+    // Tasks WITH sub-tasks fall through this branch because their pie
+    // is roll-up state derived from done-subtask count (see stck handler
+    // line ~14502) — auto-checking would conflict with that model.
+    var _hasSubs = (_T.subtasks||[]).length>0;
+    if(next===6 && !_hasSubs && !_T.done){
+      var _ttckPrev=false; // we just verified !_T.done
+      var _ttckPrevWaiting=!!_T.waiting;
+      var _ttckPrevCount=_T.count||0;
+      var _ttckPrevBudget=(S.settings&&typeof S.settings.taskBudgetRemaining==='number')?S.settings.taskBudgetRemaining:null;
+      var _ttckGpEarned=0;
+      _T.done=true;
+      if(_ttckPrevWaiting) _T.waiting=false;
+      if(taskBudgetRemaining()>0){
+        _T.count=(_T.count||0)+1;
+        _ttckGpEarned=claimTaskGold(_T.gp,'Completed: "'+(_T.name||'Unnamed contract')+'"')||0;
+      }
+      _pushUndo({kind:'ttck',tid:_T._tid,prevDone:_ttckPrev,prevWaiting:_ttckPrevWaiting,
+        prevCount:_ttckPrevCount,gpEarned:_ttckGpEarned,prevBudget:_ttckPrevBudget,
+        label:(_ttckGpEarned>0?'Marked done (+'+_ttckGpEarned+' gp)':'Marked done')+' "'+(_T.name||'Unnamed contract')+'" (via pie)'});
+      save();
+      // Re-render so the checkbox reflects the new done state and the
+      // strikethrough class lands on .stname. (The pie SVG was already
+      // updated in-place above; the checkbox needs a full render.)
+      renderTasks();
+      e.stopPropagation();
+      return;
+    }
+    save();
   } else if(tog.getAttribute('data-a')==='stpct'&&S.active[ai]&&S.active[ai].subtasks[parseInt(si,10)]){
     var _pctSub=S.active[ai].subtasks[parseInt(si,10)];
     // v1.6957 — record undo entry for subtask progress pie
