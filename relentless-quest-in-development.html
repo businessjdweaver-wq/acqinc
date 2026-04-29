@@ -36716,9 +36716,43 @@ function _isBagOfHolding(a){
   return hasSquadFormationEffect(a);
 }
 function franchiseHasBagOfHolding(){
-  // Check partyAssets for squad-formation effect
-  if((S.partyAssets||[]).some(function(a){return hasSquadFormationEffect(a);}))return true;
-  // Also check franchiseStorage for legacy string entries matching a known squad-formation item
+  // v1.7145 — Only count bags that are AVAILABLE to a new squad. A bag
+  // whose meta.ownerType==='squad' has already been consumed by an
+  // existing squad and must not count toward the franchise's eligibility
+  // for the discounted 50-gp "returning customer" enrollment path. The
+  // sqSave bagAsset filter at line ~23653 already enforces "only assign
+  // unassigned bags to a new squad" — but the brochure picker here was
+  // checking mere existence rather than availability, which is why
+  // creating a squad with a bag-of-holding still triggered the 50-gp
+  // brochure on the next "+ Squad" click even though no second bag was
+  // available to actually fulfill the discount's premise. (Diagnosis
+  // confirmed in restart2@restart.com: one Longinus Carpetbag with
+  // ownerType='squad', ownerRef='Gallow's Grasp', and the next + Squad
+  // click returned hasBag=true.)
+  //
+  // Bags reachable here that DO count:
+  //   - partyAssets entries with ownerType==='' (general franchise pool)
+  //     or 'char' (a character is carrying one — still franchise-owned,
+  //     can be reassigned to a new squad by sqSave's filter)
+  //   - franchiseStorage entries (legacy string format has no ownership;
+  //     anything stashed there is by definition franchise-pool)
+  //
+  // Bags that DON'T count (the new gate):
+  //   - partyAssets with ownerType==='squad' (consumed by an existing squad)
+  //
+  // Note: sqSave's filter at line ~23653 says "only items with ot!=='squad'"
+  // — i.e. the carrying-character ('char') case IS eligible to be reassigned
+  // to a new squad. We mirror that here, so the eligibility check and the
+  // assignment path agree. If we ever tighten sqSave to require ot==='',
+  // tighten this filter the same way.
+  function _availableForSquadFormation(a){
+    if(!hasSquadFormationEffect(a))return false;
+    var ot=(a.meta&&a.meta.ownerType)||'';
+    return ot!=='squad';
+  }
+  if((S.partyAssets||[]).some(_availableForSquadFormation))return true;
+  // franchiseStorage entries have no ownership concept — anything matching
+  // a squad-formation gear row counts as available franchise inventory.
   return (S.franchiseStorage||[]).some(function(entry){
     var name=typeof entry==='string'?entry:(entry&&entry.name)||'';
     if(!name)return false;
