@@ -3470,7 +3470,7 @@ body.dev-active #app{margin-top:36px;}
   <div style="font-size:.88em;color:var(--ink-light);line-height:1.55">
     <p style="margin:0 0 8px"><strong style="color:var(--ink)">Action row:</strong> ↕ reorder · 🕒 defer to back burner · ✂ split · ⚭ merge · 📌 pin · ✕ archive/delete/recur · 💰 claim gold.</p>
     <p style="margin:0 0 8px"><strong style="color:var(--ink)">Split:</strong> break a task with 2+ sub-tasks into two tasks. Both halves stay in the same bordered panel.</p>
-    <p style="margin:0 0 8px"><strong style="color:var(--ink)">Merge:</strong> combine two tasks into one master. Choose the new title and the order of the combined sub-tasks.</p>
+    <p style="margin:0 0 8px"><strong style="color:var(--ink)">Merge / Attach (⚭):</strong> If your task has sub-tasks, ⚭ combines it with another task into one master — pick the new title and the order of the combined sub-tasks. If your task has no sub-tasks, ⚭ instead attaches it as a new sub-task under the target you pick (the target keeps its name and identity).</p>
     <p style="margin:0 0 8px"><strong style="color:var(--ink)">Pin (📌):</strong> mirrors any task or sub-task at the top of the screen for prominence. Toggling progress on the pinned copy updates the original — they share the same data.</p>
     <p style="margin:0 0 8px"><strong style="color:var(--ink)">Waiting (⏳):</strong> swipe a sub-task right to reveal the ⏳ button, or tap the ⏳ on the task action row — either opens a short note editor for "who are you waiting on?" The row tints teal, a small note badge appears, and the checkbox swaps to an hourglass. When you're no longer waiting, open the editor again and tap "✓ Done waiting." Checking the item off also auto-clears waiting. On desktop you can right-click a checkbox to toggle the flag directly.</p>
     <p style="margin:0 0 8px"><strong style="color:var(--ink)">Favourites &amp; scheduled contracts:</strong> weekly / monthly / yearly tasks scheduled in The Archive auto-activate at your configured start-of-day.</p>
@@ -3664,13 +3664,13 @@ body.dev-active #app{margin-top:36px;}
 <div class="ov" id="ov-task-merge"><div class="modal" style="max-width:560px;padding:0;border-radius:12px;display:flex;flex-direction:column;max-height:86vh;overflow:hidden">
   <div style="padding:14px 16px 10px;border-bottom:1px solid var(--parchment-deep);display:flex;align-items:center;gap:10px;flex-shrink:0">
     <div style="flex:1;min-width:0">
-      <div style="font-weight:700;font-size:1em;color:var(--ink)">⚭ Merge Tasks</div>
+      <div id="ov-merge-title" style="font-weight:700;font-size:1em;color:var(--ink)">⚭ Merge Tasks</div>
       <div id="ov-merge-src-name" style="font-size:.82em;color:var(--ink-light);margin-top:2px;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
     </div>
     <button class="btn bink sm" id="ov-merge-cancel" style="flex-shrink:0">✕</button>
   </div>
   <div style="padding:12px 16px;border-bottom:1px solid var(--parchment-deep);flex-shrink:0">
-    <label style="display:block;font-size:.75em;font-family:'Cinzel',serif;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px">Merge with</label>
+    <label id="ov-merge-target-label" style="display:block;font-size:.75em;font-family:'Cinzel',serif;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px">Merge with</label>
     <select id="ov-merge-target" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:6px;background:var(--parchment);color:var(--ink);font-size:.92em;margin-bottom:10px"></select>
     <label style="display:block;font-size:.75em;font-family:'Cinzel',serif;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px">New master title</label>
     <input type="text" id="ov-merge-newtitle" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:6px;background:var(--parchment);color:var(--ink);font-size:.92em">
@@ -10931,6 +10931,41 @@ function undoApply(entry){
       srcTask.task.subtasks.splice(at,0,sub);
       return true;
     }
+    if(entry.kind==='mergeAttach'){
+      // v1.7143 — Reverse a single-task merge-attach. Splice the new
+      // subtask back out of the target (located by sid), restore the
+      // target's pre-mutation count/desc/note/pct/collapsed, re-insert
+      // the source as a top-level task at its prior index, and restore
+      // S.pinned from snapshot. We don't trust srcIdx as a hard index
+      // because other tasks may have been added/removed in the meantime
+      // — clamp to valid range.
+      var _maTgt=_findTaskByTid(entry.tgtTid);
+      if(!_maTgt)return false;
+      // Find the new sub by sid and splice it out
+      var _maSubIdx=-1;
+      for(var _mai=0;_mai<(_maTgt.task.subtasks||[]).length;_mai++){
+        if(_maTgt.task.subtasks[_mai] && _maTgt.task.subtasks[_mai]._sid===entry.newSubSid){
+          _maSubIdx=_mai;break;
+        }
+      }
+      if(_maSubIdx<0)return false;
+      _maTgt.task.subtasks.splice(_maSubIdx,1);
+      // Restore tgt fields
+      if(entry.prevTgt){
+        _maTgt.task.count=entry.prevTgt.count;
+        _maTgt.task.desc=entry.prevTgt.desc;
+        _maTgt.task.note=entry.prevTgt.note;
+        _maTgt.task.pct=entry.prevTgt.pct;
+        _maTgt.task.collapsed=entry.prevTgt.collapsed;
+      }
+      // Re-insert src at clamped prior index
+      if(!S.active)S.active=[];
+      var _maAt=Math.max(0,Math.min(entry.srcIdx|0,S.active.length));
+      S.active.splice(_maAt,0,clone(entry.srcSnapshot));
+      // Restore pinned from snapshot
+      if(entry.prevPinned)S.pinned=entry.prevPinned.map(function(p){return clone(p);});
+      return true;
+    }
     if(entry.kind==='sgaddmember'){
       // v1.7023 — Reverse a "new split" add. Find the task by _tid and
       // splice it out. If this was the last task in the group, the group
@@ -12270,6 +12305,46 @@ function openMergeModal(i){
   P.mergeTitleDirty=false;
   document.getElementById('ov-merge-src-name').textContent=src.name||'';
   document.getElementById('ov-merge-err').textContent='';
+  // v1.7143 — Detect attach mode (single-task source). When src has no
+  // subtasks, the merge becomes a one-way attach: the source becomes a
+  // subtask under the target, target keeps its identity. Modal UX flips
+  // accordingly: hide the "new master title" field (target keeps its
+  // name), hide the sub-order preview (always appends to end of target's
+  // subs — user can reorder afterward), retitle the dialog, and change
+  // the confirm button label from "Merge" to "Attach". The class
+  // 'merge-mode-attach' is applied to the modal so CSS or future styling
+  // can distinguish the two flows visually if needed.
+  var _isAttach=(src.subtasks||[]).length===0;
+  var _modal=document.getElementById('ov-task-merge');
+  if(_modal){
+    _modal.classList.toggle('merge-mode-attach',_isAttach);
+  }
+  // Show/hide the new-title label + input. Both share a parent wrapper
+  // (the second padded div in the modal). To avoid restructuring HTML,
+  // toggle each element by id/sibling rather than by container.
+  var _titleInput=document.getElementById('ov-merge-newtitle');
+  var _titleLabel=_titleInput?_titleInput.previousElementSibling:null;
+  if(_titleInput)_titleInput.style.display=_isAttach?'none':'';
+  if(_titleLabel && _titleLabel.tagName==='LABEL')_titleLabel.style.display=_isAttach?'none':'';
+  // Hide sub-order preview region in attach mode (the new sub just goes
+  // to the bottom; no reordering needed).
+  var _subsBox=document.getElementById('ov-merge-subs');
+  var _subsRegion=_subsBox?_subsBox.parentElement:null;
+  if(_subsRegion)_subsRegion.style.display=_isAttach?'none':'';
+  // Update the dialog header text via the v1.7143-added id.
+  var _hdrTitle=document.getElementById('ov-merge-title');
+  if(_hdrTitle){
+    _hdrTitle.textContent=_isAttach?'\u26AD Attach as Sub-task':'\u26AD Merge Tasks';
+  }
+  // Flip the dropdown label too — "Merge with" reads strangely in attach
+  // mode where there's no merge happening.
+  var _tgtLabel=document.getElementById('ov-merge-target-label');
+  if(_tgtLabel){
+    _tgtLabel.textContent=_isAttach?'Attach to':'Merge with';
+  }
+  // Update confirm button label
+  var _confirmBtn=document.getElementById('ov-merge-confirm');
+  if(_confirmBtn)_confirmBtn.textContent=_isAttach?'Attach':'Merge';
   // Populate target dropdown
   // v1.7070 — Include zero-sub tasks. Their subtasks-count display
   // reads "0 sub-tasks" honestly so the user can tell what they're
@@ -12285,14 +12360,18 @@ function openMergeModal(i){
   // Pre-select first option and build initial merge order / default title
   if(sel.options.length){
     sel.selectedIndex=0;
-    rebuildMergeOrderFromTarget();
-    document.getElementById('ov-merge-newtitle').value=computeDefaultMergeTitle();
+    if(!_isAttach){
+      rebuildMergeOrderFromTarget();
+      document.getElementById('ov-merge-newtitle').value=computeDefaultMergeTitle();
+    }
   }
-  renderMergeSubsList();
+  if(!_isAttach)renderMergeSubsList();
   openOv('ov-task-merge');
   setTimeout(function(){
-    var f=document.getElementById('ov-merge-newtitle');
-    if(f){f.focus();f.select();}
+    // In attach mode, focus the target dropdown (the only meaningful
+    // input). In merge mode, focus the title field as before.
+    var f=_isAttach?document.getElementById('ov-merge-target'):document.getElementById('ov-merge-newtitle');
+    if(f){f.focus();if(!_isAttach && f.select)f.select();}
   },60);
 }
 
@@ -12396,6 +12475,13 @@ function renderMergeSubsList(){
 
 // Merge modal event wiring
 document.getElementById('ov-merge-target').addEventListener('change',function(){
+  // v1.7143 — In attach mode (single-task source), skip the merge-order
+  // rebuild and title recompute — both UI elements are hidden. The
+  // confirm handler reads the dropdown value directly when it fires,
+  // so no other state needs updating on change.
+  var _src7143=S.active[P.mergeSrcIdx];
+  var _isAttach7143=_src7143 && (_src7143.subtasks||[]).length===0;
+  if(_isAttach7143)return;
   rebuildMergeOrderFromTarget();
   if(!P.mergeTitleDirty){
     document.getElementById('ov-merge-newtitle').value=computeDefaultMergeTitle();
@@ -12423,6 +12509,113 @@ document.getElementById('ov-merge-confirm').addEventListener('click',function(){
   var tgtIdx=parseInt(document.getElementById('ov-merge-target').value);
   var tgt=S.active[tgtIdx];
   if(!src||!tgt||src._tid===tgt._tid){document.getElementById('ov-merge-err').textContent='Pick a different target task.';return;}
+
+  // ─── v1.7143 — Attach branch ─────────────────────────────────────────
+  // When the source has no subtasks of its own, "merge" is reframed as
+  // "attach the source as a new subtask under the target." The target
+  // keeps its identity (name, _tid, existing subs, count, pct, desc,
+  // note) and just gains one more sub. The source disappears as a
+  // top-level task.
+  //
+  // Why this differs from the symmetric path below: a single task being
+  // merged into a multi-sub task previously caused the SOURCE to survive
+  // (with its _tid) and absorb the target's subs, which felt like the
+  // single-task "stole" the multi-sub task's contents. The attach
+  // semantics match the user's mental model — a single task is a leaf,
+  // and the natural way to combine a leaf with a tree is to graft it.
+  //
+  // What carries over from src to the new subtask vs. to the target:
+  //   - new subtask gets: name, done flag, waiting flag + waitingNote
+  //   - target absorbs:   src.count (added to tgt.count), src.note (joined
+  //                       with " · "), src.desc (only if tgt.desc empty)
+  //   - dropped:          src.pct (target recalcs from sub rollup),
+  //                       src._splitGroup, src.burnerUntil, src.collapsed
+  //
+  // Pin handling: any task-level pin on src becomes a sub-pin on the
+  // new sid; any sub-level pin on src is impossible here (src has no
+  // subs by definition). Pins on tgt are unaffected.
+  if((src.subtasks||[]).length===0){
+    // Mint a stable _sid using the same formula as ensureTaskIds (line 11145)
+    // so any pins we retarget to it resolve correctly on the next render.
+    var _atSid='s'+Date.now().toString(36)+Math.random().toString(36).slice(2,8)+'a';
+    var _newSub={
+      _sid:_atSid,
+      name:src.name||'',
+      done:!!src.done
+    };
+    if(src.waiting){_newSub.waiting=true;}
+    if(typeof src.waitingNote==='string' && src.waitingNote.trim()){_newSub.waitingNote=src.waitingNote;}
+    // Snapshot tgt state BEFORE mutating, so undo can restore exactly.
+    // We snapshot the specific fields we'll touch rather than cloning the
+    // whole task — pinned references, _tid, and unrelated fields don't
+    // need to be snapshotted because we don't change them.
+    var _atTgtPrev={
+      count:tgt.count||0,
+      desc:tgt.desc||'',
+      note:tgt.note||'',
+      pct:tgt.pct||0,
+      collapsed:!!tgt.collapsed
+    };
+    if(!tgt.subtasks)tgt.subtasks=[];
+    tgt.subtasks.push(_newSub);
+    // Roll source metadata into target (mirrors symmetric merge at
+    // lines 12456-12459 but only the bits that don't conflict).
+    tgt.count=(tgt.count||0)+(src.count||0);
+    if(src.desc && !tgt.desc)tgt.desc=src.desc;
+    if(src.note)tgt.note=[tgt.note,src.note].filter(Boolean).join(' \u00B7 ');
+    // Recalc target's pie from rolled-up sub completion (mirrors the
+    // stck handler at line ~14502 and the project-transfer recalc at
+    // line ~30493). Adding a not-done sub will lower the percentage,
+    // which is correct — there's now more work to do.
+    var _doneN=tgt.subtasks.filter(function(s){return !!s.done;}).length;
+    tgt.pct=Math.min(6,Math.round(_doneN/tgt.subtasks.length*6));
+    // Auto-expand target so the user sees the new subtask land
+    // (matches project-transfer behavior at line ~30498).
+    tgt.collapsed=false;
+    // Pin retargeting: task-pins on src become sub-pins on the new sid.
+    // Sub-pins on src can't exist (src has no subs).
+    if(!S.pinned)S.pinned=[];
+    var _atPinSnapshot=S.pinned.map(function(p){return clone(p);});
+    S.pinned.forEach(function(p){
+      if(p.kind==='task' && p.tid===src._tid){
+        p.kind='sub';
+        p.tid=tgt._tid;
+        p.sid=_atSid;
+      }
+    });
+    // Dedupe (same pattern as symmetric merge at line 12469)
+    var _atSeen={};
+    S.pinned=S.pinned.filter(function(p){
+      var k=p.kind+'|'+p.tid+'|'+(p.sid||'');
+      if(_atSeen[k])return false;
+      _atSeen[k]=true;return true;
+    });
+    // Snapshot src so undo can restore it
+    var _atSrcSnapshot=clone(src);
+    var _atSrcLiveIdx=S.active.indexOf(src);
+    S.active.splice(_atSrcLiveIdx,1);
+    // v1.6957-style undo entry. The legacy symmetric merge confirm
+    // doesn't push an undo (it predates the undo system); the attach
+    // path is new code so we add one. Restore on revert: re-insert src
+    // at its old index, splice the new subtask back out of tgt, restore
+    // the snapshotted tgt fields, and restore S.pinned from snapshot.
+    _pushUndo({
+      kind:'mergeAttach',
+      srcSnapshot:_atSrcSnapshot,
+      srcIdx:_atSrcLiveIdx,
+      tgtTid:tgt._tid,
+      newSubSid:_atSid,
+      prevTgt:_atTgtPrev,
+      prevPinned:_atPinSnapshot,
+      label:'Attached "'+(src.name||'')+'" as sub-task of "'+(tgt.name||'')+'"'
+    });
+    logAdd('Attached "'+(src.name||'')+'" \u2192 sub-task of "'+(tgt.name||'')+'"','task');
+    closeOv('ov-task-merge');
+    save();renderTasks();
+    return;
+  }
+  // ─── End attach branch ──────────────────────────────────────────────
+
   var newTitle=(document.getElementById('ov-merge-newtitle').value||'').trim();
   if(!newTitle){document.getElementById('ov-merge-err').textContent='New master title is required.';return;}
   if(!P.mergeOrder||!P.mergeOrder.length){document.getElementById('ov-merge-err').textContent='No sub-tasks to merge.';return;}
