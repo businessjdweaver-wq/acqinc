@@ -1274,9 +1274,13 @@ function pullData() {
   // Traits/terrain/conditions/game_rules/outcome_template: official+shared only
   // v1.7117 — Territory weights also fetched in vocab scope so an author
   // can see and adapt weights authored by others (private overrides own).
+  // v1.7149 — Specialties added to vocab fetch (admin-authored, official-
+  // visibility only). Without this, specialty rows save successfully but
+  // are never pulled back, so the local `specialties` array stays empty
+  // and the Specialties tab shows nothing but the hardcoded fallback.
   var vocabFilter = 'select=*' +
     '&visibility=in.(official,shared)' +
-    '&content_type=in.(trait,terrain,condition,game_rules,outcome_template,monster,territory_weights)' +
+    '&content_type=in.(trait,terrain,condition,game_rules,outcome_template,monster,territory_weights,specialty)' +
     '&order=sort_order.asc';
 
   return Promise.all([
@@ -3222,13 +3226,31 @@ function showSpecialtyForm(key) {
     };
     sbUpsert(row).then(function(){
       flash('✓ Specialty saved');
+      console.log('[specialty save] upserted', row.content_key, '— pulling fresh data');
       return pullData();
     }).then(function(){
+      // v1.699 — Verify the round-trip. If the row didn't come back in
+      // the local `specialties` array, something is filtering it out
+      // (RLS, vocab fetch filter, etc.). Surface a warning so the user
+      // doesn't silently lose data.
+      var found = (specialties||[]).some(function(x){return x.content_key===slugKey;});
+      if (!found) {
+        console.warn('[specialty save] row "'+slugKey+'" did not appear after pullData. ' +
+          'Check (1) RLS policies on content_items for content_type=specialty, ' +
+          '(2) the vocab fetch filter in pullData includes "specialty", ' +
+          '(3) the visibility column was set correctly.');
+        alert('⚠ The specialty appeared to save but did not reload from Supabase. ' +
+          'Check the browser console for details. Common causes:\n\n' +
+          '• RLS policy on content_items rejects content_type=specialty\n' +
+          '• The vocab fetch filter excludes specialty\n' +
+          '• A CHECK constraint on content_type rejected the row');
+      }
       sel = { kind: 'specialty', key: slugKey };
       activeTab = 'specialties';
       renderList();
       showSpecialtyForm(slugKey);
     }).catch(function(err){
+      console.error('[specialty save] error:', err);
       alert('Save failed: ' + (err.message || err));
     });
   };
