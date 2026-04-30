@@ -3103,7 +3103,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7150</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7151</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4067,7 +4067,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7150
+      Version 1.7151
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -8811,6 +8811,17 @@ function prepBurnerModal(){
   if(dt)dt.value=nearestThreeHourDeferValue();
   var wrap=document.getElementById('ov-brn-picker-wrap');
   if(wrap)wrap.style.display='none';
+  // v1.7151 — Clear any pillMins state from a previous defer so we don't
+  // accidentally use a stale pill choice if the user opens the modal,
+  // backs out, and reopens. confirmBurner will fall back to the input's
+  // pre-filled value (next 3-hour block) if the user just hits Defer
+  // without making a selection — same default behavior as before.
+  var modal=document.getElementById('ov-burner');
+  if(modal)delete modal.dataset.pillMins;
+  // Also clear visual highlight from any previously-active pill.
+  document.querySelectorAll('#ov-brn-pills button.active').forEach(function(b){
+    b.classList.remove('active');
+  });
 }
 function availableCoverageForQuestLike(q){
   var pr=(q&&q.pre)||{};
@@ -34677,7 +34688,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7150';
+var RQ_CLIENT_VERSION='v1.7151';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -40504,6 +40515,23 @@ document.getElementById('ov-pw-yes').addEventListener('click',function(){
 
 
 function burnerPillClick(mins){
+  // v1.7151 — Previously this wrote a computed timestamp into the hidden
+  // datetime-local input, then confirmBurner read it back. That round-trip
+  // was fragile: any path that re-ran prepBurnerModal (which pre-fills the
+  // input with the next 3-hour block) silently reverted the pill choice,
+  // leading to the documented bug where a 4h defer at 8:25 AM committed
+  // as 9:00 AM (the next 3-hour block, == prepBurner's default).
+  //
+  // Now: the pill click stores the CHOSEN MINUTES as state on the modal
+  // root element. confirmBurner reads that value first; only when no pill
+  // was clicked AND the user opened the date picker explicitly does it
+  // fall back to reading the input's value. That makes the chain "what
+  // the user clicked = what gets committed", with no re-fill side-effects.
+  var modal=document.getElementById('ov-burner');
+  if(modal)modal.dataset.pillMins=String(parseInt(mins,10)||15);
+  // Also keep the input synchronized for the non-bug path (user reopens
+  // the date picker after clicking a pill — they should see their pill
+  // choice as the starting value).
   var dt=document.getElementById('ov-brn-dt');
   var wrap=document.getElementById('ov-brn-picker-wrap');
   if(wrap)wrap.style.display='none';
@@ -40514,6 +40542,14 @@ function showBurnerPicker(){
   var wrap=document.getElementById('ov-brn-picker-wrap');
   if(wrap)wrap.style.display='';
   if(dt && !dt.value)dt.value=nearestThreeHourDeferValue();
+  // v1.7151 — Opening the date picker is an explicit choice to override
+  // any pill that was clicked. Clear the pillMins state so confirmBurner
+  // reads the input value rather than the pill offset.
+  var modal=document.getElementById('ov-burner');
+  if(modal)delete modal.dataset.pillMins;
+  document.querySelectorAll('#ov-brn-pills button.active').forEach(function(b){
+    b.classList.remove('active');
+  });
   try{ if(dt && dt.showPicker) dt.showPicker(); else if(dt) dt.focus(); }catch(err){ if(dt)dt.focus(); }
 }
 function cancelBurner(){
@@ -40522,8 +40558,25 @@ function cancelBurner(){
   closeOv('ov-burner');
 }
 function confirmBurner(){
-  var dtEl=document.getElementById('ov-brn-dt');
-  var ts=parseDateTimeLocal(dtEl?dtEl.value:'');
+  // v1.7151 — Read the pill choice off the modal root element first.
+  // This is the source of truth when the user clicked a pill. Only if
+  // no pill is set (the user opened the date picker and chose a custom
+  // time) do we fall back to reading the datetime-local input's value.
+  var modal=document.getElementById('ov-burner');
+  var pillMins=modal&&modal.dataset.pillMins?parseInt(modal.dataset.pillMins,10):NaN;
+  // Also detect whether the date picker was explicitly opened — if it
+  // was, we should respect its current value over a stale pill choice.
+  // (Both are kept in sync by burnerPillClick, but if the user clicked
+  // the picker AFTER a pill, the input value should win.)
+  var wrap=document.getElementById('ov-brn-picker-wrap');
+  var pickerOpen=wrap&&wrap.style.display!=='none';
+  var ts;
+  if(isFinite(pillMins)&&!pickerOpen){
+    ts=Date.now()+(pillMins*60000);
+  } else {
+    var dtEl=document.getElementById('ov-brn-dt');
+    ts=parseDateTimeLocal(dtEl?dtEl.value:'');
+  }
   if(!isFinite(ts)){alert('Choose a valid defer date and time.');return;}
   if(ts<=Date.now()){alert('Choose a time in the future.');return;}
   // v1.6932: Split-group burner (whole group deferred in lockstep)
