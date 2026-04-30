@@ -1388,6 +1388,11 @@ function pullData() {
           // shows "not consumable" for legacy gear.
           consumable: !!row.consumable,
           uses: (row.uses!==null&&row.uses!==undefined)?(parseInt(row.uses,10)||null):null,
+          // v1.698 — Read item traits from the items.traits jsonb column.
+          // Pre-migration rows return undefined → empty array (no traits).
+          // The chip panel renders from item.traits; the main game's
+          // trait-prereq gate also reads this same field via loadItemsFromDB.
+          traits: Array.isArray(row.traits) ? row.traits.slice() : [],
           _dbId:row.id };
       });
 
@@ -2010,7 +2015,15 @@ function saveItemRow(item) {
     // see v1_7148_migration.sql). consumable=false implicitly means
     // permanent gear; uses is meaningful only when consumable=true.
     consumable: !!item.consumable,
-    uses: item.consumable ? (item.uses || null) : null
+    uses: item.consumable ? (item.uses || null) : null,
+    // v1.698 — Persist traits jsonb column. Previously v1.685 added the
+    // traits chip panel to the item form but never wired it through to
+    // Supabase, so item traits never survived a page reload. Fixed here:
+    // saves the traits array verbatim. The main game (loadItemsFromDB)
+    // already reads row.traits for the trait-prereq gate evaluator. SQL
+    // migration: ALTER TABLE items ADD COLUMN traits jsonb DEFAULT '[]';
+    // (or just trust the column was added in an earlier ad-hoc migration).
+    traits: Array.isArray(item.traits) ? item.traits : []
   });
   if (!item._dbId) {
     return sbFetch(SB_URL + '/rest/v1/items', {
