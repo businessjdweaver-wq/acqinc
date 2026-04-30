@@ -582,6 +582,18 @@ function sbPrereqSave(questKey, prereqRows) {
       method: 'POST',
       headers: { 'Prefer': 'return=minimal' },
       body: JSON.stringify(prereqRows)
+    }).then(function(r) {
+      // v1.698 — Surface insert errors so a CHECK constraint or column-
+      // type mismatch on a new prereq_type (e.g. 'trait') doesn't silently
+      // strand the rows. Throws if the response is non-2xx; the upstream
+      // .catch logs and re-renders, so the user at least sees something
+      // went wrong rather than the trait quietly disappearing.
+      if (!r.ok) {
+        return r.text().then(function(t){
+          throw new Error('quest_prereqs insert failed: ' + r.status + ' ' + (t||r.statusText||''));
+        });
+      }
+      return r;
     });
   });
 }
@@ -6276,7 +6288,17 @@ function showQuestForm(setId, idx) {
       // shape drift that caused empty/un-fillable Faith peg slots in the app.
       rel:    (_relVals.filter(function(r){return typeof r==='string'&&r.trim();})[0] || ''),
       gold:   parseInt(document.getElementById('qf-gold').value) || 0,
-      items:  _gearItems.concat(_petItems.filter(function(p){ return _gearItems.indexOf(p) === -1; }))
+      items:  _gearItems.concat(_petItems.filter(function(p){ return _gearItems.indexOf(p) === -1; })),
+      // v1.698 — Mirror trait selections into q.pre.traits so the form-
+      // render path sees them immediately on re-render. Without this,
+      // showQuestForm runs before sbPrereqFetch resolves, the trait
+      // <option>s render without selected state, and the async DB load's
+      // setMulti('qf-traits', ...) is the only thing that restores them.
+      // That works in the happy path but creates a flash of empty state
+      // and breaks entirely if the DB save was rejected (because the
+      // load fetch returns no trait rows). Mirroring here makes the
+      // blob the source of truth at render time, with DB rows backstopping.
+      traits: selValues('qf-traits')
     };
     var _minLv = parseInt(document.getElementById('qf-min-level').value) || 0;
     if (_minLv > 0) q.minLevel = _minLv; else delete q.minLevel;
@@ -6346,7 +6368,15 @@ function showQuestForm(setId, idx) {
     }).then(function() {
       renderList(); showQuestForm(setId, idx);
     }).catch(function(e) {
+      // v1.698 — Surface the error rather than silently re-rendering. The
+      // most common failure mode is a Supabase CHECK constraint on
+      // prereq_type rejecting a new value (e.g. 'trait') — without an
+      // alert, the user just sees their selection vanish on re-render.
       console.warn('[prereq save]', e);
+      var msg = (e && e.message) ? e.message : String(e);
+      alert('Some prerequisites could not be saved:\n\n' + msg +
+        '\n\nIf this mentions a CHECK constraint on quest_prereqs.prereq_type, ' +
+        'run the v1.7148 SQL migration step to allow the "trait" prereq_type.');
       renderList(); showQuestForm(setId, idx);
     });
   };
