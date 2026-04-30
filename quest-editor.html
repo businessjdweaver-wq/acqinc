@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Quest Editor v1.698</title>
+<title>Quest Editor v1.699</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -386,7 +386,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 <body>
 <div id="login-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--parch);border:2px solid var(--gold);border-radius:10px;padding:24px;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.5)">
-    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.698</span></h2>
+    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.699</span></h2>
     <div style="margin-bottom:12px">
       <label style="display:block;font-size:.8em;color:var(--ink2);margin-bottom:4px">Email</label>
       <input type="text" id="email" autocomplete="email" style="width:100%;padding:8px;border:1px solid var(--gold);border-radius:5px;background:var(--parch);font-size:.9em;box-sizing:border-box">
@@ -402,7 +402,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 
 <div id="app">
   <div id="hdr">
-    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.698</span></h1>
+    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.699</span></h1>
     <div id="login-area">
       <span id="user-email"></span>
       <button class="hbtn" id="btn-push" style="display:none" title="Push all local changes to Supabase">☁ Push</button>
@@ -424,6 +424,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
         <button class="icon-btn" id="btn-new-outcome" title="New outcome template (admin only)" style="display:none">+ Outcome</button>
         <button class="icon-btn" id="btn-new-monster" title="New monster" style="display:none">+ Monster</button>
         <button class="icon-btn" id="btn-new-territory" title="New territory weights" style="display:none">+ Territory</button>
+        <button class="icon-btn" id="btn-new-specialty" title="New specialty (admin only)" style="display:none">+ Specialty</button>
         <button class="icon-btn" id="btn-dupe-cycle" title="Duplicate a cycle">⧉</button>
       </div>
       <div id="tab-bar" style="display:flex;border-bottom:1px solid var(--border2);flex-shrink:0;flex-wrap:wrap">
@@ -436,6 +437,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
         <button class="tab-btn" data-tab="outcomes" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">🎲 Outcomes</button>
         <button class="tab-btn" data-tab="monsters" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">👹 Monsters</button>
         <button class="tab-btn" data-tab="territories" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">🌍 Territories</button>
+        <button class="tab-btn" data-tab="specialties" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">✨ Specialties</button>
         <button class="tab-btn" data-tab="difficulty" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">📊 Difficulty</button>
       </div>
       <div id="list-scroll">
@@ -1027,6 +1029,7 @@ var gameRules         = [];   // game_rules rows from content_items (expect 1)
 var outcomeTemplates  = [];   // outcome_template rows from content_items
 var monsters          = [];   // simplified monster rows from content_items
 var territoryWeights  = [];   // v1.7117 per-territory species-weight rows from content_items
+var specialties       = [];   // v1.699 specialty rows from content_items
 
 // Store type → tab/subtab mapping
 var ITEM_TYPES = [
@@ -1116,12 +1119,32 @@ var DND_CLS = ['Barbarian','Bard','Cleric','Druid','Fighter','Monk','Paladin',
 // is shown inline in the picker so you don't have to remember which key
 // means what. Item-bestowal effects (effect_type='specialty_grant') use
 // the same key as the target value.
+// v1.699 — Specialties moved to live Supabase content_items table
+// (content_type='specialty'). The live `specialties` array (declared
+// below alongside other content arrays) is the source of truth. This
+// hardcoded fallback exists only in case the Supabase fetch fails;
+// game.html keeps the same Texere fallback baked in.
 var SPECIALTIES_QE = {
   'Texere': {
     label: 'Texere',
     desc: 'Bound by oath or blood to a Texere dragon, the bearer channels weave-magic through draconic conduits.'
   }
 };
+// Returns the merged specialty registry — DB rows take precedence over
+// the SPECIALTIES_QE fallback. Mirrors getAllSpecialties() in game.html.
+function getAllSpecialtiesQE(){
+  var out={};
+  Object.keys(SPECIALTIES_QE||{}).forEach(function(k){ out[k]=SPECIALTIES_QE[k]; });
+  (specialties||[]).forEach(function(row){
+    if(!row||!row.content_key)return;
+    out[row.content_key]={
+      label: row.label || row.content_key,
+      desc:  row.desc || '',
+      grantsItemAccess: Array.isArray(row.grantsItemAccess) ? row.grantsItemAccess.slice() : []
+    };
+  });
+  return out;
+}
 function rollStatsQE(cls) {
   var base = CLASS_STATS[cls] || CLASS_STATS['default'];
   var s = {};
@@ -1284,6 +1307,7 @@ function pullData() {
     outcomeTemplates = [];
     monsters = [];
     territoryWeights = []; // v1.7117
+    specialties = []; // v1.699
     // pets reset inside the pets table fetch below
     (rows || []).forEach(function(row) {
       var d = row.data || {};
@@ -1332,6 +1356,14 @@ function pullData() {
         // ownership, and visibility metadata preserved for the save path.
         d.content_key = row.content_key;
         territoryWeights.push(d);
+      } else if (row.content_type === 'specialty') {
+        // v1.699 — Specialty rows. content_key is the specialty key
+        // (e.g. 'Texere'); data carries {label, desc, grantsItemAccess}.
+        // The grantsItemAccess array lists item names whose class
+        // restriction the specialty bypasses for any character bound to it.
+        if (typeof row.sort_order === 'number') d.sort_order = row.sort_order;
+        d.content_key = row.content_key;
+        specialties.push(d);
       }
     });
     // Default: collapse all cycles
@@ -1658,6 +1690,8 @@ function renderList() {
   // v1.7117 — New territory weights button. Available to any logged-in author;
   // sharing semantics (private vs shared vs official) handled at save time.
   document.getElementById('btn-new-territory').style.display = (activeTab === 'territories' && !!uid()) ? '' : 'none';
+  // v1.699 — Specialty admin-only button.
+  document.getElementById('btn-new-specialty').style.display = (activeTab === 'specialties' && isAdmin()) ? '' : 'none';
   if (activeTab === 'pets')   { renderPetList();   return; }
   if (activeTab === 'items')  { renderItemList();  return; }
   if (activeTab === 'traits') { renderTraitList(); return; }
@@ -1666,6 +1700,7 @@ function renderList() {
   if (activeTab === 'outcomes') { renderOutcomeList(); return; }
   if (activeTab === 'monsters') { renderMonsterList(); return; }
   if (activeTab === 'territories') { renderTerritoryList(); return; } // v1.7117
+  if (activeTab === 'specialties') { renderSpecialtyList(); return; } // v1.699
   if (activeTab === 'difficulty') { renderDifficultyReference(); return; }
   var el = document.getElementById('list-scroll');
   if (!uid()) {
@@ -2974,6 +3009,282 @@ function showTraitForm(key) {
     sel = { kind: 'trait', key: null };
     activeTab = 'traits';
     showTraitForm(null);
+  };
+}
+
+// ══════════════════════════════════════════════════
+// SPECIALTIES TAB (v1.699 — was hardcoded in game.html SPECIALTIES)
+// ══════════════════════════════════════════════════
+// Specialties are class-agnostic Daggerheart-style domain tags. A
+// character can hold at most one. The specialty's grantsItemAccess
+// array lists item names whose class restriction (set on items via
+// the Prereq-Eligible Classes panel) it bypasses.
+//
+// Schema: content_items rows with content_type='specialty'.
+//   content_key: the specialty key (e.g. 'Texere')
+//   data.label:  display name
+//   data.desc:   lore blurb
+//   data.grantsItemAccess: array of item names this specialty unlocks
+//
+// Admin-only CRUD (same pattern as Traits/Terrain). The Texere entry
+// is also kept hardcoded as a fallback in both qe.html and game.html
+// so the system works even before the v1.7149 migration runs.
+
+function renderSpecialtyList() {
+  var el = document.getElementById('list-scroll');
+  if (!uid()) { el.innerHTML = '<div class="list-empty">Log in to load specialties.</div>'; return; }
+  // Build a normalized list — DB rows + the hardcoded Texere fallback
+  // (only if Texere isn't already in the DB list, so the Texere edit
+  // surface lights up as soon as it's seeded).
+  var dbKeys = {};
+  specialties.forEach(function(s){ if(s&&s.content_key) dbKeys[s.content_key] = true; });
+  var rows = specialties.slice();
+  Object.keys(SPECIALTIES_QE||{}).forEach(function(k){
+    if (dbKeys[k]) return;
+    var f = SPECIALTIES_QE[k];
+    rows.push({
+      content_key: k,
+      label: f.label,
+      desc: f.desc,
+      grantsItemAccess: [],
+      _fallbackOnly: true
+    });
+  });
+  rows.sort(function(a,b){
+    var sa = typeof a.sort_order === 'number' ? a.sort_order : 9999;
+    var sb = typeof b.sort_order === 'number' ? b.sort_order : 9999;
+    if (sa !== sb) return sa - sb;
+    return (a.label||a.content_key||'').localeCompare(b.label||b.content_key||'');
+  });
+
+  var html = '';
+  if (!isAdmin()) {
+    html += '<div style="padding:10px 12px;background:rgba(26,107,138,.08);' +
+      'border-bottom:1px solid var(--border2);font-size:.78em;color:var(--ink2);' +
+      'font-style:italic">👁 Read-only — only the admin can edit the specialty vocabulary.</div>';
+  }
+  if (!rows.length) {
+    el.innerHTML = html + '<div class="list-empty">No specialties yet. Click "+ Specialty" to create one.</div>';
+    return;
+  }
+  rows.forEach(function(s) {
+    var isSel = sel && sel.kind === 'specialty' && sel.key === s.content_key;
+    var badge;
+    if (s._fallbackOnly) {
+      badge = '<span class="qbadge" style="border-color:var(--ink2);color:var(--ink2)" title="Hardcoded fallback — not yet in DB">fallback</span>';
+    } else if (s._ownerUserId === ADMIN_UID) {
+      badge = '<span class="qbadge" style="border-color:var(--gold);color:var(--gold)">official</span>';
+    } else {
+      badge = '<span class="qbadge">custom</span>';
+    }
+    var grantCount = (s.grantsItemAccess && s.grantsItemAccess.length) || 0;
+    var grantBadge = grantCount
+      ? ' <span style="font-size:.7em;color:var(--ink2)">· ' + grantCount + ' item' + (grantCount===1?'':'s') + '</span>'
+      : '';
+    html += '<div class="quest-row ' + (isSel ? 'sel' : '') +
+      '" data-sel-specialty="' + esc(s.content_key) + '">' +
+      '<span style="margin-right:4px">✨</span>' +
+      '<span class="quest-row-title" style="flex:1">' + esc(s.label || s.content_key) + grantBadge + '</span>' +
+      '<span style="color:var(--ink2);font-size:.75em;margin-right:6px">' + esc(s.content_key) + '</span>' +
+      badge +
+      '</div>';
+  });
+  el.innerHTML = html;
+  el.onclick = function(e) {
+    var row = e.target.closest('[data-sel-specialty]');
+    if (!row) return;
+    var key = row.getAttribute('data-sel-specialty');
+    sel = { kind: 'specialty', key: key };
+    renderSpecialtyList();
+    showSpecialtyForm(key);
+  };
+}
+
+function showSpecialtyForm(key) {
+  // Resolve from DB first, then from fallback (so editing 'Texere' before
+  // the migration shows its baked-in label/desc).
+  var s = specialties.filter(function(x){return x.content_key===key;})[0] || null;
+  var fallback = (!s && SPECIALTIES_QE && SPECIALTIES_QE[key]) ? SPECIALTIES_QE[key] : null;
+  var isNew = !s && !fallback;
+  var canEdit = isAdmin();
+  var fi = document.getElementById('form-inner');
+  // Source of truth for prefill values
+  var src = s || fallback || null;
+  var srcLabel = src ? (src.label||key||'') : '';
+  var srcDesc  = src ? (src.desc ||'') : '';
+  var srcGrants = (src && Array.isArray(src.grantsItemAccess)) ? src.grantsItemAccess.slice() : [];
+  var srcSort  = (s && typeof s.sort_order === 'number') ? s.sort_order : 9999;
+
+  var roAttr = canEdit ? '' : ' readonly disabled';
+
+  // Build the grantsItemAccess multi-select. Source = GEAR_PREREQ_NAMES
+  // (already deduped against the DB). Pre-select rows in srcGrants;
+  // surface orphans (saved values not in current GEAR_PREREQ_NAMES) as
+  // separate options so they can be deliberately kept or removed.
+  var orphans = srcGrants.filter(function(n){ return GEAR_PREREQ_NAMES.indexOf(n) === -1; });
+  var grantOptsHtml =
+    GEAR_PREREQ_NAMES.slice().sort().map(function(n){
+      var selAttr = (srcGrants.indexOf(n) !== -1) ? ' selected' : '';
+      return '<option value="' + esc(n) + '"' + selAttr + '>' + esc(n) + '</option>';
+    }).join('') +
+    orphans.map(function(n){
+      return '<option value="' + esc(n) + '" selected>' + esc(n) + '  \u26A0 not in DB</option>';
+    }).join('');
+
+  fi.innerHTML =
+    '<div id="form-title-row">' +
+      '<div id="form-heading">✨ ' + (isNew ? 'New Specialty' : esc(srcLabel || key)) + '</div>' +
+    '</div>' +
+
+    (canEdit ? '' :
+      '<div style="padding:10px 12px;background:rgba(26,107,138,.08);border:1px solid var(--border2);' +
+      'border-radius:4px;margin-bottom:10px;font-size:.85em;color:var(--ink2);font-style:italic">' +
+      'You are viewing this specialty in read-only mode. Only the admin can modify the specialty vocabulary.</div>') +
+
+    (fallback && !s ? (
+      '<div style="padding:10px 12px;background:rgba(201,146,42,.08);border:1px solid var(--border2);' +
+      'border-radius:4px;margin-bottom:10px;font-size:.85em;color:var(--ink2)">' +
+      '\u26A0 This specialty currently exists only as a hardcoded fallback in the game source. ' +
+      'Saving it here will create a Supabase row that overrides the fallback going forward.</div>'
+    ) : '') +
+
+    '<div class="fsec">' +
+      '<div class="fsec-title">Identity</div>' +
+      '<div class="fgrid c2">' +
+        frow('Label *', '<input type="text" id="sf-label" value="' + esc(srcLabel) +
+          '" placeholder="e.g. Texere"' + roAttr + '>') +
+        frow('ID / Key *', '<input type="text" id="sf-key" value="' + esc(key||'') +
+          '" placeholder="e.g. Texere"' +
+          (isNew && canEdit ? '' : ' readonly') + ' style="font-family:monospace">') +
+      '</div>' +
+      '<div class="fgrid c1" style="margin-top:10px">' +
+        frow('Description',
+          '<textarea id="sf-desc" rows="3" placeholder="Lore blurb shown on character peek and capstone reward modal"' +
+          roAttr + '>' + esc(srcDesc) + '</textarea>') +
+        frow('Sort Order', '<input type="number" id="sf-sort" value="' + srcSort +
+          '" min="0" step="1"' + roAttr + '>') +
+      '</div>' +
+    '</div>' +
+
+    '<div class="fsec">' +
+      '<div class="fsec-title">Item Access Grants</div>' +
+      '<div style="font-size:.78em;color:var(--ink2);margin-bottom:6px">' +
+        'Items listed here can be used by any character bound to this specialty, ' +
+        'even if the item is otherwise restricted to specific classes (via the ' +
+        'item form\'s Prereq-Eligible Classes panel). Use this for class-locked ' +
+        'gear that the specialty\'s lore would unlock — e.g., Texere unlocks ' +
+        'dragon-touched runic foci that are normally Wizard-only.' +
+      '</div>' +
+      frow('Grants Item Access <span class="select-hint">(Ctrl/⌘ for multi)</span>',
+        '<select id="sf-grants" multiple' + roAttr + ' style="min-height:120px">' +
+        grantOptsHtml + '</select>') +
+    '</div>' +
+
+    (canEdit ? (
+      '<div id="action-row">' +
+        '<button class="btn btn-save" id="sf-save">💾 Save Specialty</button>' +
+        (!isNew && s && s._ownerUserId === ADMIN_UID ? '<button class="btn btn-del" id="sf-del">🗑 Delete</button>' : '') +
+        (!isNew ? '<button class="btn btn-new" id="sf-dupe">⧉ Duplicate</button>' : '') +
+        '<button class="btn btn-new" id="sf-new" style="margin-left:auto">+ New Specialty</button>' +
+        '<span id="save-flash"></span>' +
+      '</div>'
+    ) : '');
+
+  if (!canEdit) return;
+
+  document.getElementById('sf-save').onclick = function() {
+    var label = (document.getElementById('sf-label').value || '').trim();
+    var rawKey = (document.getElementById('sf-key').value || '').trim();
+    // Specialty keys preserve case (Texere, Bone, Blade — proper nouns) but
+    // strip whitespace and special chars to a safe slug. We allow letters,
+    // digits, hyphen, underscore. Blanks rejected.
+    var slugKey = rawKey.replace(/[^a-zA-Z0-9_\-]/g, '');
+    var desc  = (document.getElementById('sf-desc').value || '').trim();
+    var srt   = parseInt(document.getElementById('sf-sort').value, 10);
+    if (isNaN(srt)) srt = 9999;
+    if (!label || !slugKey) { alert('Label and ID are required.'); return; }
+    if (isNew && specialties.some(function(x){return x.content_key===slugKey;})) {
+      alert('A specialty with ID "' + slugKey + '" already exists. Choose a different ID.');
+      return;
+    }
+    var grantsSel = document.getElementById('sf-grants');
+    var grants = grantsSel ? Array.from(grantsSel.selectedOptions).map(function(o){return o.value;}) : [];
+
+    var row = {
+      content_type: 'specialty',
+      content_key:  slugKey,
+      title:        label,
+      owner_user_id: ADMIN_UID,
+      visibility:   'official',
+      status:       'published',
+      sort_order:   srt,
+      data: { label: label, desc: desc, grantsItemAccess: grants }
+    };
+    sbUpsert(row).then(function(){
+      flash('✓ Specialty saved');
+      return pullData();
+    }).then(function(){
+      sel = { kind: 'specialty', key: slugKey };
+      activeTab = 'specialties';
+      renderList();
+      showSpecialtyForm(slugKey);
+    }).catch(function(err){
+      alert('Save failed: ' + (err.message || err));
+    });
+  };
+
+  if (!isNew && s && s._ownerUserId === ADMIN_UID) {
+    document.getElementById('sf-del').onclick = function() {
+      if (prompt('Type DELETE to confirm removing specialty "' + (s.label||s.content_key) +
+        '". Characters currently bound to this specialty will retain c.specialty="' +
+        s.content_key + '" but the gate will fall back to the hardcoded SPECIALTIES (Texere only).') !== 'DELETE') {
+        alert('Cancelled.'); return;
+      }
+      var filter = 'content_type=eq.specialty' +
+        '&content_key=eq.' + encodeURIComponent(s.content_key) +
+        '&owner_user_id=eq.' + encodeURIComponent(ADMIN_UID);
+      sbDelete(filter).then(function(){
+        flash('✓ Specialty deleted');
+        return pullData();
+      }).then(function(){
+        sel = null;
+        activeTab = 'specialties';
+        renderList();
+        showPlaceholder();
+      }).catch(function(err){
+        alert('Delete failed: ' + (err.message || err));
+      });
+    };
+  }
+
+  if (!isNew && s) {
+    document.getElementById('sf-dupe').onclick = function() {
+      var dupeKey = s.content_key + '_copy';
+      var n = 2;
+      while (specialties.some(function(x){return x.content_key===dupeKey;})) {
+        dupeKey = s.content_key + '_copy' + (n++);
+      }
+      sel = { kind: 'specialty', key: null };
+      activeTab = 'specialties';
+      showSpecialtyForm(null);
+      document.getElementById('sf-label').value = (s.label || s.content_key) + ' (copy)';
+      document.getElementById('sf-key').value = dupeKey;
+      document.getElementById('sf-desc').value = s.desc || '';
+      document.getElementById('sf-sort').value = (typeof s.sort_order === 'number' ? s.sort_order : 9999);
+      // Pre-select the same grants
+      var gSel = document.getElementById('sf-grants');
+      if (gSel) {
+        Array.from(gSel.options).forEach(function(o){
+          o.selected = (s.grantsItemAccess||[]).indexOf(o.value) !== -1;
+        });
+      }
+    };
+  }
+
+  document.getElementById('sf-new').onclick = function() {
+    sel = { kind: 'specialty', key: null };
+    activeTab = 'specialties';
+    showSpecialtyForm(null);
   };
 }
 
@@ -5894,10 +6205,16 @@ function showQuestForm(setId, idx) {
           '<div style="margin-bottom:8px"><label style="'+lbl+'">Specialty *</label>'+
             '<select id="qf-cr-specialty-key" style="'+inp+'">'+
               '<option value="">— select a specialty —</option>'+
-              Object.keys(SPECIALTIES_QE).map(function(k){
-                var selAttr = (crType==='specialty' && cr.specialty === k) ? ' selected' : '';
-                return '<option value="'+esc(k)+'"'+selAttr+'>'+esc(SPECIALTIES_QE[k].label||k)+'</option>';
-              }).join('')+
+              (function(){
+                // v1.699 — Read from the merged registry (DB + fallback)
+                // so newly-authored specialties show up automatically.
+                var _all = getAllSpecialtiesQE();
+                var _keys = Object.keys(_all).sort();
+                return _keys.map(function(k){
+                  var selAttr = (crType==='specialty' && cr.specialty === k) ? ' selected' : '';
+                  return '<option value="'+esc(k)+'"'+selAttr+'>'+esc(_all[k].label||k)+'</option>';
+                }).join('');
+              }())+
             '</select>'+
             '<div id="qf-cr-specialty-info" style="font-size:.72em;color:#8b6914;margin-top:5px;min-height:1em;font-style:italic"></div>'+
           '</div>'+
@@ -5947,8 +6264,9 @@ function showQuestForm(setId, idx) {
       if (!spSel || !infoEl) return;
       function renderSpInfo() {
         var k = spSel.value;
-        if (!k || !SPECIALTIES_QE[k]) { infoEl.textContent = ''; return; }
-        infoEl.textContent = SPECIALTIES_QE[k].desc || '';
+        var _all = getAllSpecialtiesQE();
+        if (!k || !_all[k]) { infoEl.textContent = ''; return; }
+        infoEl.textContent = _all[k].desc || '';
       }
       spSel.addEventListener('change', renderSpInfo);
       renderSpInfo();
@@ -6259,13 +6577,14 @@ function showQuestForm(setId, idx) {
         };
       } else if (t === 'specialty') {
         // v1.697 — Specialty capstone reward. Validates a specialty key
-        // is selected from SPECIALTIES_QE (the editor-side mirror of the
-        // main game's SPECIALTIES registry). Empty selection treated as
-        // "no reward configured" — saves null so the capstone falls
-        // through to the random pool. Author can switch back to specify
-        // a different reward type without losing earlier panel data.
+        // is selected from the merged registry (DB + hardcoded fallback).
+        // Empty selection treated as "no reward configured" — saves null
+        // so the capstone falls through to the random pool. Author can
+        // switch back to specify a different reward type without losing
+        // earlier panel data.
         var k = (document.getElementById('qf-cr-specialty-key').value || '').trim();
-        if (!k || !SPECIALTIES_QE[k]) { q.capstoneReward = null; return; }
+        var _allSp = getAllSpecialtiesQE();
+        if (!k || !_allSp[k]) { q.capstoneReward = null; return; }
         q.capstoneReward = {
           type: 'specialty',
           specialty: k
@@ -6829,6 +7148,14 @@ document.getElementById('btn-new-territory').onclick = function() {
   sel = { kind: 'territory', key: null };
   activeTab = 'territories';
   showTerritoryForm(null);
+};
+// v1.699 — New Specialty button. Opens an empty specialty form so the
+// admin can author a new specialty (key, label, desc, grantsItemAccess).
+document.getElementById('btn-new-specialty').onclick = function() {
+  if (!isAdmin()) { alert('Only the admin can create specialties.'); return; }
+  sel = { kind: 'specialty', key: null };
+  activeTab = 'specialties';
+  showSpecialtyForm(null);
 };
 document.getElementById('btn-new-quest').onclick = function() {
   if (!sel) return;

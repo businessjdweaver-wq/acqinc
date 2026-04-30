@@ -3103,7 +3103,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7148</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7149</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4067,7 +4067,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7148
+      Version 1.7149
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -5862,15 +5862,60 @@ function _itemRestrictedToClasses(itemName){
 // helper effectiveSpecialty(c) implements this resolution.
 
 var SPECIALTIES={
+  // v1.7149 — Authored content moved to Supabase content_items table
+  // (content_type='specialty'). Use getSpecialty(key) / getAllSpecialties()
+  // helpers instead of indexing this constant directly.
+  // The Texere entry is preserved here as a hardcoded fallback so the
+  // game works even before the v1.7149 SQL migration runs (which seeds
+  // the DB with Texere). Once the DB is seeded, the DB version takes
+  // precedence — see getSpecialty() resolution order.
   'Texere':{
     label:'Texere',
     desc:'Bound by oath or blood to a Texere dragon, the bearer channels weave-magic through draconic conduits. Dragon-touched items, scales, and runic foci respond to their hand even when convention would deny them.',
-    // Populated as you author dragon-touched items in the quest editor.
-    // Each entry is the exact item name the specialty unlocks regardless
-    // of restrictedToClasses. Empty on first deploy.
     grantsItemAccess:[]
   }
 };
+
+// Returns the merged specialty registry as a plain {key: definition}
+// object. Walks CONTENT_LIB.{official,shared,private}.specialties in
+// that order with later scopes overriding earlier (so a private custom
+// 'Texere' tweak wins over the shared/official definition). Falls back
+// to the hardcoded SPECIALTIES constant for entries not yet in the DB.
+//
+// Result keys are the specialty's content_key (which the editor saves
+// from the form's "ID / Key" input — e.g. 'Texere'). Values match the
+// SPECIALTIES shape: {label, desc, grantsItemAccess:[]}.
+function getAllSpecialties(){
+  var out={};
+  // Layer 1: hardcoded fallback (lowest priority — DB always wins)
+  Object.keys(SPECIALTIES||{}).forEach(function(k){
+    out[k]=SPECIALTIES[k];
+  });
+  // Layer 2: DB scopes in priority order. Later writes win.
+  if(typeof CONTENT_LIB!=='undefined'){
+    ['official','shared','private'].forEach(function(scope){
+      var bucket=CONTENT_LIB[scope]&&CONTENT_LIB[scope].specialties;
+      if(!Array.isArray(bucket))return;
+      bucket.forEach(function(row){
+        if(!row||!row.content_key)return;
+        out[row.content_key]={
+          label:row.label||row.content_key,
+          desc:row.desc||'',
+          grantsItemAccess:Array.isArray(row.grantsItemAccess)?row.grantsItemAccess.slice():[]
+        };
+      });
+    });
+  }
+  return out;
+}
+
+// Convenience: look up a single specialty by key. Returns null when
+// missing. Use this everywhere you would have done SPECIALTIES[key].
+function getSpecialty(key){
+  if(!key)return null;
+  var all=getAllSpecialties();
+  return all[key]||null;
+}
 
 // Returns the specialty label currently effective for this character,
 // or null if none. Resolution order:
@@ -5882,7 +5927,7 @@ var SPECIALTIES={
 // Returns the key (e.g. 'Texere') so callers can index SPECIALTIES.
 function effectiveSpecialty(c){
   if(!c)return null;
-  if(c.specialty&&SPECIALTIES[c.specialty])return c.specialty;
+  if(c.specialty&&getSpecialty(c.specialty))return c.specialty;
   // Walk character's inventory looking for a specialty_grant effect.
   // Items here are flat strings; the effect lookup goes through the
   // live item registries to find the item object that has effects.
@@ -5906,12 +5951,12 @@ function effectiveSpecialty(c){
         if(Array.isArray(it.effects)){
           for(var e=0;e<it.effects.length;e++){
             var fx=it.effects[e];
-            if(fx&&fx.effect_type==='specialty_grant'&&fx.target&&SPECIALTIES[fx.target]){
+            if(fx&&fx.effect_type==='specialty_grant'&&fx.target&&getSpecialty(fx.target)){
               return fx.target;
             }
           }
         }
-        if(it.effect&&it.effect.grantSpecialty&&SPECIALTIES[it.effect.grantSpecialty]){
+        if(it.effect&&it.effect.grantSpecialty&&getSpecialty(it.effect.grantSpecialty)){
           return it.effect.grantSpecialty;
         }
         break; // matched item by name; don't keep walking same registry
@@ -5928,8 +5973,9 @@ function effectiveSpecialty(c){
 function _charSpecialtyGrantsAccess(c,itemName){
   if(!c||!itemName)return false;
   var sp=effectiveSpecialty(c);
-  if(!sp||!SPECIALTIES[sp])return false;
-  var grants=SPECIALTIES[sp].grantsItemAccess||[];
+  var spDef=getSpecialty(sp);
+  if(!spDef)return false;
+  var grants=spDef.grantsItemAccess||[];
   return grants.indexOf(itemName)!==-1;
 }
 
@@ -19692,8 +19738,8 @@ function _renderCharpeekHeader(){
   var bannerEl=document.getElementById('ov-charpeek-specialty-banner');
   if(bannerEl){
     var spKey=(typeof effectiveSpecialty==='function')?effectiveSpecialty(c):null;
-    if(spKey&&SPECIALTIES[spKey]){
-      var spDef=SPECIALTIES[spKey];
+    var spDef=spKey?getSpecialty(spKey):null;
+    if(spKey&&spDef){
       var isPermanent=(c.specialty===spKey);
       // Find the bestowing item if this is an item-bestowed specialty.
       var viaItem='';
@@ -19909,15 +19955,17 @@ function _cpkOverviewHtml(c,ci){
   // Lets you assign or clear c.specialty without going through a quest
   // capstone or item bestow. Permanent grant once set (the lock rule
   // means you'll see the badge persist even without an item). The
-  // dropdown lists EVERY specialty in SPECIALTIES regardless of class —
-  // specialties are class-agnostic in this design.
+  // dropdown lists EVERY specialty in the merged registry (DB +
+  // hardcoded fallback) regardless of class — specialties are
+  // class-agnostic in this design.
   if(typeof isDevModeActive==='function'&&isDevModeActive()){
-    var spKeys=Object.keys(SPECIALTIES||{});
+    var _allSp=getAllSpecialties();
+    var spKeys=Object.keys(_allSp);
     var curSp=c.specialty||'';
     var optsHtml='<option value="">— none —</option>'+
       spKeys.map(function(k){
         var sel=(k===curSp)?' selected':'';
-        return '<option value="'+esc(k)+'"'+sel+'>'+esc((SPECIALTIES[k].label||k))+'</option>';
+        return '<option value="'+esc(k)+'"'+sel+'>'+esc((_allSp[k].label||k))+'</option>';
       }).join('');
     parts.push(
       '<div style="margin-bottom:10px;padding:8px 10px;background:rgba(26,107,138,.06);border:1px dashed var(--teal);border-radius:6px">'+
@@ -21525,12 +21573,13 @@ function renderParty(){
             var _spChipHtml='';
             if(typeof effectiveSpecialty==='function'){
               var _spKey=effectiveSpecialty(c);
-              if(_spKey&&SPECIALTIES[_spKey]){
+              var _spDef=_spKey?getSpecialty(_spKey):null;
+              if(_spKey&&_spDef){
                 var _spIsPerm=(c.specialty===_spKey);
                 var _spBorder=_spIsPerm?'var(--gold)':'var(--teal)';
                 var _spBg=_spIsPerm?'rgba(201,146,42,.12)':'rgba(26,107,138,.10)';
                 var _spFg=_spIsPerm?'var(--gold-dark)':'var(--teal)';
-                _spChipHtml='<span class="prr-specialty" title="Specialty: '+esc(SPECIALTIES[_spKey].label||_spKey)+(_spIsPerm?' (permanent)':' (via item — see character peek)')+'" style="display:inline-block;font-family:\'Cinzel\',serif;font-size:.62em;font-weight:700;letter-spacing:.04em;color:'+_spFg+';background:'+_spBg+';border:1px solid '+_spBorder+';border-radius:8px;padding:0 5px;margin-left:5px;vertical-align:middle;line-height:1.4">\u2728 '+esc(SPECIALTIES[_spKey].label||_spKey)+'</span>';
+                _spChipHtml='<span class="prr-specialty" title="Specialty: '+esc(_spDef.label||_spKey)+(_spIsPerm?' (permanent)':' (via item — see character peek)')+'" style="display:inline-block;font-family:\'Cinzel\',serif;font-size:.62em;font-weight:700;letter-spacing:.04em;color:'+_spFg+';background:'+_spBg+';border:1px solid '+_spBorder+';border-radius:8px;padding:0 5px;margin-left:5px;vertical-align:middle;line-height:1.4">\u2728 '+esc(_spDef.label||_spKey)+'</span>';
               }
             }
             return '<div class="party-roster-row" style="grid-template-columns:'+_gridTemplate+'">'+
@@ -22995,9 +23044,10 @@ document.addEventListener('change',function(e){
   var oldSp=c.specialty||null;
   if(newSp===oldSp)return;
   if(newSp){
-    if(!SPECIALTIES[newSp]){alert('Unknown specialty: '+newSp);return;}
+    var _newDef=getSpecialty(newSp);
+    if(!_newDef){alert('Unknown specialty: '+newSp);return;}
     c.specialty=newSp;
-    logAdd('\u2728 '+c.name+': specialty granted ('+SPECIALTIES[newSp].label+')','adv');
+    logAdd('\u2728 '+c.name+': specialty granted ('+_newDef.label+')','adv');
   } else {
     delete c.specialty;
     logAdd('\u2728 '+c.name+': specialty cleared'+(oldSp?(' (was '+oldSp+')'):''),'adv');
@@ -27738,11 +27788,11 @@ function awardCapstonReward(set){
       // overgranted — the picker excludes them and the dispatch warns
       // if no eligible target exists.
       var spKey=override.specialty;
-      if(!spKey||!SPECIALTIES[spKey]){
+      var spDef=getSpecialty(spKey);
+      if(!spKey||!spDef){
         console.warn('[Capstone specialty] unknown specialty key:',spKey);
         override=null; // fall through to random
       } else {
-        var spDef=SPECIALTIES[spKey];
         // Resolve eligible character pool.
         var sqName=(typeof activeCycleSquadName==='function')?activeCycleSquadName():null;
         var sq=sqName?(S.squads||[]).filter(function(s){return s.name===sqName;})[0]:null;
@@ -34608,7 +34658,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7148';
+var RQ_CLIENT_VERSION='v1.7149';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -40699,9 +40749,9 @@ bootApp();
 
 // Shared content library stored in Supabase content_items
 var CONTENT_LIB={
-  official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[],monsters:[],traits:[],terrain:[],conditions:[],gameRules:[],outcomeTemplates:[]},
-  shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[],monsters:[],traits:[],terrain:[],conditions:[],gameRules:[],outcomeTemplates:[]},
-  private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[],monsters:[],traits:[],terrain:[],conditions:[],gameRules:[],outcomeTemplates:[]}
+  official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[],monsters:[],traits:[],terrain:[],conditions:[],gameRules:[],outcomeTemplates:[],specialties:[]},
+  shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[],monsters:[],traits:[],terrain:[],conditions:[],gameRules:[],outcomeTemplates:[],specialties:[]},
+  private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[],monsters:[],traits:[],terrain:[],conditions:[],gameRules:[],outcomeTemplates:[],specialties:[]}
 };
 var CONTENT_TYPE_MAP={
   _customQuestSets:'quest_set',
@@ -40717,7 +40767,8 @@ var CONTENT_TYPE_MAP={
   _customTerrain:'terrain',
   _customConditions:'condition',
   _customGameRules:'game_rules',
-  _customOutcomeTemplates:'outcome_template'
+  _customOutcomeTemplates:'outcome_template',
+  _customSpecialties:'specialty' // v1.7149
 };
 var CONTENT_LIST_MAP={
   _customQuestSets:'questSets',
@@ -40733,7 +40784,8 @@ var CONTENT_LIST_MAP={
   _customTerrain:'terrain',
   _customConditions:'conditions',
   _customGameRules:'gameRules',
-  _customOutcomeTemplates:'outcomeTemplates'
+  _customOutcomeTemplates:'outcomeTemplates',
+  _customSpecialties:'specialties' // v1.7149
 };
 
 function normalizeContentScope(v){
@@ -41169,7 +41221,7 @@ function loadContentLibrary(manual){
   // Load shared/official content for everyone, plus this user's private content
   var _clQuery='select=*&order=sort_order.asc&or=(visibility.in.(shared,official),and(visibility.eq.private,owner_user_id.eq.'+encodeURIComponent(uid())+'))';
   return sbGet('content_items',_clQuery).then(function(rows){
-    CONTENT_LIB={official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[],monsters:[],traits:[],terrain:[],conditions:[],gameRules:[],outcomeTemplates:[],territoryWeights:[]},shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[],monsters:[],traits:[],terrain:[],conditions:[],gameRules:[],outcomeTemplates:[],territoryWeights:[]},private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[],monsters:[],traits:[],terrain:[],conditions:[],gameRules:[],outcomeTemplates:[],territoryWeights:[]}};
+    CONTENT_LIB={official:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[],monsters:[],traits:[],terrain:[],conditions:[],gameRules:[],outcomeTemplates:[],territoryWeights:[],specialties:[]},shared:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[],monsters:[],traits:[],terrain:[],conditions:[],gameRules:[],outcomeTemplates:[],territoryWeights:[],specialties:[]},private:{questSets:[],quests:[],grind:[],gear:[],vehicles:[],buildings:[],pets:[],dashCards:[],monsters:[],traits:[],terrain:[],conditions:[],gameRules:[],outcomeTemplates:[],territoryWeights:[],specialties:[]}};
     (rows||[]).forEach(function(row){
       var scope=normalizeContentScope(row.visibility);
       var listKey =
@@ -41187,6 +41239,11 @@ function loadContentLibrary(manual){
         row.content_type==='condition' ? 'conditions' :
         row.content_type==='game_rules' ? 'gameRules' :
         row.content_type==='outcome_template' ? 'outcomeTemplates' :
+        // v1.7149 — Specialties (formerly hardcoded SPECIALTIES registry).
+        // content_key is the specialty key (e.g. 'Texere'); data carries
+        // {label, desc, grantsItemAccess:[item names]}. Resolved by
+        // getSpecialty(key) which walks the three scope buckets.
+        row.content_type==='specialty' ? 'specialties' :
         // v1.7117 — Per-territory species weights authored in the Quest Editor.
         // One row per territory; content_key is the territory name; data holds
         // {species:{speciesName:multiplier}}. Merged into S.territoryWeights
@@ -44655,7 +44712,7 @@ function _autoCreateDashCard(quest,scope){
   // the author-supplied desc field if present.
   else if(cr.type==='specialty'){
     ic='\u2728';
-    var spDef=(typeof SPECIALTIES!=='undefined'&&SPECIALTIES[cr.specialty])?SPECIALTIES[cr.specialty]:null;
+    var spDef=(typeof getSpecialty==='function')?getSpecialty(cr.specialty):null;
     name=(spDef&&spDef.label)||cr.specialty||'Specialty';
     desc=(spDef&&spDef.desc)||cr.desc||'';
     colors=['#3a2a4a','#7a5a3a','#c8a85a']; // dusk-violet to gold
