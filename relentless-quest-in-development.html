@@ -3103,7 +3103,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7147</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7148</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4067,7 +4067,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7147
+      Version 1.7148
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -5952,6 +5952,220 @@ function _itemClassRestrictionLabel(itemName){
   if(!restricted||!restricted.length)return '';
   if(restricted.length===1)return 'restricted to '+restricted[0]+' only';
   return 'restricted to '+restricted.slice(0,-1).join(', ')+' or '+restricted[restricted.length-1];
+}
+
+// ════════════════════════════════════════════════════════════════════
+// v1.7148 — Consumable item infrastructure
+// ════════════════════════════════════════════════════════════════════
+// Items flagged consumable in the DB (item.consumable === true) carry a
+// per-character charge counter. The counter is stored on the character
+// in c.invMeta — a map keyed by item name → {usesLeft:N}. We piggyback
+// c.invMeta onto the stats jsonb column on the Supabase round-trip
+// (same pattern as _homeTerritory, _statsClass, _gradClass, _specialty),
+// so no new column is needed for character-side state.
+//
+// Default usesLeft on grant:
+//   item.uses is null  → 1   (single-use; torch, scroll, potion)
+//   item.uses is N>0   → N   (multi-charge; Healer's Kit, wands)
+//
+// Decrement triggers:
+//   1. Quest start: when a character's item satisfies an item-prereq
+//      slot, _consumeItemFromChar is called for one charge.
+//   2. Manual: a "Use" button in the Gear tab (added later in this
+//      version), for items the player wants to consume off-quest
+//      (e.g. drinking a potion before a tough cycle).
+// When usesLeft hits 0 the item is removed from c.inv AND its meta
+// entry deleted, freeing both maps cleanly.
+
+// Look up the live registry record for an item name. Walks GEAR,
+// VEHICLES, BUILDINGS the same way _itemRestrictedToClasses does.
+// Returns null when not found (pre-DB-load, custom unknown, etc.).
+function _itemRegistryLookup(itemName){
+  if(!itemName)return null;
+  var registries=[
+    typeof GEAR!=='undefined'?GEAR:null,
+    typeof VEHICLES!=='undefined'?VEHICLES:null,
+    typeof BUILDINGS!=='undefined'?BUILDINGS:null
+  ];
+  for(var i=0;i<registries.length;i++){
+    var reg=registries[i];if(!reg)continue;
+    for(var j=0;j<reg.length;j++){
+      if(reg[j]&&reg[j].name===itemName)return reg[j];
+    }
+  }
+  return null;
+}
+
+// True if the named item is flagged consumable in the live registry.
+// Pre-DB-load items return false (safe default — ungated permanent gear).
+function _itemIsConsumable(itemName){
+  var it=_itemRegistryLookup(itemName);
+  return !!(it&&it.consumable);
+}
+
+// Returns the default starting charge count for a freshly-acquired
+// consumable. Uses item.uses when set; defaults to 1 for single-use
+// items where uses isn't authored.
+function _itemDefaultUses(itemName){
+  var it=_itemRegistryLookup(itemName);
+  if(!it||!it.consumable)return null;
+  var n=parseInt(it.uses,10);
+  return (isFinite(n)&&n>0)?n:1;
+}
+
+// Returns the current usesLeft for itemName on character c, or null
+// when the item isn't consumable (or character has no meta entry yet).
+// Lazily-initializes the counter on first read for a consumable item
+// the character has in inv but no meta entry — needed because legacy
+// pre-v1.7148 saves don't carry invMeta. The lazy init grants the
+// item's default uses, mirroring "this character just picked it up."
+function charItemUsesLeft(c,itemName){
+  if(!c||!itemName)return null;
+  if(!_itemIsConsumable(itemName))return null;
+  if(!c.invMeta)c.invMeta={};
+  if(!c.invMeta[itemName]||typeof c.invMeta[itemName].usesLeft!=='number'){
+    var def=_itemDefaultUses(itemName);
+    if(def===null)return null;
+    c.invMeta[itemName]={usesLeft:def};
+  }
+  return c.invMeta[itemName].usesLeft;
+}
+
+// Consume one charge of itemName from character c. Returns {ok:bool,
+// remaining:N, depleted:bool}. When depleted (charges hit 0), removes
+// the item from c.inv AND wipes its meta entry. Caller is responsible
+// for save() and any UI re-renders. Logs the consumption to the
+// adventure log so the player has a forensic trail.
+function _consumeItemFromChar(c,itemName,reason){
+  if(!c||!itemName)return {ok:false,remaining:null,depleted:false};
+  if(!_itemIsConsumable(itemName))return {ok:false,remaining:null,depleted:false};
+  // Verify they actually have it.
+  var inv=c.inv||[];
+  var idx=inv.indexOf(itemName);
+  if(idx===-1)return {ok:false,remaining:null,depleted:false};
+  // Initialize meta on demand. charItemUsesLeft handles legacy migration.
+  var left=charItemUsesLeft(c,itemName);
+  if(left===null||left<=0){
+    // Defensive: an item that's somehow at 0 charges in inv. Treat as
+    // immediately depleted and clean up.
+    inv.splice(idx,1);
+    if(c.invMeta)delete c.invMeta[itemName];
+    return {ok:true,remaining:0,depleted:true};
+  }
+  c.invMeta[itemName].usesLeft=left-1;
+  var remaining=c.invMeta[itemName].usesLeft;
+  var depleted=(remaining===0);
+  if(depleted){
+    inv.splice(idx,1);
+    delete c.invMeta[itemName];
+  }
+  if(typeof logAdd==='function'){
+    var msg='\uD83D\uDD25 '+(c.name||'?')+' used '+itemName;
+    if(reason)msg+=' ('+reason+')';
+    if(depleted)msg+=' \u2014 depleted';
+    else msg+=' \u2014 '+remaining+' left';
+    logAdd(msg,'adv');
+  }
+  return {ok:true,remaining:remaining,depleted:depleted};
+}
+
+// ════════════════════════════════════════════════════════════════════
+// v1.7148 — Trait-as-prereq infrastructure
+// ════════════════════════════════════════════════════════════════════
+// Quest prereqs can now ask for a TRAIT (e.g. 'light-source') rather
+// than a specific item name. The gate finds any item in the character's
+// inventory (or franchise) that carries the trait via its item.traits
+// array. This is the cleaner alternative to OR-grouping at the schema
+// level — once you tag torch/lantern/goggles all with 'light-source',
+// every quest with that prereq sees them all as qualifying.
+//
+// pr.traits is an array of trait keys (matching CONTENT_LIB trait
+// content_keys). qddBuildCharSlots emits {type:'trait', value:K} slots;
+// qddCharCoversSlot iterates the character's inv looking for an item
+// whose traits include K. availableCoverageForQuestLike does the same
+// for the union path. When the prereq fails, the failure-message
+// renderer expands the trait into a list of qualifying items the
+// character (or any party member) actually has.
+
+// Returns the list of all items in the live registries that carry the
+// given trait key. Used by both the gate evaluator and the failure-
+// message hover hint that lists qualifying items.
+function _itemsCarryingTrait(traitKey){
+  if(!traitKey)return [];
+  var out=[];
+  var registries=[
+    typeof GEAR!=='undefined'?GEAR:null,
+    typeof VEHICLES!=='undefined'?VEHICLES:null,
+    typeof BUILDINGS!=='undefined'?BUILDINGS:null
+  ];
+  for(var i=0;i<registries.length;i++){
+    var reg=registries[i];if(!reg)continue;
+    for(var j=0;j<reg.length;j++){
+      var it=reg[j];
+      if(!it||!Array.isArray(it.traits))continue;
+      if(it.traits.indexOf(traitKey)!==-1)out.push(it.name);
+    }
+  }
+  return out;
+}
+
+// True when character c carries any item whose traits include traitKey.
+// Honors the v1.7146 proficiency gate AND v1.7146 class-restriction
+// gate AND v1.7147 specialty exception — same layered gate as a
+// specific-item prereq, just driven by trait match instead of name match.
+function charHasItemWithTrait(c,traitKey){
+  if(!c||!traitKey)return false;
+  var inv=(c.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;});
+  for(var i=0;i<inv.length;i++){
+    var name=inv[i];
+    var it=_itemRegistryLookup(name);
+    if(!it||!Array.isArray(it.traits))continue;
+    if(it.traits.indexOf(traitKey)===-1)continue;
+    // Layer the proficiency + class + specialty gates so a longbow with
+    // a 'light-source'-equivalent trait still doesn't qualify if the
+    // character can't actually use it. (Edge case but possible: an
+    // item could be both gated and trait-tagged.)
+    if(typeof charHasProficiencyForItem==='function'&&!charHasProficiencyForItem(c,name))continue;
+    if(typeof _charCanUseItemByClass==='function'&&!_charCanUseItemByClass(c,name))continue;
+    return true;
+  }
+  return false;
+}
+
+// Returns the human-readable label for a trait key. Looks across
+// CONTENT_LIB.{official,shared,private}.traits in that priority order.
+// Falls back to the key itself when the trait isn't found in any
+// scope (legacy/orphan traits).
+function _traitLabel(traitKey){
+  if(!traitKey)return '';
+  if(typeof CONTENT_LIB==='undefined')return traitKey;
+  var scopes=['official','shared','private'];
+  for(var s=0;s<scopes.length;s++){
+    var bucket=CONTENT_LIB[scopes[s]];
+    if(!bucket||!Array.isArray(bucket.traits))continue;
+    for(var i=0;i<bucket.traits.length;i++){
+      var t=bucket.traits[i];
+      if(t&&t.content_key===traitKey)return t.label||traitKey;
+    }
+  }
+  return traitKey;
+}
+
+// Returns the human-readable description for a trait key (or '' if
+// none). Same lookup pattern as _traitLabel.
+function _traitDesc(traitKey){
+  if(!traitKey)return '';
+  if(typeof CONTENT_LIB==='undefined')return '';
+  var scopes=['official','shared','private'];
+  for(var s=0;s<scopes.length;s++){
+    var bucket=CONTENT_LIB[scopes[s]];
+    if(!bucket||!Array.isArray(bucket.traits))continue;
+    for(var i=0;i<bucket.traits.length;i++){
+      var t=bucket.traits[i];
+      if(t&&t.content_key===traitKey)return t.desc||'';
+    }
+  }
+  return '';
 }
 
 // Combined gate evaluator: does any character in the available pool both
@@ -8582,6 +8796,13 @@ function availableCoverageForQuestLike(q){
   // unrestricted items, _someCharCanFullyUseItem still returns true based
   // on inv possession alone, so behavior is preserved for mundane gear.
   (pr.items||[]).forEach(function(x){total++;if(_someCharCanFullyUseItem(available,x))met++;});
+  // v1.7148 — Trait prereq union check. Met when any available
+  // character carries any item with the required trait (passing all
+  // gates). Same per-character semantics as item prereqs.
+  (pr.traits||[]).forEach(function(t){
+    total++;
+    if(available.some(function(c){return charHasItemWithTrait(c,t);}))met++;
+  });
   return {met:met,total:total,pct:total?met/total:1};
 }
 function questCyclePrereqMet(q){
@@ -16736,6 +16957,14 @@ window.rqPersistenceTest=function(){
     // saves and characters without a specialty round-trip cleanly (no
     // empty key clutter on every character row).
     if(c.specialty)_statsWithMeta._specialty=c.specialty;
+    // v1.7148 — Per-character consumable charge counters. Map of
+    // {itemName: {usesLeft:N}} packed under reserved key _invMeta. Only
+    // set when non-empty so characters with no consumables don't carry
+    // dead state in the column. Lazily initialized at item-grant time
+    // (charItemUsesLeft) and cleared on full depletion.
+    if(c.invMeta&&typeof c.invMeta==='object'&&Object.keys(c.invMeta).length>0){
+      _statsWithMeta._invMeta=c.invMeta;
+    }
     return {
       name:c.name,species:c.species||'',cls:c.cls||'',bg:c.bg||'',
       rel:c.rel||'',age:c.age||0,height:c.height||'',weight:c.weight||'',
@@ -16834,10 +17063,11 @@ window.rqPersistenceTest=function(){
     var _cStatsClass='';
     var _cGradClass='';
     var _cSpecialty=''; // v1.7147
+    var _cInvMeta=null; // v1.7148
     var _rawStats=row.stats||{};
     var _cleanStats=_rawStats;
     if(_rawStats&&typeof _rawStats==='object'&&
-       (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined||_rawStats._specialty!==undefined)){
+       (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined||_rawStats._specialty!==undefined||_rawStats._invMeta!==undefined)){
       _cleanStats=Object.assign({},_rawStats);
       if(typeof _cleanStats._homeTerritory==='string'&&_cleanStats._homeTerritory)_cHomeTerritory=_cleanStats._homeTerritory;
       if(typeof _cleanStats._statsClass==='string'&&_cleanStats._statsClass)_cStatsClass=_cleanStats._statsClass;
@@ -16845,10 +17075,16 @@ window.rqPersistenceTest=function(){
       if(typeof _cleanStats._gradClass==='string'&&_cleanStats._gradClass)_cGradClass=_cleanStats._gradClass;
       // v1.7147 — Lift _specialty off the stats blob and onto c.specialty.
       if(typeof _cleanStats._specialty==='string'&&_cleanStats._specialty)_cSpecialty=_cleanStats._specialty;
+      // v1.7148 — Lift _invMeta off the stats blob and onto c.invMeta.
+      // The stored shape is {itemName: {usesLeft:N}}. We accept any object
+      // and copy by reference; cleanup of malformed entries happens
+      // organically in charItemUsesLeft / _consumeItemFromChar.
+      if(_cleanStats._invMeta&&typeof _cleanStats._invMeta==='object')_cInvMeta=_cleanStats._invMeta;
       delete _cleanStats._homeTerritory;
       delete _cleanStats._statsClass;
       delete _cleanStats._gradClass;
       delete _cleanStats._specialty;
+      delete _cleanStats._invMeta;
     }
     var c={
       name:row.name,species:row.species,cls:row.cls,bg:row.bg,rel:row.rel,
@@ -16867,6 +17103,7 @@ window.rqPersistenceTest=function(){
     if(_cStatsClass)c.statsClass=_cStatsClass;
     if(_cGradClass)c.gradClass=_cGradClass;
     if(_cSpecialty)c.specialty=_cSpecialty; // v1.7147
+    if(_cInvMeta)c.invMeta=_cInvMeta; // v1.7148
     return c;
   }
   function _deserializeSquadRow(row,party){
@@ -16946,7 +17183,7 @@ window.rqPersistenceTest=function(){
     'hireling','formerHireling','premium','skills','tools','lang','weapons','inv',
     'stats','xp','dtProgress','downtimeBadges','coinPurse','contact','contactBg',
     'exoticTrait','ownedItems','firstHire','questsRemaining','questQuota',
-    'homeTerritory','statsClass','specialty']; // v1.7147 added specialty
+    'homeTerritory','statsClass','specialty','invMeta']; // v1.7148 added invMeta
   (_before.party||[]).forEach(function(c,ci){
     if(!c)return;
     var rebuilt=_partyRebuilt[ci];
@@ -19968,9 +20205,21 @@ function _cpkGearHtml(c){
   function _personalRow(it){
     var wt=ITEM_WEIGHT[it];
     var wtStr=(wt!==undefined&&wt>0)?' <span style="font-size:.78em;color:var(--ink-light)">('+wt+'lb)</span>':'';
+    // v1.7148 — Show consumable charge count for personal items, but no
+    // Use button (personal items are owned and tracked separately; the
+    // player can still consume by other means, but the Gear-tab Use
+    // affordance is reserved for shared inventory.)
+    var chargeBadge='';
+    if(typeof _itemIsConsumable==='function'&&_itemIsConsumable(it)){
+      var left=charItemUsesLeft(c,it);
+      var max=_itemDefaultUses(it);
+      if(left!==null){
+        chargeBadge=' <span style="font-size:.68em;color:var(--gold-dark);font-weight:700;background:rgba(201,146,42,.15);border:1px solid var(--gold-dark);border-radius:8px;padding:1px 5px;margin-left:4px" title="Consumable: '+left+' of '+max+' charges left">\uD83D\uDD25 '+left+(max>1?(' / '+max):'')+'</span>';
+      }
+    }
     return '<div style="font-size:.86em;padding:4px 8px;background:rgba(201,146,42,.08);border:1px solid rgba(201,146,42,.25);border-radius:4px;display:flex;align-items:center;gap:6px">'+
       '<span style="font-size:.72em;color:var(--gold-dark);flex-shrink:0">🔒</span>'+
-      '<span style="flex:1">'+esc(it)+wtStr+'</span>'+
+      '<span style="flex:1">'+esc(it)+wtStr+chargeBadge+'</span>'+
       '<span style="font-size:.68em;color:var(--gold-dark);font-style:italic;flex-shrink:0">personal</span>'+
       '</div>';
   }
@@ -19978,13 +20227,35 @@ function _cpkGearHtml(c){
   function _sharedRow(it){
     var wt=ITEM_WEIGHT[it];
     var wtStr=(wt!==undefined&&wt>0)?' <span style="font-size:.78em;color:var(--ink-light)">('+wt+'lb)</span>':'';
-    return '<button type="button" class="cpk-inv-item" data-item="'+esc(it)+'" '+
-      'style="display:block;width:100%;font-size:.86em;padding:4px 8px;background:rgba(255,255,255,.45);border:1px solid var(--parchment-deep);border-radius:4px;cursor:pointer;text-align:left;font-family:inherit;color:var(--ink)">'+
+    // v1.7148 — Consumable charge badge + inline Use button. The Use
+    // button decrements one charge via _consumeItemFromChar; depletion
+    // (charges hit 0) auto-removes the item from inventory. Stops
+    // propagation so the "tap to manage" row click doesn't also fire.
+    var chargeBadge='';
+    var useBtn='';
+    if(typeof _itemIsConsumable==='function'&&_itemIsConsumable(it)){
+      var left=charItemUsesLeft(c,it);
+      var max=_itemDefaultUses(it);
+      if(left!==null){
+        chargeBadge=' <span style="font-size:.68em;color:var(--gold-dark);font-weight:700;background:rgba(201,146,42,.15);border:1px solid var(--gold-dark);border-radius:8px;padding:1px 5px;margin-left:4px" title="Consumable: '+left+' of '+max+' charges left">\uD83D\uDD25 '+left+(max>1?(' / '+max):'')+'</span>';
+        if(left>0){
+          useBtn='<button type="button" class="cpk-inv-use" data-use-item="'+esc(it)+'" '+
+            'style="font-size:.68em;padding:2px 7px;border:1px solid var(--crimson);border-radius:9px;'+
+            'background:rgba(150,30,30,.08);color:var(--crimson);cursor:pointer;font-family:inherit;flex-shrink:0;margin-left:4px" '+
+            'title="Use one charge of '+esc(it)+'">Use</button>';
+        }
+      }
+    }
+    return '<div style="display:flex;align-items:center;gap:0">'+
+      '<button type="button" class="cpk-inv-item" data-item="'+esc(it)+'" '+
+      'style="display:block;flex:1;font-size:.86em;padding:4px 8px;background:rgba(255,255,255,.45);border:1px solid var(--parchment-deep);border-radius:4px;cursor:pointer;text-align:left;font-family:inherit;color:var(--ink)">'+
       '<div style="display:flex;align-items:center;gap:6px">'+
-        '<span style="flex:1">'+esc(it)+wtStr+'</span>'+
+        '<span style="flex:1">'+esc(it)+wtStr+chargeBadge+'</span>'+
         '<span style="font-size:.68em;color:var(--ink-light);font-style:italic;flex-shrink:0">tap to manage</span>'+
       '</div>'+
-      '</button>';
+      '</button>'+
+      useBtn+
+      '</div>';
   }
   // (A) Shared inventory section — comes first (everyday actionable gear)
   parts.push(
@@ -23927,6 +24198,23 @@ document.getElementById('ov-free-choice-grind').addEventListener('click',functio
       if(it)_cpkOpenInvModal(it);
       return;
     }
+    // v1.7148 — Consumable Use button. Lives next to the inv-item row,
+    // decrements one charge, auto-removes the item when charges hit 0.
+    // stopPropagation so the row's "tap to manage" doesn't also fire.
+    var useBtn=e.target.closest('.cpk-inv-use');
+    if(useBtn){
+      e.stopPropagation();
+      e.preventDefault();
+      var useIt=useBtn.getAttribute('data-use-item')||'';
+      var c=S.party[_charpeekCi];
+      if(!c||!useIt)return;
+      var res=_consumeItemFromChar(c,useIt,'manual use');
+      if(!res.ok)return;
+      save();
+      if(typeof _renderCharpeekBody==='function')_renderCharpeekBody();
+      if(typeof renderParty==='function')renderParty();
+      return;
+    }
     // (The old in-drawer action handler was removed in v1.6900; inventory
     // actions now live inside the dedicated ov-cpk-inv modal opened by
     // _cpkOpenInvModal.)
@@ -26695,7 +26983,7 @@ function questCalcReward(q,charIdxs){
 
 function prereqRowsToPreObj(rows){
   // Convert quest_prereqs DB rows to the same shape as q.pre for existing check logic
-  var pr={skills:[],tools:[],lang:[],rel:'',items:[],gold:0};
+  var pr={skills:[],tools:[],lang:[],rel:'',items:[],gold:0,traits:[]};
   (rows||[]).filter(function(r){return !r.bonus_only;}).forEach(function(r){
     if(r.prereq_type==='skill'&&r.value)pr.skills.push(r.value);
     else if(r.prereq_type==='tool'&&r.value)pr.tools.push(r.value);
@@ -26703,6 +26991,8 @@ function prereqRowsToPreObj(rows){
     else if(r.prereq_type==='rel'&&r.value)pr.rel=r.value;
     else if(r.prereq_type==='gold')pr.gold=r.quantity||0;
     else if(r.prereq_type==='item'&&r.value)pr.items.push(r.value);
+    // v1.7148 — Trait prereq. value is the trait content_key.
+    else if(r.prereq_type==='trait'&&r.value)pr.traits.push(r.value);
   });
   return pr;
 }
@@ -26774,6 +27064,28 @@ function questPrereqCheck(q,charIdxs){
       met=inventoryHasPrereqItem(charInv,x);
     }
     if(!met)missing.push('Item: '+x);
+  });
+
+  // v1.7148 — Trait prereqs. Each entry in pr.traits is a trait
+  // content_key. Met when any non-busy peg-slot char carries any item
+  // whose item.traits array contains the key. Failure message lists
+  // the trait label (or key fallback) plus a hint about qualifying
+  // items so the player knows what to look for.
+  (pr.traits||[]).forEach(function(t){
+    var matched=(charIdxs||[]).some(function(ci){
+      if(_busy[ci])return false;
+      var c=S.party[ci];
+      if(!c)return false;
+      return charHasItemWithTrait(c,t);
+    });
+    if(!matched){
+      var lbl=_traitLabel(t);
+      var qualifying=_itemsCarryingTrait(t);
+      var hint=qualifying.length
+        ?(' (any of: '+qualifying.slice(0,4).join(', ')+(qualifying.length>4?(', \u2026'):'')+')')
+        :'';
+      missing.push('Trait: '+lbl+hint);
+    }
   });
 
   if(pr.gold&&S.gold<pr.gold)missing.push('Gold: '+pr.gold+' gp');
@@ -30443,6 +30755,65 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit,skipContactWarn){
   if(hardIssuesMain.length){alert('⚠ '+hardIssuesMain.join('\n'));return;}
   if(missingMain.length){alert('⚠ Missing prerequisites:\n'+missingMain.join('\n'));return;}
   if(pr.gold&&pr.gold>0){if(!goldSpend(pr.gold,'Gold invest: "'+q.title+'"','adv'))return;}
+  // v1.7148 — Consumable-item consumption at quest start.
+  // For each item-prereq, find the first character in the assigned
+  // roster who covers that slot and consume one charge of the item
+  // from their personal inventory. Same for trait-prereqs: find the
+  // first character carrying any qualifying item, consume one charge
+  // (if that item is consumable). When the consumption depletes the
+  // last charge, _consumeItemFromChar removes the item from c.inv
+  // automatically. Logs every consumption to the adventure log.
+  // Done BEFORE the assignment commit so a thrown error mid-loop
+  // doesn't leave the quest in a half-launched state.
+  try {
+    (pr.items||[]).forEach(function(itemName){
+      // Skip pet/asset items — those aren't carried, can't be consumed.
+      if(typeof isPetItemName==='function'&&isPetItemName(itemName))return;
+      if(typeof isAssetItemName==='function'&&isAssetItemName(itemName))return;
+      if(!_itemIsConsumable(itemName))return;
+      // Find the first roster char who covers this slot AND personally
+      // carries the item. (qddCharCoversSlot already enforces the gates.)
+      for(var i=0;i<chars.length;i++){
+        var cc=S.party[chars[i]];
+        if(!cc)continue;
+        var ccInv=(cc.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;});
+        if(!inventoryHasPrereqItem(ccInv,itemName))continue;
+        if(!charHasProficiencyForItem(cc,itemName))continue;
+        if(!_charCanUseItemByClass(cc,itemName))continue;
+        _consumeItemFromChar(cc,itemName,'used on "'+q.title+'"');
+        break;
+      }
+    });
+    (pr.traits||[]).forEach(function(traitKey){
+      // Find the first roster char who covers this trait. Then walk
+      // their inv looking for any item with the trait that is also
+      // consumable, and burn one charge. We pick the FIRST consumable
+      // match per trait per character; non-consumable trait items
+      // (e.g. permanent goggles) just satisfy the slot without burn.
+      for(var i=0;i<chars.length;i++){
+        var cc=S.party[chars[i]];
+        if(!cc||!charHasItemWithTrait(cc,traitKey))continue;
+        var ccInv=(cc.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;});
+        for(var j=0;j<ccInv.length;j++){
+          var nm=ccInv[j];
+          var def=_itemRegistryLookup(nm);
+          if(!def||!Array.isArray(def.traits))continue;
+          if(def.traits.indexOf(traitKey)===-1)continue;
+          // Layer the gates again to be safe.
+          if(!charHasProficiencyForItem(cc,nm))continue;
+          if(!_charCanUseItemByClass(cc,nm))continue;
+          if(_itemIsConsumable(nm)){
+            _consumeItemFromChar(cc,nm,'used for "'+_traitLabel(traitKey)+'" on "'+q.title+'"');
+          }
+          break; // one item per char per trait
+        }
+        break; // one consuming character per trait
+      }
+    });
+  } catch(e) {
+    console.warn('[v1.7148] consumable consumption error:',e);
+    // Non-fatal: quest still launches even if consumption logic glitched.
+  }
   var qs=S.questState;
   if(!qs.assigned)qs.assigned={};
   qs.assigned[P4.quest]=chars;
@@ -34237,7 +34608,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7147';
+var RQ_CLIENT_VERSION='v1.7148';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -35574,6 +35945,12 @@ function sbPush(manual){
         // a Supabase column migration. Lift side at the deserializer pulls
         // it back to c.specialty.
         if(c.specialty)_statsWithMeta._specialty=c.specialty;
+        // v1.7148 — Per-character consumable charge counters. Same packing
+        // pattern as _specialty; lift side at the deserializer pulls back
+        // to c.invMeta.
+        if(c.invMeta&&typeof c.invMeta==='object'&&Object.keys(c.invMeta).length>0){
+          _statsWithMeta._invMeta=c.invMeta;
+        }
         return {user_id:userId,sort_order:i,
           name:c.name,species:c.species||'',cls:c.cls||'',bg:c.bg||'',
           rel:c.rel||'',age:c.age||0,height:c.height||'',weight:c.weight||'',
@@ -36280,10 +36657,11 @@ function sbPull(manual){
         var _cStatsClass='';
         var _cGradClass='';
         var _cSpecialty=''; // v1.7147
+        var _cInvMeta=null; // v1.7148
         var _rawStats=c.stats||legacyMeta.stats||{};
         var _cleanStats=_rawStats;
         if(_rawStats&&(typeof _rawStats==='object')&&
-           (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined||_rawStats._specialty!==undefined)){
+           (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined||_rawStats._specialty!==undefined||_rawStats._invMeta!==undefined)){
           _cleanStats=Object.assign({},_rawStats);
           if(typeof _cleanStats._homeTerritory==='string'&&_cleanStats._homeTerritory){
             _cHomeTerritory=_cleanStats._homeTerritory;
@@ -36298,10 +36676,15 @@ function sbPull(manual){
           if(typeof _cleanStats._specialty==='string'&&_cleanStats._specialty){
             _cSpecialty=_cleanStats._specialty;
           }
+          // v1.7148 — Lift _invMeta (per-character consumable charges).
+          if(_cleanStats._invMeta&&typeof _cleanStats._invMeta==='object'){
+            _cInvMeta=_cleanStats._invMeta;
+          }
           delete _cleanStats._homeTerritory;
           delete _cleanStats._statsClass;
           delete _cleanStats._gradClass;
           delete _cleanStats._specialty;
+          delete _cleanStats._invMeta;
         }
         // Proper columns take priority; legacy meta is fallback
         var _rebuilt={_sbId:c.id,name:c.name,species:c.species,cls:c.cls,bg:c.bg,rel:c.rel,
@@ -36346,6 +36729,7 @@ function sbPull(manual){
         if(_cStatsClass)_rebuilt.statsClass=_cStatsClass;
         if(_cGradClass)_rebuilt.gradClass=_cGradClass;
         if(_cSpecialty)_rebuilt.specialty=_cSpecialty; // v1.7147
+        if(_cInvMeta)_rebuilt.invMeta=_cInvMeta; // v1.7148
         return _rebuilt;
       });
     }
@@ -40699,7 +41083,19 @@ function loadItemsFromDB(){
           // unrestricted exactly like ungated items in v1.7146 idea (2).
           restrictedToClasses: Array.isArray(row.restricted_to_classes)
             ? row.restricted_to_classes.slice()
-            : null
+            : null,
+          // v1.7148 — Consumable + uses. consumable=false (default) means
+          // permanent gear. consumable=true with uses=null means single-
+          // use; uses=N>0 means multi-charge (Healer's Kit=10 etc.). Pre-
+          // migration rows return undefined; we coerce to safe defaults so
+          // every legacy item behaves as non-consumable.
+          consumable: !!row.consumable,
+          uses: (row.uses!==null&&row.uses!==undefined)?(parseInt(row.uses,10)||null):null,
+          // v1.7148 — Item traits piggybacked here so trait-as-prereq
+          // resolution can read item.traits. The QE persists traits on
+          // items already (per v1.685); we just need to surface them.
+          // Defaults to [] when unset.
+          traits: Array.isArray(row.traits)?row.traits.slice():[]
         };
         // Attach effects
         var fxList=fxMap[row.id]||[];
@@ -41236,6 +41632,17 @@ function qddBuildCharSlots(questLike,isGrind){
     slots.push({type:'item',value:x,label:lbl,key:'item:'+x,nonChar:_isNonChar,
       isPet:_isPet,isAsset:_isAsset});
   });
+  // v1.7148 — Trait prereq slots. Each entry in pr.traits is a trait
+  // content_key (e.g. 'light-source'). The slot is covered by any
+  // character carrying any inventory item whose item.traits array
+  // contains that key. The label shows the trait's human-readable
+  // label (resolved via _traitLabel — falls back to the key on miss).
+  // Marked nonChar=false because they're covered by character inv,
+  // same as item slots.
+  (pr.traits||[]).forEach(function(t){
+    var _tlabel=(typeof _traitLabel==='function')?_traitLabel(t):t;
+    slots.push({type:'trait',value:t,label:'\u2728 '+_tlabel,key:'trait:'+t});
+  });
   // buildingReq: hard prereq peg slot — met when franchise owns the building
   if(questLike.buildingReq&&questLike.buildingReq.name){
     var _brName=questLike.buildingReq.name;
@@ -41365,6 +41772,43 @@ function qddBuildInfoPrereqs(questLike){
       gateReason:gateReason // v1.7146 — populated only when item is held but gate fails
     });
   });
+  // v1.7148 — Trait prereq rows. Each entry resolves to the first
+  // available qualifying item across the franchise (party inv +
+  // partyAssets + storage). The hover/expand list shows EVERY item
+  // in the registry that carries the trait, so the player sees all
+  // possible answers. The "met" check uses the same per-character
+  // qualified-holder semantics as item rows.
+  (pr.traits||[]).forEach(function(t){
+    var lbl=_traitLabel(t);
+    var qualifying=_itemsCarryingTrait(t);
+    // Hover hint: list registry items carrying this trait
+    var ownedQual=[];
+    (S.party||[]).forEach(function(c){
+      if(!c)return;
+      var inv=(c.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;});
+      qualifying.forEach(function(qn){
+        if(inv.indexOf(qn)!==-1&&ownedQual.indexOf(qn)===-1)ownedQual.push(qn);
+      });
+    });
+    // Met: any party char fully covers via charHasItemWithTrait
+    var met=(S.party||[]).some(function(c){return c&&charHasItemWithTrait(c,t);});
+    // Also consider franchise storage / partyAssets (you'd need to
+    // transfer to a char before launch, but it's still satisfiable).
+    if(!met){
+      var fItems=asN.concat(stN);
+      met=fItems.some(function(nm){
+        var def=_itemRegistryLookup(nm);
+        return def&&Array.isArray(def.traits)&&def.traits.indexOf(t)!==-1;
+      });
+    }
+    rows.push({
+      icon:'\u2728', label:lbl, met:met,
+      isTrait:true, traitKey:t,
+      qualifyingItems:qualifying,
+      qualifyingOwned:ownedQual,
+      traitDesc:_traitDesc(t)
+    });
+  });
   // Vehicle req (bonus, not hard gate)
   if(questLike.vehicleReq){
     var hasV=(S.partyAssets||[]).some(function(a){return a.name===questLike.vehicleReq.name;});
@@ -41396,6 +41840,11 @@ function qddCharCoversSlot(c,slot){
   if(slot.type==='lang') return(c.lang  ||[]).indexOf(slot.value)!==-1;
   if(slot.type==='rel')  return c.rel===slot.value;
   if(slot.type==='level')return _charCountsForLevelSlot(c)&&(c.level||0)>=slot.value;
+  // v1.7148 — Trait prereq slot. Covered when the character has any
+  // item in inventory that carries the slot's trait key (and passes
+  // the layered proficiency / class / specialty gates). All-or-
+  // nothing per slot: one item per character is enough.
+  if(slot.type==='trait')return charHasItemWithTrait(c,slot.value);
   if(slot.type==='item'){
     // Pet slots: the char whose pet matches the prereq lights up as a candidate
     if(slot.isPet){
@@ -42193,6 +42642,32 @@ function qddInfoPrereqHtml(questLike){
       storeBtn=''; // suppress Purchase: item exists, gate is the issue
     }
     var rowTitle=r.gateReason?('Held but unusable: '+r.gateReason):'';
+    // v1.7148 — Trait prereq rows show a hover-revealed list of all
+    // qualifying items in the registry, with a visual indicator for
+    // which ones the party already owns. Tapping the row expands an
+    // inline detail block instead of relying on title hover only.
+    if(r.isTrait){
+      var traitTip=r.traitDesc||'Any item with the "'+r.label+'" trait satisfies this prereq.';
+      var ownedSet={};
+      (r.qualifyingOwned||[]).forEach(function(n){ownedSet[n]=true;});
+      var qList=(r.qualifyingItems||[]).map(function(n){
+        var owned=!!ownedSet[n];
+        return '<span style="display:inline-block;font-size:.7em;padding:1px 5px;margin:1px;'+
+          'border-radius:8px;border:1px solid '+(owned?'var(--teal)':'rgba(102,68,30,.3)')+';'+
+          (owned?'background:rgba(26,107,138,.12);color:var(--teal);font-weight:600':'background:rgba(255,255,255,.5);color:var(--ink-light)')+
+          '">'+(owned?'\u2713 ':'')+esc(n)+'</span>';
+      }).join('');
+      if(!qList)qList='<span style="font-size:.7em;color:var(--ink-light);font-style:italic">No items in the registry currently carry this trait. Authors can tag items in the quest editor.</span>';
+      return '<div class="qcs-info-row qcs-trait-row" data-trait="'+esc(r.traitKey)+'" style="min-width:0;cursor:help" title="'+esc(traitTip)+'">'+
+        '<span class="'+(r.met?'qcs-info-met':'qcs-info-unmet')+'">'+(r.met?'\u2713':'\u2717')+'</span>'+
+        '<span style="font-size:.82em;overflow:hidden;text-overflow:ellipsis;flex:1">'+r.icon+' '+esc(r.label)+
+          ' <span style="font-size:.65em;color:var(--ink-light)">(any with trait)</span>'+
+        '</span>'+
+        '<details style="grid-column:1/-1;margin-top:2px"><summary style="font-size:.7em;color:var(--gold-dark);cursor:pointer;list-style:none">\u25BE Show qualifying items ('+(r.qualifyingItems||[]).length+')</summary>'+
+        '<div style="margin-top:3px;padding:4px 6px;background:rgba(255,255,255,.45);border-radius:4px;line-height:1.6">'+qList+'</div>'+
+        '</details>'+
+      '</div>';
+    }
     return'<div class="qcs-info-row" style="min-width:0"'+(rowTitle?' title="'+esc(rowTitle)+'"':'')+'>'+
       '<span class="'+(r.met?'qcs-info-met':'qcs-info-unmet')+'">'+(r.met?'\u2713':'\u2717')+'</span>'+
       '<span style="font-size:.82em;overflow:hidden;text-overflow:ellipsis;flex:1">'+r.icon+' '+esc(r.label)+noteHtml+gateHint+'</span>'+

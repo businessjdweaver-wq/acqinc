@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Quest Editor v1.697</title>
+<title>Quest Editor v1.698</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -386,7 +386,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 <body>
 <div id="login-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--parch);border:2px solid var(--gold);border-radius:10px;padding:24px;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.5)">
-    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.697</span></h2>
+    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.698</span></h2>
     <div style="margin-bottom:12px">
       <label style="display:block;font-size:.8em;color:var(--ink2);margin-bottom:4px">Email</label>
       <input type="text" id="email" autocomplete="email" style="width:100%;padding:8px;border:1px solid var(--gold);border-radius:5px;background:var(--parch);font-size:.9em;box-sizing:border-box">
@@ -402,7 +402,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 
 <div id="app">
   <div id="hdr">
-    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.697</span></h1>
+    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.698</span></h1>
     <div id="login-area">
       <span id="user-email"></span>
       <button class="hbtn" id="btn-push" style="display:none" title="Push all local changes to Supabase">☁ Push</button>
@@ -607,6 +607,10 @@ function prereqRowsFromForm(questKey) {
   var minLv = parseInt(document.getElementById('qf-min-level').value) || 0;
   if (minLv > 0) rows.push(row('level', null, 1, minLv));
   selValues('qf-items').forEach(function(item) { rows.push(row('item', item)); });
+  // v1.698 — Trait prereq rows. Each selected trait becomes a prereq_type
+  // 'trait' row with the trait content_key as value. Consumed by
+  // prereqRowsToPreObj on the game side into pr.traits.
+  selValues('qf-traits').forEach(function(t) { rows.push(row('trait', t)); });
   var vrName = (document.getElementById('qf-vrq-name').value || '').trim();
   var vrDesc = (document.getElementById('qf-vrq-desc').value || '').trim();
   if (vrName) rows.push(row('vehicle', vrName, 1, null, true, vrDesc, '\uD83D\uDE97'));
@@ -630,6 +634,7 @@ function prereqRowsToFormValues(rows, q) {
   // We also still merge any pet names that happen to arrive as 'item' rows
   // (legacy blob-round-tripped data) so older quests migrate cleanly.
   var skills = [], tools = [], langs = [], items = [], pets = [], rel = [],
+      traits = [], // v1.698
       gold = 0, minLv = 0, vrName = '', vrDesc = '', brName = '', brDesc = '';
   rows.forEach(function(r) {
     if (r.prereq_type === 'skill')    skills.push(r.value);
@@ -640,6 +645,9 @@ function prereqRowsToFormValues(rows, q) {
     else if (r.prereq_type === 'level')   minLv = r.min_level || 0;
     else if (r.prereq_type === 'pet')     { if (r.value) pets.push(r.value); }
     else if (r.prereq_type === 'item')    items.push(r.value);
+    // v1.698 — Trait prereq rows are populated on save dispatch from
+    // qf-traits. value is the trait content_key.
+    else if (r.prereq_type === 'trait')   { if (r.value) traits.push(r.value); }
     else if (r.prereq_type === 'vehicle' && r.bonus_only) { vrName = r.value || ''; vrDesc = r.bonus_note || ''; }
     else if (r.prereq_type === 'building' && r.bonus_only) { brName = r.value || ''; brDesc = r.bonus_note || ''; }
   });
@@ -662,6 +670,11 @@ function prereqRowsToFormValues(rows, q) {
   // DB fetch returned rows. Use the same setMulti helper used for the other
   // multi-select fields.
   setMulti('qf-items', items);
+  // v1.698 — Apply trait prereqs to the multi-select. Traits with
+  // content_keys not present as <option> values won't be selected (the
+  // form-render pass surfaces orphans as separate marked options when
+  // the form re-renders, so the user can deliberately keep or drop them).
+  setMulti('qf-traits', traits);
   var vrEl = document.getElementById('qf-vrq-name'); if (vrEl) vrEl.value = vrName;
   var vrDEl = document.getElementById('qf-vrq-desc'); if (vrDEl) vrDEl.value = vrDesc;
   var brEl = document.getElementById('qf-brq-name'); if (brEl) brEl.value = brName;
@@ -1358,6 +1371,11 @@ function pullData() {
           restricted_to_classes: Array.isArray(row.restricted_to_classes)
             ? row.restricted_to_classes.slice()
             : null,
+          // v1.698 — Consumable item flag and uses count. Pre-migration
+          // rows return undefined → coerce to safe defaults so the form
+          // shows "not consumable" for legacy gear.
+          consumable: !!row.consumable,
+          uses: (row.uses!==null&&row.uses!==undefined)?(parseInt(row.uses,10)||null):null,
           _dbId:row.id };
       });
 
@@ -1973,7 +1991,14 @@ function saveItemRow(item) {
     // migration the column accepts both null and JSON arrays directly.
     restricted_to_classes: (Array.isArray(item.restricted_to_classes) && item.restricted_to_classes.length)
       ? item.restricted_to_classes
-      : null
+      : null,
+    // v1.698 — Consumable + uses (SQL migration required:
+    //   ALTER TABLE items ADD COLUMN consumable boolean DEFAULT false;
+    //   ALTER TABLE items ADD COLUMN uses integer DEFAULT NULL;
+    // see v1_7148_migration.sql). consumable=false implicitly means
+    // permanent gear; uses is meaningful only when consumable=true.
+    consumable: !!item.consumable,
+    uses: item.consumable ? (item.uses || null) : null
   });
   if (!item._dbId) {
     return sbFetch(SB_URL + '/rest/v1/items', {
@@ -2163,6 +2188,24 @@ function showItemForm(id) {
     '</div>' +
     '</div>' +
 
+    // v1.698 — Consumable item flag + uses count. When checked, the item
+    // is single-use (or multi-charge if uses > 1) and decrements by 1
+    // each time it's used to satisfy a quest prereq, or each time the
+    // player taps "Use" on the Gear tab in-game. When charges reach 0
+    // the item is removed from the character's inventory automatically.
+    '<div class="fsec">' +
+    '<div class="fsec-title">Consumable</div>' +
+    '<div style="font-size:.78em;color:var(--ink2);margin-bottom:6px">A consumable item is used up when its charges run out. Single-use items (torch, scroll, potion) leave <em>uses</em> blank or set it to 1. Multi-charge items (Healer\'s Kit, wand of Magic Missiles) set <em>uses</em> to N.</div>' +
+    '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.9em;font-weight:600;margin-bottom:8px">' +
+      '<input type="checkbox" id="if-consumable"' + (item && item.consumable ? ' checked' : '') + ' style="margin:0">' +
+      '🔥 Item is consumable' +
+    '</label>' +
+    '<div id="if-uses-row" style="' + (item && item.consumable ? '' : 'display:none') + '">' +
+      frow('Charges <span class="select-hint">(blank or 1 = single-use)</span>',
+        '<input type="number" id="if-uses" min="1" max="999" value="' + (item && item.uses ? item.uses : '') + '" placeholder="1" style="max-width:120px">') +
+    '</div>' +
+    '</div>' +
+
     // ── Effects ──
     '<div class="fsec">' +
     '<div class="fsec-title">Effects</div>' +
@@ -2222,6 +2265,17 @@ function showItemForm(id) {
       _qmPriceRow.style.display = _qmChk.checked ? '' : 'none';
     });
   }
+  // v1.698 — Toggle the consumable charges row visibility based on the
+  // consumable checkbox. Same pattern as qmrack: visible when enabled,
+  // hidden but value preserved when disabled. Save path coerces uses=0
+  // for non-consumables, but the input keeps whatever the author typed.
+  var _conChk = document.getElementById('if-consumable');
+  var _conRow = document.getElementById('if-uses-row');
+  if (_conChk && _conRow) {
+    _conChk.addEventListener('change', function() {
+      _conRow.style.display = _conChk.checked ? '' : 'none';
+    });
+  }
 
   // ── Save handler ─────────────────────────────────────────────
   document.getElementById('if-save').onclick = function() {
@@ -2251,6 +2305,17 @@ function showItemForm(id) {
       traits:    _ifTraits.slice(),     // v1.685
       qm_rack:   qmRack,                // v1.691 — Quest Map rack flag
       qp_price:  qpPrice,               // v1.691 — Quest Map rack QP cost
+      // v1.698 — Consumable item flags. consumable=false stores uses=null
+      // (no decrement system applies). consumable=true with uses=null
+      // means single-use (default 1 charge). consumable=true with uses=N
+      // means N starting charges. saveItemRow normalizes the column types.
+      consumable: !!(document.getElementById('if-consumable')&&document.getElementById('if-consumable').checked),
+      uses: (function(){
+        var ch=document.getElementById('if-consumable');
+        if(!ch||!ch.checked)return null;
+        var u=parseInt((document.getElementById('if-uses')||{}).value,10);
+        return (isFinite(u)&&u>0)?u:null;
+      }()),
       // v1.7146 — Empty array stored as null so DB shape is "unrestricted"
       // for items without a class gate, distinct from "restricted to no
       // class" (which would be a misconfiguration). The save body normalizes
@@ -5516,6 +5581,50 @@ function showQuestForm(setId, idx) {
     '<div class="fgrid" style="margin-top:10px">' +
     frow('Item Prerequisites <span class="select-hint">(Ctrl/⌘ for multi — gear, magic, tools)</span>',
       multiSelect('qf-items', GEAR_PREREQ_NAMES, q.pre && q.pre.items)) +
+    '</div>' +
+    // v1.698 — Trait Prerequisites. Like item prereqs but matches by
+    // trait, so any item with the trait can satisfy. Authors tag items
+    // with traits in the items form (e.g. torch, lantern, scroll-of-
+    // light all carry "light-source"). One quest prereq line "trait:
+    // light-source" then accepts all of them. Pulled from the live
+    // traits table; uses content_key as the value (matches what items
+    // store on item.traits).
+    '<div class="fgrid" style="margin-top:10px">' +
+    frow('Trait Prerequisites <span class="select-hint">(Ctrl/⌘ for multi — any item with the trait satisfies)</span>',
+      (function(){
+        var savedTraits = (q.pre && q.pre.traits) || [];
+        var traitOpts = (traits||[]).slice().sort(function(a,b){
+          return ((a&&a.label)||(a&&a.content_key)||'').localeCompare((b&&b.label)||(b&&b.content_key)||'');
+        });
+        if (!traitOpts.length && !savedTraits.length) {
+          return '<div style="font-size:.85em;color:var(--ink2);font-style:italic;padding:8px;border:1px dashed rgba(102,68,30,.3);border-radius:4px;background:rgba(255,255,255,.4)">'+
+            'No traits authored yet. Create traits in the Traits tab, then tag items in the Items tab. '+
+            'A quest prereq of "trait: X" matches any item carrying trait X.'+
+            '</div>';
+        }
+        var existingKeys = traitOpts.map(function(t){return t.content_key;});
+        var orphans = savedTraits.filter(function(k){return existingKeys.indexOf(k)===-1;});
+        var html = '<select id="qf-traits" multiple>' +
+          traitOpts.map(function(t){
+            var k = t.content_key;
+            return '<option value="' + esc(k) + '"' +
+              (savedTraits.indexOf(k)!==-1 ? ' selected' : '') + '>' +
+              esc((t.label || k) + (t.desc?' — '+t.desc.slice(0,60)+(t.desc.length>60?'…':''):'')) +
+              '</option>';
+          }).join('') +
+          orphans.map(function(k){
+            return '<option value="' + esc(k) + '" selected>' + esc(k) + '  \u26A0 not in DB</option>';
+          }).join('') +
+          '</select>';
+        if (orphans.length) {
+          html += '<div style="font-size:.78em;color:var(--ink2);margin-top:4px">'+
+            '\u26A0 '+orphans.length+' trait'+(orphans.length===1?'':'s')+' on this quest '+
+            (orphans.length===1?'is':'are')+' not in the DB. Either add '+
+            (orphans.length===1?'it':'them')+' to the Traits tab or remove from this prereq.'+
+            '</div>';
+        }
+        return html;
+      }())) +
     '</div>' +
     '<div class="fgrid" style="margin-top:10px">' +
     frow('Pet Prerequisites <span class="select-hint">(Ctrl/⌘ for multi)</span>',
