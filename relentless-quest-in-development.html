@@ -3110,7 +3110,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7154</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7155</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3323,8 +3323,15 @@ body.dev-active #app{margin-top:36px;}
 
     <!-- Recent ledger -->
     <div style="background:rgba(44,26,14,.06);border:1px solid var(--parchment-deep);border-radius:8px;padding:16px 20px;margin-bottom:20px">
-      <div style="font-family:\'Cinzel\',serif;font-size:.88em;color:var(--gold-dark);margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em">📒 Recent Transactions</div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+        <div style="font-family:\'Cinzel\',serif;font-size:.88em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.05em">📒 Recent Transactions</div>
+        <!-- v1.7155 — Expand/collapse toggle. Default shows 20 rows;
+             expanded shows everything in the ledger (capped by
+             qpLedgerTrim retention — 60 days / 600 entries). -->
+        <button type="button" id="qpm-ledger-toggle" style="font-size:.78em;font-family:inherit;background:none;border:1px solid var(--parchment-deep);border-radius:4px;padding:3px 10px;color:var(--gold-dark);cursor:pointer">Show more</button>
+      </div>
       <div id="qpm-ledger" style="font-size:.82em;max-height:200px;overflow-y:auto"></div>
+      <div id="qpm-ledger-footer" style="font-size:.72em;color:var(--ink-light);font-style:italic;margin-top:6px;text-align:right"></div>
     </div>
 
     <!-- Save button -->
@@ -4074,7 +4081,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7154
+      Version 1.7155
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -8945,6 +8952,32 @@ function questDifficultyRequirementMet(q,charIdxs){
 function qpEnabled(){return !!(S.settings&&S.settings.qp&&S.settings.qp.enabled);}
 function qpCfg(){return (S.settings&&S.settings.qp)||{};}
 
+// v1.7155 — Single source of truth for QP ledger retention. Every site
+// that trims the ledger calls this helper (the credit/debit functions,
+// the qpAdjust dev helper, and the two Supabase pack sites). Keeps
+// everything from the last QP_LEDGER_DAYS days, capped at QP_LEDGER_MAX
+// as a runaway-safety ceiling. Returns the trimmed array (caller assigns
+// it back; trim is non-mutating to avoid surprises in the pack sites
+// that don't want the live S.qpLedger touched).
+//
+// Direction note: ledger is unshift'd so [0] is newest, [length-1] is
+// oldest. slice(0, N) keeps the newest N. The pre-v1.7155 Supabase
+// pack sites used slice(-N) which kept the OLDEST N — a real bug where
+// every cross-device sync silently truncated recent transactions for
+// any user with 100+ entries. Fixed at the same time as this helper.
+var QP_LEDGER_DAYS=60;
+var QP_LEDGER_MAX=600;
+function qpLedgerTrim(arr){
+  if(!Array.isArray(arr))return [];
+  var cutoff=Date.now()-(QP_LEDGER_DAYS*24*60*60*1000);
+  var filtered=arr.filter(function(r){
+    if(!r||typeof r.ts!=='number')return true; // keep malformed rows defensively
+    return r.ts>=cutoff;
+  });
+  if(filtered.length>QP_LEDGER_MAX)filtered=filtered.slice(0,QP_LEDGER_MAX);
+  return filtered;
+}
+
 function qpAward(amount,type,note,eventKey){
   if(!qpEnabled()||amount<=0)return;
   var cfg=qpCfg();
@@ -8959,7 +8992,7 @@ function qpAward(amount,type,note,eventKey){
   S.qpEarnedToday=(S.qpEarnedToday||0)+actual;
   if(!S.qpLedger)S.qpLedger=[];
   S.qpLedger.unshift({type:type,amount:actual,note:note,ts:Date.now()});
-  if(S.qpLedger.length>100)S.qpLedger=S.qpLedger.slice(0,100);
+  S.qpLedger=qpLedgerTrim(S.qpLedger);
   updateQpDisplay();
   save();
   // Sync to Supabase qp_transactions (idempotent via event_key)
@@ -9002,7 +9035,7 @@ function qpSpend(amount,type,note){
   S.qpBalance-=amount;
   if(!S.qpLedger)S.qpLedger=[];
   S.qpLedger.unshift({type:type,amount:-amount,note:note,ts:Date.now()});
-  if(S.qpLedger.length>100)S.qpLedger=S.qpLedger.slice(0,100);
+  S.qpLedger=qpLedgerTrim(S.qpLedger);
   updateQpDisplay();
   save();
   // Sync spend to Supabase
@@ -17151,7 +17184,12 @@ window.rqPersistenceTest=function(){
     // v1.7116 — Per-territory species weights for the recruit randomizer.
     cleanSettings._territoryWeights=(s.territoryWeights&&typeof s.territoryWeights==='object')?Object.assign({},s.territoryWeights):{};
     cleanSettings._qpPending=Array.isArray(s.qpPending)?s.qpPending.slice():[];
-    cleanSettings._qpLedger=Array.isArray(s.qpLedger)?s.qpLedger.slice(-100):[];
+    // v1.7155 — was slice(-100), which kept the OLDEST 100 entries
+    // (the ledger is unshift'd so [0] is newest). Cross-device sync
+    // silently truncated recent transactions for any user with 100+
+    // entries. qpLedgerTrim returns the newest entries within the
+    // configured retention window. See helper at ~line 8945.
+    cleanSettings._qpLedger=qpLedgerTrim(s.qpLedger);
     cleanSettings._qpLoginStreak=typeof s.qpLoginStreak==='number'?s.qpLoginStreak:0;
     cleanSettings._qpLastLoginDate=s.qpLastLoginDate||'';
     // v1.7042 downtime roll machinery
@@ -28249,7 +28287,14 @@ function qpmRefreshTestPanel(){
   if(todayEl)todayEl.textContent=(S.qpEarnedToday||0);
   var ledEl=document.getElementById('qpm-ledger');
   if(ledEl){
-    var rows=(S.qpLedger||[]).slice(0,20);
+    // v1.7155 — Default 20-row view, "Show more" expands to everything
+    // stored. Window._qpmLedgerExpanded is the state; the toggle button
+    // flips it and re-renders. The full ledger is capped by qpLedgerTrim
+    // (60 days / 600 entries) — never unbounded.
+    var fullLen=(S.qpLedger||[]).length;
+    var expanded=!!window._qpmLedgerExpanded;
+    var defaultCount=20;
+    var rows=(S.qpLedger||[]).slice(0,expanded?fullLen:defaultCount);
     if(!rows.length){ledEl.innerHTML='<div style="color:var(--ink-light);font-style:italic">No transactions yet.</div>';}
     else ledEl.innerHTML=rows.map(function(r){
       var sign=r.amount>=0?'+':'';
@@ -28260,9 +28305,46 @@ function qpmRefreshTestPanel(){
         '<span style="flex:1">'+esc(r.note||r.type||'')+'</span>'+
         '<span style="color:var(--ink-light)">'+d+'</span></div>';
     }).join('');
+    // Adjust max-height on expand so the user sees more without an
+    // overscroll fight. Capped at 60vh so the modal stays scrollable.
+    ledEl.style.maxHeight=expanded?'60vh':'200px';
+    // Toggle button label & footer count.
+    var btn=document.getElementById('qpm-ledger-toggle');
+    if(btn){
+      btn.textContent=expanded?'Show less':'Show more';
+      // Hide the toggle entirely when there's nothing more to show
+      // (i.e. fewer entries than the default visible count).
+      btn.style.display=(fullLen>defaultCount)?'':'none';
+    }
+    var footEl=document.getElementById('qpm-ledger-footer');
+    if(footEl){
+      if(!fullLen){
+        footEl.textContent='';
+      } else if(expanded){
+        footEl.textContent='Showing all '+fullLen+' stored entr'+(fullLen===1?'y':'ies')+' (last '+QP_LEDGER_DAYS+' days)';
+      } else if(fullLen>defaultCount){
+        footEl.textContent='Showing '+defaultCount+' of '+fullLen+' stored';
+      } else {
+        footEl.textContent='Showing all '+fullLen+' entr'+(fullLen===1?'y':'ies');
+      }
+    }
   }
 }
 document.getElementById('btn-close-qp-manager').addEventListener('click',closeQpManager);
+// v1.7155 — Show more / show less toggle for the QP recent-transactions
+// ledger. Default view shows 20; expanded shows everything stored
+// (capped by qpLedgerTrim's 60-day / 600-entry retention). State lives
+// on window._qpmLedgerExpanded so it survives modal close+reopen but
+// resets on page reload (intentional — the default view is the right
+// starting point most of the time).
+(function(){
+  var btn=document.getElementById('qpm-ledger-toggle');
+  if(!btn)return;
+  btn.addEventListener('click',function(){
+    window._qpmLedgerExpanded=!window._qpmLedgerExpanded;
+    qpmRefreshTestPanel();
+  });
+})();
 document.getElementById('qpm-save').addEventListener('click',function(){
   // v1.7088 — QP Manager is now a global game-tuning panel. Save writes
   // to the qp_config table, not just the local franchise. Dev gate
@@ -32536,7 +32618,7 @@ function qpCreditDirect(amount,type,note,eventKey){
   S.qpBalance+=amount;
   if(!S.qpLedger)S.qpLedger=[];
   S.qpLedger.unshift({type:type,amount:amount,note:note,ts:Date.now()});
-  if(S.qpLedger.length>100)S.qpLedger=S.qpLedger.slice(0,100);
+  S.qpLedger=qpLedgerTrim(S.qpLedger);
   updateQpDisplay();
   save();
   if(uid()){
@@ -34871,7 +34953,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7154';
+var RQ_CLIENT_VERSION='v1.7155';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -36101,7 +36183,10 @@ function sbPush(manual){
     // if the user had Object.assign'd those keys onto S.settings at some
     // point). Source of truth is S.qpPending / S.qpLedger, not the blob.
     cleanSettings._qpPending=Array.isArray(S.qpPending)?S.qpPending.slice():[];
-    cleanSettings._qpLedger=Array.isArray(S.qpLedger)?S.qpLedger.slice(-100):[];
+    // v1.7155 — was slice(-100); see comment at ~line 17180 for the
+    // direction bug this used to have. qpLedgerTrim returns newest
+    // entries within the retention window.
+    cleanSettings._qpLedger=qpLedgerTrim(S.qpLedger);
     // v1.7040 — write QP loyalty-bonus login streak + last-login date to
     // the blob. Both added by v1.6858 but never plumbed to Supabase for
     // regular users — every cross-device pull reset the streak to 0 and
