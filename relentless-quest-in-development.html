@@ -8024,6 +8024,19 @@ function createDefaultState(){
     // authors weights via the v1.7117 quest-editor UI (or sets them
     // directly via console).
     territoryWeights:{},
+    // v1.7156 — Cycle pause timers. Map of setId → ms timestamp marking
+    // when this cycle's 24-hour activation cooldown began. Stamped the
+    // first time a cycle's prereqs become met; cleared once 24h has
+    // elapsed (the timestamp is left in place but the helpers treat
+    // any timestamp older than CYCLE_PAUSE_DURATION_MS as expired).
+    // The intent: when a new cycle becomes available, the player has
+    // 24 hours to either spend their wait on grinds or purchase a
+    // (future) "quest expansion" item to skip the wait. Activation is
+    // gated until the timer expires. Existing saves get a free pass —
+    // tickCyclePauseStarts() stamps already-available cycles as
+    // already-expired on first run via the _cyclePauseInit flag.
+    cyclePauseStarts:{},
+    _cyclePauseInit:false,
     settings:normalizeSettings(),
     lastFavCheck:''
   };
@@ -8495,6 +8508,13 @@ function load(){
   if(typeof migrateMedionToEffigianV1_7118==='function')migrateMedionToEffigianV1_7118(); // v1.7118
   if(typeof migrateInitTerritoryWeightsV1_7116==='function')migrateInitTerritoryWeightsV1_7116(); // v1.7116
   if(typeof migrateBindOrphanCycleV1_7137==='function')migrateBindOrphanCycleV1_7137(); // v1.7137
+  // v1.7156 — Initial cycle-pause sweep. On first run, stamps every
+  // currently-available cycle as already-expired so existing saves get a
+  // free pass; thereafter, newly-available cycles get a real 24h
+  // countdown stamped as they cross the prereq-met threshold. Idempotent.
+  // Must run AFTER the territory + orphan-binding migrations because
+  // those affect which cycles count as "prereqs met."
+  if(typeof tickCyclePauseStarts==='function')tickCyclePauseStarts();
   // v1.6995 — dedupe partyAssets that may have accumulated from earlier races.
   // Only runs if the function is already defined (it's defined much later in
   // the file, so this guard handles the ordering during script parse).
@@ -9334,6 +9354,137 @@ function isSetCompleted(setId){
   var hist=(S.questCycles||[]).filter(function(cy){return cy&&cy.setId===setId;});
   return hist.some(function(cy){return (cy.completed||[]).length>=totalQuests;});
 }
+// ══════════════════════════════════════════
+// CYCLE PAUSE TIMERS (v1.7156)
+// ══════════════════════════════════════════
+// When a cycle's prerequisites first become met, a 24-hour countdown begins
+// before the cycle can be activated. The timer gives the player a window to
+// pursue grind missions on already-unlocked territories or (eventually) buy
+// a "quest expansion" item to skip the wait. The flat 24h duration is not
+// reducible by gameplay actions — grinds and items are simply alternative
+// uses of the player's time during the wait.
+//
+// Implementation: S.cyclePauseStarts is a sparse map of setId → ms timestamp.
+// Absent entries mean "no countdown ever started for this cycle." A present
+// entry whose timestamp is older than CYCLE_PAUSE_DURATION_MS is treated as
+// expired (the cycle is freely activatable).
+//
+// Migration: S._cyclePauseInit gates the first-run free-pass for existing
+// saves. Until that flag is true, tickCyclePauseStarts stamps every
+// already-available cycle with an already-expired timestamp so legacy saves
+// don't suddenly find their available cycles paused. The flag flips to true
+// after that first sweep; subsequent transitions to "available" stamp a
+// fresh Date.now() and start a real 24h countdown.
+var CYCLE_PAUSE_DURATION_MS=24*60*60*1000;
+function _cycleIsCompletedOrActive(set){
+  if(!set)return false;
+  if(typeof isSetCompleted==='function'&&isSetCompleted(set.id))return true;
+  if(S.questState&&S.questState.setId===set.id)return true;
+  return false;
+}
+function _cyclePrereqsRawMet(set){
+  // Raw prereq check that ignores the pause timer. Mirrors cycleGateStatus's
+  // ok-state logic but without consulting the pause field — this is used
+  // by tickCyclePauseStarts to decide when to first stamp a setId.
+  if(!set)return false;
+  var rule=cycleGateForSet(set)||{};
+  if(rule.requiredCycleSetId&&!isSetCompleted(rule.requiredCycleSetId))return false;
+  if(rule.requiredAsset){
+    var _ra=rule.requiredAsset;
+    var has=(S.partyAssets||[]).some(function(a){return a&&a.name===_ra;})
+      ||(S.franchiseStorage||[]).some(function(x){return (typeof x==='string'?x:(x&&x.name)||'')===_ra;})
+      ||(S.party||[]).some(function(c){return c&&(c.inv||[]).indexOf(_ra)!==-1;});
+    if(!has)return false;
+  }
+  if(rule.requiredMountCount){
+    var kind=rule.requiredCompanionKind||'specific';
+    var owned=0;
+    if(kind==='pet'){
+      owned=(S.partyAssets||[]).filter(function(a){return a&&assetBaseType(a)==='pet';}).length;
+      if(owned<rule.requiredMountCount)return false;
+    }else if(kind==='mount'||kind==='vehicle'){
+      owned=(S.partyAssets||[]).filter(function(a){return a&&assetBaseType(a)==='mount';}).length;
+      if(owned<rule.requiredMountCount)return false;
+    }else if(rule.requiredMountType){
+      owned=(S.partyAssets||[]).filter(function(a){return a&&a.name===rule.requiredMountType&&assetBaseType(a)==='mount';}).length;
+      if(owned<rule.requiredMountCount)return false;
+    }
+  }
+  if(rule.minAvgSquadLevel||rule.minSquadSize){
+    var okSquad=(candidateSquadsForCycleGate(rule)||[]).some(function(c){
+      var avg=averageLevelForIndices(c.idxs);
+      var sizeOk=!rule.minSquadSize||c.idxs.length>=rule.minSquadSize;
+      var avgOk=!rule.minAvgSquadLevel||avg>=rule.minAvgSquadLevel;
+      return sizeOk&&avgOk;
+    });
+    if(!okSquad)return false;
+  }
+  return true;
+}
+function cyclePauseRemainingMs(setId){
+  if(!S.cyclePauseStarts)return 0;
+  var t=S.cyclePauseStarts[setId];
+  if(typeof t!=='number'||t<=0)return 0;
+  var remaining=CYCLE_PAUSE_DURATION_MS-(Date.now()-t);
+  return remaining>0?remaining:0;
+}
+function cyclePauseActive(setId){
+  return cyclePauseRemainingMs(setId)>0;
+}
+function formatCyclePauseRemaining(ms){
+  if(ms<=0)return '0m';
+  var totalSec=Math.ceil(ms/1000);
+  var h=Math.floor(totalSec/3600);
+  var m=Math.floor((totalSec%3600)/60);
+  var s=totalSec%60;
+  if(h>0)return h+'h '+m+'m';
+  if(m>0)return m+'m '+s+'s';
+  return s+'s';
+}
+function tickCyclePauseStarts(){
+  // Idempotent. For every QUESTSET:
+  //   - If completed or currently-active, skip (timer is meaningless there).
+  //   - If prereqs are NOT met, ensure no stale stamp lingers (clear it so
+  //     a future re-meeting starts a fresh 24h countdown — gameplay edge:
+  //     a player loses a required asset, the cycle locks, then they
+  //     re-acquire it. Treat that as a fresh "becomes available" event).
+  //   - If prereqs ARE met and no stamp exists yet, stamp one.
+  //     • Pre-init phase (legacy saves): stamp as already-expired so
+  //       no existing save sees a sudden 24h block on cycles they could
+  //       activate yesterday.
+  //     • Post-init phase (normal play): stamp Date.now() to start 24h.
+  if(!S.cyclePauseStarts||typeof S.cyclePauseStarts!=='object')S.cyclePauseStarts={};
+  var preInit=!S._cyclePauseInit;
+  var stampValue=preInit?(Date.now()-CYCLE_PAUSE_DURATION_MS-1000):Date.now();
+  var changed=false;
+  (QUESTSETS||[]).forEach(function(set){
+    if(!set||!set.id)return;
+    if(_cycleIsCompletedOrActive(set)){
+      // No need to track pause for completed/active cycles. Don't delete
+      // the stamp though — the cycle may have been active-but-not-completed
+      // and we want the timer state preserved if they abandon back to
+      // available state. Actually: completed cycles will never re-enter
+      // a "becomes available" transition, so a leftover stamp is harmless.
+      return;
+    }
+    var raw=_cyclePrereqsRawMet(set);
+    var has=Object.prototype.hasOwnProperty.call(S.cyclePauseStarts,set.id);
+    if(raw&&!has){
+      S.cyclePauseStarts[set.id]=stampValue;
+      changed=true;
+    } else if(!raw&&has){
+      // Prereqs no longer met — clear the stamp so a future re-meet
+      // starts a fresh 24h countdown.
+      delete S.cyclePauseStarts[set.id];
+      changed=true;
+    }
+  });
+  if(!S._cyclePauseInit){
+    S._cyclePauseInit=true;
+    changed=true;
+  }
+  return changed;
+}
 function cycleGateStatus(set){
   var rule=cycleGateForSet(set)||{};
   var issues=[];
@@ -9374,7 +9525,19 @@ function cycleGateStatus(set){
       else issues.push('Requires squad average level '+rule.minAvgSquadLevel+'+.');
     }
   }
-  return {ok:issues.length===0,issues:issues,visibility:rule.visibility||'fully_visible',rule:rule};
+  // v1.7156 — surface the cycle pause timer on the status object as a
+  // separate field. We deliberately do NOT collapse this into `ok`/`issues`
+  // because the renderer treats "locked (prereqs unmet)" and "paused
+  // (prereqs met but cooling down)" as visually distinct states: locked
+  // shows a "Requires: …" line and no activate button, paused shows a
+  // disabled ⏳ button with countdown text. Pause is only meaningful when
+  // there are no other issues; if prereqs are unmet we don't bother
+  // computing remaining time.
+  var pausedMs=0;
+  if(set&&set.id&&!issues.length){
+    pausedMs=cyclePauseRemainingMs(set.id);
+  }
+  return {ok:issues.length===0,issues:issues,visibility:rule.visibility||'fully_visible',rule:rule,pausedMs:pausedMs};
 }
 function cycleGateSummaryText(status){
   if(!status||!status.issues||!status.issues.length)return 'Available';
@@ -10902,6 +11065,14 @@ function _qmRackBuy(itemName){
 function renderCycleMapCards(){
   var host=document.getElementById('ov-cycle-map-cards');
   if(!host)return;
+  // v1.7156 — Refresh the cycle pause timers before rendering so newly-met
+  // prereqs get stamped with a 24h countdown the moment the player views
+  // the map. Idempotent and cheap (no save/network). Save iff something
+  // actually changed so the timestamps survive reload + cross-device.
+  if(typeof tickCyclePauseStarts==='function'){
+    var _pauseChanged=tickCyclePauseStarts();
+    if(_pauseChanged&&typeof save==='function')save();
+  }
   // v1.7059 — Resolve activeSet from qs.setId directly rather than via
   // activeQuestSet(). activeQuestSet() falls back to QUESTSETS[0] (Root &
   // Branch) when qs.setId is null — useful in most contexts but fatal
@@ -10965,13 +11136,27 @@ function renderCycleMapCards(){
     var reBadge=rebuildings.length?
       '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(201,146,42,.12);border:1px solid var(--gold-dark);color:var(--gold-dark);border-radius:4px;padding:1px 6px;font-size:.68em">\uD83C\uDFD8 '+rebuildings.length+' bldg'+(rebuildings.length===1?'':'s')+'</span>':'';
     var progressBadge='<span style="font-size:.68em;color:var(--ink-light)">'+esc(progressStr)+'</span>';
+    // v1.7156 — Cycle pause countdown badge. Shown only when the cycle is
+    // currently in its 24h cooldown (prereqs met but not yet activatable).
+    // Visible even when the tile is collapsed so the player can see the
+    // timer at a glance without expanding every locked card. The badge
+    // disappears automatically once the timer expires (next render after
+    // expiry — refreshed on the 30s interval below).
+    var pauseBadge='';
+    if(st.pausedMs>0&&!isCompletedCycle&&!isActive){
+      pauseBadge='<span style="display:inline-flex;align-items:center;gap:3px;'+
+        'background:rgba(201,146,42,.12);border:1px solid var(--gold-dark);'+
+        'color:var(--gold-dark);border-radius:4px;padding:1px 6px;'+
+        'font-size:.68em" title="New cycle cooldown — wait, grind, or use a quest expansion item">'+
+        '\u23f3 '+esc(formatCyclePauseRemaining(st.pausedMs))+'</span>';
+    }
     var card=
       '<div class="enc-card" style="border-color:'+statusColor+';padding:0;overflow:hidden;">'+
         '<div style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px 12px;user-select:none" data-cycle-toggle="'+esc(set.id)+'">'+
           '<span style="font-size:1.1em;flex-shrink:0">'+statusIcon+'</span>'+
           '<div style="flex:1;min-width:0">'+
             '<div style="font-family:\'Cinzel\',serif;font-size:.88em;font-weight:700;color:var(--ink)">'+esc(tierLabel+set.name)+'</div>'+
-            '<div style="display:flex;align-items:center;gap:5px;margin-top:2px;flex-wrap:wrap">'+squadBadge+reBadge+progressBadge+'</div>'+
+            '<div style="display:flex;align-items:center;gap:5px;margin-top:2px;flex-wrap:wrap">'+squadBadge+reBadge+pauseBadge+progressBadge+'</div>'+
           '</div>'+
           '<span style="font-size:.85em;color:var(--ink-light)">'+(expanded?'\u25b4':'\u25be')+'</span>'+
         '</div>'+
@@ -11003,8 +11188,22 @@ function renderCycleMapCards(){
                 '<button class="btn sm" data-a="cycle-log" data-setid="'+esc(set.id)+'" '+
                 'style="background:rgba(44,26,14,.08);border:1px solid var(--ink);color:var(--ink)">\uD83D\uDCDC Quest Log</button>'
               :
-                '<button class="btn bg sm" data-a="cycle-activate" data-setid="'+esc(set.id)+'">'+
-                (isActive?'\u2713 Active Cycle':'\u2694 Activate Cycle')+'</button>'
+                // v1.7156 — Pause-aware activate slot. When the cycle is in
+                // its 24h cooldown, render a disabled ⏳ button + a small
+                // hint line showing remaining time. The button is given a
+                // distinct data-a value so the click handler can show a
+                // soft "still cooling down" message rather than silently
+                // doing nothing — and so the live remaining-time string
+                // stays accurate when refreshed by the 30s ticker.
+                (st.pausedMs>0&&!isActive?
+                  '<button class="btn sm" data-a="cycle-paused" data-setid="'+esc(set.id)+'" '+
+                  'style="background:rgba(201,146,42,.08);border:1px solid var(--gold-dark);color:var(--gold-dark);cursor:not-allowed;opacity:.85" '+
+                  'title="New cycle cooldown — wait, grind on an unlocked territory, or use a quest expansion item">'+
+                  '\u23f3 Available in '+esc(formatCyclePauseRemaining(st.pausedMs))+'</button>'
+                :
+                  '<button class="btn bg sm" data-a="cycle-activate" data-setid="'+esc(set.id)+'">'+
+                  (isActive?'\u2713 Active Cycle':'\u2694 Activate Cycle')+'</button>'
+                )
               )+
               // v1.6937: 📖 Preview — inspect quests without activating / assigning.
               // Shown only on incomplete cycles (completed cycles already expose
@@ -11025,7 +11224,18 @@ function renderCycleMapCards(){
                 '<button class="btn bink sm" data-a="cycle-abandon" data-setid="'+esc(set.id)+'" '+
                 'style="border-color:var(--crimson);color:var(--crimson)">\uD83D\uDEAB Abandon</button>'
               :'')+
-              '</div>'
+              '</div>'+
+              // v1.7156 — Pause hint. Shown only when the activate slot
+              // rendered the disabled ⏳ button. Explains the wait and
+              // offers the two productive uses of the player's time
+              // (grinds on already-unlocked territories, or future
+              // quest-expansion items). Kept short — the badge in the
+              // header already shows the timer prominently.
+              (st.pausedMs>0&&!isActive&&!isCompletedCycle?
+                '<div style="font-size:.72em;color:var(--ink-light);margin-top:6px;line-height:1.4">'+
+                'Newly available cycles enter a 24-hour cooldown. Run grinds on an unlocked territory or use a quest expansion item (coming soon) to skip the wait.'+
+                '</div>'
+              :'')
             :'<div style="font-size:.78em;color:var(--ink-light);padding:4px 0;">'+(vis==='obscured'?'Requires: ':'Locked: ')+esc(cycleGateSummaryText(st))+'</div>'
             )+
           '</div>'
@@ -17204,6 +17414,9 @@ window.rqPersistenceTest=function(){
     cleanSettings._partyUniqueOnly=!!s.partyUniqueOnly;
     // v1.7046 party-screen shopping-mode override map
     cleanSettings._partyShoppingOverride=(s.partyShoppingOverride&&typeof s.partyShoppingOverride==='object')?Object.assign({},s.partyShoppingOverride):{};
+    // v1.7156 cycle pause cooldown machinery
+    cleanSettings._cyclePauseStarts=(s.cyclePauseStarts&&typeof s.cyclePauseStarts==='object')?Object.assign({},s.cyclePauseStarts):{};
+    cleanSettings._cyclePauseInit=!!s._cyclePauseInit;
     return {
       gold:s.gold,
       settings:cleanSettings,
@@ -17324,6 +17537,9 @@ window.rqPersistenceTest=function(){
     s.partyUniqueOnly=!!rawSettings._partyUniqueOnly;
     // v1.7046 party-screen shopping-mode override map
     s.partyShoppingOverride=(rawSettings._partyShoppingOverride&&typeof rawSettings._partyShoppingOverride==='object')?Object.assign({},rawSettings._partyShoppingOverride):{};
+    // v1.7156 — cycle pause cooldown machinery
+    s.cyclePauseStarts=(rawSettings._cyclePauseStarts&&typeof rawSettings._cyclePauseStarts==='object')?Object.assign({},rawSettings._cyclePauseStarts):{};
+    s._cyclePauseInit=!!rawSettings._cyclePauseInit;
     var cleanSettings=Object.assign({},rawSettings);
     ['_franchiseStorage','_questLog','_taskGroups','_partyAssetsBackup','_archivedBackup',
      '_downtimeJobs','_questStateBackup','_questCyclesHistoryBackup','_questCycleSquadsBackup',
@@ -17331,7 +17547,9 @@ window.rqPersistenceTest=function(){
      '_originTerritory','_unlockedTerritories','_qpLoginStreak','_qpLastLoginDate',
      '_downtimeRollHistory','_pendingDowntimeRolls','_partyAttrAxes',
      '_partyOverlapOn','_partyOverlapScope','_partyUniqueOnly','_partyShoppingOverride',
-     '_territoryWeights']
+     '_territoryWeights',
+     // v1.7156
+     '_cyclePauseStarts','_cyclePauseInit']
       .forEach(function(k){delete cleanSettings[k];});
     s.settings=cleanSettings;
     return s;
@@ -17447,7 +17665,9 @@ window.rqPersistenceTest=function(){
     // v1.7069 — companion unique-filter mode (uses same scope)
     'partyUniqueOnly',
     // v1.7046 — party-screen shopping-mode override map
-    'partyShoppingOverride'];
+    'partyShoppingOverride',
+    // v1.7156 — cycle pause cooldown machinery
+    'cyclePauseStarts','_cyclePauseInit'];
   FRANCHISE_FIELDS.forEach(function(k){
     if(_deepEq(_before[k],_franchiseRebuilt[k])){
       _results.regularUser.pass.push('S.'+k);
@@ -17518,7 +17738,9 @@ window.rqPersistenceTest=function(){
     '_shoppingList','_sqmgrPins',
     'pendingDowntimeRolls','downtimeRollHistory',
     'undoLog',
-    'lastFavCheck','lastFavCheckTs','lastRerollReset'
+    'lastFavCheck','lastFavCheckTs','lastRerollReset',
+    // v1.7156 — cycle pause cooldown machinery
+    'cyclePauseStarts','_cyclePauseInit'
   ];
   var SESSION_LOCAL_EXPECTED=[
     'stock','stockDate','doneEnc','encAssigned','pendingQuests','partyTagFilter'
@@ -28741,7 +28963,26 @@ document.getElementById('btn-monthly-theme').addEventListener('click',function()
 document.getElementById('btn-cycle-map').addEventListener('click',function(){
   renderCycleMapCards();
   openOv('ov-cycle-map');
+  // v1.7156 — Start a 30-second refresh ticker so the ⏳ countdown badge
+  // stays roughly accurate without thrashing render. 30s is fine for an
+  // hour-scale countdown; the badge displays h+m anyway, so sub-minute
+  // drift is invisible. The ticker is cleared on close to avoid leaks.
+  if(typeof _cycleMapTickerId!=='undefined'&&_cycleMapTickerId){
+    clearInterval(_cycleMapTickerId);
+  }
+  _cycleMapTickerId=setInterval(function(){
+    var ov=document.getElementById('ov-cycle-map');
+    if(!ov||!ov.classList.contains('show')){
+      // Modal closed by some other path — clear the ticker.
+      clearInterval(_cycleMapTickerId);
+      _cycleMapTickerId=null;
+      return;
+    }
+    renderCycleMapCards();
+  },30000);
 });
+// v1.7156 — Module-scope handle for the cycle-map refresh ticker.
+var _cycleMapTickerId=null;
 document.getElementById('ov-cycle-map-cards').addEventListener('click',function(e){
   // v1.7012: Arcane Offerings rack purchase button
   var rackBuyBtn=e.target.closest('[data-a="qm-rack-buy"]');
@@ -28817,6 +29058,27 @@ document.getElementById('ov-cycle-map-cards').addEventListener('click',function(
     if(setId)openCycleAbandon(setId);
     return;
   }
+  // v1.7156 — Tap on the disabled ⏳ button. Show a toast/alert explaining
+  // the cooldown rather than letting the click fall through silently. The
+  // button itself is rendered with cursor:not-allowed so the tap is
+  // already weird-feeling, but a soft message reinforces the cause.
+  var pausedBtn=e.target.closest('[data-a="cycle-paused"]');
+  if(pausedBtn){
+    var pSetId=pausedBtn.getAttribute('data-setid');
+    if(pSetId&&typeof cyclePauseRemainingMs==='function'){
+      var rem=cyclePauseRemainingMs(pSetId);
+      if(rem>0){
+        alert('This cycle just became available and is on a 24-hour cooldown.\n\n'+
+          'Available in '+formatCyclePauseRemaining(rem)+'.\n\n'+
+          'In the meantime, send squads on grind missions in territories you\u2019ve already unlocked, or use a quest expansion item (coming soon) to skip the wait.');
+      } else {
+        // Timer already expired — re-render so the button updates, then
+        // let the player tap again.
+        renderCycleMapCards();
+      }
+    }
+    return;
+  }
   var btn=e.target.closest('[data-a="cycle-activate"]');
   if(btn){
     var setId=btn.getAttribute('data-setid');
@@ -28832,6 +29094,19 @@ document.getElementById('ov-cycle-map-cards').addEventListener('click',function(
       } else {
         alert('This cycle is already complete. Open the Quest Log to review it.');
       }
+      return;
+    }
+    // v1.7156 — Defense in depth: even if some path renders a live
+    // Activate button on a paused cycle (race between badge tick and
+    // click, or a stale DOM during the 30s refresh interval), the
+    // handler refuses and re-renders. Currently-active cycles bypass
+    // this gate — the activate handler also fires for the "Active
+    // Cycle" button which navigates to the next quest, and we never
+    // want to block ongoing play.
+    if(S.questState&&S.questState.setId!==setId&&typeof cyclePauseActive==='function'&&cyclePauseActive(setId)){
+      var rem2=cyclePauseRemainingMs(setId);
+      alert('This cycle is still on its 24-hour cooldown. Available in '+formatCyclePauseRemaining(rem2)+'.');
+      renderCycleMapCards();
       return;
     }
     // If a squad is already assigned to this cycle, skip the picker and go straight to the quest
@@ -28852,6 +29127,14 @@ document.getElementById('ov-cycle-map-cards').addEventListener('click',function(
 });
 document.getElementById('ov-cycle-map-close').addEventListener('click',function(){
   closeOv('ov-cycle-map');
+  // v1.7156 — Clear the countdown refresh ticker. The ticker also self-
+  // clears the next time it fires and finds the modal closed (via the
+  // .show class check), but clearing it here is cleaner — saves one
+  // unnecessary tick fire and one render call.
+  if(_cycleMapTickerId){
+    clearInterval(_cycleMapTickerId);
+    _cycleMapTickerId=null;
+  }
 });
 
 document.getElementById('btn-qmap-fast-forward').addEventListener('click',function(){
@@ -36112,7 +36395,15 @@ function sbPush(manual){
       //   recompute), lastFavCheckTs (timestamp pair), lastRerollReset
       //   (store daily reroll tracker). All persistent to avoid a mid-day
       //   cross-device pull resetting the day-marker.
-      'lastFavCheck','lastFavCheckTs','lastRerollReset'
+      'lastFavCheck','lastFavCheckTs','lastRerollReset',
+      //   v1.7156 — cycle pause timers. Map of setId → ms timestamp marking
+      //   when the 24-hour activation cooldown began. Must round-trip via
+      //   the player_data blob so a cooldown started on phone doesn't
+      //   reset to "freshly available, 24 more hours please" when the
+      //   player opens the desktop session. _cyclePauseInit is the
+      //   one-shot migration flag that gates the legacy free-pass on
+      //   first ever sweep.
+      'cyclePauseStarts','_cyclePauseInit'
       // Intentionally NOT in _keys (session-local by design):
       //   stock, stockDate  — rotating daily store stock, regenerates
       //   doneEnc, encAssigned, pendingQuests — transient/dead UI state
@@ -36225,6 +36516,17 @@ function sbPush(manual){
     // occurrence of the round-trip-strip pattern.
     cleanSettings._lastFavCheck=typeof S.lastFavCheck==='string'?S.lastFavCheck:'';
     cleanSettings._lastFavCheckTs=typeof S.lastFavCheckTs==='string'?S.lastFavCheckTs:'';
+    // v1.7156 — Cycle pause timers + first-run init flag. Same underscore-
+    // prefix piggyback pattern as the QP / territory / downtime fields
+    // above. Without this round-trip, a cooldown started on one device
+    // would reset on every cross-device pull and the player would face
+    // a fresh 24h wait whenever they switched devices. The init flag
+    // also rides along so the legacy free-pass doesn't re-fire on
+    // every device — once any device has done the first sweep, all
+    // devices see _cyclePauseInit=true and treat newly-met prereqs as
+    // genuine "becomes available" transitions.
+    cleanSettings._cyclePauseStarts=(S.cyclePauseStarts&&typeof S.cyclePauseStarts==='object')?Object.assign({},S.cyclePauseStarts):{};
+    cleanSettings._cyclePauseInit=!!S._cyclePauseInit;
     // v1.7091 — Cross-device staleness detection. Stamp every push with the
     // tabId that did it and the wall-clock time. The next time any device
     // becomes visible after >60s idle, it does a lightweight check of these
@@ -36897,6 +37199,17 @@ function sbPull(manual){
       }
       if(typeof rawSettings._lastFavCheckTs==='string'){
         S.lastFavCheckTs=rawSettings._lastFavCheckTs;
+      }
+      // v1.7156 — Read cycle pause timers from the settings blob. Falls
+      // back to the in-memory value (from localStorage) when the key is
+      // absent so a pull from a pre-v1.7156 row doesn't wipe locally-
+      // stamped cooldowns on first upgrade pull. After first save under
+      // v1.7156+, the server is the authoritative source.
+      if(rawSettings._cyclePauseStarts&&typeof rawSettings._cyclePauseStarts==='object'){
+        S.cyclePauseStarts=Object.assign({},rawSettings._cyclePauseStarts);
+      }
+      if(typeof rawSettings._cyclePauseInit==='boolean'){
+        S._cyclePauseInit=rawSettings._cyclePauseInit;
       }
       // v1.7091 — Cross-device staleness: read last-pusher metadata so the
       // staleness checker knows which tab last wrote to the server and when.
