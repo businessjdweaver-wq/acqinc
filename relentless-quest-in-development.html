@@ -3110,7 +3110,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7162</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7163</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4081,7 +4081,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7162
+      Version 1.7163
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -9180,6 +9180,14 @@ function renderQpToGpBar(){
 
 function qpSpend(amount,type,note){
   if(!qpEnabled())return false;
+  // v1.7163 — Zero-amount spends are a clean no-op. They occur when an
+  // action that's normally QP-priced ends up free (e.g. Back to HQ to
+  // the same territory the character is already in). Without this guard
+  // we'd write a "-0 QP" ledger entry and a no-op Supabase row, both
+  // wasteful. Returning true tells the caller the "spend" succeeded —
+  // because it did, in the trivial sense — so they proceed with the
+  // gameplay action.
+  if(amount===0)return true;
   if(!S.qpBalance||S.qpBalance<amount){alert('Not enough QP. You need '+amount+' QP.');return false;}
   S.qpBalance-=amount;
   if(!S.qpLedger)S.qpLedger=[];
@@ -20634,7 +20642,6 @@ function _refreshCharpeekFooterBtns(){
     // Disable only when the character is already unassigned (no squad rows
     // to remove from). Founder, on-quest, and in-downtime are all allowed
     // to leave their squad.
-    var _bthqCost=(qpCfg().costBackToHQ||10);
     var inAnySquad=(S.squads||[]).some(function(sq){
       return sq&&(sq.memberIdxs||[]).indexOf(_charpeekCi)!==-1;
     });
@@ -20645,8 +20652,37 @@ function _refreshCharpeekFooterBtns(){
       rifBtn.textContent='🏠 Already at HQ';
       rifBtn.title=(c.name||'')+' is not in any squad.';
     } else {
-      rifBtn.textContent='🏠 Back to HQ ('+_bthqCost+' QP)';
-      rifBtn.title='Return '+(c.name||'')+' to HQ (leave all squads).';
+      // v1.7163 — Use the per-character resolved destination so the label
+      // reflects what this character will actually pay (which can be 0
+      // when their squad is in a territory with a local HQ, or premium
+      // when no local HQ exists or the local HQ is at capacity). Pre-v1.7163
+      // the label always showed the base config cost regardless of the
+      // character's situation, which was technically inaccurate — the
+      // confirm prompt at click time always resolved properly, but the
+      // button label could mislead the player into expecting a different
+      // amount. Fixing the label closes that loop.
+      var _bthqDest=(typeof resolveBackToHQDestination==='function')?
+        resolveBackToHQDestination(_charpeekCi):null;
+      var _bthqCost=(_bthqDest&&_bthqDest.cost!=null)?
+        _bthqDest.cost:(qpCfg().costBackToHQ||10);
+      var _bthqDestName=(_bthqDest&&_bthqDest.target)||'';
+      var _bthqLabel,_bthqTitle;
+      if(_bthqCost===0){
+        _bthqLabel='🏠 Back to HQ — free';
+        _bthqTitle='Return '+(c.name||'')+' to '+(_bthqDestName||'HQ')+
+          (_bthqDestName?' (already in territory — no QP cost)':' (no QP cost)')+'.';
+      } else if(_bthqDest&&_bthqDest.isPremium){
+        _bthqLabel='🏠 Back to HQ ('+_bthqCost+' QP — premium)';
+        _bthqTitle='Return '+(c.name||'')+' to '+(_bthqDestName||'HQ')+
+          ' \u2014 premium ('+(_bthqDest.reason==='no-local-hq'?
+            'no headquarters in their squad\u2019s territory':
+            'local HQ at capacity')+').';
+      } else {
+        _bthqLabel='🏠 Back to HQ ('+_bthqCost+' QP)';
+        _bthqTitle='Return '+(c.name||'')+' to '+(_bthqDestName||'HQ')+'.';
+      }
+      rifBtn.textContent=_bthqLabel;
+      rifBtn.title=_bthqTitle;
     }
   }
 }
@@ -23879,7 +23915,9 @@ document.getElementById('ov-charpeek-rif').addEventListener('click',function(e){
       premiumNote='\n\n\u26A0 The local HQ is at capacity ('+UNASSIGNED_PER_TERRITORY_MAX+'/'+UNASSIGNED_PER_TERRITORY_MAX+'), so '+c.name+' must be rerouted to '+dest.target+' (origin). This costs more QP.';
     }
   }
-  if(!confirm('Send '+c.name+' back'+destLabel+' for '+_bthqCost+' QP? They will leave all squads and become unassigned.'+premiumNote))return;
+  // v1.7163 — natural wording for the free same-territory case.
+  var costClause=(_bthqCost===0)?'at no QP cost':('for '+_bthqCost+' QP');
+  if(!confirm('Send '+c.name+' back'+destLabel+' '+costClause+'? They will leave all squads and become unassigned.'+premiumNote))return;
   window._bthqDestination=dest;
   _completeBackToHQ(ci,[]);
 });
@@ -23948,7 +23986,10 @@ function _completeBackToHQ(ci,engagements){
        isPremium:false,reason:'',isOrigin:true};
   }
   window._bthqDestination=null; // consume one-shot
-  var _bthqCost=dest.cost||(qpCfg().costBackToHQ||10);
+  // v1.7163 — Use null-check rather than falsy-coalesce so a legitimate
+  // dest.cost===0 (the free same-territory case) doesn't get silently
+  // replaced with the default 10. Same idiom used at the dialog preview.
+  var _bthqCost=(dest&&dest.cost!=null)?dest.cost:(qpCfg().costBackToHQ||10);
   var spendReason='Back to HQ: '+c.name+(dest.target?(' \u2192 '+dest.target):'');
   if(dest.isPremium)spendReason+=' (premium: '+(dest.reason||'')+')';
   if(!qpSpend(_bthqCost,'back-to-hq',spendReason))return;
@@ -24123,9 +24164,16 @@ function openAssignSquadModal(ci){
     var _bthqCostPreview=_bthqDestPreview?_bthqDestPreview.cost:(qpCfg().costBackToHQ||10);
     var _bthqTargetPreview=_bthqDestPreview&&_bthqDestPreview.target?_bthqDestPreview.target:'';
     var _bthqPremium=_bthqDestPreview&&_bthqDestPreview.isPremium;
+    // v1.7163 — When the destination matches the current territory, the
+    // resolver returns cost:0 (no relocation, no fee). Show that with a
+    // muted "free" pill on the right and a friendlier sub-label.
+    var _bthqIsFree=_bthqCostPreview===0;
     var _bthqSubLabel=_bthqTargetPreview?
-      (esc(_bthqTargetPreview)+' HQ'+(_bthqPremium?' · premium':'')):
+      (esc(_bthqTargetPreview)+' HQ'+(_bthqPremium?' · premium':(_bthqIsFree?' · already in territory':''))):
       'Leave all squads';
+    var _bthqCostPill=_bthqIsFree?
+      '<span style="font-size:.68em;color:var(--ink-light);font-style:italic;white-space:nowrap">no QP cost</span>':
+      '<span style="font-size:.72em;color:var(--gold-dark);font-weight:700;white-space:nowrap">'+_bthqCostPreview+' QP</span>';
     rowsHtml+='<button type="button" data-assign-bthq="1" '+
       'style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--teal);'+
       'background:rgba(26,107,138,.1);color:var(--teal);border-radius:6px;cursor:pointer;'+
@@ -24137,7 +24185,7 @@ function openAssignSquadModal(ci){
           _bthqSubLabel+
         '</div>'+
       '</div>'+
-      '<span style="font-size:.72em;color:var(--gold-dark);font-weight:700;white-space:nowrap">'+_bthqCostPreview+' QP</span>'+
+      _bthqCostPill+
       '</button>';
   }
   // Always offer the "create new squad" path
@@ -35627,7 +35675,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7162';
+var RQ_CLIENT_VERSION='v1.7163';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -44994,15 +45042,31 @@ function resolveBackToHQDestination(ci){
       unassignedCount=unassignedCountInTerritory(sourceTerr);
     }
     if(unassignedCount<UNASSIGNED_PER_TERRITORY_MAX){
-      return {target:sourceTerr,cost:baseCost,isPremium:false,reason:'',
+      // v1.7163 — When the destination matches the character's current
+      // territory, no relocation is happening; the QP cost is for crossing
+      // the world map, not for the bookkeeping of leaving a squad. So
+      // returning to a local HQ in the same territory you're already in
+      // is free. (sourceTerr is the squad's home territory, which is also
+      // where the character currently is — they're a member of that squad.)
+      return {target:sourceTerr,cost:0,isPremium:false,reason:'same-territory',
         isOrigin:sourceTerr===origin};
     }
-    // Local HQ at cap — fall through to origin reroute.
+    // Local HQ at cap — fall through to origin reroute. If origin happens
+    // to equal sourceTerr, the same-territory rule above would have fired
+    // and we wouldn't be here, so origin != sourceTerr and the premium
+    // crossing fee is legitimately due.
     return {target:origin,cost:premiumCost,isPremium:true,
       reason:'local-hq-at-cap',isOrigin:true};
   }
   // No qualifying building in the squad's territory — no real local HQ
-  // exists. Reroute to origin at premium cost.
+  // exists. Reroute to origin at premium cost. v1.7163: still apply the
+  // same-territory free rule if origin happens to equal sourceTerr (rare
+  // but possible if the character drifted into a squad with no HQ in
+  // their own home territory).
+  if(origin===sourceTerr){
+    return {target:origin,cost:0,isPremium:false,reason:'same-territory',
+      isOrigin:true};
+  }
   return {target:origin,cost:premiumCost,isPremium:true,
     reason:'no-local-hq',isOrigin:true};
 }
