@@ -1667,6 +1667,27 @@ body {
 </head>
 <body>
 
+<!-- LOGIN OVERLAY (v0.3.6) -->
+<div id="login-overlay" style="position:fixed;inset:0;background:rgba(15,15,20,0.96);z-index:10000;display:flex;align-items:center;justify-content:center;font-family:'Crimson Pro',serif">
+  <div style="background:var(--steel-dark,#1a1a22);border:1px solid var(--ember-pale,#c8420a);border-radius:8px;padding:32px 36px;max-width:380px;width:90%;box-shadow:0 8px 40px rgba(0,0,0,0.5)">
+    <h2 style="font-family:'Cinzel',serif;color:var(--ember-pale,#c8420a);margin:0 0 6px 0;font-size:1.2em;letter-spacing:0.04em">⚒ Monster Workshop</h2>
+    <div style="font-size:.78em;color:var(--steel-light,#888);margin-bottom:18px;letter-spacing:0.04em">Sign in to author and publish monsters</div>
+    <div style="margin-bottom:10px">
+      <label style="display:block;font-size:.78em;color:var(--steel-light,#888);margin-bottom:4px">Email</label>
+      <input type="email" id="login-email" autocomplete="email" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.3);border:1px solid var(--steel-light,#888);border-radius:4px;color:#fff;font-family:inherit;font-size:.9em;box-sizing:border-box">
+    </div>
+    <div style="margin-bottom:14px">
+      <label style="display:block;font-size:.78em;color:var(--steel-light,#888);margin-bottom:4px">Password</label>
+      <input type="password" id="login-password" autocomplete="current-password" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.3);border:1px solid var(--steel-light,#888);border-radius:4px;color:#fff;font-family:inherit;font-size:.9em;box-sizing:border-box">
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <button class="btn btn-gold" style="flex:1" onclick="doLogin()">Log In</button>
+      <button class="btn btn-ghost" onclick="doRegister()">Register</button>
+    </div>
+    <div id="login-status" style="font-size:.78em;color:var(--steel-light,#888);min-height:1.2em;text-align:center"></div>
+  </div>
+</div>
+
 <!-- TOPBAR -->
 <div class="topbar">
   <span class="topbar-brand">Relentless Quest</span>
@@ -1681,6 +1702,8 @@ body {
     <button class="btn btn-gold btn-sm" onclick="publishToQuestSystem()" title="Publish a simplified version of this monster to Relentless Quest's content_items table, where it becomes available in the Quest Editor's encounter authoring.">📤 Publish to Quest System</button>
     <a href="session-planner.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">← Session Planner</a>
     <a href="monster-blender.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">🧪 Blender</a>
+    <span id="user-email-badge" style="font-size:.7em;color:var(--steel-light,#888);margin-left:12px;align-self:center"></span>
+    <button class="btn btn-ghost btn-sm" id="btn-logout" onclick="doLogout()" style="display:none">Log Out</button>
   </div>
   <!-- Hidden file input for Foundry JSON -->
   <input type="file" id="foundryFileInput" accept=".json" style="display:none" onchange="handleFoundryFile(event)">
@@ -1901,11 +1924,151 @@ ui.notifications.info(`Exported ${npcs.length} NPCs`);</pre>
 // ── CONFIG ──
 const SB_URL = 'https://burtvenqfzextswpjziw.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1cnR2ZW5xZnpleHRzd3Bqeml3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyNTkxMzEsImV4cCI6MjA5MDgzNTEzMX0.M9krIdktkO1wMeKYMm_HoR_tEykewbRUVHdjerg1XIo';
-const SB_HEADERS = {
-  'Content-Type': 'application/json',
-  'apikey': SB_KEY,
-  'Authorization': 'Bearer ' + SB_KEY
-};
+
+// ══════════════════════════════════════════════════════════════════════
+// AUTH (v0.3.6) — mirrors the QE's Supabase Auth flow.
+// Persistent login: session saved to localStorage, restored on page load.
+// Required to publish to content_items (RLS requires authenticated owner).
+// All Supabase requests now go through sbHeaders() which returns the JWT
+// when logged in, falling back to the anon key when logged out.
+// ══════════════════════════════════════════════════════════════════════
+
+let currentUser = null;
+
+function uid() {
+  return currentUser && currentUser.user ? currentUser.user.id : null;
+}
+function userEmail() {
+  return currentUser && currentUser.user ? currentUser.user.email : '';
+}
+function isSessionExpiringSoon() {
+  if (!currentUser || !currentUser.expires_at) return false;
+  return (Date.now() + 60000) >= (currentUser.expires_at * 1000);
+}
+function persistSession() {
+  try {
+    if (currentUser) localStorage.setItem('mw_auth', JSON.stringify(currentUser));
+    else localStorage.removeItem('mw_auth');
+  } catch(e) {}
+}
+function restoreSession() {
+  try {
+    const raw = localStorage.getItem('mw_auth');
+    if (raw) currentUser = JSON.parse(raw);
+  } catch(e) { currentUser = null; }
+}
+function sbHeaders() {
+  const h = { 'Content-Type': 'application/json', 'apikey': SB_KEY };
+  if (currentUser && currentUser.access_token) {
+    h.Authorization = 'Bearer ' + currentUser.access_token;
+  } else {
+    h.Authorization = 'Bearer ' + SB_KEY;
+  }
+  return h;
+}
+async function refreshSession(force) {
+  if (!currentUser || !currentUser.refresh_token) return currentUser;
+  if (!force && !isSessionExpiringSoon()) return currentUser;
+  try {
+    const r = await fetch(SB_URL + '/auth/v1/token?grant_type=refresh_token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+      body: JSON.stringify({ refresh_token: currentUser.refresh_token })
+    });
+    const d = await r.json();
+    if (d && d.access_token) { currentUser = d; persistSession(); }
+  } catch(e) { /* swallow — caller can still try with stale token */ }
+  return currentUser;
+}
+// Wrapper around fetch that ensures auth headers are fresh and merged.
+// Use this for any call that needs the session JWT. Calls that explicitly
+// want anon (e.g. /auth/v1/token endpoints) should use plain fetch.
+async function sbAuthFetch(url, opts) {
+  opts = opts || {};
+  await refreshSession(false);
+  const req = Object.assign({}, opts);
+  req.headers = Object.assign({}, sbHeaders(), opts.headers || {});
+  return fetch(url, req);
+}
+
+function setLoginStatus(msg, isErr) {
+  const el = document.getElementById('login-status');
+  if (el) {
+    el.textContent = msg || '';
+    el.style.color = isErr ? '#e55' : 'var(--steel-light,#888)';
+  }
+}
+function showApp() {
+  const ov = document.getElementById('login-overlay');
+  if (ov) ov.style.display = 'none';
+  const badge = document.getElementById('user-email-badge');
+  if (badge) badge.textContent = userEmail() ? '👤 ' + userEmail() : '';
+  const lo = document.getElementById('btn-logout');
+  if (lo) lo.style.display = '';
+}
+function showLogin() {
+  const ov = document.getElementById('login-overlay');
+  if (ov) ov.style.display = 'flex';
+  const badge = document.getElementById('user-email-badge');
+  if (badge) badge.textContent = '';
+  const lo = document.getElementById('btn-logout');
+  if (lo) lo.style.display = 'none';
+  setLoginStatus('', false);
+}
+
+async function doLogin() {
+  const email = (document.getElementById('login-email').value || '').trim();
+  const pass  = document.getElementById('login-password').value || '';
+  if (!email || !pass) { setLoginStatus('Enter email and password.', true); return; }
+  setLoginStatus('Logging in…', false);
+  try {
+    const r = await fetch(SB_URL + '/auth/v1/token?grant_type=password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+      body: JSON.stringify({ email, password: pass })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error_description || d.msg || 'Login failed');
+    currentUser = d;
+    persistSession();
+    showApp();
+    // After login, refresh the local monster lists in case auth-scoped RLS
+    // affects what's visible.
+    if (typeof loadCustomMonsters === 'function') loadCustomMonsters();
+  } catch(err) {
+    setLoginStatus(err.message || 'Login failed', true);
+  }
+}
+async function doRegister() {
+  const email = (document.getElementById('login-email').value || '').trim();
+  const pass  = document.getElementById('login-password').value || '';
+  if (!email || !pass) { setLoginStatus('Enter email and password.', true); return; }
+  setLoginStatus('Creating account…', false);
+  try {
+    const r = await fetch(SB_URL + '/auth/v1/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+      body: JSON.stringify({ email, password: pass })
+    });
+    const d = await r.json();
+    if (!r.ok) { setLoginStatus(d.msg || d.error_description || 'Failed', true); return; }
+    setLoginStatus('Account created — now log in.', false);
+  } catch(err) {
+    setLoginStatus(err.message || 'Registration failed', true);
+  }
+}
+function doLogout() {
+  currentUser = null;
+  persistSession();
+  showLogin();
+}
+window.doLogin    = doLogin;
+window.doRegister = doRegister;
+window.doLogout   = doLogout;
+
+// Restore any persisted session on first script execution; the DOMContentLoaded
+// handler at the bottom of the file will gate showApp() vs showLogin().
+restoreSession();
 
 // ── CR SCALING TABLE (DMG) ──
 const CR_TABLE = {
@@ -3245,11 +3408,11 @@ async function saveMonster() {
     let res;
     if (currentMonster?.id) {
       res = await fetch(`${SB_URL}/rest/v1/rq_monsters?id=eq.${currentMonster.id}`, {
-        method: 'PATCH', headers: SB_HEADERS, body: JSON.stringify(data)
+        method: 'PATCH', headers: sbHeaders(), body: JSON.stringify(data)
       });
     } else {
       res = await fetch(`${SB_URL}/rest/v1/rq_monsters`, {
-        method: 'POST', headers: { ...SB_HEADERS, 'Prefer': 'return=representation' },
+        method: 'POST', headers: { ...sbHeaders(), 'Prefer': 'return=representation' },
         body: JSON.stringify(data)
       });
       if (res.ok) {
@@ -3410,7 +3573,7 @@ async function publishToQuestSystem() {
   try {
     const existing = await fetch(
       `${SB_URL}/rest/v1/content_items?content_type=eq.monster&content_key=eq.${encodeURIComponent(contentKey)}&owner_user_id=eq.${encodeURIComponent(ADMIN_UID)}&select=data`,
-      { headers: SB_HEADERS }
+      { headers: sbHeaders() }
     );
     if (existing.ok) {
       const rows = await existing.json();
@@ -3435,7 +3598,7 @@ async function publishToQuestSystem() {
       `${SB_URL}/rest/v1/content_items?on_conflict=content_type,content_key,owner_user_id`,
       {
         method: 'POST',
-        headers: { ...SB_HEADERS, 'Prefer': 'resolution=merge-duplicates,return=representation' },
+        headers: { ...sbHeaders(), 'Prefer': 'resolution=merge-duplicates,return=representation' },
         body: JSON.stringify(row)
       }
     );
@@ -3454,7 +3617,7 @@ async function publishToQuestSystem() {
 
 async function loadCustomMonsters() {
   try {
-    const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?order=created_at.desc&limit=500`, { headers: SB_HEADERS });
+    const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?order=created_at.desc&limit=500`, { headers: sbHeaders() });
     if (res.ok) {
       const rows = await res.json();
       customMonsters = rows.map(r => ({
@@ -4090,7 +4253,7 @@ async function importSelected() {
     try {
       const res = await fetch(`${SB_URL}/rest/v1/rq_monsters`, {
         method: 'POST',
-        headers: { ...SB_HEADERS, 'Prefer': 'return=minimal' },
+        headers: { ...sbHeaders(), 'Prefer': 'return=minimal' },
         body: JSON.stringify(m)
       });
       if (res.ok || res.status === 201) {
@@ -4616,8 +4779,37 @@ function rollDamageResult(formula, label, resultElId) {
   showToast('📋 Stat block opened in new window');
 }
 
-// ── BOOT ──
-init();
+// ── BOOT (v0.3.6) ──
+// restoreSession() ran earlier in script execution. Now decide whether
+// to show the login overlay or boot the app.
+//
+// We always render the SRD list immediately so the UI isn't blank behind
+// the login overlay (the SRD list is bundled in the page, no fetch needed).
+// loadCustomMonsters() requires auth and only fires after login completes.
+renderBrowserList(SRD_MONSTERS);
+
+if (currentUser && currentUser.access_token) {
+  // Have a session — try a refresh in the background, then show the app.
+  refreshSession(true).then(function(){
+    showApp();
+    loadCustomMonsters();
+  }).catch(function(){
+    // Refresh failed — token is probably dead. Show login.
+    currentUser = null;
+    persistSession();
+    showLogin();
+  });
+} else {
+  showLogin();
+}
+
+// Wire Enter-key on login fields to submit
+['login-email','login-password'].forEach(function(id){
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') doLogin();
+  });
+});
 </script>
 </body>
 </html>
