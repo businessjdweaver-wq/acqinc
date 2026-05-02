@@ -3110,7 +3110,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7164</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7165</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4081,7 +4081,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7164
+      Version 1.7165
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -28259,6 +28259,502 @@ function distributeCharPay(chars,charPool){
 
   return{shares:shares,unspent:unspent,franchiseDebit:franchiseDebit};
 }
+
+/* ═══════════════════════ POST-QUEST RESOLUTION ENGINE ═══════════════════════
+   v1.7165 / Phase 3.1 — Pure functions that compute a ResolutionPlan from a
+   quest + party + inventory + scout tier. No mutations, no DOM access. The
+   plan is a JSON-serializable description of what would happen if the quest
+   were collected via the full-resolution path.
+
+   Design goals:
+   • Console-callable for testing: window.testResolveQuest(qIdx) prints the plan.
+   • Robust to missing content: a quest with no encounter / boostTraits /
+     outcome_template still produces a sane plan (uses hardcoded defaults).
+   • Deterministic when an rng is passed (for tests). Defaults to Math.random.
+
+   ResolutionPlan shape: see _RESOLUTION_PLAN_SCHEMA comment below.
+
+   Phase 3.1 deliverables (this commit): pure functions only, no UI wiring.
+   Phase 3.2 will hook these to a "⚔ Full Resolution" button and modal.
+   ════════════════════════════════════════════════════════════════════════ */
+
+// Defaults used when game_rules row is missing or partial.
+var _RESOLUTION_DEFAULTS = {
+  dcLadder: { trivial:8, easy:11, moderate:14, hard:17, deadly:20, legendary:24 },
+  rollThresholds: { critFail:-10, fail:-1, partial:0, success:5, critSuccess:10 },
+  outcomeWeights: { crit_fail:0, fail:0.25, partial:0.75, success:1.0, crit_success:1.25 },
+  xpPerOutcome: { crit_fail:0, fail:0, partial:1, success:1, crit_success:2 },
+  levelMismatch: { perLevel:1, cap:5 },
+  traitBonusDefault: 2
+};
+
+// Tier average levels used for level-mismatch calc when a quest has a
+// tier set but no explicit baseline. Mirrors DIFFICULTY_PROFILES.
+var _RESOLUTION_TIER_AVG_LEVEL = { 1:2, 2:7, 3:13, 4:18 };
+
+function _resGameRules(contentLib) {
+  // Find the franchise game_rules row or fall back to defaults.
+  if (!contentLib) return _RESOLUTION_DEFAULTS;
+  var scopes = ['private','shared','official'];  // private wins (player override)
+  for (var i=0; i<scopes.length; i++) {
+    var arr = (contentLib[scopes[i]] && contentLib[scopes[i]].gameRules) || [];
+    for (var j=0; j<arr.length; j++) {
+      if (arr[j] && arr[j].content_key === 'franchise_rules') {
+        return _resMergeRules(arr[j]);
+      }
+    }
+  }
+  return _RESOLUTION_DEFAULTS;
+}
+
+function _resMergeRules(row) {
+  // Backfill missing top-level keys from defaults so the engine never
+  // crashes on a partial schema. Does NOT deep-merge — partial sub-objects
+  // get the row's values verbatim. Authors should fill out each section
+  // they touch.
+  var out = {};
+  Object.keys(_RESOLUTION_DEFAULTS).forEach(function(k){ out[k] = _RESOLUTION_DEFAULTS[k]; });
+  if (!row) return out;
+  Object.keys(row).forEach(function(k){
+    if (row[k] !== undefined && row[k] !== null) out[k] = row[k];
+  });
+  return out;
+}
+
+// Sum a character's traits from items + class + species + specialty.
+// Returns array of {trait, source} objects (for showing source in the modal).
+function _resCharTraits(char, contentLib) {
+  if (!char) return [];
+  var out = [];
+  var seen = {};
+  function add(trait, source) {
+    if (!trait || seen[trait]) return;
+    seen[trait] = true;
+    out.push({ trait: trait, source: source });
+  }
+  function lookupVocab(listName, key) {
+    // Walk three scopes for the matching content_key (private wins).
+    if (!contentLib || !key) return null;
+    var scopes = ['private','shared','official'];
+    for (var i=0; i<scopes.length; i++) {
+      var arr = (contentLib[scopes[i]] && contentLib[scopes[i]][listName]) || [];
+      for (var j=0; j<arr.length; j++) {
+        if (arr[j] && arr[j].content_key === key) return arr[j];
+      }
+    }
+    return null;
+  }
+  // 1. Item traits — for each item the char carries, check item.traits
+  (char.inv || []).forEach(function(itemName){
+    if (!itemName) return;
+    var matches = (typeof GEAR !== 'undefined' && Array.isArray(GEAR))
+      ? GEAR.filter(function(g){ return g && g.name === itemName; })
+      : [];
+    if (matches.length && Array.isArray(matches[0].traits)) {
+      matches[0].traits.forEach(function(t){ add(t, itemName); });
+    }
+  });
+  // 2. Class traits
+  if (char.cls) {
+    var clsRow = lookupVocab('classTraits', char.cls);
+    if (clsRow && Array.isArray(clsRow.traits)) {
+      clsRow.traits.forEach(function(t){ add(t, char.cls + ' (class)'); });
+    }
+  }
+  // 3. Species traits (post-v1.7114 rename — char.species is the field)
+  if (char.species) {
+    var spRow = lookupVocab('speciesTraits', char.species);
+    if (spRow && Array.isArray(spRow.traits)) {
+      spRow.traits.forEach(function(t){ add(t, char.species + ' (species)'); });
+    }
+  }
+  // 4. Specialty traits
+  if (char.specialty) {
+    var specRow = lookupVocab('specialties', char.specialty);
+    if (specRow && Array.isArray(specRow.traits)) {
+      specRow.traits.forEach(function(t){ add(t, char.specialty + ' (specialty)'); });
+    }
+  }
+  return out;
+}
+
+// Adjusts a roll based on (party avg level) - (quest tier avg level).
+// Positive = party over-leveled, gets bonus. Capped per gameRules.
+function _resLevelMismatchMod(partyAvgLevel, questTier, gameRules) {
+  var tierAvg = _RESOLUTION_TIER_AVG_LEVEL[questTier] || 5;
+  var diff = partyAvgLevel - tierAvg;
+  var perLevel = (gameRules.levelMismatch && gameRules.levelMismatch.perLevel) || 1;
+  var cap = (gameRules.levelMismatch && gameRules.levelMismatch.cap) || 5;
+  var mod = diff * perLevel;
+  if (mod > cap) mod = cap;
+  if (mod < -cap) mod = -cap;
+  return Math.round(mod);
+}
+
+// Compute trait modifier: sum of bonuses for traits that appear in the
+// quest's boostTraits (positive) and penaltyTraits (negative).
+// Returns {mod, contributions: [{trait, source, value}]}.
+function _resTraitMod(quest, party, contentLib, gameRules) {
+  var contributions = [];
+  var mod = 0;
+  if (!quest || !quest.encounter) return { mod: 0, contributions: contributions };
+  var enc = quest.encounter;
+  var boostTraits = Array.isArray(enc.boostTraits) ? enc.boostTraits : [];
+  var penaltyTraits = Array.isArray(enc.penaltyTraits) ? enc.penaltyTraits : [];
+  var defaultBonus = gameRules.traitBonusDefault || 2;
+  // Each boost trait (object: {key, value} or just key string)
+  boostTraits.forEach(function(b){
+    var key = (typeof b === 'string') ? b : (b && b.key);
+    var value = (typeof b === 'object' && b && typeof b.value === 'number') ? b.value : defaultBonus;
+    if (!key) return;
+    party.forEach(function(c){
+      var traits = _resCharTraits(c, contentLib);
+      traits.forEach(function(t){
+        if (t.trait === key) {
+          contributions.push({ trait: key, source: c.name + ' via ' + t.source, value: value });
+          mod += value;
+        }
+      });
+    });
+  });
+  penaltyTraits.forEach(function(p){
+    var key = (typeof p === 'string') ? p : (p && p.key);
+    var value = (typeof p === 'object' && p && typeof p.value === 'number') ? p.value : defaultBonus;
+    if (!key) return;
+    party.forEach(function(c){
+      var traits = _resCharTraits(c, contentLib);
+      traits.forEach(function(t){
+        if (t.trait === key) {
+          contributions.push({ trait: key, source: c.name + ' via ' + t.source, value: -value });
+          mod -= value;
+        }
+      });
+    });
+  });
+  return { mod: mod, contributions: contributions };
+}
+
+// Determine outcome tier from roll margin (total - DC).
+function _resOutcomeTier(margin, gameRules) {
+  var t = gameRules.rollThresholds || _RESOLUTION_DEFAULTS.rollThresholds;
+  if (margin <= t.critFail) return 'crit_fail';
+  if (margin <  t.partial)  return 'fail';
+  if (margin <  t.success)  return 'partial';
+  if (margin <  t.critSuccess) return 'success';
+  return 'crit_success';
+}
+
+// Pick an outcome_template matching this quest type and outcome tier.
+// Returns the row's data, or null. If multiple templates match, picks
+// one at random (using rng).
+function _resPickTemplate(quest, outcomeTier, contentLib, rng) {
+  if (!contentLib) return null;
+  var qType = quest && quest.type;
+  var scopes = ['private','shared','official'];
+  var matches = [];
+  scopes.forEach(function(scope){
+    var arr = (contentLib[scope] && contentLib[scope].outcomeTemplates) || [];
+    arr.forEach(function(row){
+      if (!row) return;
+      // A template applies if its questType matches (or is '*' / unset)
+      // AND its outcomeTier matches.
+      var templateQType = row.questType || '*';
+      var templateTier  = row.outcomeTier;
+      if ((templateQType === '*' || templateQType === qType) && templateTier === outcomeTier) {
+        matches.push(row);
+      }
+    });
+  });
+  if (!matches.length) return null;
+  var idx = Math.floor((rng || Math.random)() * matches.length);
+  return matches[idx];
+}
+
+// Synthesize a default effects list when no outcome_template matched.
+// Mirrors the pre-Phase-3 reward behavior so an encounter-less quest
+// with no templates still gives gold/XP correctly.
+function _resDefaultEffects(quest, pq, outcomeTier, gameRules) {
+  var weight = (gameRules.outcomeWeights && gameRules.outcomeWeights[outcomeTier]);
+  if (typeof weight !== 'number') weight = 1.0;
+  var goldAmount = Math.round((pq.reward || 0) * weight);
+  var xpAmount = (gameRules.xpPerOutcome && gameRules.xpPerOutcome[outcomeTier]) || 0;
+  var effects = [];
+  if (goldAmount > 0) {
+    effects.push({ type: 'gold_award', amount: goldAmount, target: 'all' });
+  }
+  if (xpAmount > 0) {
+    effects.push({ type: 'xp_award', amount: xpAmount, target: 'all', track: quest.type });
+  }
+  return effects;
+}
+
+// Pick a single character to receive a single-target effect.
+// Mode: 'random' (default), 'lowest_hp', 'lowest_level', 'highest_level'.
+function _resPickAffectedChar(party, mode, rng) {
+  if (!party || !party.length) return null;
+  mode = mode || 'random';
+  var pool = party.slice();
+  if (mode === 'lowest_hp') {
+    pool.sort(function(a,b){ return (a.hp||0) - (b.hp||0); });
+    return pool[0];
+  }
+  if (mode === 'lowest_level') {
+    pool.sort(function(a,b){ return (a.level||0) - (b.level||0); });
+    return pool[0];
+  }
+  if (mode === 'highest_level') {
+    pool.sort(function(a,b){ return (b.level||0) - (a.level||0); });
+    return pool[0];
+  }
+  var idx = Math.floor((rng || Math.random)() * pool.length);
+  return pool[idx];
+}
+
+// For a condition application effect, find which party member's inventory
+// holds an item with a matching counter trait. Returns
+// {char, item} or null. Counter map is read from gameRules.counterMap.
+function _resFindCounter(conditionKey, party, gameRules) {
+  if (!conditionKey) return null;
+  var counterMap = gameRules.counterMap || {};
+  // counterMap is shaped like { anti_poison: ['Poisoned'], ... }
+  // We need the inverse: condition -> set of counter trait keys.
+  var counterTraits = [];
+  Object.keys(counterMap).forEach(function(traitKey){
+    var conds = counterMap[traitKey];
+    if (Array.isArray(conds) && conds.indexOf(conditionKey) !== -1) {
+      counterTraits.push(traitKey);
+    }
+  });
+  if (!counterTraits.length) return null;
+  // Walk party inventories. For each item, if item.traits contains any
+  // of counterTraits, return that {char, item} pair.
+  for (var i=0; i<party.length; i++) {
+    var c = party[i];
+    var inv = c.inv || [];
+    for (var j=0; j<inv.length; j++) {
+      var itemName = inv[j];
+      var gearMatch = (typeof GEAR !== 'undefined' && Array.isArray(GEAR))
+        ? GEAR.filter(function(g){ return g && g.name === itemName; })[0]
+        : null;
+      if (gearMatch && Array.isArray(gearMatch.traits)) {
+        for (var k=0; k<gearMatch.traits.length; k++) {
+          if (counterTraits.indexOf(gearMatch.traits[k]) !== -1) {
+            return { char: c, item: gearMatch, counterTrait: gearMatch.traits[k] };
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// Pick a label for the source of a condition. Prefers the encounter's
+// monster (most likely cause); falls back to terrain or generic.
+function _resPickConditionSource(quest) {
+  if (quest && quest.encounter) {
+    if (quest.encounter.monster && quest.encounter.monster.label) return quest.encounter.monster.label;
+    if (quest.encounter.monsterKey) return quest.encounter.monsterKey;
+    if (quest.encounter.terrain) return quest.encounter.terrain + ' terrain';
+  }
+  return 'the quest';
+}
+
+// Resolve effects from a template into concrete plan effect rows.
+// A template effect is shaped like {type, amount, target, condition, ...}.
+// We map it to a plan effect row, expanding {target: 'random'} into a
+// concrete character pick and adding counter-consumable info if a
+// condition_apply effect is present.
+function _resExpandTemplateEffects(template, quest, party, gameRules, rng) {
+  var effects = [];
+  var srcEffects = (template && template.effects) || [];
+  srcEffects.forEach(function(eff){
+    if (!eff || !eff.type) return;
+    var out = {};
+    Object.keys(eff).forEach(function(k){ out[k] = eff[k]; });
+    // For single-target effects, resolve which char receives it
+    if (out.target === 'random' || out.target === 'lowest_hp' ||
+        out.target === 'lowest_level' || out.target === 'highest_level') {
+      var picked = _resPickAffectedChar(party, out.target, rng);
+      out.targetChar = picked ? picked.name : null;
+      out.targetMode = out.target;
+      out.target = 'one';
+    }
+    // For condition_apply effects, check for counter consumables
+    if (out.type === 'condition_apply' && out.condition) {
+      out.source = out.source || _resPickConditionSource(quest);
+      var counter = _resFindCounter(out.condition, party, gameRules);
+      if (counter) {
+        out.counter = {
+          char: counter.char.name,
+          item: counter.item.name,
+          counterTrait: counter.counterTrait,
+          consumed: counter.item.type === 'consumable'
+        };
+      }
+    }
+    effects.push(out);
+  });
+  return effects;
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Top-level resolution function. Returns a ResolutionPlan describing what
+// would happen if this quest were collected. Does NOT mutate state.
+//
+// _RESOLUTION_PLAN_SCHEMA:
+// {
+//   questId: string,
+//   questLabel: string,
+//   partyChars: [{name, level, traitsContributed:[]}],
+//   difficulty: {tier, label, baseDC, partyAvgLevel, levelMod, finalDC},
+//   encounter: {monsterKey, monsterLabel, terrain, traitContribs:[], traitMod},
+//   roll: {d20, levelMod, traitMod, total, dc, margin},
+//   outcome: {tier, template:{id,label}|null, effects:[]},
+//   scoutTier: number
+// }
+// ────────────────────────────────────────────────────────────────────────
+function resolveQuest(quest, party, scoutTier, contentLib, rng) {
+  rng = rng || Math.random;
+  party = (party || []).filter(function(c){ return c; });
+  scoutTier = scoutTier || 0;
+  var gameRules = _resGameRules(contentLib);
+
+  // Difficulty
+  var diffKey = (quest && quest.difficulty) || 'moderate';
+  var baseDC = (gameRules.dcLadder && gameRules.dcLadder[diffKey]) ||
+               _RESOLUTION_DEFAULTS.dcLadder[diffKey] || 14;
+  var avgLevel = party.length
+    ? (party.reduce(function(s,c){ return s + (c.level||1); }, 0) / party.length)
+    : 1;
+  var qTier = (quest && quest.tier) || 1;
+  var levelMod = _resLevelMismatchMod(avgLevel, qTier, gameRules);
+
+  // Trait mod from encounter
+  var traitResult = _resTraitMod(quest, party, contentLib, gameRules);
+
+  // Roll
+  var d20 = Math.floor(rng() * 20) + 1;
+  var total = d20 + levelMod + traitResult.mod;
+  var margin = total - baseDC;
+  var outcomeTier = _resOutcomeTier(margin, gameRules);
+
+  // Pick outcome template
+  var template = _resPickTemplate(quest, outcomeTier, contentLib, rng);
+
+  // Build effects
+  var effects;
+  if (template && Array.isArray(template.effects) && template.effects.length) {
+    effects = _resExpandTemplateEffects(template, quest, party, gameRules, rng);
+  } else {
+    // No template — synthesize from outcome weight + base reward
+    effects = _resDefaultEffects(quest, quest._pq || { reward: quest.reward || 0 }, outcomeTier, gameRules);
+  }
+
+  return {
+    questId: (quest && quest.id) || null,
+    questLabel: (quest && quest.title) || (quest && quest.label) || '(unnamed quest)',
+    partyChars: party.map(function(c){
+      return {
+        name: c.name,
+        level: c.level || 1,
+        cls: c.cls || null,
+        species: c.species || null,
+        specialty: c.specialty || null,
+        traits: _resCharTraits(c, contentLib).map(function(t){ return t.trait; })
+      };
+    }),
+    difficulty: {
+      tier: qTier,
+      label: diffKey,
+      baseDC: baseDC,
+      partyAvgLevel: Math.round(avgLevel * 10) / 10,
+      levelMod: levelMod,
+      finalDC: baseDC  // we adjust the roll, not the DC; finalDC kept for modal
+    },
+    encounter: quest && quest.encounter ? {
+      monsterKey: quest.encounter.monsterKey || null,
+      monsterLabel: (quest.encounter.monster && quest.encounter.monster.label) ||
+                    quest.encounter.monsterKey || null,
+      terrain: quest.encounter.terrain || null,
+      flavorHint: quest.encounter.flavorHint || null,
+      traitContribs: traitResult.contributions,
+      traitMod: traitResult.mod
+    } : null,
+    roll: {
+      d20: d20,
+      levelMod: levelMod,
+      traitMod: traitResult.mod,
+      total: total,
+      dc: baseDC,
+      margin: margin
+    },
+    outcome: {
+      tier: outcomeTier,
+      template: template ? {
+        id: template.content_key || null,
+        label: template.label || null
+      } : null,
+      effects: effects
+    },
+    scoutTier: scoutTier
+  };
+}
+
+// applyResolution(plan) — performs the mutations described by a plan.
+// PHASE 3.1 STUB: only implements the obvious effects (gold, xp). Other
+// effect types are logged for later phases. This intentionally does NOT
+// call collectQuest's existing reward-distribution logic — that runs as
+// a separate path in Phase 3.2 when the user clicks ⚔ Full Resolution.
+function applyResolution(plan) {
+  if (!plan || !plan.outcome || !Array.isArray(plan.outcome.effects)) {
+    console.warn('[applyResolution] plan has no effects'); return;
+  }
+  plan.outcome.effects.forEach(function(eff){
+    if (eff.type === 'gold_award' && typeof eff.amount === 'number') {
+      goldAdd(eff.amount, 'Quest resolution: ' + plan.questLabel, 'adv');
+    } else if (eff.type === 'xp_award' && typeof eff.amount === 'number') {
+      // Award XP to all party chars in the plan
+      (plan.partyChars || []).forEach(function(pc){
+        var c = (S.party || []).filter(function(x){ return x && x.name === pc.name; })[0];
+        if (!c) return;
+        if (!c.xp) c.xp = {};
+        var track = eff.track || 'adv';
+        c.xp[track] = (c.xp[track] || 0) + eff.amount;
+      });
+    } else {
+      console.log('[applyResolution] effect type', eff.type, 'not yet implemented in Phase 3.1:', eff);
+    }
+  });
+}
+
+// Console-callable test entry point. Picks the quest at index qIdx in the
+// current cycle's quest list, builds a temporary party from S.party (all
+// non-injured chars), and prints a fully-formed ResolutionPlan to console.
+// Does NOT mutate state. Intended for engine validation during Phase 3.1.
+function testResolveQuest(qIdx) {
+  qIdx = qIdx || 0;
+  var pq = (S.activeQuests && S.activeQuests[qIdx]);
+  var q = pq && pq.q;
+  if (!q) {
+    console.warn('[testResolveQuest] No active quest at index', qIdx,
+                 '(activeQuests has', (S.activeQuests||[]).length, 'entries)');
+    return null;
+  }
+  var party = (pq.chars || []).map(function(ci){ return S.party[ci]; }).filter(Boolean);
+  if (!party.length) party = (S.party||[]).slice(0, 4);
+  q._pq = pq;  // hand the engine the active quest record so it can read pq.reward
+  var scoutTier = (S.scoutedQuests && S.scoutedQuests[q.id] && S.scoutedQuests[q.id].tier) || 0;
+  var plan = resolveQuest(q, party, scoutTier, CONTENT_LIB);
+  console.log('═══ ResolutionPlan for "' + plan.questLabel + '" ═══');
+  console.log(JSON.stringify(plan, null, 2));
+  return plan;
+}
+window.testResolveQuest = testResolveQuest;
+window.resolveQuest = resolveQuest;
+window.applyResolution = applyResolution;
+
+/* ════════════════════════════════════════════════════════════════════════ */
+
 function collectQuest(qi,pq,q,set){
   var totalReward=pq.reward;
   var chars=pq.chars||[];
@@ -35675,7 +36171,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7164';
+var RQ_CLIENT_VERSION='v1.7165';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
