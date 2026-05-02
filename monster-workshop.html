@@ -114,6 +114,17 @@ body {
 .btn-gold:hover { background: linear-gradient(135deg, var(--gold-bright) 0%, var(--gold) 100%); }
 .btn-sm { font-size: 0.55rem; padding: 4px 10px; }
 .btn-xs { font-size: 0.5rem; padding: 3px 8px; }
+/* v0.3.6 — Disabled state for buttons. Used by 🗑 Unpublish when no
+   currently-loaded monster has a published copy. */
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: saturate(0.4);
+}
+.btn:disabled:hover {
+  background: inherit;
+  border-color: inherit;
+}
 .icon-btn {
   background: none; border: none; cursor: pointer;
   color: var(--steel-pale); font-size: 1rem; padding: 2px 5px;
@@ -254,6 +265,32 @@ body {
   font-size: 0.65rem;
   color: var(--steel-pale);
   white-space: nowrap;
+}
+/* v0.3.6 — Published-to-Quest-System badge on browser entries and editor header */
+.entry-published {
+  display: inline-block;
+  font-size: 0.62rem;
+  color: var(--ember-pale, #c8420a);
+  background: rgba(200, 66, 10, 0.14);
+  border: 1px solid rgba(200, 66, 10, 0.35);
+  border-radius: 8px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.editor-published-pill {
+  display: inline-block;
+  font-size: 0.7rem;
+  color: var(--ember-pale, #c8420a);
+  background: rgba(200, 66, 10, 0.14);
+  border: 1px solid rgba(200, 66, 10, 0.4);
+  border-radius: 10px;
+  padding: 2px 8px;
+  margin-left: 8px;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
 }
 .browser-empty {
   padding: 24px 14px;
@@ -1700,6 +1737,7 @@ body {
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
     <button class="btn btn-gold btn-sm" onclick="saveMonster()">💾 Save to Supabase</button>
     <button class="btn btn-gold btn-sm" onclick="publishToQuestSystem()" title="Publish a simplified version of this monster to Relentless Quest's content_items table, where it becomes available in the Quest Editor's encounter authoring.">📤 Publish to Quest System</button>
+    <button class="btn btn-ghost btn-sm" id="btnUnpublish" onclick="unpublishFromQuestSystem()" disabled title="Remove this monster's published copy from the Relentless Quest content system. The full monster data stays in your library.">🗑 Unpublish</button>
     <a href="session-planner.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">← Session Planner</a>
     <a href="monster-blender.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">🧪 Blender</a>
     <span id="user-email-badge" style="font-size:.7em;color:var(--steel-light,#888);margin-left:12px;align-self:center"></span>
@@ -2626,6 +2664,10 @@ let allMonsters = [...SRD_MONSTERS];
 let customMonsters = [];
 let currentMonster = null;
 let isEditing = false;
+// v0.3.6 — Set of Workshop monster ids that have a published simplified copy
+// in content_items. Populated by loadPublishedSet() after login. Keys are
+// the rq_monsters.id values (the same id we use for content_key="workshop_<id>").
+let publishedSet = new Set();
 
 // ── INIT ──
 async function init() {
@@ -2673,10 +2715,18 @@ function renderBrowserList(monsters) {
     const crLabel  = m.cr === '?' ? '<span class="entry-cr" style="opacity:0.4;">EV</span>' : `<span class="entry-cr">CR ${m.cr}</span>`;
     const isDS     = m.source === 'draw-steel';
     const typeDisp = isDS ? (m._dsRole || m.type) : m.type;
+    // v0.3.6 — published-to-quest-system badge for custom monsters whose
+    // workshop id is in publishedSet. SRD/DS monsters can't be published
+    // (no DB id), so they never get the badge.
+    const isPublished = m.source === 'custom' && m.id && publishedSet.has(String(m.id));
+    const pubBadge = isPublished
+      ? '<span class="entry-published" title="Published to the Relentless Quest content system">📤</span>'
+      : '';
     return `<div class="monster-entry ${currentMonster && currentMonster.slug === m.slug ? 'selected' : ''}"
          onclick="selectMonster('${m.slug}')">
       ${crLabel}
       <span class="entry-name">${m.name}</span>
+      ${pubBadge}
       <span class="entry-type">${typeDisp}</span>
     </div>`;
   }).join('');
@@ -2696,6 +2746,9 @@ async function selectMonster(slug) {
 
   isEditing = currentMonster.source === 'custom';
   renderEditor(currentMonster);
+  // v0.3.6 — surface published-status pill + sync Unpublish button
+  updatePublishedPill();
+  syncUnpublishButton();
 
   // Refresh list to show selection highlight
   const data = currentTab === 'srd' ? SRD_MONSTERS
@@ -3604,6 +3657,17 @@ async function publishToQuestSystem() {
     );
     if (res.ok) {
       showToast('✓ ' + data.name + ' published to Quest System');
+      // v0.3.6 — Mark this monster as published locally so the badge
+      // appears immediately. We also fire a fresh loadPublishedSet() in
+      // the background so any other clients' state syncs eventually,
+      // but the local update is what makes the UI feel snappy.
+      if (currentMonster && currentMonster.id) {
+        publishedSet.add(String(currentMonster.id));
+        if (currentTab === 'custom') renderBrowserList(customMonsters);
+        updatePublishedPill();
+        syncUnpublishButton();
+      }
+      loadPublishedSet();  // background refresh
     } else {
       const err = await res.text();
       console.error('[publishToQuestSystem] HTTP', res.status, err);
@@ -3615,7 +3679,141 @@ async function publishToQuestSystem() {
   }
 }
 
+// ── UNPUBLISH FROM QUEST SYSTEM (v0.3.6) ────────────────────────────────
+// Removes the simplified content_items copy of the currently-loaded
+// monster. The full Workshop monster (in rq_monsters) is untouched.
+//
+// Important: any quests that reference this monster in their encounter
+// section will be left with a dangling reference until either the quest
+// is re-saved or the monster is re-published. The confirm dialog warns
+// about this so the DM doesn't unpublish content currently in use.
+async function unpublishFromQuestSystem() {
+  if (!currentMonster || !currentMonster.id) {
+    showToast('Open a saved monster first', true); return;
+  }
+  if (!publishedSet.has(String(currentMonster.id))) {
+    showToast('This monster has no published copy', true); return;
+  }
+  const proceed = confirm(
+    'Remove "' + (currentMonster.name || 'this monster') + '" from the Quest System?\n\n' +
+    'The full monster stays in your Workshop library.\n\n' +
+    'Any quests that reference this monster in an encounter will retain a ' +
+    'dangling reference until the quest is re-saved or the monster is ' +
+    're-published.'
+  );
+  if (!proceed) return;
+
+  const contentKey = 'workshop_' + currentMonster.id;
+  try {
+    const filter = `content_type=eq.monster` +
+                   `&content_key=eq.${encodeURIComponent(contentKey)}` +
+                   `&owner_user_id=eq.${encodeURIComponent(ADMIN_UID)}`;
+    const res = await fetch(`${SB_URL}/rest/v1/content_items?${filter}`, {
+      method: 'DELETE',
+      headers: { ...sbHeaders(), 'Prefer': 'return=minimal' }
+    });
+    if (res.ok) {
+      showToast('✓ ' + (currentMonster.name || 'Monster') + ' unpublished');
+      // Update local state immediately for snappy UI
+      publishedSet.delete(String(currentMonster.id));
+      if (currentTab === 'custom') renderBrowserList(customMonsters);
+      updatePublishedPill();
+      syncUnpublishButton();
+      loadPublishedSet();  // background reconciliation
+    } else {
+      const err = await res.text();
+      console.error('[unpublishFromQuestSystem] HTTP', res.status, err);
+      showToast('Unpublish failed: ' + (err.slice(0, 200) || res.status), true);
+    }
+  } catch(e) {
+    console.error('[unpublishFromQuestSystem] network error:', e);
+    showToast('Network error: ' + e.message, true);
+  }
+}
+
+// Enable/disable the Unpublish button based on whether the currently-
+// loaded monster is in publishedSet. Called from selectMonster, after
+// publish/unpublish completes, and after loadPublishedSet refreshes.
+function syncUnpublishButton() {
+  const btn = document.getElementById('btnUnpublish');
+  if (!btn) return;
+  const canUnpublish = !!(
+    currentMonster &&
+    currentMonster.source === 'custom' &&
+    currentMonster.id &&
+    publishedSet.has(String(currentMonster.id))
+  );
+  btn.disabled = !canUnpublish;
+}
+
+// ── PUBLISHED-SET FETCH (v0.3.6) ─────────────────────────────────────────
+// Pulls all content_items rows owned by ADMIN_UID with content_type='monster'
+// and reads each row's data._workshopId (set by publishToQuestSystem) to
+// build the set of Workshop monster ids that have a published copy. Used
+// by the browser list and editor header to render a "📤 Published" badge.
+//
+// Only fires when logged in (sbHeaders sends the JWT, RLS only returns
+// rows the user can see). Failures are non-fatal — the badge just won't
+// render, which is the same as "not published" from the user's view.
+async function loadPublishedSet() {
+  if (!currentUser || !currentUser.access_token) {
+    publishedSet = new Set();
+    return;
+  }
+  try {
+    const url = `${SB_URL}/rest/v1/content_items?content_type=eq.monster&owner_user_id=eq.${ADMIN_UID}&select=content_key,data`;
+    const res = await fetch(url, { headers: sbHeaders() });
+    if (!res.ok) {
+      console.warn('[loadPublishedSet] HTTP', res.status, await res.text());
+      publishedSet = new Set();
+      return;
+    }
+    const rows = await res.json();
+    const next = new Set();
+    rows.forEach(r => {
+      // Prefer data._workshopId (the canonical source of truth set at
+      // publish time); fall back to parsing content_key='workshop_<id>'
+      // for resilience if older rows were written without _workshopId.
+      const wid = (r.data && r.data._workshopId) ||
+                  (r.content_key && r.content_key.indexOf('workshop_') === 0
+                    ? r.content_key.slice('workshop_'.length)
+                    : null);
+      if (wid) next.add(String(wid));
+    });
+    publishedSet = next;
+    // Re-render anything that could show a badge
+    if (currentTab === 'custom') renderBrowserList(customMonsters);
+    if (currentMonster) updatePublishedPill();
+    syncUnpublishButton();
+  } catch(e) {
+    console.warn('[loadPublishedSet] error:', e);
+    publishedSet = new Set();
+    syncUnpublishButton();
+  }
+}
+
+// Updates the editor header's published pill to reflect publishedSet.
+// Called after publishToQuestSystem succeeds and on monster selection.
+function updatePublishedPill() {
+  const headerRow = document.querySelector('.editor-source-pill');
+  if (!headerRow || !headerRow.parentNode) return;
+  // Remove any existing pill first (idempotent)
+  const existing = headerRow.parentNode.querySelector('.editor-published-pill');
+  if (existing) existing.remove();
+  // Only show for custom monsters with a saved id
+  if (!currentMonster || currentMonster.source !== 'custom' || !currentMonster.id) return;
+  if (!publishedSet.has(String(currentMonster.id))) return;
+  const pill = document.createElement('span');
+  pill.className = 'editor-published-pill';
+  pill.textContent = '📤 Published';
+  pill.title = 'A simplified version of this monster is published to the Relentless Quest content system.';
+  headerRow.parentNode.insertBefore(pill, headerRow.nextSibling);
+}
+
 async function loadCustomMonsters() {
+  // v0.3.6 — fire the published-set fetch in parallel; it doesn't block
+  // the main rq_monsters load and it's fine if it lags slightly.
+  loadPublishedSet();
   try {
     const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?order=created_at.desc&limit=500`, { headers: sbHeaders() });
     if (res.ok) {
