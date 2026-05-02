@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Quest Editor v1.7163</title>
+<title>Quest Editor v1.7164</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -386,7 +386,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 <body>
 <div id="login-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--parch);border:2px solid var(--gold);border-radius:10px;padding:24px;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.5)">
-    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.7163</span></h2>
+    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.7164</span></h2>
     <div style="margin-bottom:12px">
       <label style="display:block;font-size:.8em;color:var(--ink2);margin-bottom:4px">Email</label>
       <input type="text" id="email" autocomplete="email" style="width:100%;padding:8px;border:1px solid var(--gold);border-radius:5px;background:var(--parch);font-size:.9em;box-sizing:border-box">
@@ -402,7 +402,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 
 <div id="app">
   <div id="hdr">
-    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.7163</span></h1>
+    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.7164</span></h1>
     <div id="login-area">
       <span id="user-email"></span>
       <button class="hbtn" id="btn-push" style="display:none" title="Push all local changes to Supabase">☁ Push</button>
@@ -439,6 +439,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
         <button class="tab-btn" data-tab="territories" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">🌍 Territories</button>
         <button class="tab-btn" data-tab="specialties" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">✨ Specialties</button>
         <button class="tab-btn" data-tab="difficulty" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">📊 Difficulty</button>
+        <button class="tab-btn" data-tab="rules" style="flex:1;padding:6px 4px;font-family:'Cinzel',serif;font-size:.65em;text-transform:uppercase;letter-spacing:.04em;border:none;border-bottom:2px solid transparent;background:none;color:var(--ink2);cursor:pointer">🎲 Rules</button>
       </div>
       <div id="list-scroll">
         <div class="list-empty">Log in to load your quests.</div>
@@ -1706,6 +1707,7 @@ function renderList() {
   if (activeTab === 'territories') { renderTerritoryList(); return; } // v1.7117
   if (activeTab === 'specialties') { renderSpecialtyList(); return; } // v1.699
   if (activeTab === 'difficulty') { renderDifficultyReference(); return; }
+  if (activeTab === 'rules') { renderGameRules(); return; }
   var el = document.getElementById('list-scroll');
   if (!uid()) {
     el.innerHTML = '<div class="list-empty">Log in to load your quests.</div>';
@@ -4958,6 +4960,446 @@ function renderDifficultyReference() {
     '<div style="margin-top:14px;padding:10px 12px;background:rgba(26,107,138,.06);border:1px solid var(--border2);border-radius:4px;font-size:.78em;color:var(--ink2);line-height:1.5">' +
       '<strong style="color:var(--teal)">Tuning:</strong> To adjust these values, edit the <code>DIFFICULTY_PROFILES</code> object at the top of the HTML source. Each cell is independently tunable. The matrix is heavily commented for devs.' +
     '</div>';
+}
+
+// ══════════════════════════════════════════════════
+// GAME RULES (v1.7164)
+// ══════════════════════════════════════════════════
+// Single franchise-wide config record holding every tunable the
+// Phase 3 resolution engine consults: DC ladder, level-mismatch
+// modifiers, roll thresholds, outcome weights, trait bonus cap,
+// XP/reward math, counter-consumable mapping, death rules,
+// condition recovery, quest duration overrides, engine toggles.
+//
+// Editor pattern: explainer in list-scroll (left), editable form
+// in form-panel (right) — same shape as the Difficulty tab.
+// Admin-only edit; non-admins see a read-only view.
+// One row per franchise; identified by content_key='franchise_rules'.
+// ══════════════════════════════════════════════════
+
+var GR_DEFAULTS = {
+  dcLadder: { trivial:8, easy:10, medium:13, hard:16, deadly:20 },
+  levelMismatchMods: { under2:3, under1:1, atTier:0, over1:-1, over2:-2 },
+  rollThresholds: { critSuccessNat:20, critFailNat:1, autoSuccessMargin:10, autoFailMargin:10 },
+  outcomeWeights: { setback:15, mixed:30, success:40, bonus:15 },
+  traitBonusCap: { maxBonus:10, maxPenalty:-10 },
+  xpAndRewards: {
+    baseXpPerTier: { tier1:5, tier2:10, tier3:20, tier4:40 },
+    trackMatchBonusXp: 2,
+    outcomeXpMult: { setback:0.25, mixed:0.6, success:1.0, bonus:1.5 },
+    franchiseCutPct: 0.4,
+    adventurerSharePct: 0.6
+  },
+  counterMap: [
+    { trait:'anti_poison',     counters:'Poisoned'  },
+    { trait:'anti_disease',    counters:'Diseased'  },
+    { trait:'anti_exhaustion', counters:'Exhausted' },
+    { trait:'anti_death',      counters:'Death'     },
+    { trait:'anti_petrified',  counters:'Petrified' }
+  ],
+  allowDoubleSub: true,
+  doubleSubMap: { anti_death: ['anti_poison','anti_poison'] },
+  deathRules: {
+    permadeath:false, autoReviveAtSessionEnd:false,
+    petrifiedRecoveryGp:500, petrifiedRecoveryDowntimes:2,
+    deathSavingThrowDC:10
+  },
+  conditionRecovery: { minor:1, moderate:2, severe:3, extreme:5 },
+  conditionsStack: false,
+  questDuration: { firstQuestDurationMin:3, defaultQuestDurationMin:60, testModeDurationMin:1 },
+  engineToggles: {
+    showRollBreakdownInLog:true, autoCollectOnSuccess:false,
+    narrativeFromTemplates:true, confirmBeforeApplyingDeath:true
+  }
+};
+
+// Working copy held while editor is open. Hydrated from the
+// Supabase row on entry; flushed back via Save All.
+var _grWork = null;
+
+function _grPickRow() {
+  // Find the franchise rules row from the loaded gameRules array.
+  // gameRules is a top-level var populated by pullData().
+  if (!Array.isArray(gameRules)) return null;
+  for (var i=0; i<gameRules.length; i++) {
+    if (gameRules[i] && gameRules[i].content_key === 'franchise_rules') return gameRules[i];
+  }
+  return gameRules[0] || null;
+}
+
+function _grHydrate() {
+  // Build _grWork by deep-cloning defaults then overlaying the row's data.
+  var def = JSON.parse(JSON.stringify(GR_DEFAULTS));
+  var row = _grPickRow();
+  if (row && row.data && typeof row.data === 'object') {
+    // Merge each top-level key, preserving defaults for missing fields.
+    Object.keys(def).forEach(function(k){
+      if (row.data[k] !== undefined && row.data[k] !== null) {
+        def[k] = JSON.parse(JSON.stringify(row.data[k]));
+      }
+    });
+  }
+  _grWork = def;
+}
+
+function renderGameRules() {
+  _grHydrate();
+  var canEdit = isAdmin();
+
+  // Left panel: explainer
+  var lp = document.getElementById('list-scroll');
+  lp.innerHTML = '<div style="padding:14px 12px;font-size:.82em;color:var(--ink2);line-height:1.5">' +
+    '<strong style="color:var(--gold)">Game Rules</strong><br><br>' +
+    'A single franchise-wide record of every tunable the resolution engine consults: DC ladder, outcome weights, XP math, counter-consumables, death rules, and more.<br><br>' +
+    (canEdit
+      ? 'Edit values on the right and click <strong>Save All</strong> to push to Supabase. Changes apply immediately for all players on next pull.'
+      : '<em>Read-only — only the franchise admin can edit these values.</em>') +
+    '<br><br>If a field is missing from the saved row, the engine uses the documented default shown in parentheses.' +
+    '</div>';
+
+  // Right panel: form
+  var fi = document.getElementById('form-inner');
+  fi.innerHTML =
+    '<div id="form-title-row">' +
+      '<div id="form-heading">🎲 Game Rules</div>' +
+      (canEdit ? '<button id="gr-save" class="primary-btn">Save All</button>' : '') +
+    '</div>' +
+    (canEdit ? '' : '<div style="padding:10px 12px;background:rgba(201,146,42,.08);border:1px solid var(--border2);border-radius:4px;margin-bottom:12px;font-size:.8em;color:var(--ink2)">Read-only. Admin-only tab.</div>') +
+    '<div id="gr-body" style="padding:0 4px"></div>';
+
+  _grRenderBody(canEdit);
+
+  if (canEdit) {
+    document.getElementById('gr-save').onclick = _grSave;
+  }
+}
+
+function _grSection(title, html) {
+  return '<details open style="margin:10px 0;border:1px solid var(--border2);border-radius:4px;background:rgba(255,255,255,0.02)">' +
+    '<summary style="padding:8px 10px;font-family:\'Cinzel\',serif;font-size:.8em;color:var(--gold);cursor:pointer;text-transform:uppercase;letter-spacing:.04em">'+title+'</summary>' +
+    '<div style="padding:10px 12px">'+html+'</div>' +
+  '</details>';
+}
+
+function _grNumInput(path, def, opts) {
+  // path: dot-separated key path into _grWork (e.g. 'dcLadder.medium')
+  // def: default for placeholder hint
+  // opts: {step, min, max}
+  opts = opts || {};
+  var parts = path.split('.');
+  var v = _grWork;
+  for (var i=0; i<parts.length; i++) {
+    if (v == null) { v = ''; break; }
+    v = v[parts[i]];
+  }
+  if (v === undefined || v === null) v = '';
+  var attrs = 'data-grpath="'+esc(path)+'" type="number"';
+  if (opts.step !== undefined) attrs += ' step="'+opts.step+'"';
+  if (opts.min !== undefined)  attrs += ' min="'+opts.min+'"';
+  if (opts.max !== undefined)  attrs += ' max="'+opts.max+'"';
+  return '<input class="gr-num" '+attrs+' value="'+esc(String(v))+'" placeholder="'+esc(String(def))+'" style="width:80px;padding:3px 6px;font-size:.85em;background:var(--bg);border:1px solid var(--border2);border-radius:3px;color:var(--ink)">';
+}
+
+function _grBoolInput(path) {
+  var parts = path.split('.');
+  var v = _grWork;
+  for (var i=0; i<parts.length; i++) {
+    if (v == null) { v = false; break; }
+    v = v[parts[i]];
+  }
+  return '<input class="gr-bool" data-grpath="'+esc(path)+'" type="checkbox"'+(v?' checked':'')+'>';
+}
+
+function _grRow(label, control, hint) {
+  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px dashed var(--border2)">' +
+    '<label style="font-size:.85em;color:var(--ink);flex:1">'+label+
+      (hint ? '<span style="color:var(--ink2);font-size:.85em;margin-left:6px;font-style:italic">'+hint+'</span>' : '') +
+    '</label>' +
+    '<div>'+control+'</div>' +
+  '</div>';
+}
+
+function _grRenderBody(canEdit) {
+  var body = document.getElementById('gr-body');
+  if (!body) return;
+  var html = '';
+
+  // §1 DC Ladder
+  html += _grSection('§1 DC Ladder',
+    _grRow('Trivial',  _grNumInput('dcLadder.trivial',  8),  '(default 8)') +
+    _grRow('Easy',     _grNumInput('dcLadder.easy',    10),  '(default 10)') +
+    _grRow('Medium',   _grNumInput('dcLadder.medium',  13),  '(default 13)') +
+    _grRow('Hard',     _grNumInput('dcLadder.hard',    16),  '(default 16)') +
+    _grRow('Deadly',   _grNumInput('dcLadder.deadly',  20),  '(default 20)')
+  );
+
+  // §2 Level Mismatch
+  html += _grSection('§2 Level vs Tier Modifiers',
+    _grRow('Party 2+ levels under tier min', _grNumInput('levelMismatchMods.under2',  3), '(+DC, harder)') +
+    _grRow('Party 1 level under tier min',   _grNumInput('levelMismatchMods.under1',  1), '(+DC)') +
+    _grRow('Party at tier min',              _grNumInput('levelMismatchMods.atTier',  0), '(no change)') +
+    _grRow('Party 1 level above tier min',   _grNumInput('levelMismatchMods.over1',  -1), '(-DC, easier)') +
+    _grRow('Party 2+ levels above tier min', _grNumInput('levelMismatchMods.over2',  -2), '(-DC)')
+  );
+
+  // §3 Roll Thresholds
+  html += _grSection('§3 Roll Thresholds',
+    _grRow('Crit-success natural',     _grNumInput('rollThresholds.critSuccessNat',    20, {min:1,max:20}), '(natural d20 ≥ this)') +
+    _grRow('Crit-fail natural',        _grNumInput('rollThresholds.critFailNat',        1, {min:1,max:20}), '(natural d20 ≤ this)') +
+    _grRow('Auto-success margin',      _grNumInput('rollThresholds.autoSuccessMargin', 10), '(beat DC by this → Bonus)') +
+    _grRow('Auto-fail margin',         _grNumInput('rollThresholds.autoFailMargin',    10), '(miss DC by this → Setback)')
+  );
+
+  // §4 Outcome Weights
+  html += _grSection('§4 Outcome Tier Weights',
+    '<div style="font-size:.78em;color:var(--ink2);margin-bottom:8px">Engine normalizes these — set any to 0 to disable that tier.</div>' +
+    _grRow('Setback', _grNumInput('outcomeWeights.setback', 15, {min:0}), '') +
+    _grRow('Mixed',   _grNumInput('outcomeWeights.mixed',   30, {min:0}), '') +
+    _grRow('Success', _grNumInput('outcomeWeights.success', 40, {min:0}), '') +
+    _grRow('Bonus',   _grNumInput('outcomeWeights.bonus',   15, {min:0}), '')
+  );
+
+  // §5 Trait Cap
+  html += _grSection('§5 Trait Bonus Cap',
+    _grRow('Max cumulative bonus',  _grNumInput('traitBonusCap.maxBonus',   10), '(+DC)') +
+    _grRow('Max cumulative penalty', _grNumInput('traitBonusCap.maxPenalty', -10), '(-DC)')
+  );
+
+  // §6 XP & Rewards
+  html += _grSection('§6 XP &amp; Rewards',
+    '<div style="font-size:.78em;color:var(--ink2);margin-bottom:8px">Base XP per character on a Success outcome. Multipliers shift the value for other outcomes.</div>' +
+    _grRow('Base XP — Tier 1 (Lv 1–4)',   _grNumInput('xpAndRewards.baseXpPerTier.tier1',  5,  {min:0}), '') +
+    _grRow('Base XP — Tier 2 (Lv 5–10)',  _grNumInput('xpAndRewards.baseXpPerTier.tier2',  10, {min:0}), '') +
+    _grRow('Base XP — Tier 3 (Lv 11–16)', _grNumInput('xpAndRewards.baseXpPerTier.tier3',  20, {min:0}), '') +
+    _grRow('Base XP — Tier 4 (Lv 17–20)', _grNumInput('xpAndRewards.baseXpPerTier.tier4',  40, {min:0}), '') +
+    _grRow('Track-match bonus XP',        _grNumInput('xpAndRewards.trackMatchBonusXp',     2, {min:0}), '(per char whose track matches quest)') +
+    '<hr style="border:none;border-top:1px dashed var(--border2);margin:8px 0">' +
+    _grRow('Outcome multiplier — Setback', _grNumInput('xpAndRewards.outcomeXpMult.setback', 0.25, {step:0.05,min:0}), '') +
+    _grRow('Outcome multiplier — Mixed',   _grNumInput('xpAndRewards.outcomeXpMult.mixed',   0.6,  {step:0.05,min:0}), '') +
+    _grRow('Outcome multiplier — Success', _grNumInput('xpAndRewards.outcomeXpMult.success', 1.0,  {step:0.05,min:0}), '') +
+    _grRow('Outcome multiplier — Bonus',   _grNumInput('xpAndRewards.outcomeXpMult.bonus',   1.5,  {step:0.05,min:0}), '') +
+    '<hr style="border:none;border-top:1px dashed var(--border2);margin:8px 0">' +
+    _grRow('Franchise gold cut',         _grNumInput('xpAndRewards.franchiseCutPct',     0.4, {step:0.05,min:0,max:1}), '(0.0–1.0)') +
+    _grRow('Adventurer share',           _grNumInput('xpAndRewards.adventurerSharePct',  0.6, {step:0.05,min:0,max:1}), '(0.0–1.0)')
+  );
+
+  // §7 Counter-consumables
+  html += _grSection('§7 Counter-Consumables',
+    '<div style="font-size:.78em;color:var(--ink2);margin-bottom:8px">Item traits that pre-empt conditions. The engine consumes one matching item from any assigned character\'s inventory before applying the bad effect.</div>' +
+    '<div id="gr-cm-rows"></div>' +
+    (canEdit ? '<button id="gr-cm-add" type="button" class="ghost-btn" style="margin-top:6px">+ Add counter</button>' : '') +
+    '<div style="margin-top:14px">' +
+      _grRow('Allow double-substitution', _grBoolInput('allowDoubleSub'), '(2× lower-tier = 1× higher-tier)') +
+    '</div>' +
+    '<div style="margin-top:8px;font-size:.78em;color:var(--ink2)">Double-sub map (advanced):</div>' +
+    '<div id="gr-ds-rows"></div>' +
+    (canEdit ? '<button id="gr-ds-add" type="button" class="ghost-btn" style="margin-top:6px">+ Add substitution</button>' : '')
+  );
+
+  // §8 Death rules
+  html += _grSection('§8 Death &amp; Safety Valves',
+    _grRow('Permadeath',                  _grBoolInput('deathRules.permadeath'),                ' ') +
+    _grRow('Auto-revive at session end',  _grBoolInput('deathRules.autoReviveAtSessionEnd'),    ' ') +
+    _grRow('Petrified — recovery gp',     _grNumInput('deathRules.petrifiedRecoveryGp',  500, {min:0}), '') +
+    _grRow('Petrified — downtimes needed', _grNumInput('deathRules.petrifiedRecoveryDowntimes', 2, {min:0}), '') +
+    _grRow('Death-saving throw DC',       _grNumInput('deathRules.deathSavingThrowDC',   10, {min:1}), '')
+  );
+
+  // §9 Condition recovery
+  html += _grSection('§9 Condition Recovery',
+    '<div style="font-size:.78em;color:var(--ink2);margin-bottom:8px">Downtime actions required to remove each condition tier.</div>' +
+    _grRow('Minor (Frightened, Charmed)',          _grNumInput('conditionRecovery.minor',    1, {min:0}), '') +
+    _grRow('Moderate (Poisoned, Exhausted 1–2)',   _grNumInput('conditionRecovery.moderate', 2, {min:0}), '') +
+    _grRow('Severe (Diseased, Exhausted 3–4)',     _grNumInput('conditionRecovery.severe',   3, {min:0}), '') +
+    _grRow('Extreme (Petrified, Exhausted 5–6)',   _grNumInput('conditionRecovery.extreme',  5, {min:0}), '') +
+    '<hr style="border:none;border-top:1px dashed var(--border2);margin:8px 0">' +
+    _grRow('Conditions stack',  _grBoolInput('conditionsStack'), '(otherwise: re-apply has no effect)')
+  );
+
+  // §10 Quest Duration
+  html += _grSection('§10 Quest Duration Overrides',
+    _grRow('First-quest duration (min)',   _grNumInput('questDuration.firstQuestDurationMin',   3,  {min:1}), '(player\'s very first quest)') +
+    _grRow('Default duration (min)',       _grNumInput('questDuration.defaultQuestDurationMin', 60, {min:1}), '(quest with no explicit duration)') +
+    _grRow('Test mode duration (min)',     _grNumInput('questDuration.testModeDurationMin',     1,  {min:1}), '(when dev mode is on)')
+  );
+
+  // §11 Engine Toggles
+  html += _grSection('§11 Engine Behavior Toggles',
+    _grRow('Show roll breakdown in log',     _grBoolInput('engineToggles.showRollBreakdownInLog'), '(print DC + roll math)') +
+    _grRow('Auto-collect on success',        _grBoolInput('engineToggles.autoCollectOnSuccess'),   '(skip ready-to-collect step)') +
+    _grRow('Narrative from outcome templates', _grBoolInput('engineToggles.narrativeFromTemplates'), '(false = label only)') +
+    _grRow('Confirm before applying death',  _grBoolInput('engineToggles.confirmBeforeApplyingDeath'), '(hard-stop modal)')
+  );
+
+  body.innerHTML = html;
+
+  // Disable inputs if not admin
+  if (!canEdit) {
+    body.querySelectorAll('input').forEach(function(el){ el.disabled = true; });
+  }
+
+  // Render counter-map and double-sub rows
+  _grRenderCounterRows(canEdit);
+  _grRenderDoubleSubRows(canEdit);
+
+  // Wire buttons
+  if (canEdit) {
+    var addCM = document.getElementById('gr-cm-add');
+    if (addCM) addCM.onclick = function(){
+      _grWork.counterMap = _grWork.counterMap || [];
+      _grWork.counterMap.push({ trait:'', counters:'' });
+      _grRenderCounterRows(canEdit);
+    };
+    var addDS = document.getElementById('gr-ds-add');
+    if (addDS) addDS.onclick = function(){
+      _grWork.doubleSubMap = _grWork.doubleSubMap || {};
+      var name = prompt('Target trait (the one being substituted FOR, e.g. anti_death):');
+      if (!name) return;
+      name = name.trim();
+      if (!name) return;
+      _grWork.doubleSubMap[name] = ['',''];
+      _grRenderDoubleSubRows(canEdit);
+    };
+  }
+}
+
+function _grRenderCounterRows(canEdit) {
+  var host = document.getElementById('gr-cm-rows');
+  if (!host) return;
+  var arr = _grWork.counterMap || [];
+  var html = '';
+  for (var i=0; i<arr.length; i++) {
+    var r = arr[i] || {};
+    html += '<div style="display:flex;gap:6px;align-items:center;padding:4px 0;border-bottom:1px dashed var(--border2)">' +
+      '<input data-grcm-trait="'+i+'" placeholder="trait key (e.g. anti_poison)" value="'+esc(r.trait||'')+'" style="flex:1;padding:3px 6px;font-size:.82em;background:var(--bg);border:1px solid var(--border2);border-radius:3px;color:var(--ink)"'+(canEdit?'':' disabled')+'>' +
+      '<span style="color:var(--ink2);font-size:.8em">→</span>' +
+      '<input data-grcm-counters="'+i+'" placeholder="condition (e.g. Poisoned)" value="'+esc(r.counters||'')+'" style="flex:1;padding:3px 6px;font-size:.82em;background:var(--bg);border:1px solid var(--border2);border-radius:3px;color:var(--ink)"'+(canEdit?'':' disabled')+'>' +
+      (canEdit ? '<button type="button" class="ghost-btn" data-grcm-del="'+i+'" style="padding:2px 8px;font-size:.8em">×</button>' : '') +
+    '</div>';
+  }
+  if (!arr.length) html = '<div style="font-size:.78em;color:var(--ink2);font-style:italic;padding:4px 0">No counters defined.</div>';
+  host.innerHTML = html;
+  // Wire deletes
+  if (canEdit) {
+    host.querySelectorAll('[data-grcm-del]').forEach(function(b){
+      b.onclick = function(){
+        var idx = parseInt(b.getAttribute('data-grcm-del'), 10);
+        _grWork.counterMap.splice(idx, 1);
+        _grRenderCounterRows(canEdit);
+      };
+    });
+  }
+}
+
+function _grRenderDoubleSubRows(canEdit) {
+  var host = document.getElementById('gr-ds-rows');
+  if (!host) return;
+  var ds = _grWork.doubleSubMap || {};
+  var keys = Object.keys(ds);
+  var html = '';
+  keys.forEach(function(k){
+    var arr = Array.isArray(ds[k]) ? ds[k] : [];
+    html += '<div style="display:flex;gap:6px;align-items:center;padding:4px 0;border-bottom:1px dashed var(--border2)">' +
+      '<span style="font-size:.82em;color:var(--gold);min-width:120px">'+esc(k)+'</span>' +
+      '<span style="color:var(--ink2);font-size:.8em">=</span>' +
+      '<input data-grds-key="'+esc(k)+'" data-grds-i="0" placeholder="trait1" value="'+esc(arr[0]||'')+'" style="flex:1;padding:3px 6px;font-size:.82em;background:var(--bg);border:1px solid var(--border2);border-radius:3px;color:var(--ink)"'+(canEdit?'':' disabled')+'>' +
+      '<span style="color:var(--ink2);font-size:.8em">+</span>' +
+      '<input data-grds-key="'+esc(k)+'" data-grds-i="1" placeholder="trait2" value="'+esc(arr[1]||'')+'" style="flex:1;padding:3px 6px;font-size:.82em;background:var(--bg);border:1px solid var(--border2);border-radius:3px;color:var(--ink)"'+(canEdit?'':' disabled')+'>' +
+      (canEdit ? '<button type="button" class="ghost-btn" data-grds-del="'+esc(k)+'" style="padding:2px 8px;font-size:.8em">×</button>' : '') +
+    '</div>';
+  });
+  if (!keys.length) html = '<div style="font-size:.78em;color:var(--ink2);font-style:italic;padding:4px 0">No substitutions defined.</div>';
+  host.innerHTML = html;
+  if (canEdit) {
+    host.querySelectorAll('[data-grds-del]').forEach(function(b){
+      b.onclick = function(){
+        var k = b.getAttribute('data-grds-del');
+        delete _grWork.doubleSubMap[k];
+        _grRenderDoubleSubRows(canEdit);
+      };
+    });
+  }
+}
+
+function _grSetByPath(obj, path, value) {
+  var parts = path.split('.');
+  var ref = obj;
+  for (var i=0; i<parts.length-1; i++) {
+    if (ref[parts[i]] == null || typeof ref[parts[i]] !== 'object') ref[parts[i]] = {};
+    ref = ref[parts[i]];
+  }
+  ref[parts[parts.length-1]] = value;
+}
+
+function _grCollect() {
+  // Pull all input values back into _grWork.
+  document.querySelectorAll('#gr-body .gr-num').forEach(function(el){
+    var path = el.getAttribute('data-grpath');
+    var raw = el.value;
+    var num = (raw === '' || raw == null) ? null : Number(raw);
+    if (num !== null && !isNaN(num)) _grSetByPath(_grWork, path, num);
+  });
+  document.querySelectorAll('#gr-body .gr-bool').forEach(function(el){
+    var path = el.getAttribute('data-grpath');
+    _grSetByPath(_grWork, path, !!el.checked);
+  });
+  // Counter-map rows
+  var cmHost = document.getElementById('gr-cm-rows');
+  if (cmHost) {
+    var newMap = [];
+    var rows = cmHost.querySelectorAll('[data-grcm-trait]');
+    rows.forEach(function(el){
+      var i = el.getAttribute('data-grcm-trait');
+      var trait = el.value.trim();
+      var ctrEl = cmHost.querySelector('[data-grcm-counters="'+i+'"]');
+      var counters = ctrEl ? ctrEl.value.trim() : '';
+      if (trait || counters) newMap.push({ trait: trait, counters: counters });
+    });
+    _grWork.counterMap = newMap;
+  }
+  // Double-sub rows
+  var dsHost = document.getElementById('gr-ds-rows');
+  if (dsHost) {
+    var newDs = {};
+    var seen = {};
+    dsHost.querySelectorAll('[data-grds-key]').forEach(function(el){
+      var k = el.getAttribute('data-grds-key');
+      if (seen[k]) return;
+      seen[k] = true;
+      var v0 = (dsHost.querySelector('[data-grds-key="'+k.replace(/"/g,'\\"')+'"][data-grds-i="0"]')||{}).value || '';
+      var v1 = (dsHost.querySelector('[data-grds-key="'+k.replace(/"/g,'\\"')+'"][data-grds-i="1"]')||{}).value || '';
+      newDs[k] = [v0.trim(), v1.trim()];
+    });
+    _grWork.doubleSubMap = newDs;
+  }
+}
+
+function _grSave() {
+  if (!isAdmin()) { alert('Only the franchise admin can save Game Rules.'); return; }
+  _grCollect();
+  // Build the upsert row.
+  var row = {
+    content_type:  'game_rules',
+    content_key:   'franchise_rules',
+    title:         'Franchise Game Rules',
+    owner_user_id: ADMIN_UID,
+    visibility:    'official',
+    status:        'published',
+    sort_order:    0,
+    data:          JSON.parse(JSON.stringify(_grWork))
+  };
+  var btn = document.getElementById('gr-save');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  sbUpsert(row).then(function(){
+    flash('✓ Game Rules saved');
+    return pullData();
+  }).then(function(){
+    activeTab = 'rules';
+    renderList();
+  }).catch(function(err){
+    alert('Save failed: ' + (err.message || err));
+    if (btn) { btn.disabled = false; btn.textContent = 'Save All'; }
+  });
 }
 
 // ══════════════════════════════════════════════════
