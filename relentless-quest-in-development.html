@@ -5304,16 +5304,10 @@ body.dev-active #app{margin-top:36px;}
   </div>
 </div></div>
 
-<div class="ov" id="ov-cycle-realestate"><div class="modal" style="max-width:440px;max-height:92vh;display:flex;flex-direction:column;padding:0;overflow:hidden;border-radius:12px">
-  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 12px;border-bottom:2px solid var(--parchment-deep);flex-shrink:0;background:var(--parchment)">
-    <div>
-      <h3 style="margin:0;font-family:'Cinzel',serif;font-size:1.05em">🏘 Real Estate</h3>
-      <div id="ov-cre-setname" style="font-size:.72em;color:var(--ink-light);margin-top:2px"></div>
-    </div>
-    <button id="ov-cre-close" style="width:32px;height:32px;border-radius:50%;background:rgba(44,26,14,.08);border:1px solid var(--parchment-deep);font-size:1em;cursor:pointer;color:var(--ink);display:flex;align-items:center;justify-content:center;flex-shrink:0" title="Close">✕</button>
-  </div>
-  <div id="ov-cre-body" style="flex:1;overflow-y:auto;padding:12px 14px 16px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain"></div>
-</div></div>
+<!-- v1.7158 — ov-cycle-realestate modal removed. Real estate now binds to
+     territories at purchase time; the buy-from-cycle flow has been retired
+     in favor of the unified store path. The naming modal below (ov-cre-name)
+     is retained because the new store flow re-uses it for property naming. -->
 
 <!-- v1.6910: REAL ESTATE NAMING — after purchase, name the new property -->
 <div class="ov" id="ov-cre-name"><div class="modal" style="max-width:380px">
@@ -8508,6 +8502,12 @@ function load(){
   if(typeof migrateMedionToEffigianV1_7118==='function')migrateMedionToEffigianV1_7118(); // v1.7118
   if(typeof migrateInitTerritoryWeightsV1_7116==='function')migrateInitTerritoryWeightsV1_7116(); // v1.7116
   if(typeof migrateBindOrphanCycleV1_7137==='function')migrateBindOrphanCycleV1_7137(); // v1.7137
+  // v1.7158 — Convert legacy cycle-owned buildings to territory-owned. MUST
+  // run after migrateToTerritoryV1_7006 (which seeds originTerritory used
+  // as the empty-territory fallback) and after migrateBindOrphanCycleV1_7137
+  // (which may have just bound an orphaned cycle, giving its buildings a
+  // resolvable territory for the first time).
+  if(typeof migrateCycleBuildingsToTerritories==='function')migrateCycleBuildingsToTerritories();
   // v1.7156 — Initial cycle-pause sweep. On first run, stamps every
   // currently-available cycle as already-expired so existing saves get a
   // free pass; thereafter, newly-available cycles get a real 24h
@@ -8777,6 +8777,46 @@ function assetOwnerOptionsHtml(selected,opts){
   return html;
 }
 function ensureAssetMetas(){(S.partyAssets||[]).forEach(function(a){assetMeta(a);});}
+
+// v1.7158 — Build the <option> list for the territory picker shown when
+// purchasing a building from the store. Lists every unlocked territory,
+// with the franchise's origin shown first and explicitly labeled. The
+// HQ name (territoryHQName) is appended in parentheses when one exists,
+// so the player sees e.g. "Gojimura (The Golden Stag)" rather than
+// just the bare territory name. Used by the buy-item modal at lines
+// ~31083 and ~31124.
+function territoryPickerOptionsHtml(selected){
+  var unlocked=(S.unlockedTerritories||[]).slice();
+  // If the unlock list is empty (very early game / fresh save before any
+  // territory has been computed) fall back to origin so the picker is
+  // never empty. recomputeUnlockedTerritories() seeds origin so this is
+  // mostly belt-and-suspenders.
+  if(!unlocked.length){
+    var origin=S.originTerritory||'';
+    if(origin)unlocked.push(origin);
+  }
+  // Origin first, others in alphabetical order — gives players a stable,
+  // predictable list as their franchise expands.
+  var origin=S.originTerritory||'';
+  var rest=unlocked.filter(function(t){return t&&t!==origin;}).sort();
+  var ordered=(origin?[origin]:[]).concat(rest);
+  if(!ordered.length){
+    return '<option value="">— No territory available —</option>';
+  }
+  return ordered.map(function(t){
+    var hq=(typeof territoryHQName==='function')?territoryHQName(t):'';
+    var label=t;
+    if(t===origin){
+      label='🏛 '+t+' (HQ)';
+    } else if(hq&&hq!=='Headquarters'){
+      label='🏛 '+t+' — '+hq;
+    } else {
+      label='🏛 '+t;
+    }
+    var v='territory::'+t;
+    return '<option value="'+esc(v)+'"'+(selected===v?' selected':'')+'>'+esc(label)+'</option>';
+  }).join('');
+}
 
 
 function characterAnimalAssets(charName){
@@ -10050,49 +10090,18 @@ function grindsUnlocked(){
   if(isDevModeActive&&isDevModeActive())return true;
   return isSetCompleted('root-and-branch');
 }
-// v1.6910: Curated real-estate list for completed ('old') cycles. A small
-// subset of BUILDINGS across a variety of price points. Resolved at call
-// time so custom/edited BUILDINGS entries stay in sync.
-// v1.6912: Quest Editor can now deny specific buildings (or all) per cycle
-// via cycle.realEstateDeny = {all:bool, buildings:{name:true,...}}. Honored
-// here and in the Quest Map card's Real Estate button gate.
-var REAL_ESTATE_NAMES=[
-  'Storage Shed',       // 200
-  'Stables',            // 500
-  'Market Stall',       // 800
-  'Barracks',           // 1000
-  'Smithy',             // 1200
-  'Tavern (Common Room)', // 1500
-  'Greenhouse',         // 1800
-  "Alchemist's Lab",    // 2000
-  'Library & Scriptorium', // 2500
-  'Safe House'          // 3000
-];
-function realEstateDenyForSet(setId){
-  if(!setId)return {};
-  var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
-  if(!set||!set.realEstateDeny)return {};
-  return set.realEstateDeny;
-}
-function realEstateAllDeniedForSet(setId){
-  var d=realEstateDenyForSet(setId);
-  return !!d.all;
-}
-function realEstateCatalog(setId){
-  var deny=realEstateDenyForSet(setId);
-  if(deny.all)return [];
-  var deniedMap=(deny.buildings&&typeof deny.buildings==='object')?deny.buildings:{};
-  return REAL_ESTATE_NAMES
-    .filter(function(nm){return !deniedMap[nm];})
-    .map(function(nm){
-      return (BUILDINGS||[]).filter(function(b){return b&&b.name===nm;})[0];
-    }).filter(Boolean);
-}
-// Return the buildings that have been assigned to a given completed cycle.
-function cycleAssignedBuildings(setId){
-  if(!setId)return [];
+// v1.7158 — REAL_ESTATE_NAMES, realEstateDenyForSet, realEstateAllDeniedForSet,
+// realEstateCatalog, and the cycleAssignedBuildings back-compat shim have
+// been removed. Real estate now binds to territories at purchase time
+// through the unified store flow; the per-cycle curated catalog (and the
+// per-cycle deny rules) no longer apply. Per-territory deny rules are
+// authored in the Quest Editor's Territories tab going forward.
+// territoryAssignedBuildings(territory) replaces cycleAssignedBuildings
+// for any code that still needs to enumerate real estate by region.
+function territoryAssignedBuildings(territory){
+  if(!territory)return [];
   return (S.partyAssets||[]).filter(function(a){
-    return a&&a.meta&&a.meta.ownerType==='cycle'&&a.meta.ownerRef===setId;
+    return a&&a.meta&&a.meta.ownerType==='territory'&&a.meta.ownerRef===territory;
   });
 }
 function navigateToNextQuest(setId){
@@ -10188,10 +10197,15 @@ function openGrindClockInPicker(territory){
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// v1.6910: REAL ESTATE CATALOG — buy a curated building for a completed cycle
+// v1.7158: REAL ESTATE NAMING — only the post-purchase naming flow remains
+// in this file. Real estate purchases happen in the store (search for
+// "v1.7158" in the buy-item commit handler); this module is just the
+// pending-item pointer and the naming-modal handler that the store flow
+// hands off to.
 // ═════════════════════════════════════════════════════════════════════════
-var _reActiveSetId=null;
-var _rePendingItem=null; // {item, setId} between purchase and naming
+var _rePendingItem=null; // {uid, item, setId} between purchase and naming.
+                         // setId is retained as a string field for shape
+                         // compatibility but is unused under v1.7158.
 // v1.6922: Quest Log — read-only per-cycle quest listing reached from the
 // 📜 button on a completed cycle card in the Quest Map. Shows each quest
 // in the set with a done/undone checkmark, ordered by set sequence. The
@@ -10610,102 +10624,13 @@ function openQuestPreview(setId,qIdx){
 })();
 
 
-function openRealEstateModal(setId){
-  _reActiveSetId=setId;
-  var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
-  var nmEl=document.getElementById('ov-cre-setname');
-  if(nmEl)nmEl.textContent=set?('Assigned to '+set.name):'';
-  renderRealEstateCatalog();
-  openOv('ov-cycle-realestate');
-}
-function renderRealEstateCatalog(){
-  var host=document.getElementById('ov-cre-body');
-  if(!host)return;
-  var setId=_reActiveSetId;
-  var catalog=realEstateCatalog(setId);
-  var owned=cycleAssignedBuildings(setId);
-  var gold=S.gold||0;
-  var html='';
-  // v1.6912: When the cycle denies all real estate, show a clear message
-  // instead of the empty catalog so the user understands why.
-  if(realEstateAllDeniedForSet(setId)){
-    html+='<div style="padding:14px 16px;background:rgba(139,26,26,.06);border:1px solid rgba(139,26,26,.25);border-radius:6px;margin-bottom:10px;color:var(--ink)">'+
-      '<div style="font-family:\'Cinzel\',serif;font-size:.82em;color:var(--crimson);margin-bottom:4px">\uD83D\uDEAB Real estate unavailable</div>'+
-      '<div style="font-size:.85em">This cycle does not permit real estate purchases.</div>'+
-    '</div>';
-  }
-  // Already-owned roster at top
-  if(owned.length){
-    html+='<div style="margin-bottom:12px;padding:9px 11px;background:rgba(31,111,31,.08);border:1px solid var(--forest);border-radius:6px">'+
-      '<div style="font-family:\'Cinzel\',serif;font-size:.78em;color:var(--forest);margin-bottom:5px">Already on this cycle</div>'+
-      owned.map(function(a){
-        var nm=(a.meta&&a.meta.customName)||a.name;
-        return '<div style="font-size:.85em;color:var(--ink);padding:3px 0">'+esc(a.ic||'\uD83C\uDFE0')+' <strong>'+esc(nm)+'</strong> <span style="color:var(--ink-light);font-size:.85em">('+esc(a.name)+')</span></div>';
-      }).join('')+
-    '</div>';
-  }
-  html+='<div style="font-size:.82em;color:var(--ink);margin-bottom:8px">Purchase a property to establish a franchise presence tied to this cycle. Available gold: <strong>'+gold.toLocaleString()+' gp</strong></div>';
-  html+='<div style="display:flex;flex-direction:column;gap:8px">';
-  catalog.forEach(function(b){
-    var afford=gold>=b.price;
-    html+='<div class="enc-card" style="border-color:'+(afford?'var(--gold-dark)':'var(--ink-light)')+';padding:10px 12px">'+
-      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">'+
-        '<span style="font-size:1.3em">'+esc(b.ic||'\uD83C\uDFE0')+'</span>'+
-        '<div style="flex:1;min-width:0">'+
-          '<div style="font-family:\'Cinzel\',serif;font-size:.92em;font-weight:700;color:var(--ink)">'+esc(b.name)+'</div>'+
-          '<div style="font-size:.75em;color:var(--ink-light)">'+esc(b.desc||'')+'</div>'+
-        '</div>'+
-        '<div style="text-align:right;flex-shrink:0">'+
-          '<div style="font-family:\'Cinzel\',serif;font-size:.85em;color:'+(afford?'var(--gold-dark)':'var(--crimson)')+'">\uD83D\uDCB0 '+b.price.toLocaleString()+' gp</div>'+
-        '</div>'+
-      '</div>'+
-      '<div style="text-align:right;margin-top:6px">'+
-        (afford?
-          '<button class="btn bg sm" data-a="cre-buy" data-bname="'+esc(b.name)+'">Purchase</button>'
-        :'<button class="btn bink sm" disabled style="opacity:.55;cursor:not-allowed">Insufficient gold</button>')+
-      '</div>'+
-    '</div>';
-  });
-  html+='</div>';
-  host.innerHTML=html;
-}
-function confirmRealEstatePurchase(buildingName){
-  var setId=_reActiveSetId;
-  if(!setId)return;
-  var b=(BUILDINGS||[]).filter(function(x){return x&&x.name===buildingName;})[0];
-  if(!b){alert('Property not found.');return;}
-  if((S.gold||0)<b.price){alert('Not enough gold.');return;}
-  var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
-  if(!confirm('Purchase '+b.name+' for '+b.price.toLocaleString()+' gp? It will be assigned to '+(set?set.name:'this cycle')+'.'))return;
-  if(!goldSpend(b.price,'Purchased property: '+b.name+' (for '+(set?set.name:setId)+')','buy'))return;
-  // Create asset with cycle ownership and a blank customName — the naming
-  // modal will fill it in next. Use ensureAssetMetas()-style meta with uid.
-  if(!S.partyAssets)S.partyAssets=[];
-  var meta={uid:newAssetUid(),customName:'',ownerType:'cycle',ownerRef:setId};
-  var newAsset={name:b.name,ic:b.ic,type:b.type,meta:meta};
-  S.partyAssets.push(newAsset);
-  _rePendingItem={uid:meta.uid,item:b,setId:setId};
-  // v1.7006 — If this building qualifies (price >= TERRITORY_UNLOCK_BUILDING_MIN_GP)
-  // and sits in a territory we haven't unlocked yet, recomputeUnlockedTerritories
-  // will append it. Surface a one-time adventure-log entry so the player sees
-  // the unlock happen. Skip logging if the territory was already unlocked
-  // (origin, or a previously-bought qualifying building in the same region).
-  var _terrBefore=(S.unlockedTerritories||[]).slice();
-  if(typeof recomputeUnlockedTerritories==='function')recomputeUnlockedTerritories();
-  var _newlyUnlocked=(S.unlockedTerritories||[]).filter(function(t){return _terrBefore.indexOf(t)===-1;});
-  if(_newlyUnlocked.length&&typeof logAdd==='function'){
-    _newlyUnlocked.forEach(function(t){
-      logAdd('🗺 Territory unlocked: '+t+' — you can now charter or relocate up to '+SQUADS_PER_TERRITORY_MAX+' squads here.','adv');
-    });
-  }
-  save();
-  // Open the naming modal
-  var msgEl=document.getElementById('ov-cre-name-msg');
-  if(msgEl)msgEl.textContent='You acquired '+b.name+'. Give it a memorable name, or skip to keep the default.';
-  var inp=document.getElementById('ov-cre-name-input');
-  if(inp){inp.value='';setTimeout(function(){try{inp.focus();}catch(e){}},80);}
-  openOv('ov-cre-name');
-}
+// v1.7158 — openRealEstateModal, renderRealEstateCatalog, and
+// confirmRealEstatePurchase removed. Real estate is now bought through
+// the store with a territory picker (see the buy-item commit handler);
+// the per-cycle modal flow has been retired entirely. finishRealEstateNaming
+// remains because the new store flow re-uses it for property naming —
+// it simply commits the player's chosen name to the asset's meta and
+// refreshes the relevant views.
 function finishRealEstateNaming(saveName){
   if(!_rePendingItem){closeOv('ov-cre-name');return;}
   if(saveName){
@@ -10721,8 +10646,7 @@ function finishRealEstateNaming(saveName){
   _rePendingItem=null;
   closeOv('ov-cre-name');
   save();
-  // Refresh the catalog and quest-map
-  renderRealEstateCatalog();
+  // Refresh views that surface real-estate state.
   renderCycleMapCards();
   if(typeof renderParty==='function')renderParty();
   if(typeof renderStore==='function')renderStore();
@@ -11131,10 +11055,9 @@ function renderCycleMapCards(){
         (isActive?'background:rgba(31,111,31,.12);border:1px solid var(--forest);color:var(--forest);':'background:rgba(44,26,14,.08);border:1px solid rgba(44,26,14,.2);color:var(--ink);')+
         'border-radius:4px;padding:1px 6px;font-size:.68em">'+
         '\u2694\uFE0F '+esc(squadName)+(isActive?' \u25cf active':'')+'</span>':'';
-    // Real-estate badge: show count of buildings assigned to this cycle
-    var rebuildings=isCompletedCycle?cycleAssignedBuildings(set.id):[];
-    var reBadge=rebuildings.length?
-      '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(201,146,42,.12);border:1px solid var(--gold-dark);color:var(--gold-dark);border-radius:4px;padding:1px 6px;font-size:.68em">\uD83C\uDFD8 '+rebuildings.length+' bldg'+(rebuildings.length===1?'':'s')+'</span>':'';
+    // v1.7158 — Real-estate badge and roster removed from per-cycle cards.
+    // Real estate is no longer cycle-bound; the canonical view of real
+    // estate is the territory-grouped panel in Assets & Investments.
     var progressBadge='<span style="font-size:.68em;color:var(--ink-light)">'+esc(progressStr)+'</span>';
     // v1.7156 — Cycle pause countdown badge. Shown only when the cycle is
     // currently in its 24h cooldown (prereqs met but not yet activatable).
@@ -11156,23 +11079,15 @@ function renderCycleMapCards(){
           '<span style="font-size:1.1em;flex-shrink:0">'+statusIcon+'</span>'+
           '<div style="flex:1;min-width:0">'+
             '<div style="font-family:\'Cinzel\',serif;font-size:.88em;font-weight:700;color:var(--ink)">'+esc(tierLabel+set.name)+'</div>'+
-            '<div style="display:flex;align-items:center;gap:5px;margin-top:2px;flex-wrap:wrap">'+squadBadge+reBadge+pauseBadge+progressBadge+'</div>'+
+            '<div style="display:flex;align-items:center;gap:5px;margin-top:2px;flex-wrap:wrap">'+squadBadge+pauseBadge+progressBadge+'</div>'+
           '</div>'+
           '<span style="font-size:.85em;color:var(--ink-light)">'+(expanded?'\u25b4':'\u25be')+'</span>'+
         '</div>'+
         (expanded?
           '<div style="padding:0 12px 12px;border-top:1px solid var(--parchment-deep)">'+
             '<div class="edesc" style="padding-top:8px;margin-bottom:8px">'+esc(set.theme||set.desc||'')+'</div>'+
-            // v1.6910: Real-estate roster (assigned buildings) for completed cycles
-            (isCompletedCycle&&rebuildings.length?
-              '<div style="margin-bottom:8px;padding:7px 9px;background:rgba(201,146,42,.08);border:1px solid rgba(201,146,42,.3);border-radius:5px">'+
-                '<div style="font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);margin-bottom:4px">\uD83C\uDFD8 Real Estate</div>'+
-                rebuildings.map(function(a){
-                  var nm=(a.meta&&a.meta.customName)||a.name;
-                  return '<div style="font-size:.78em;color:var(--ink);padding:2px 0">'+esc(a.ic||'\uD83C\uDFE0')+' '+esc(nm)+' <span style="color:var(--ink-light);font-size:.85em">('+esc(a.name)+')</span></div>';
-                }).join('')+
-              '</div>'
-            :'')+
+            // v1.7158 — Real-estate roster removed. See Assets & Investments
+            // for territory-grouped real estate.
             (st.ok?
               '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
               // v1.6922: On a fully-completed cycle, replace the Activate
@@ -11212,14 +11127,8 @@ function renderCycleMapCards(){
                 '<button class="btn sm" data-a="cycle-preview" data-setid="'+esc(set.id)+'" '+
                 'style="background:rgba(26,107,138,.1);border:1px solid var(--teal);color:var(--teal)">\uD83D\uDCD6 Preview</button>'
               :'')+
-              // v1.6910: Real Estate button for completed cycles.
-              // v1.6912: Hidden when the cycle denies ALL real estate AND no
-              // buildings have been assigned yet. If there are already owned
-              // buildings, keep the button available so the user can view them.
-              (isCompletedCycle&&(!realEstateAllDeniedForSet(set.id)||rebuildings.length)?
-                '<button class="btn sm" data-a="cycle-realestate" data-setid="'+esc(set.id)+'" '+
-                'style="background:rgba(201,146,42,.12);border:1px solid var(--gold-dark);color:var(--gold-dark)">\uD83C\uDFD8 Real Estate</button>'
-              :'')+
+              // v1.7158 — Per-cycle "Real Estate" button removed; buildings
+              // are bought from the store and bound to a territory there.
               (squadName||isActive?
                 '<button class="btn bink sm" data-a="cycle-abandon" data-setid="'+esc(set.id)+'" '+
                 'style="border-color:var(--crimson);color:var(--crimson)">\uD83D\uDEAB Abandon</button>'
@@ -22409,27 +22318,35 @@ function renderParty(){
     if(!a)return false;
     var _ot=assetMeta(a).ownerType;
     if(_ot==='squad')return false;
-    if(_ot==='cycle')return false;
+    if(_ot==='territory')return false; // v1.7158 — was 'cycle'
     return true;
   });
-  // Pull cycle-owned buildings out separately so we can render them grouped
-  // by their owning quest cycle.
-  var _cycleAssetsRaw=(S.partyAssets||[]).filter(function(a){
+  // Pull territory-owned buildings out separately so we can render them
+  // grouped by their owning territory.
+  // v1.7158 — was grouped by completed cycle; buildings now bind directly
+  // to territories at purchase time, so the grouping key is the territory
+  // name itself (no cycle resolution required).
+  var _territoryAssetsRaw=(S.partyAssets||[]).filter(function(a){
     if(!a)return false;
-    return assetMeta(a).ownerType==='cycle';
+    return assetMeta(a).ownerType==='territory';
   });
-  // Group by ownerRef (setId). Unknown setIds fall into a '?' bucket.
-  var _cycleGroups={};
-  _cycleAssetsRaw.forEach(function(a){
+  // Group by ownerRef (territory name). Unknown/empty territories fall
+  // into a '?' bucket so legacy stragglers stay visible rather than vanishing.
+  var _territoryGroups={};
+  _territoryAssetsRaw.forEach(function(a){
     var key=(a.meta&&a.meta.ownerRef)||'?';
-    if(!_cycleGroups[key])_cycleGroups[key]=[];
-    _cycleGroups[key].push(a);
+    if(!_territoryGroups[key])_territoryGroups[key]=[];
+    _territoryGroups[key].push(a);
   });
-  // Resolve setId → cycle name via QUESTSETS at render time
-  function _cycleNameForSetId(sid){
-    if(!sid||sid==='?')return 'Unknown Cycle';
-    var set=(QUESTSETS||[]).filter(function(s){return s&&s.id===sid;})[0];
-    return set&&set.name?set.name:sid;
+  // Display label for a territory key — shows territory name + HQ name
+  // when one exists, mirroring the territoryHQName composition.
+  function _territoryLabel(terr){
+    if(!terr||terr==='?')return 'Unspecified Territory';
+    var hq=(typeof territoryHQName==='function')?territoryHQName(terr):'';
+    if(terr===S.originTerritory){
+      return hq||('Headquarters · '+terr);
+    }
+    return (hq&&hq!=='Headquarters')?(hq+' · '+terr):terr;
   }
   if(S.assetsAnimalEditorCollapsed===undefined)S.assetsAnimalEditorCollapsed=true;
   if(!S.assetsCollapsed)S.assetsCollapsed=false;
@@ -22528,17 +22445,16 @@ function renderParty(){
     :'')+
     '</div>';
 
-  // v1.6921: Cycle-owned real estate — one grouped section per cycle that
-  // has buildings bound to it via ownerType:'cycle'. Purely display; all
-  // mutations still go through the Quest Map's 🏘 Real Estate modal
-  // (ov-cycle-realestate). Each cycle gets a labeled card with the cycle
-  // name + building count, and lists its buildings with their custom names
-  // when set. No Sell action here — cycle buildings aren't meant to be
-  // quick-sold alongside franchise assets.
-  Object.keys(_cycleGroups).forEach(function(setId){
-    var list=_cycleGroups[setId]||[];
+  // v1.7158 — Render territory-grouped real estate. One card per territory
+  // with its label (HQ name + territory) and a small list of buildings.
+  // Replaces the v1.6921 cycle-grouped rendering: real estate is now bound
+  // to territories at purchase time, so cycles are no longer the grouping
+  // axis. No Sell action here — buildings aren't meant to be quick-sold
+  // alongside franchise assets.
+  Object.keys(_territoryGroups).forEach(function(terrKey){
+    var list=_territoryGroups[terrKey]||[];
     if(!list.length)return;
-    var label=_cycleNameForSetId(setId);
+    var label=_territoryLabel(terrKey);
     html+='<div class="card" style="margin-top:14px;padding:9px 12px;background:rgba(201,146,42,.04);border:1px solid var(--gold-dark)">'+
       '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">'+
         '<span style="font-family:\'Cinzel\',serif;font-size:.78em;text-transform:uppercase;letter-spacing:.05em;color:var(--gold-dark);flex:1">'+
@@ -29031,13 +28947,10 @@ document.getElementById('ov-cycle-map-cards').addEventListener('click',function(
     renderCycleMapCards();
     return;
   }
-  // v1.6910: Real Estate button on completed cycle cards
-  var reBtn=e.target.closest('[data-a="cycle-realestate"]');
-  if(reBtn){
-    var reSetId=reBtn.getAttribute('data-setid');
-    if(reSetId)openRealEstateModal(reSetId);
-    return;
-  }
+  // v1.7158 — The "cycle-realestate" click handler was removed along with
+  // the per-cycle real estate modal. Real estate is purchased through the
+  // store with a territory picker; nothing on the Quest Map card opens a
+  // real-estate modal anymore.
   // v1.6922: Quest Log button on completed cycle cards
   var logBtn=e.target.closest('[data-a="cycle-log"]');
   if(logBtn){
@@ -29757,18 +29670,11 @@ document.addEventListener('click',function(e){
 });
 
 // ═════════════════════════════════════════════════════════════════════════
-// v1.6910: Real Estate catalog listeners
+// v1.7158: Real Estate naming-modal listeners
+// (The cycle-RE catalog modal listeners were removed in v1.7158 along with
+// the modal itself; the naming flow lives on for the new store-driven
+// real-estate purchase path.)
 // ═════════════════════════════════════════════════════════════════════════
-document.getElementById('ov-cre-close').addEventListener('click',function(){
-  _reActiveSetId=null;
-  closeOv('ov-cycle-realestate');
-});
-document.getElementById('ov-cre-body').addEventListener('click',function(e){
-  var btn=e.target.closest('[data-a="cre-buy"]');
-  if(!btn)return;
-  var bname=btn.getAttribute('data-bname');
-  if(bname)confirmRealEstatePurchase(bname);
-});
 document.getElementById('ov-cre-name-skip').addEventListener('click',function(){
   finishRealEstateNaming(false);
 });
@@ -31051,13 +30957,25 @@ document.getElementById('ov-quest').addEventListener('click',function(e){
         ||shopItem.type==='income'||shopItem.type==='workshop'
         ||shopItem.type==='utility'||shopItem.type==='stronghold';
       if(_isPrereqBuilding2){
-        document.getElementById('ov-bi-ownerlbl').textContent='Buildings are placed in Franchise Storage.';
-        document.getElementById('ov-bi-sel').innerHTML='<option value="__storage__">Franchise Storage</option>';
-        document.getElementById('ov-bi-charrow').style.display='none';
+        // v1.7158 — Buildings now bind to a territory at purchase time,
+        // unifying the store flow with what was previously the Quest
+        // Map's "Real Estate" modal. Show the territory picker; the
+        // commit handler at #ov-bi-yes routes the resulting
+        // territory::TerritoryName value into meta.ownerType='territory',
+        // meta.ownerRef=territoryName.
+        document.getElementById('ov-bi-ownerlbl').textContent='Assign this building to a territory';
+        document.getElementById('ov-bi-sel').innerHTML=territoryPickerOptionsHtml('');
+        document.getElementById('ov-bi-charrow').style.display='block';
         document.getElementById('ov-bi-namerow').style.display='none';
         document.getElementById('ov-bi-weaponrow').style.display='none';
-        document.getElementById('ov-bi-partynote').style.display='none';
+        document.getElementById('ov-bi-partynote').style.display='block';
+        document.getElementById('ov-bi-partynote').textContent='Buildings stay where you place them — they cannot be relocated later.';
         document.getElementById('ov-bi-msg').textContent=shopItem.name+' — \uD83E\uDE99 '+shopItem.price+' gp';
+        // Force quantity=1 and hide the qty row — you can't buy "5 Libraries"
+        // and have them all assigned to the same territory in one click.
+        var _qtyRow=document.getElementById('ov-bi-qtyrow');
+        if(_qtyRow)_qtyRow.style.display='none';
+        document.getElementById('ov-bi-qty').value='1';
       } else {
         document.getElementById('ov-bi-ownerlbl').textContent=
           (typeof isAnimalAsset==='function'&&isAnimalAsset(shopItem))
@@ -31077,6 +30995,9 @@ document.getElementById('ov-quest').addEventListener('click',function(e){
             (shopItem.type==='mount'?'mount':'animal')+' name.'
           :'Optional: assign these assets to a building, vehicle, or squad.';
         document.getElementById('ov-bi-msg').textContent=shopItem.name+' — \uD83E\uDE99 '+shopItem.price+' gp each';
+        // v1.7158 — Restore qty row (the building branch hides it).
+        var _qtyRowR=document.getElementById('ov-bi-qtyrow');
+        if(_qtyRowR)_qtyRowR.style.display='';
       }
       document.getElementById('ov-bi-qty').value='1';
       openOv('ov-buyitem');
@@ -31092,8 +31013,12 @@ document.getElementById('ov-quest').addEventListener('click',function(e){
       ||shopItem.type==='income'||shopItem.type==='workshop'||shopItem.type==='utility'
       ||shopItem.type==='stronghold');
     if(_isPrereqBuilding){
-      document.getElementById('ov-bi-ownerlbl').textContent='Buildings are placed in the Franchise.';
-      document.getElementById('ov-bi-sel').innerHTML='<option value="__storage__">Franchise</option>';
+      // v1.7158 — Defensive fallthrough: if a building somehow reaches
+      // this non-party path (custom/edited building without party:true),
+      // still route through the territory picker rather than the legacy
+      // hardcoded "Franchise" placeholder.
+      document.getElementById('ov-bi-ownerlbl').textContent='Assign this building to a territory';
+      document.getElementById('ov-bi-sel').innerHTML=territoryPickerOptionsHtml('');
     } else {
       document.getElementById('ov-bi-ownerlbl').textContent='Deliver to Adventurer, Storage, Building, Vehicle, or Squad';
       var charOptions=S.party.map(function(c,ci){
@@ -31879,7 +31804,7 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
   var qty=Math.max(1,parseInt(document.getElementById('ov-bi-qty').value,10)||1);
   var ownerVal=document.getElementById('ov-bi-sel').value||'';
   if(!P5.assetMode){
-    var isStructuredOwner=ownerVal==='storage'||ownerVal==='__storage__'||ownerVal.indexOf('building::')===0||ownerVal.indexOf('vehicle::')===0||ownerVal.indexOf('squad::')===0;
+    var isStructuredOwner=ownerVal==='storage'||ownerVal==='__storage__'||ownerVal.indexOf('building::')===0||ownerVal.indexOf('vehicle::')===0||ownerVal.indexOf('squad::')===0||ownerVal.indexOf('territory::')===0; // v1.7158
     var ciCheck=parseInt(ownerVal,10);
     if(!isStructuredOwner && (!S.party[ciCheck]||isNaN(ciCheck))){
       alert('Choose a destination first.');
@@ -31891,6 +31816,14 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
   if(P5.assetMode){
     var petName=(document.getElementById('ov-bi-petname').value||'').trim();
     if(!S.partyAssets)S.partyAssets=[];
+    // v1.7158 — Detect building purchases up front. Buildings have a
+    // territory:: ownerVal and feed straight into the naming modal after
+    // the asset is created (mirrors the old Quest Map real estate flow).
+    var _isBuildingBuy=(typeof item==='object')&&item&&(
+      item.rar==='building'||item.type==='structure'||item.type==='income'||
+      item.type==='workshop'||item.type==='utility'||item.type==='stronghold'
+    );
+    var _newAssetUid=null;
     for(var aq=0;aq<qty;aq++){
       var meta={uid:newAssetUid(),customName:(aq===0?petName:''),ownerType:'',ownerRef:''};
       if(ownerVal==='__storage__'||ownerVal==='storage'){meta.ownerType='';meta.ownerRef='';}
@@ -31898,7 +31831,9 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
       else if(ownerVal.indexOf('building::')===0){meta.ownerType='building';meta.ownerRef=ownerVal.slice(10);}
       else if(ownerVal.indexOf('squad::')===0){meta.ownerType='squad';meta.ownerRef=ownerVal.slice(7);}
       else if(ownerVal.indexOf('vehicle::')===0){meta.ownerType='vehicle';meta.ownerRef=ownerVal.slice(9);}
+      else if(ownerVal.indexOf('territory::')===0){meta.ownerType='territory';meta.ownerRef=ownerVal.slice(11);} // v1.7158
       S.partyAssets.push({name:item.name,ic:item.ic,type:item.type,meta:meta});
+      if(aq===0)_newAssetUid=meta.uid;
     }
     logAdd('Purchased: '+item.name+' ×'+qty+' ('+total+' gp)','buy');
     P5.item=null;P5.assetMode=false;P5.customItem=null;
@@ -31910,6 +31845,33 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
     // met. Mirrors the _finalizeToChar re-open block at line ~26617.
     var _reopenAsset=window._questModalOpenAfterBuy;
     window._questModalOpenAfterBuy=false;
+    // v1.7158 — Building purchases hand off to the naming modal so the
+    // player can give the property a memorable name (mirrors the old
+    // Quest Map real estate flow). Also recompute territory unlocks now
+    // that a new qualifying building exists, and surface a one-time log
+    // line if a territory becomes newly accessible.
+    if(_isBuildingBuy&&_newAssetUid){
+      var _terrBefore=(S.unlockedTerritories||[]).slice();
+      if(typeof recomputeUnlockedTerritories==='function')recomputeUnlockedTerritories();
+      var _newlyUnlocked=(S.unlockedTerritories||[]).filter(function(t){return _terrBefore.indexOf(t)===-1;});
+      if(_newlyUnlocked.length&&typeof logAdd==='function'){
+        _newlyUnlocked.forEach(function(t){
+          logAdd('🗺 Territory unlocked: '+t+' — you can now charter or relocate up to '+SQUADS_PER_TERRITORY_MAX+' squads here.','adv');
+        });
+      }
+      _rePendingItem={uid:_newAssetUid,item:item,setId:''};
+      closeOv('ov-buyitem');
+      save();renderParty();renderStore();
+      // Open the naming modal — same one used by the legacy real-estate
+      // flow. finishRealEstateNaming() reads _rePendingItem.uid and
+      // commits the customName via the Save / Skip buttons.
+      var _msgEl=document.getElementById('ov-cre-name-msg');
+      if(_msgEl)_msgEl.textContent='You acquired '+item.name+'. Give it a memorable name, or skip to keep the default.';
+      var _inp=document.getElementById('ov-cre-name-input');
+      if(_inp){_inp.value='';setTimeout(function(){try{_inp.focus();}catch(e){}},80);}
+      openOv('ov-cre-name');
+      return;
+    }
     closeOv('ov-buyitem');
     save();renderParty();renderStore();
     if(_reopenAsset&&qddQuestLike){
@@ -37059,6 +37021,7 @@ function sbPull(manual){
   if(typeof migrateMedionToEffigianV1_7118==='function')migrateMedionToEffigianV1_7118(); // v1.7118
   if(typeof migrateInitTerritoryWeightsV1_7116==='function')migrateInitTerritoryWeightsV1_7116(); // v1.7116
   if(typeof migrateBindOrphanCycleV1_7137==='function')migrateBindOrphanCycleV1_7137(); // v1.7137
+  if(typeof migrateCycleBuildingsToTerritories==='function')migrateCycleBuildingsToTerritories(); // v1.7158
           setGold();applySettings();renderTasks();renderSettings();renderAdv();
           renderParty();renderArchive();renderLog();updateQpDisplay();
           // v1.7052 — log code-session pull_ok with diff
@@ -40992,6 +40955,7 @@ function initSession(pullFromCloud){
       if(typeof migrateMedionToEffigianV1_7118==='function')migrateMedionToEffigianV1_7118(); // v1.7118
       if(typeof migrateInitTerritoryWeightsV1_7116==='function')migrateInitTerritoryWeightsV1_7116(); // v1.7116
       if(typeof migrateBindOrphanCycleV1_7137==='function')migrateBindOrphanCycleV1_7137(); // v1.7137
+      if(typeof migrateCycleBuildingsToTerritories==='function')migrateCycleBuildingsToTerritories(); // v1.7158
       // v1.6901 — backfill ownedItems on existing NPC contacts so their gear
       // shows as 🔒 personal in the char modal Gear tab (matching the rule
       // that new capstone-reward contacts get personal-marked inventory).
@@ -44245,6 +44209,51 @@ function territoryForCycleSetId(setId){
   return String(set.territory).trim();
 }
 
+// v1.7158 — One-shot migration converting legacy cycle-owned buildings to
+// territory-owned. Earlier versions tied real-estate purchases to the
+// completed cycle that triggered them (meta.ownerType='cycle',
+// meta.ownerRef=setId), forcing every territory lookup through
+// territoryForCycleSetId(). v1.7158 unifies the buy-in-store and
+// buy-from-cycle flows behind a single territory picker, so buildings now
+// bind directly to the territory (meta.ownerType='territory',
+// meta.ownerRef=territoryName). This migration walks every cycle-owned
+// building, resolves its territory through the cycle, rewrites the meta,
+// and is idempotent — buildings already in the new shape are skipped.
+// Edge case: a cycle whose territory field is empty (legacy/unset) falls
+// back to S.originTerritory and logs a one-line warning so the player
+// knows it landed at HQ rather than vanishing.
+function migrateCycleBuildingsToTerritories(){
+  if(!S.partyAssets||!S.partyAssets.length)return 0;
+  var migrated=0;
+  var fellBackToOrigin=0;
+  S.partyAssets.forEach(function(a){
+    if(!a||!a.meta)return;
+    if(a.meta.ownerType!=='cycle'||!a.meta.ownerRef)return;
+    // Only migrate building assets — other cycle-bound rewards (artifacts,
+    // etc.) keep their cycle linkage. Buildings are identified by name
+    // matching a BUILDINGS entry.
+    var isBuilding=(BUILDINGS||[]).some(function(b){return b&&b.name===a.name;});
+    if(!isBuilding)return;
+    var terr=territoryForCycleSetId(a.meta.ownerRef);
+    if(!terr){
+      terr=S.originTerritory||'';
+      fellBackToOrigin++;
+    }
+    a.meta.ownerType='territory';
+    a.meta.ownerRef=terr;
+    migrated++;
+  });
+  if(migrated&&typeof logAdd==='function'){
+    var msg='\uD83C\uDFD8 Real estate updated: '+migrated+' building'+(migrated===1?'':'s')+
+      ' now bound to territor'+(migrated===1?'y':'ies')+' (was bound to cycles).';
+    if(fellBackToOrigin){
+      msg+=' '+fellBackToOrigin+' had no clear territory and went to HQ.';
+    }
+    logAdd(msg,'adv');
+  }
+  return migrated;
+}
+
 // The franchise's origin territory — auto-unlocked at no cost. Resolves
 // from the earliest QUESTSETS entry with a non-empty territory field
 // (QUESTSETS is ordered by intended play sequence, so the "first" entry
@@ -44412,12 +44421,14 @@ function territoriesUnlockedByBuildings(){
   (S.partyAssets||[]).forEach(function(a){
     if(!a)return;
     var m=assetMeta(a);
-    if(m.ownerType!=='cycle'||!m.ownerRef)return;
+    // v1.7158 — buildings now bind to territory directly. ownerRef IS the
+    // territory name; no QUESTSETS lookup required.
+    if(m.ownerType!=='territory'||!m.ownerRef)return;
     // Resolve base price from BUILDINGS — partyAssets entries don't carry
     // a price field; their name matches a BUILDINGS[*].name exactly.
     var baseBuilding=(BUILDINGS||[]).filter(function(b){return b&&b.name===a.name;})[0];
     if(!baseBuilding||(baseBuilding.price||0)<TERRITORY_UNLOCK_BUILDING_MIN_GP)return;
-    var terr=territoryForCycleSetId(m.ownerRef);
+    var terr=m.ownerRef;
     if(!terr||seen[terr])return;
     seen[terr]=true;
     out.push(terr);
@@ -44454,11 +44465,11 @@ function territoryHQName(territory){
   (S.partyAssets||[]).some(function(a){
     if(!a)return false;
     var m=assetMeta(a);
-    if(m.ownerType!=='cycle'||!m.ownerRef)return false;
+    // v1.7158 — buildings bind directly to territory; no cycle hop needed.
+    if(m.ownerType!=='territory'||!m.ownerRef)return false;
     var baseBuilding=(BUILDINGS||[]).filter(function(b){return b&&b.name===a.name;})[0];
     if(!baseBuilding||(baseBuilding.price||0)<TERRITORY_UNLOCK_BUILDING_MIN_GP)return false;
-    var terr=territoryForCycleSetId(m.ownerRef);
-    if(terr!==territory)return false;
+    if(m.ownerRef!==territory)return false;
     candidate=(m&&m.customName)?m.customName:a.name;
     return true; // stop at first
   });
@@ -44484,10 +44495,11 @@ function territoryHasHQBuilding(territory){
   return (S.partyAssets||[]).some(function(a){
     if(!a)return false;
     var m=assetMeta(a);
-    if(m.ownerType!=='cycle'||!m.ownerRef)return false;
+    // v1.7158 — direct territory binding.
+    if(m.ownerType!=='territory'||!m.ownerRef)return false;
     var baseBuilding=(BUILDINGS||[]).filter(function(b){return b&&b.name===a.name;})[0];
     if(!baseBuilding||(baseBuilding.price||0)<TERRITORY_UNLOCK_BUILDING_MIN_GP)return false;
-    return territoryForCycleSetId(m.ownerRef)===territory;
+    return m.ownerRef===territory;
   });
 }
 
