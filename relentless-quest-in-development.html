@@ -3110,7 +3110,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7158</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7159</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4081,7 +4081,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7158
+      Version 1.7159
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -8761,12 +8761,21 @@ function assetOwnerValue(a){
 }
 function assetOwnerOptionsHtml(selected,opts){
   opts=opts||{};
+  // v1.7159 — opts.includeChars (default true) controls whether the "👤 Name"
+  // per-character options are appended. Buy-modal callers that already render
+  // their own squad-narrowed character section pass false to avoid the
+  // duplicate-name pile-up that v1.7158 made visible (the helper was always
+  // emitting the full party, but the duplication was hidden when the upstream
+  // section used the same "Name (class)" format).
+  var includeChars=(opts.includeChars!==false);
   var html='<option value="">— Unassigned —</option>';
   if(opts.includeStorage)html+='<option value="storage"'+(selected==='storage'?' selected':'')+'>📦 Franchise Storage</option>';
-  html+=(S.party||[]).map(function(c){
-    var v='char::'+c.name;
-    return '<option value="'+esc(v)+'"'+(selected===v?' selected':'')+'>👤 '+esc(c.name)+'</option>';
-  }).join('');
+  if(includeChars){
+    html+=(S.party||[]).map(function(c){
+      var v='char::'+c.name;
+      return '<option value="'+esc(v)+'"'+(selected===v?' selected':'')+'>👤 '+esc(c.name)+'</option>';
+    }).join('');
+  }
   html+=(S.partyAssets||[]).filter(function(a){return isBuildingAsset(a);}).map(function(a){
     var uid=assetMeta(a).uid;
     var v='building::'+uid;
@@ -8841,13 +8850,20 @@ function territoryPickerOptionsHtml(selected){
 //     even on the active quest, then watch the prereq slot still come up
 //     unmet.
 //   - Each option carries warnings (⚠) when the character can't actually
-//     USE the item for prereq purposes — encumbrance OR proficiency layer
+//     USE the item for prereq purposes — proficiency layer OR encumbrance
 //     OR class-restriction layer. Warnings are concatenated with " · "
-//     separators so multiple problems are surfaced at once. The option
-//     remains selectable; the player retains full agency to stash the
-//     item on a character knowing they'll hand it off later.
+//     separators so multiple problems are surfaced at once. Warning order
+//     follows v1.7159 design: proficiency first (usually the deciding
+//     factor for prereq matching), then encumbrance (load-bearing concern),
+//     then class restriction (rare, usually only fires on +1 weapons and
+//     similar). The option remains selectable; the player retains full
+//     agency to stash the item on a character knowing they'll hand it off
+//     later.
 //   - Warnings render in crimson via the existing inline-style pattern
 //     (matches the pre-existing wouldEncumber styling).
+//   - v1.7159: characters with no warnings are listed first, characters
+//     with warnings second. Order within each group is stable (S.party
+//     creation order — same as the carousel and other character lists).
 function buyDeliverCharOptionsHtml(itemName){
   var sqName=(typeof activeCycleSquadName==='function')?activeCycleSquadName():'';
   var sq=sqName?(S.squads||[]).filter(function(s){return s&&s.name===sqName;})[0]:null;
@@ -8857,28 +8873,37 @@ function buyDeliverCharOptionsHtml(itemName){
     if(memberIdxs)return memberIdxs.indexOf(e.ci)!==-1;
     return true;
   });
-  return entries.map(function(e){
+  // Build a per-character record with the warning list resolved up front
+  // so we can sort by warning count without recomputing.
+  var rendered=entries.map(function(e){
     var c=e.c, ci=e.ci;
     var warns=[];
-    // Encumbrance — pre-existing check.
-    if(typeof wouldEncumber==='function'&&wouldEncumber(c,itemName)){
-      warns.push('would encumber');
-    }
-    // Proficiency gate (weapon/tool prof). Skipped for items that don't
-    // have a proficiency requirement — _itemProficiencyLabel returns ''
-    // for ungated items, which is faster to read than calling the gate
-    // function and inverting.
+    // 1. Proficiency gate (weapon/tool prof) — usually the deciding factor
+    //    for a quest-prereq item, so it leads the warning string.
     if(typeof charHasProficiencyForItem==='function'&&!charHasProficiencyForItem(c,itemName)){
       var profLabel=(typeof _itemProficiencyLabel==='function')?_itemProficiencyLabel(itemName):'';
       warns.push(profLabel||'lacks proficiency');
     }
-    // Class-restriction gate (v1.7146 layer).
+    // 2. Encumbrance — pre-existing check.
+    if(typeof wouldEncumber==='function'&&wouldEncumber(c,itemName)){
+      warns.push('would encumber');
+    }
+    // 3. Class-restriction gate (v1.7146 layer) — rare.
     if(typeof _charCanUseItemByClass==='function'&&!_charCanUseItemByClass(c,itemName)){
       warns.push('class can\u2019t use');
     }
-    var warnSuffix=warns.length?(' \u26a0 '+warns.join(' \u00b7 ')):'';
-    var styleAttr=warns.length?' style="color:var(--crimson)"':'';
-    return '<option value="'+ci+'"'+styleAttr+'>'+esc(c.name)+' ('+esc(c.cls)+')'+esc(warnSuffix)+'</option>';
+    return {ci:ci, c:c, warns:warns};
+  });
+  // Stable partition: usable (no warnings) first, unusable second. Within
+  // each group preserve S.party order — same conventional ordering used
+  // by the squad carousel and other lists in the game, so the player gets
+  // a predictable position for each character.
+  var usable=rendered.filter(function(r){return r.warns.length===0;});
+  var unusable=rendered.filter(function(r){return r.warns.length>0;});
+  return usable.concat(unusable).map(function(r){
+    var warnSuffix=r.warns.length?(' \u26a0 '+r.warns.join(' \u00b7 ')):'';
+    var styleAttr=r.warns.length?' style="color:var(--crimson)"':'';
+    return '<option value="'+r.ci+'"'+styleAttr+'>'+esc(r.c.name)+' ('+esc(r.c.cls)+')'+esc(warnSuffix)+'</option>';
   }).join('');
 }
 
@@ -31372,7 +31397,7 @@ document.getElementById('ov-quest').addEventListener('click',function(e){
       // most important site for the warning to fire — the player is
       // explicitly trying to satisfy a slot here.
       var charOptions=buyDeliverCharOptionsHtml(shopItem.name);
-      document.getElementById('ov-bi-sel').innerHTML=charOptions+assetOwnerOptionsHtml('',{includeStorage:true});
+      document.getElementById('ov-bi-sel').innerHTML=charOptions+assetOwnerOptionsHtml('',{includeStorage:true,includeChars:false});
     }
     document.getElementById('ov-bi-namerow').style.display='none';
     document.getElementById('ov-bi-partynote').style.display='block';
@@ -32049,7 +32074,7 @@ document.getElementById('slist').addEventListener('click',function(e){
     document.getElementById('ov-bi-ownerlbl').textContent='Deliver to Adventurer, Storage, Building, Vehicle, or Squad';
     // v1.7158 — squad-narrowed + warnings (replaces an ad-hoc party map).
     var _charOpts=buyDeliverCharOptionsHtml(item.name);
-    document.getElementById('ov-bi-sel').innerHTML=_charOpts+assetOwnerOptionsHtml('',{includeStorage:true});
+    document.getElementById('ov-bi-sel').innerHTML=_charOpts+assetOwnerOptionsHtml('',{includeStorage:true,includeChars:false});
     document.getElementById('ov-bi-namerow').style.display='none';
     document.getElementById('ov-bi-partynote').style.display='block';
     document.getElementById('ov-bi-partynote').textContent='Showing squad members. \u26a0 marks characters who can\u2019t use this item for quest prereqs.';
@@ -32115,7 +32140,7 @@ document.getElementById('slist').addEventListener('click',function(e){
     // pre-existing wouldEncumber check and adds proficiency / class
     // restriction layers on top, concatenating warnings with " · ".
     var charOptions=buyDeliverCharOptionsHtml(item.name);
-    document.getElementById('ov-bi-sel').innerHTML=charOptions+assetOwnerOptionsHtml('',{includeStorage:true});
+    document.getElementById('ov-bi-sel').innerHTML=charOptions+assetOwnerOptionsHtml('',{includeStorage:true,includeChars:false});
   }
   document.getElementById('ov-bi-namerow').style.display='none';
   document.getElementById('ov-bi-partynote').style.display='block';
@@ -35547,7 +35572,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7158';
+var RQ_CLIENT_VERSION='v1.7159';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
