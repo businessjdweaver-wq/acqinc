@@ -3110,7 +3110,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7165</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7166</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4081,7 +4081,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7165
+      Version 1.7166
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -28728,21 +28728,54 @@ function applyResolution(plan) {
 }
 
 // Console-callable test entry point. Picks the quest at index qIdx in the
-// current cycle's quest list, builds a temporary party from S.party (all
-// non-injured chars), and prints a fully-formed ResolutionPlan to console.
+// current cycle's pending list, builds a party from the chars assigned to
+// that pending entry, and prints a fully-formed ResolutionPlan to console.
 // Does NOT mutate state. Intended for engine validation during Phase 3.1.
+//
+// State path:
+//   S.questState.pending[]  — list of pending (in-progress / ready) quests
+//   pq.idx                  — index into the active quest set's quests array
+//   pq.chars                — array of party indices assigned to this quest
+//   pq.reward               — reward gp for this quest
+//   activeQuestSet()        — resolves the current quest set (built-in or custom)
+//   questByIdx(set, idx)    — looks up the quest object by its idx
 function testResolveQuest(qIdx) {
   qIdx = qIdx || 0;
-  var pq = (S.activeQuests && S.activeQuests[qIdx]);
-  var q = pq && pq.q;
+  var pending = (S.questState && S.questState.pending) || [];
+  if (!pending.length) {
+    console.warn('[testResolveQuest] No pending quests. (S.questState.pending is empty.)');
+    console.log('Tip: start a quest first, then call testResolveQuest(0). ' +
+                'You can also resolve a ready quest, but the engine works on pending entries either way.');
+    return null;
+  }
+  if (qIdx >= pending.length) {
+    console.warn('[testResolveQuest] qIdx ' + qIdx + ' out of range. Pending has ' + pending.length + ' entries.');
+    console.log('Available pending quests:');
+    pending.forEach(function(pq, i){
+      var s = activeQuestSet();
+      var q = questByIdx(s, pq.idx);
+      console.log('  [' + i + '] ' + (q && q.title ? q.title : '(unknown #' + pq.idx + ')') +
+                  ' — chars: ' + (pq.chars || []).map(function(ci){
+                    return S.party[ci] ? S.party[ci].name : '?';
+                  }).join(', '));
+    });
+    return null;
+  }
+  var pq = pending[qIdx];
+  var set = activeQuestSet();
+  var q = (typeof questByIdx === 'function') ? questByIdx(set, pq.idx) : null;
   if (!q) {
-    console.warn('[testResolveQuest] No active quest at index', qIdx,
-                 '(activeQuests has', (S.activeQuests||[]).length, 'entries)');
+    console.warn('[testResolveQuest] Could not resolve the quest object at pq.idx=' + pq.idx);
     return null;
   }
   var party = (pq.chars || []).map(function(ci){ return S.party[ci]; }).filter(Boolean);
-  if (!party.length) party = (S.party||[]).slice(0, 4);
-  q._pq = pq;  // hand the engine the active quest record so it can read pq.reward
+  if (!party.length) {
+    console.warn('[testResolveQuest] No characters assigned to this pending quest. Falling back to first 4 party members.');
+    party = (S.party || []).slice(0, 4);
+  }
+  // Pass the pending entry through to the engine via q._pq so the default-
+  // effects synthesizer can read pq.reward.
+  q._pq = pq;
   var scoutTier = (S.scoutedQuests && S.scoutedQuests[q.id] && S.scoutedQuests[q.id].tier) || 0;
   var plan = resolveQuest(q, party, scoutTier, CONTENT_LIB);
   console.log('═══ ResolutionPlan for "' + plan.questLabel + '" ═══');
@@ -36171,7 +36204,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7165';
+var RQ_CLIENT_VERSION='v1.7166';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
