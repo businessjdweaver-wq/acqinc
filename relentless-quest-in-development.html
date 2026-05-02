@@ -3110,7 +3110,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7155</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7158</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4081,7 +4081,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7155
+      Version 1.7158
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -4470,6 +4470,10 @@ body.dev-active #app{margin-top:36px;}
     </div>
   </div>
   <div class="hint" style="margin:2px 0 8px;font-size:.78em">8h is standard. Shorter sessions incur a roll penalty; longer sessions add a bonus.</div>
+  <!-- v1.7158 — Threshold breakdown for the selected track. Shows the
+       current goalpost, the franchise buildings already lowering it, and
+       (when applicable) the next building that would lower it further. -->
+  <div id="ov-dt-threshold" style="margin:4px 0 10px;padding:7px 10px;background:rgba(26,107,138,.06);border:1px solid rgba(26,107,138,.25);border-radius:6px;font-size:.78em;color:var(--ink);line-height:1.45;display:none"></div>
   <div class="mbtns">
     <button class="btn bink" type="button" id="ov-dt-no">Cancel</button>
     <button class="btn bpur" type="button" id="ov-dt-yes">🕯 Start Downtime</button>
@@ -6443,6 +6447,13 @@ var BUILDINGS=[
   {name:"Wizard's Tower",ic:'🗼',desc:'Ritual casting space + alarm.',rar:'building',price:8000,type:'utility',party:true},
   {name:'Temple Shrine',ic:'⛩️',desc:'Free Cure Wounds 1/day.',rar:'building',price:5000,type:'utility',party:true},
   {name:'Greenhouse',ic:'🌿',desc:'Rare herbs & spell components.',rar:'building',price:1800,type:'workshop',party:true},
+  // v1.7158 — Two new buildings introduced to give Skill and Faith
+  // downtime tracks accessible early-game acceleration paths. Training
+  // Yard is the sub-Library option for physical/martial skills; Wayside
+  // Shrine is the sub-Temple option for any deity. Both are referenced
+  // by DOWNTIME_BUILDING_CONTRIBS — keep the names in sync.
+  {name:'Training Yard',ic:'🎯',desc:'Pells, targets, tumbling mats for daily drills.',rar:'building',price:500,type:'utility',party:true},
+  {name:'Wayside Shrine',ic:'🪬',desc:'A small consecrated space for prayer and reflection.',rar:'building',price:700,type:'utility',party:true},
   {name:'Fortress Keep',ic:'🏰',desc:'Houses 50. 20 gp/week income.',rar:'building',price:50000,type:'stronghold',party:true}
 ];
 
@@ -17762,6 +17773,196 @@ function downtimeTrackLabel(type,target){
   if(type==='intel')return 'Rumors';
   return target||type;
 }
+
+// ═════════════════════════════════════════════════════════════════════════
+// v1.7158: DOWNTIME ACCELERATION SYSTEM
+// ─────────────────────────────────────────────────────────────────────────
+// Every downtime track has a base threshold (the d20+mod+duration progress
+// needed to unlock the reward) and a floor (the lowest the threshold can
+// ever drop, no matter how invested the franchise is). Each franchise-owned
+// building in the runner's homeTerritory that contributes to the chosen
+// track lowers the threshold by 2, capped at 3 contributors (max −6).
+//
+//   Track       Base   Floor
+//   skill        16      8
+//   language     16      8
+//   faith        12      6
+//   contacts     12      6
+//   intel        10      5
+//
+// The contributing-building table below is keyed first by track type, then
+// by target. For per-skill / per-language / per-deity tracks the target
+// must match exactly (e.g. 'Acrobatics', 'Elvish', 'Gloriosus, the Bold').
+// For the all-in-one tracks (contacts, intel) the target is always 'core'.
+// ═════════════════════════════════════════════════════════════════════════
+
+var DOWNTIME_THRESHOLD_BASE={
+  skill:    16,
+  language: 16,
+  faith:    12,
+  contacts: 12,
+  intel:    10
+};
+var DOWNTIME_THRESHOLD_FLOOR={
+  skill:    8,
+  language: 8,
+  faith:    6,
+  contacts: 6,
+  intel:    5
+};
+var DOWNTIME_BUILDING_STEP=2;       // gp threshold reduction per contributing building
+var DOWNTIME_BUILDING_CAP=3;        // maximum number of buildings that can contribute
+
+// Two new buildings introduced by v1.7158 are referenced below. They are
+// added to the BUILDINGS array further down in this file; the strings here
+// must match those entries exactly.
+var DOWNTIME_BUILDING_CONTRIBS={
+  skill:{
+    'Acrobatics':       ['Training Yard','Tavern (Common Room)'],
+    'Animal Handling':  ['Stables','Greenhouse'],
+    'Arcana':           ['Library & Scriptorium',"Wizard's Tower","Alchemist's Lab"],
+    'Athletics':        ['Training Yard','Barracks','Smithy'],
+    'Deception':        ['Tavern (Common Room)','Safe House','Market Stall'],
+    'History':          ['Library & Scriptorium',"Wizard's Tower"],
+    'Insight':          ['Tavern (Common Room)','Market Stall','Temple Shrine'],
+    'Intimidation':     ['Guard Post','Barracks','Training Yard'],
+    'Investigation':    ['Library & Scriptorium','Safe House',"Wizard's Tower"],
+    'Medicine':         ['Temple Shrine',"Alchemist's Lab",'Greenhouse'],
+    'Nature':           ['Greenhouse','Stables'],
+    'Perception':       ['Guard Post',"Wizard's Tower"],
+    'Performance':      ['Tavern (Common Room)'],
+    'Persuasion':       ['Tavern (Common Room)','Market Stall','Temple Shrine'],
+    'Religion':         ['Temple Shrine','Wayside Shrine','Library & Scriptorium'],
+    'Sleight of Hand':  ['Safe House','Market Stall','Training Yard'],
+    'Stealth':          ['Safe House','Guard Post'],
+    'Survival':         ['Stables','Greenhouse','Training Yard']
+  },
+  language:{
+    // Common-tongue languages — accelerated by Library (book learning) or
+    // Tavern (immersion through travelers and foreign merchants).
+    'Common':              ['Library & Scriptorium','Tavern (Common Room)'],
+    'Common Sign Language':['Library & Scriptorium','Tavern (Common Room)'],
+    'Dwarvish':            ['Library & Scriptorium','Tavern (Common Room)'],
+    'Elvish':              ['Library & Scriptorium','Tavern (Common Room)'],
+    'Giant':               ['Library & Scriptorium','Tavern (Common Room)'],
+    'Gnomish':             ['Library & Scriptorium','Tavern (Common Room)'],
+    'Goblin':              ['Library & Scriptorium','Tavern (Common Room)'],
+    'Halfling':            ['Library & Scriptorium','Tavern (Common Room)'],
+    'Orcish':              ['Library & Scriptorium','Tavern (Common Room)'],
+    // Exotic / planar languages — Library plus arcane / sacred contexts.
+    'Abyssal':             ['Library & Scriptorium',"Wizard's Tower",'Temple Shrine'],
+    'Celestial':           ['Library & Scriptorium','Temple Shrine',"Wizard's Tower"],
+    'Draconic':            ['Library & Scriptorium',"Wizard's Tower"],
+    'Deep Speech':         ['Library & Scriptorium',"Wizard's Tower"],
+    'Infernal':            ['Library & Scriptorium',"Wizard's Tower",'Temple Shrine'],
+    'Primordial':          ['Library & Scriptorium',"Wizard's Tower"],
+    'Sylvan':              ['Library & Scriptorium','Greenhouse'],
+    'Undercommon':         ['Library & Scriptorium','Safe House'],
+    // Secret tongues — picked up only from the right back rooms / wild groves.
+    "Thieves' Cant":       ['Safe House','Tavern (Common Room)']
+    // 'Druidic' is gated by class, not normally a downtime study target.
+  },
+  faith:{
+    // Per-deity acceleration — Temple/Wayside Shrine is the universal
+    // primary; the secondary/tertiary buildings reflect the deity's
+    // character (martial, scholarly, hearth, naturalist, etc.).
+    'Gloriosus, the Bold':     ['Temple Shrine','Wayside Shrine','Barracks','Training Yard','Guard Post'],
+    'Perterre, the Wary':      ['Temple Shrine','Wayside Shrine','Greenhouse','Stables'],
+    'Somnian, the Dreamer':    ['Temple Shrine','Wayside Shrine','Library & Scriptorium',"Wizard's Tower"],
+    'Interitus, the Inventor': ['Temple Shrine','Wayside Shrine','Smithy','Greenhouse',"Alchemist's Lab"],
+    'Beatudo, the Joker':      ['Temple Shrine','Wayside Shrine','Tavern (Common Room)','Safe House'],
+    'Castigare, the Avenger':  ['Temple Shrine','Wayside Shrine','Guard Post','Barracks','Fortress Keep'],
+    'Mendax, the Pretender':   ['Temple Shrine','Wayside Shrine','Safe House','Tavern (Common Room)','Market Stall'],
+    'Amantis, the Lover':      ['Temple Shrine','Wayside Shrine','Tavern (Common Room)','Market Stall'],
+    'Dicentis, the Persuader': ['Temple Shrine','Wayside Shrine','Tavern (Common Room)','Market Stall','Library & Scriptorium']
+    // Non-canonical religions (Protean Way, Medio, Texere Dragons, etc.)
+    // get only the Temple/Wayside Shrine acceleration through the fallback
+    // logic in downtimeBuildingContributors.
+  },
+  contacts:{
+    // Single 'core' track — five buildings each contribute. Different
+    // buildings will, in a future enhancement, also bias the *type* of
+    // contact spawned.
+    'core': ['Tavern (Common Room)','Market Stall','Safe House','Guard Post','Temple Shrine']
+  },
+  intel:{
+    // Single 'core' track — five lead sources, one per building.
+    'core': ['Library & Scriptorium','Tavern (Common Room)','Safe House',"Wizard's Tower",'Guard Post']
+  }
+};
+
+// Returns the list of buildings owned by the franchise in the given
+// character's homeTerritory that contribute to the specified track.
+// Capped at DOWNTIME_BUILDING_CAP (3). Each building is returned at most
+// once even if the player owns multiple instances of it. Returns an
+// empty array if the character has no homeTerritory, the track has no
+// contribs entry, or no qualifying buildings are owned.
+//
+// The fallback for non-canonical faiths (Atheist, Protean Way, etc.):
+// if the deity is not in the contribs table, return Temple Shrine /
+// Wayside Shrine if either is owned in the territory — they always
+// accelerate any sincere faith research, regardless of pantheon.
+function downtimeBuildingContributors(type,target,c){
+  if(!c)return [];
+  var territory=c.homeTerritory||S.originTerritory||'';
+  if(!territory)return [];
+  var typeMap=DOWNTIME_BUILDING_CONTRIBS[type];
+  if(!typeMap)return [];
+  var key=(type==='contacts'||type==='intel')?'core':target;
+  var candidates=typeMap[key]||[];
+  // Faith fallback: unknown deity → still allow the universal shrines.
+  if(type==='faith'&&!typeMap[key]){
+    candidates=['Temple Shrine','Wayside Shrine'];
+  }
+  if(!candidates.length)return [];
+  // Walk franchise-owned territory-tagged buildings; intersect with the
+  // candidate list. Preserve candidate order so the UI shows contributors
+  // in the same priority sequence the design table expresses.
+  var ownedByName={};
+  (S.partyAssets||[]).forEach(function(a){
+    if(!a||!a.meta)return;
+    if(a.meta.ownerType!=='territory'||a.meta.ownerRef!==territory)return;
+    ownedByName[a.name]=true;
+  });
+  var hits=[];
+  for(var i=0;i<candidates.length;i++){
+    if(ownedByName[candidates[i]]){
+      hits.push(candidates[i]);
+      if(hits.length>=DOWNTIME_BUILDING_CAP)break;
+    }
+  }
+  return hits;
+}
+
+// Canonical threshold function for downtime tracks. Replaces the six
+// hardcoded `type==='contacts'?6:(type==='intel'?5:8)` (and similar)
+// expressions scattered through the codebase. Guarantees the threshold
+// never drops below the per-track floor regardless of how many buildings
+// the franchise owns.
+//
+// Three call signatures supported for ergonomics across the rendering
+// sites — most callers pass (type, target, c); the legacy two-arg form
+// is supported because some renderers don't have a character handy and
+// just want the unaccelerated base number for the progress denominator.
+//   downtimeThreshold(type)              → base only, no acceleration
+//   downtimeThreshold(type, target)      → base only, no acceleration
+//   downtimeThreshold(type, target, c)   → accelerated by c's territory
+function downtimeThreshold(type,target,c){
+  var base=DOWNTIME_THRESHOLD_BASE[type];
+  if(base==null){
+    // Defensive default — preserves the pre-v1.7158 behavior for any
+    // unknown future track types. 8 is what the legacy code returned
+    // for everything that wasn't 'contacts'/'faith'/'intel'.
+    base=8;
+  }
+  var floor=DOWNTIME_THRESHOLD_FLOOR[type];
+  if(floor==null)floor=Math.ceil(base/2);
+  if(!c)return base;
+  var contributors=downtimeBuildingContributors(type,target,c);
+  var reduced=base-(DOWNTIME_BUILDING_STEP*Math.min(contributors.length,DOWNTIME_BUILDING_CAP));
+  return Math.max(floor,reduced);
+}
+
 // In-progress badges: one allowed per downtime type (language, skill, faith, etc.)
 // Completion badges (Tongue Scholar etc.) are permanent achievements — never removed
 var _DT_TYPE_BADGE={
@@ -19605,7 +19806,12 @@ function _spawnContactFromDowntime(runnerC){
 function applyDowntimeThreshold(c, type, target){
   if(!c||!c.dtProgress)return[];
   var key=type+':'+(target||'core');
-  var threshold=(type==='contacts'||type==='faith'?6:(type==='intel'?5:8));
+  // v1.7158 — territory-aware threshold. The runner is `c`, so any
+  // contributing buildings in c.homeTerritory pull this down toward the
+  // floor. Using the canonical helper also fixes a latent bug where the
+  // old expression for the merge path silently used a different shape
+  // than the resolve path.
+  var threshold=downtimeThreshold(type,target,c);
   var msgs=[];
   while((c.dtProgress[key]||0)>=threshold){
     c.dtProgress[key]-=threshold;
@@ -19719,7 +19925,8 @@ function resolveDowntimeRoll(pending, roll){
   addDowntimeBadge(c,downtimeBadgeForJob(job));
   if(c.dtProgress[key]==null)c.dtProgress[key]=0;
   c.dtProgress[key]+=gain;
-  var threshold=(job.type==='contacts'||job.type==='faith'?6:(job.type==='intel'?5:8));
+  // v1.7158 — territory-aware threshold (replaces hardcoded 6/5/8 ladder).
+  var threshold=downtimeThreshold(job.type,job.target,c);
   var unlocked=false;
   var unlockMsg='';
   if(c.dtProgress[key]>=threshold){
@@ -19956,7 +20163,10 @@ function renderDowntimeModal(){
       var bParts=bestKey.split(':');
       var bType=bParts[0];
       var bTarget=bParts.slice(1).join(':')||'core';
-      var bThreshold=(bType==='contacts'?6:(bType==='intel'?5:8));
+      // v1.7158 — territory-aware threshold (the resume pill's denominator
+      // moves if the player owns building investments since this character
+      // last had downtime).
+      var bThreshold=downtimeThreshold(bType,bTarget,c);
       var bProg=prog[bestKey]||0;
       resumeEl.style.display='';
       resumeEl.innerHTML=
@@ -20026,6 +20236,83 @@ function renderDowntimeModal(){
     var diff=Math.round(((DOWNTIME_PENDING.endsAt||0)-Date.now())/60000);
     btn.classList.toggle('active',Math.abs(diff-mins)<=1);
   });
+
+  // ── v1.7158 — Threshold breakdown panel ──────────────────────────
+  // Show the player exactly what the goalpost is for the selected
+  // activity+target, the franchise buildings in this character's
+  // territory that are already lowering it, and the next opportunity
+  // for further acceleration. The panel hides itself on tracks where
+  // we couldn't resolve a sensible target (no available targets).
+  var threshEl=document.getElementById('ov-dt-threshold');
+  if(threshEl){
+    var dtType=DOWNTIME_PENDING.type;
+    var dtTarget=DOWNTIME_PENDING.target||'';
+    if(!dtTarget||(dtType!=='contacts'&&dtType!=='intel'&&!dtTarget)){
+      // No target picked yet (e.g. switching activity mid-render) → hide.
+      threshEl.style.display='none';
+    } else {
+      var rawTarget=dtTarget.replace(/^(?:★|🔄) /,''); // strip UI prefix
+      var keyTarget=(dtType==='contacts'||dtType==='intel')?'core':rawTarget;
+      var base=DOWNTIME_THRESHOLD_BASE[dtType]||8;
+      var floor=DOWNTIME_THRESHOLD_FLOOR[dtType]||Math.ceil(base/2);
+      var contributors=downtimeBuildingContributors(dtType,keyTarget,c);
+      var thresh=downtimeThreshold(dtType,keyTarget,c);
+      var territoryLabel=c.homeTerritory||S.originTerritory||'(no territory)';
+      // Determine candidates the player COULD invest in to push lower.
+      // Only relevant when the threshold hasn't bottomed out at floor and
+      // there are still candidate slots (< DOWNTIME_BUILDING_CAP).
+      var notYetAccelerating=[];
+      if(thresh>floor&&contributors.length<DOWNTIME_BUILDING_CAP){
+        var typeMap=DOWNTIME_BUILDING_CONTRIBS[dtType]||{};
+        var allCandidates=typeMap[keyTarget]||[];
+        if(dtType==='faith'&&!typeMap[keyTarget]){
+          allCandidates=['Temple Shrine','Wayside Shrine'];
+        }
+        notYetAccelerating=allCandidates.filter(function(b){
+          return contributors.indexOf(b)===-1;
+        });
+      }
+      var lines=[];
+      lines.push(
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">'+
+          '<span style="font-family:\'Cinzel\',serif;font-size:.92em;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.04em">Goalpost</span>'+
+          '<span style="font-family:\'Cinzel\',serif;font-size:1.15em;color:var(--ink);font-weight:700">'+thresh+' progress</span>'+
+          (thresh<base
+            ?'<span style="font-size:.78em;color:var(--forest)">(base '+base+' \u2212 '+(base-thresh)+' acceleration)</span>'
+            :'<span style="font-size:.78em;color:var(--ink-light)">(base '+base+', no acceleration)</span>')+
+        '</div>'
+      );
+      if(contributors.length){
+        lines.push(
+          '<div style="margin-top:4px"><span style="color:var(--ink-light);font-size:.92em">Active in '+esc(territoryLabel)+': </span>'+
+          contributors.map(function(b){
+            return '<span style="display:inline-block;margin:1px 4px 1px 0;padding:1px 7px;background:rgba(31,111,31,.12);border:1px solid var(--forest);border-radius:3px;font-size:.92em;color:var(--forest)">\u2212'+DOWNTIME_BUILDING_STEP+' '+esc(b)+'</span>';
+          }).join('')+
+          '</div>'
+        );
+      } else {
+        lines.push(
+          '<div style="margin-top:4px;color:var(--ink-light);font-size:.92em;font-style:italic">No buildings in '+esc(territoryLabel)+' currently accelerate this track.</div>'
+        );
+      }
+      if(notYetAccelerating.length){
+        var preview=notYetAccelerating.slice(0,3);
+        lines.push(
+          '<div style="margin-top:4px;font-size:.92em;color:var(--ink-light)">Could accelerate further: '+
+          preview.map(function(b){return esc(b);}).join(', ')+
+          (notYetAccelerating.length>3?', \u2026':'')+
+          '</div>'
+        );
+      } else if(thresh===floor){
+        lines.push(
+          '<div style="margin-top:4px;font-size:.92em;color:var(--gold-dark);font-weight:600">\u272a Maximum acceleration reached \u2014 threshold at floor.</div>'
+        );
+      }
+      threshEl.innerHTML=lines.join('');
+      threshEl.style.display='';
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────
 }
 function downtimePillPick(mins){
   DOWNTIME_PENDING.endsAt=Date.now()+((parseInt(mins,10)||240)*60000);
@@ -20497,8 +20784,9 @@ function _cpkProgressHtml(c,ci){
         var p=cleanKey.split(':');
         var type=p[0]||'';
         var target=p.slice(1).join(':')||'core';
-        // Threshold logic mirrors the modal at line ~19485.
-        var threshold=(type==='contacts'?6:(type==='intel'?5:8));
+        // v1.7158 — territory-aware threshold (replaces the old type/target
+        // expression that didn't include faith and ignored building accel).
+        var threshold=downtimeThreshold(type,target,c);
         var total=keys.reduce(function(sum,k){return sum+(progressMap[k]||0);},0);
         var pct=Math.min(100,Math.round(total/threshold*100));
         var label=downtimeTrackLabel(type,target);
@@ -21166,7 +21454,10 @@ function renderParty(){
         var bParts=bestKey.split(':');
         var bType=bParts[0],bTarget=bParts.slice(1).join(':')||'core';
         trackLabel=downtimeTrackLabel(bType,bTarget);
-        trackThreshold=(bType==='contacts'||bType==='faith'?6:(bType==='intel'?5:8));
+        // v1.7158 — territory-aware threshold so the bar's progress
+        // percentage reflects the actual goalpost (which may have moved
+        // due to building investments since the player last saw the bar).
+        trackThreshold=downtimeThreshold(bType,bTarget,e.c);
         trackProg=prog[bestKey]||0;
       }
       var pct=Math.min(100,Math.round(trackProg/trackThreshold*100));
@@ -23240,7 +23531,8 @@ document.getElementById('plist').addEventListener('click',function(e){
         var parts=cleanKey.split(':');
         var type=parts[0]||'';
         var target=parts.slice(1).join(':')||'core';
-        var threshold=(type==='contacts'?6:(type==='intel'?5:8));
+        // v1.7158 — territory-aware threshold; bc2 is the character.
+        var threshold=downtimeThreshold(type,target,bc2);
         var isDirty=keys.length>1||(keys.length===1&&keys[0]!==cleanKey);
         var totalProg=keys.reduce(function(sum,k){return sum+(progressMap[k]||0);},0);
         var pct=Math.min(100,Math.round(totalProg/threshold*100));
@@ -23328,7 +23620,8 @@ document.getElementById('plist').addEventListener('click',function(e){
         var parts=cleanKey.split(':');
         var type=parts[0]||'';
         var target=parts.slice(1).join(':')||'core';
-        var threshold=(type==='contacts'?6:(type==='intel'?5:8));
+        // v1.7158 — territory-aware threshold; bc2fresh is the character.
+        var threshold=downtimeThreshold(type,target,bc2fresh);
         var isDirty=keys.length>1||(keys.length===1&&keys[0]!==cleanKey);
         var totalProg=keys.reduce(function(sum,k){return sum+(progressMap2[k]||0);},0);
         var pct=Math.min(100,Math.round(totalProg/threshold*100));
@@ -35198,7 +35491,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7155';
+var RQ_CLIENT_VERSION='v1.7158';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -41256,7 +41549,13 @@ if(_dtAct && !_dtAct.dataset.bound){
 var _dtTarget=document.getElementById('ov-dt-target');
 if(_dtTarget && !_dtTarget.dataset.bound){
   _dtTarget.dataset.bound='1';
-  _dtTarget.addEventListener('change',function(){DOWNTIME_PENDING.target=this.value||'';});
+  _dtTarget.addEventListener('change',function(){
+    DOWNTIME_PENDING.target=this.value||'';
+    // v1.7158 — Re-render so the threshold breakdown panel reflects the
+    // newly-selected target. Was a no-op before; with per-skill / per-deity
+    // building contributions, the goalpost now changes mid-modal.
+    renderDowntimeModal();
+  });
 }
 var _dtNo=document.getElementById('ov-dt-no');
 if(_dtNo && !_dtNo.dataset.bound){
