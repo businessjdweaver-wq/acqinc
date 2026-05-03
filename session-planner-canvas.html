@@ -81,7 +81,7 @@ html, body {
 /* ── CANVAS ──────────────────────────────────────────────── */
 #canvas-wrap {
   position: absolute;
-  top: 44px; left: 0; right: 0; bottom: 0;
+  top: 44px; left: 88px; right: 0; bottom: 0;     /* leave 88px on the left for #campaign-frame */
   overflow: hidden;
   background:
     radial-gradient(ellipse at center, #1f1a12 0%, #14110b 100%);
@@ -89,6 +89,253 @@ html, body {
 }
 #canvas-wrap.panning { cursor: grabbing; }
 #canvas-wrap.spacedown { cursor: grab; }
+
+/* ── CAMPAIGN FRAME (left strip) ─────────────────────────────
+   Screen-fixed column running the height of the canvas viewport.
+   Holds nodes that have been promoted to campaign scope from any
+   session in this campaign — so they appear here on EVERY session
+   except their home session (where they live on the canvas interior).
+   See stage 6a notes for the home_session_id rule.
+
+   Layout: ~88px wide, vertical stack of mini-cards. Scrolls internally
+   if more nodes than fit. */
+#campaign-frame {
+  position: absolute;
+  top: 44px; left: 0; bottom: 0;
+  width: 88px;
+  background: linear-gradient(180deg, #1a1610 0%, #0f0c08 100%);
+  border-right: 1px solid var(--gold-faint);
+  box-shadow: 2px 0 10px rgba(0,0,0,0.6);
+  display: flex;
+  flex-direction: column;
+  z-index: 5;
+}
+#campaign-frame-title {
+  font-family: 'Cinzel', serif;
+  letter-spacing: 0.18em;
+  font-size: 0.55rem;
+  color: var(--gold-pale);
+  text-transform: uppercase;
+  text-align: center;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--gold-faint);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  align-self: center;
+  flex-shrink: 0;
+}
+#campaign-frame-title:after { content: ''; }
+#campaign-frame-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 4px;
+  display: flex; flex-direction: column;
+  gap: 6px;
+}
+#campaign-frame-list::-webkit-scrollbar { width: 4px; }
+#campaign-frame-list::-webkit-scrollbar-thumb { background: var(--gold-faint); border-radius: 2px; }
+
+.frame-card {
+  position: relative;
+  padding: 6px 4px;
+  background: rgba(184,134,11,0.08);
+  border: 1px solid rgba(184,134,11,0.4);
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+  user-select: none;
+}
+.frame-card:hover { background: rgba(184,134,11,0.18); border-color: var(--gold); }
+.frame-card.selected { box-shadow: 0 0 0 1px var(--gold), inset 0 0 12px rgba(184,134,11,0.2); }
+.frame-card-icon { font-size: 1.3rem; line-height: 1; }
+.frame-card-title {
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.65rem;
+  color: var(--bone);
+  line-height: 1.1;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  max-width: 100%;
+}
+.frame-card-type {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.5rem;
+  letter-spacing: 0.08em;
+  color: var(--steel-pale);
+  text-transform: uppercase;
+}
+
+/* Anchors on frame cards are smaller and live only on the right edge,
+   since cross-scope edges always go OUT of the frame (to the canvas). */
+.frame-card .anchor {
+  position: absolute;
+  width: 6px; height: 6px;
+  background: var(--gold);
+  border-radius: 50%;
+  top: 50%;
+  right: -3px;
+  transform: translateY(-50%);
+  cursor: crosshair;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 2;
+}
+.frame-card:hover .anchor,
+.frame-card.selected .anchor,
+body.connecting .frame-card .anchor { opacity: 1; }
+
+/* Cross-scope edges (session ↔ frame) get a distinct gold stroke. */
+#canvas-svg path.edge.cross-scope {
+  stroke: var(--gold);
+  stroke-dasharray: 4 3;
+}
+#canvas-svg path.edge.cross-scope:hover { stroke: var(--gold-pale); }
+
+/* ── WRAP-SESSION MODAL ──────────────────────────────────────── */
+#wrap-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+#wrap-modal.open { display: flex; }
+#wrap-modal-card {
+  background: linear-gradient(180deg, #1a1610 0%, #14110b 100%);
+  border: 1px solid var(--gold);
+  border-radius: 4px;
+  width: min(720px, 92vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.8);
+}
+#wrap-modal-head {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--gold-faint);
+  display: flex; align-items: center; gap: 10px;
+}
+#wrap-modal-head h3 {
+  margin: 0;
+  font-family: 'Cinzel', serif;
+  font-size: 1rem;
+  letter-spacing: 0.12em;
+  color: var(--gold-pale);
+  text-transform: uppercase;
+  flex: 1;
+}
+#wrap-modal-close {
+  background: transparent;
+  border: 1px solid var(--gold-faint);
+  color: var(--steel-pale);
+  width: 28px; height: 28px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+}
+#wrap-modal-close:hover { color: var(--gold-pale); border-color: var(--gold); }
+#wrap-modal-blurb {
+  padding: 12px 18px 4px;
+  color: var(--steel-pale);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+#wrap-modal-list {
+  padding: 10px 18px;
+  overflow-y: auto;
+  flex: 1;
+}
+.wrap-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(184,134,11,0.12);
+}
+.wrap-row:last-child { border-bottom: none; }
+.wrap-row-icon { font-size: 1.1rem; }
+.wrap-row-title {
+  font-family: 'Crimson Pro', Georgia, serif;
+  color: var(--bone);
+  font-size: 0.95rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wrap-row-type {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.wrap-row label {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  color: var(--steel-pale);
+  cursor: pointer;
+  padding: 3px 7px;
+  border: 1px solid rgba(184,134,11,0.2);
+  border-radius: 2px;
+}
+.wrap-row label:hover { color: var(--gold-pale); border-color: var(--gold); }
+.wrap-row label.checked {
+  color: var(--gold-pale);
+  background: rgba(184,134,11,0.15);
+  border-color: var(--gold);
+}
+.wrap-row input[type="radio"] { display: none; }
+#wrap-modal-foot {
+  padding: 14px 18px;
+  border-top: 1px solid var(--gold-faint);
+  display: flex; gap: 10px; justify-content: flex-end;
+}
+#wrap-modal-foot button {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(184,134,11,0.4);
+  color: var(--gold-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  padding: 7px 14px;
+  border-radius: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+#wrap-modal-foot button.primary {
+  background: linear-gradient(180deg, rgba(184,134,11,0.35), rgba(139,90,43,0.35));
+  border-color: var(--gold);
+}
+#wrap-modal-foot button:hover { filter: brightness(1.3); }
+#wrap-modal-empty {
+  padding: 30px 18px;
+  text-align: center;
+  color: var(--steel-pale);
+  font-style: italic;
+}
+
+/* Wrap session button in topbar */
+#btnWrapSession {
+  background: rgba(184,134,11,0.15);
+  border: 1px solid rgba(184,134,11,0.4);
+  color: var(--gold-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  padding: 5px 11px;
+  border-radius: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+#btnWrapSession:hover { background: rgba(184,134,11,0.28); border-color: var(--gold); }
 
 /* The transform layer — both the SVG (connectors) and the nodes
    live inside this and share its pan/zoom. */
@@ -1650,7 +1897,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 5g / action overrides</span>
+  <span class="topbar-version">stage 6a / campaign frame</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -1659,6 +1906,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <button class="btn" onclick="openTypeChooserFromButton(event)" title="Add node — opens type chooser">+ Add Node</button>
     <button class="btn btn-ghost" onclick="frameSelection()" title="Frame selection or all nodes (F)">⌗ Frame</button>
     <button class="btn btn-ghost" onclick="resetView()">⌖ Reset View</button>
+    <button id="btnWrapSession" onclick="openWrapSessionModal()" title="Wrap session — choose which nodes to promote to campaign / arc scope">📜 Wrap Session</button>
     <button class="btn" id="btnSaveNow" onclick="saveCurrentSession()" title="Save canvas to current session">💾 Save</button>
     <span id="canvas-saved-status" class="idle" title="Save status">Idle</span>
     <span id="b20-status" title="Beyond20 dice roller status — green when the browser extension is detected">
@@ -1669,6 +1917,39 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 </div>
 
 <!-- Format banner removed in 4c — canvas is the only format going forward. -->
+
+<!-- ── CAMPAIGN FRAME (left strip, screen-fixed) ── -->
+<div id="campaign-frame">
+  <div id="campaign-frame-title">Campaign</div>
+  <div id="campaign-frame-list">
+    <!-- Frame cards injected by renderCampaignFrame() -->
+  </div>
+</div>
+
+<!-- Cross-scope edges (canvas ↔ frame) draw in screen coordinates,
+     not canvas coordinates, so they stay aligned when the canvas pans
+     or zooms. Lives outside #canvas-content. -->
+<svg id="cross-scope-svg" style="position:absolute; top:44px; left:0; right:0; bottom:0; pointer-events:none; z-index:6; overflow:visible;"></svg>
+
+<!-- ── WRAP-SESSION MODAL ── -->
+<div id="wrap-modal">
+  <div id="wrap-modal-card">
+    <div id="wrap-modal-head">
+      <h3>Wrap Session — Promote Nodes</h3>
+      <button id="wrap-modal-close" onclick="closeWrapSessionModal()">✕</button>
+    </div>
+    <div id="wrap-modal-blurb">
+      Decide which nodes from this session should persist beyond it. <b>Campaign</b>-scoped nodes appear in the left frame on every session in this campaign. <b>Session</b> means the node stays on this canvas only. (Arc scope coming in a follow-up stage.)
+    </div>
+    <div id="wrap-modal-list">
+      <!-- Rows injected by renderWrapSessionList() -->
+    </div>
+    <div id="wrap-modal-foot">
+      <button onclick="closeWrapSessionModal()">Cancel</button>
+      <button class="primary" onclick="applyWrapSessionPromotions()">Apply</button>
+    </div>
+  </div>
+</div>
 
 <!-- ── CANVAS ── -->
 <div id="canvas-wrap">
@@ -1687,7 +1968,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 5g · action overrides</div>
+  <div id="stage-label">Stage 6a · campaign frame</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -2326,19 +2607,26 @@ window.addEventListener('beforeunload', (e) => {
 
 // ── SESSION STATE ──
 const sessionState = {
-  campaigns: [],   // [{id,name,system}]
+  campaigns: [],   // [{id,name,system,blocks}]
   arcs: [],        // [{id,campaign_id,title}]
   sessions: [],    // [{id,arc_id,campaign_id,title,session_date,blocks,...}]
   currentSessionId: null,
+  // Campaign-scope tracking. The current session belongs to one campaign;
+  // we cache that campaign's full blocks JSONB here so the left frame can
+  // render across sessions without re-fetching. Edits write back via PATCH
+  // through saveCampaignBlocksDirty().
+  currentCampaignId: null,
+  campaignBlocks: { nodes: [], edges: [] },
+  campaignSaveGen: 0,
+  campaignLastSavedGen: 0,
+  campaignSaveTimer: null,
+  campaignSaveInFlight: false,
 };
 
 // ── PICKER FETCH ──
 async function loadCampaignsAndArcsAndSessions() {
-  // Use allSettled so a 400/403 on one table doesn't blank out the others.
-  // Surface any errors so the picker doesn't show a misleading "no campaigns" empty state.
   const [campsR, arcsR, sessR] = await Promise.allSettled([
-    sbFetch('campaigns?select=id,name,system&order=name.asc'),
-    // NB: arcs uses `name`, not `title` — the v0.4.2 schema confirms this.
+    sbFetch('campaigns?select=id,name,system,blocks&order=name.asc'),
     sbFetch('arcs?select=id,campaign_id,name,sort_order&order=campaign_id.asc,sort_order.asc'),
     sbFetch('sessions?select=id,campaign_id,arc_id,title,session_date,status,blocks,sort_order&order=campaign_id.asc,sort_order.asc'),
   ]);
@@ -2349,7 +2637,7 @@ async function loadCampaignsAndArcsAndSessions() {
   else { sessionState.arcs = []; errors.push('arcs: ' + arcsR.reason.message); }
   if (sessR.status  === 'fulfilled') sessionState.sessions = sessR.value || [];
   else { sessionState.sessions = []; errors.push('sessions: ' + sessR.reason.message); }
-  sessionState._errors = errors;     // picker renderer reads this
+  sessionState._errors = errors;
 }
 
 // ── PICKER UI ──
@@ -2367,6 +2655,200 @@ async function openSessionPicker() {
 }
 function closeSessionPicker() {
   sessionPicker.classList.remove('open');
+}
+
+// ── WRAP-SESSION MODAL ────────────────────────────────────
+// Opens a list of every node currently visible on the canvas plus the
+// frame, with radio buttons to choose scope: session / campaign. Apply
+// pushes the choices through, moving nodes between sessions.blocks and
+// campaigns.blocks as needed.
+let wrapModalChoices = {};   // { nodeId: 'session' | 'campaign' }
+function openWrapSessionModal() {
+  if (!sessionState.currentSessionId) {
+    alert('Open a session first.');
+    return;
+  }
+  wrapModalChoices = {};
+  // Pre-fill choices: existing campaign-scope nodes default to 'campaign',
+  // session-scope nodes default to 'session'. The user can change either.
+  state.nodes.forEach(n => {
+    wrapModalChoices[n.id] = n.scope === 'campaign' ? 'campaign' : 'session';
+  });
+  // Frame nodes (campaign-scope, non-home) are also listed so the user can
+  // demote them. They default to 'campaign' (their current state).
+  (sessionState.campaignBlocks.nodes || []).forEach(n => {
+    if (n.home_session_id !== sessionState.currentSessionId) {
+      wrapModalChoices[n.id] = 'campaign';
+    }
+  });
+  renderWrapModalList();
+  document.getElementById('wrap-modal').classList.add('open');
+}
+
+function closeWrapSessionModal() {
+  document.getElementById('wrap-modal').classList.remove('open');
+}
+
+function renderWrapModalList() {
+  const list = document.getElementById('wrap-modal-list');
+  if (!list) return;
+
+  // Build rows from canvas + frame.
+  const rows = [];
+  state.nodes.forEach(n => {
+    const def = BLOCK_TYPES[n.type] || BLOCK_TYPES.scene;
+    rows.push({
+      id: n.id, title: n.title, type: n.type, def,
+      currentScope: n.scope === 'campaign' ? 'campaign' : 'session',
+      location: 'canvas',
+    });
+  });
+  (sessionState.campaignBlocks.nodes || []).forEach(n => {
+    if (n.home_session_id === sessionState.currentSessionId) return; // already shown above
+    const def = BLOCK_TYPES[n.type] || BLOCK_TYPES.scene;
+    rows.push({
+      id: n.id, title: n.title || def.defaultTitle, type: n.type, def,
+      currentScope: 'campaign',
+      location: 'frame',
+      home_session_id: n.home_session_id,
+    });
+  });
+
+  if (!rows.length) {
+    list.innerHTML = '<div id="wrap-modal-empty">No nodes yet — add some scenes, NPCs, or items to the canvas first.</div>';
+    return;
+  }
+
+  list.innerHTML = rows.map(r => {
+    const choice = wrapModalChoices[r.id] || r.currentScope;
+    const isFrameOnly = r.location === 'frame';
+    const homeNote = isFrameOnly
+      ? `<span style="font-size:0.65rem;color:var(--steel-pale);margin-left:8px;opacity:0.7;">(in frame · home: another session)</span>`
+      : '';
+    return `
+      <div class="wrap-row" data-row-id="${r.id}">
+        <span class="wrap-row-icon">${r.def.icon}</span>
+        <div>
+          <span class="wrap-row-title">${escHtml(r.title || r.def.defaultTitle)}</span>
+          ${homeNote}
+          <div class="wrap-row-type">${escHtml(r.def.label)}</div>
+        </div>
+        <label class="${choice === 'session' ? 'checked' : ''}">
+          <input type="radio" name="wrap-${r.id}" value="session" ${choice === 'session' ? 'checked' : ''}>
+          Session only
+        </label>
+        <label class="${choice === 'campaign' ? 'checked' : ''}">
+          <input type="radio" name="wrap-${r.id}" value="campaign" ${choice === 'campaign' ? 'checked' : ''}>
+          Campaign
+        </label>
+        <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:var(--steel-pale);opacity:0.5;">arc soon</span>
+      </div>`;
+  }).join('');
+
+  // Wire radios — track choice and toggle "checked" class on the parent label.
+  list.querySelectorAll('input[type="radio"]').forEach(input => {
+    input.addEventListener('change', (e) => {
+      const row = input.closest('.wrap-row');
+      if (!row) return;
+      const id = row.dataset.rowId;
+      wrapModalChoices[id] = input.value;
+      row.querySelectorAll('label').forEach(l => l.classList.remove('checked'));
+      input.closest('label').classList.add('checked');
+    });
+  });
+}
+
+// Apply the user's promotion choices. For each node:
+//   • If new scope === 'campaign' AND not currently in campaignBlocks
+//     → promote (move from session.blocks to campaign.blocks; keep
+//       home_session_id as currentSessionId)
+//   • If new scope === 'session' AND currently in campaignBlocks
+//     → demote (remove from campaignBlocks; if it was home-native to this
+//       session, restore to canvas; otherwise it returns to the home
+//       session's canvas next time that session is opened)
+//   • Otherwise no change
+function applyWrapSessionPromotions() {
+  const cid = sessionState.currentSessionId;
+  if (!cid) return;
+
+  let promoted = 0, demoted = 0;
+  Object.entries(wrapModalChoices).forEach(([nodeId, newScope]) => {
+    const canvasNode = state.nodes.get(nodeId);
+    const inCamp = (sessionState.campaignBlocks.nodes || []).find(n => n.id === nodeId);
+
+    if (newScope === 'campaign' && !inCamp) {
+      // Promote: take canvas node data, push into campaignBlocks, mark
+      // its `scope` so the canvas saver no longer writes it to sessions.blocks.
+      if (!canvasNode) return;
+      const promotedRecord = {
+        id:      canvasNode.id,
+        type:    canvasNode.type,
+        x:       canvasNode.x,
+        y:       canvasNode.y,
+        title:   canvasNode.title,
+        summary: canvasNode.summary || '',
+        fields:  canvasNode.fields || {},
+        scope:   'campaign',
+        home_session_id: cid,
+        promoted_at: new Date().toISOString(),
+      };
+      sessionState.campaignBlocks.nodes.push(promotedRecord);
+      // Mutate the canvas node so its later serialize knows it's campaign
+      canvasNode.scope = 'campaign';
+      canvasNode.home_session_id = cid;
+      canvasNode.promoted_at = promotedRecord.promoted_at;
+      if (canvasNode.el) canvasNode.el.dataset.scope = 'campaign';
+      promoted++;
+    } else if (newScope === 'session' && inCamp) {
+      // Demote: remove from campaignBlocks. If it WAS home-native to this
+      // session, the canvas already has it as a campaign-scope node — flip
+      // its scope back to session. If it wasn't home-native (lived only
+      // in the frame), remove from frame and the next time we open its
+      // home session it'll appear there as a session-scope node.
+      sessionState.campaignBlocks.nodes = sessionState.campaignBlocks.nodes
+        .filter(n => n.id !== nodeId);
+      if (canvasNode && canvasNode.scope === 'campaign') {
+        canvasNode.scope = 'session';
+        delete canvasNode.home_session_id;
+        delete canvasNode.promoted_at;
+        if (canvasNode.el) canvasNode.el.dataset.scope = 'session';
+      } else if (inCamp.home_session_id !== cid) {
+        // Not home — push the demoted record into the home session's
+        // sessions.blocks. We can't easily PATCH another session's blocks
+        // from here without re-fetching it, so we just rely on the home
+        // session's next open: it'll see no campaignBlocks entry for this
+        // node, and... actually we have a problem: if we drop it from
+        // campaignBlocks WITHOUT pushing to sessions.blocks, the node is
+        // gone entirely. Let me handle this properly:
+        const homeRow = sessionState.sessions.find(s => String(s.id) === String(inCamp.home_session_id));
+        if (homeRow) {
+          const blocks = homeRow.blocks && homeRow.blocks.nodes ? homeRow.blocks : { nodes: [], edges: [] };
+          blocks.nodes = blocks.nodes || [];
+          blocks.nodes.push({
+            id: inCamp.id, type: inCamp.type, x: inCamp.x, y: inCamp.y,
+            title: inCamp.title, summary: inCamp.summary || '',
+            fields: inCamp.fields || {},
+          });
+          homeRow.blocks = blocks;
+          // PATCH the home session row so the demote sticks
+          sbFetch('sessions?id=eq.' + inCamp.home_session_id, {
+            method: 'PATCH',
+            prefer: 'return=minimal',
+            body: JSON.stringify({ blocks }),
+          }).catch(e => console.warn('Failed to demote into home session:', e.message));
+        }
+      }
+      demoted++;
+    }
+  });
+
+  if (promoted || demoted) {
+    markDirty();          // session.blocks may have shifted (promoted nodes leave)
+    markCampaignDirty();  // campaign.blocks definitely changed
+    renderCampaignFrame();
+    redrawEdges();
+  }
+  closeWrapSessionModal();
 }
 
 function renderSessionPicker() {
@@ -2517,12 +2999,14 @@ async function createNewSession(campaignId, arcId) {
 
 // ── SERIALIZE / DESERIALIZE THE CANVAS ──
 function serializeCanvas() {
-  // Walk state.nodes preserving insertion order. State.edges already an array.
-  const nodes = [];
+  // Partition canvas nodes by scope. Session-scope nodes go into the
+  // session's blocks; campaign-scope nodes (which appear here because
+  // this IS their home session) get sync'd back into the cached
+  // campaignBlocks (and then autosaved to campaigns.blocks).
+  const sessionNodes = [];
+  const campaignNodesUpdate = [];
   state.nodes.forEach(n => {
-    // Deep-clean encounter monsters of `_editingAction` (a UI-only flag for
-    // the override editor — purely "is this card currently editing"). Other
-    // transient fields like `_peekOpen` are intentionally preserved.
+    // Strip transient fields shared by both scopes.
     const fields = n.fields ? { ...n.fields } : {};
     if (Array.isArray(fields.monsters)) {
       fields.monsters = fields.monsters.map(m => {
@@ -2534,12 +3018,11 @@ function serializeCanvas() {
         return m;
       });
     }
-    // Same scrub for NPC stat-skin editor state
     if (fields.skin && fields.skin._editingAction) {
       fields.skin = { ...fields.skin };
       delete fields.skin._editingAction;
     }
-    nodes.push({
+    const base = {
       id:      n.id,
       type:    n.type,
       x:       n.x,
@@ -2547,18 +3030,50 @@ function serializeCanvas() {
       title:   n.title,
       summary: n.summary || '',
       fields:  fields,
-    });
+    };
+    if (n.scope === 'campaign') {
+      campaignNodesUpdate.push({
+        ...base,
+        scope: 'campaign',
+        home_session_id: n.home_session_id || sessionState.currentSessionId,
+        promoted_at: n.promoted_at || new Date().toISOString(),
+      });
+    } else {
+      sessionNodes.push(base);
+    }
   });
+
+  // Edges: keep all in session.blocks. The renderer resolves cross-scope
+  // targets at load time. Edges where either endpoint is campaign-scope
+  // (i.e., crosses into the frame on a non-home session) ride along here
+  // because they were authored in this session.
   const edges = state.edges.map(e => ({
     id: e.id,
     from_node: e.from.nodeId,
     to_node:   e.to.nodeId,
     dir:       e.dir,
   }));
+
+  // Reconcile campaign-scope nodes: the canvas may have new positions or
+  // edited fields for nodes that live in campaignBlocks. Sync them.
+  if (campaignNodesUpdate.length && sessionState.campaignBlocks.nodes) {
+    let mutated = false;
+    campaignNodesUpdate.forEach(updated => {
+      const idx = sessionState.campaignBlocks.nodes.findIndex(n => n.id === updated.id);
+      if (idx >= 0) {
+        sessionState.campaignBlocks.nodes[idx] = updated;
+      } else {
+        sessionState.campaignBlocks.nodes.push(updated);
+      }
+      mutated = true;
+    });
+    if (mutated) markCampaignDirty();
+  }
+
   return {
     format: 'canvas',
     version: 1,
-    nodes,
+    nodes: sessionNodes,
     edges,
     view: { x: VIEW.x, y: VIEW.y, zoom: VIEW.zoom },
   };
@@ -2577,11 +3092,12 @@ function deserializeCanvas(data) {
   state.pendingAnchor = null;
   document.body.classList.remove('connecting');
 
-  // Restore nodes — build directly with the saved id so anchor handlers
-  // close over the correct identity from the start (going through createNode
-  // and renaming afterward leaves stale ids in event-handler closures).
   let maxIdSeq = 0;
-  (data.nodes || []).forEach(nd => {
+  // Helper to instantiate a single node onto the canvas — used both for
+  // session-scope nodes from data.nodes AND for campaign-scope nodes whose
+  // home_session_id matches the current session (they live on the canvas
+  // interior in their home session, in the left frame everywhere else).
+  const buildAndAttach = (nd, scope) => {
     const def = BLOCK_TYPES[nd.type] || BLOCK_TYPES.scene;
     const node = {
       id: nd.id,
@@ -2592,12 +3108,15 @@ function deserializeCanvas(data) {
       icon: def.icon,
       summary: nd.summary || '',
       fields: nd.fields || {},
+      scope: scope,                            // 'session' | 'campaign'
+      home_session_id: nd.home_session_id || null,
     };
     const el = document.createElement('div');
     el.className = 'node';
     el.dataset.nodeId = nd.id;
     el.dataset.type   = nd.type;
     el.dataset.size   = def.size;
+    el.dataset.scope  = scope;
     el.style.left = nd.x + 'px';
     el.style.top  = nd.y + 'px';
     el.innerHTML = renderNodeFace(node);
@@ -2608,18 +3127,39 @@ function deserializeCanvas(data) {
     attachAnchorClicks(el, node);
     wireNodeBodyClickToOpenPanel(el, node);
     wireMonsterRollClicks(el, node); wireTrapRollClicks(el, node); wireSceneHazardClicks(el, node); wireNpcPeekClicks(el, node);
-    // Track highest numeric suffix so future createNode IDs don't collide
     const m = String(nd.id).match(/^n(\d+)$/);
     if (m) { const n = parseInt(m[1]); if (n > maxIdSeq) maxIdSeq = n; }
+  };
+
+  (data.nodes || []).forEach(nd => buildAndAttach(nd, 'session'));
+
+  // Merge home-native campaign-scope nodes into the canvas.
+  const cid = sessionState.currentSessionId;
+  (sessionState.campaignBlocks.nodes || []).forEach(nd => {
+    if (nd.home_session_id === cid) buildAndAttach(nd, 'campaign');
   });
-  // Bump the sequence past the max loaded id
+
   if (maxIdSeq >= nodeIdSeq) nodeIdSeq = maxIdSeq + 1;
 
-  // Restore edges (target nodes exist by now)
+  // Restore edges (target nodes might be in any scope — but at this
+  // point all nodes that should be on the canvas are loaded).
   (data.edges || []).forEach(ed => {
     const a = state.nodes.get(ed.from_node);
     const b = state.nodes.get(ed.to_node);
-    if (!a || !b) return;
+    if (!a || !b) {
+      // Edge target lives in the frame (campaign scope, non-home session).
+      // We still want to render this — but the existing createEdge expects
+      // both endpoints to be canvas nodes. Use the cross-scope variant.
+      const ra = a ? { nodeId: ed.from_node, scope: 'session' } : resolveAnchorEndpoint(ed.from_node);
+      const rb = b ? { nodeId: ed.to_node,   scope: 'session' } : resolveAnchorEndpoint(ed.to_node);
+      if (!ra || !rb) return;     // dangling — silently drop
+      createEdge(
+        { nodeId: ed.from_node, anchor: ed.from_anchor || 'mr' },
+        { nodeId: ed.to_node,   anchor: ed.to_anchor   || 'ml' },
+        ed.dir || 'forward'
+      );
+      return;
+    }
     createEdge(
       { nodeId: ed.from_node },
       { nodeId: ed.to_node },
@@ -2635,31 +3175,215 @@ function deserializeCanvas(data) {
     applyTransform();
   }
   updateEmptyHint();
-  // Force a redraw so edges line up with their nodes' final positions
   requestAnimationFrame(() => redrawEdges());
+}
+
+// Helper: confirm a node ID exists in any scope (used during edge restore)
+function resolveAnchorEndpoint(nodeId) {
+  if (state.nodes.has(nodeId)) return { nodeId, scope: 'session' };
+  const cn = (sessionState.campaignBlocks.nodes || []).find(n => n.id === nodeId);
+  if (cn) return { nodeId, scope: 'campaign' };
+  return null;
 }
 
 // ── LOAD A SESSION INTO THE CANVAS ──
 async function loadSessionData(sessionRow) {
   loadingSession = true;
   sessionState.currentSessionId = sessionRow.id;
+  sessionState.currentCampaignId = sessionRow.campaign_id || null;
   document.getElementById('topbarSession').textContent = sessionRow.title || 'Untitled Session';
 
   const fmt = detectSessionFormat(sessionRow);
   if (fmt === 'canvas') {
     deserializeCanvas(sessionRow.blocks);
   } else {
-    // Classic-format (or empty/unknown): start with an empty canvas. The
-    // first save from canvas will overwrite the row's blocks with
-    // canvas-shaped data, retiring the classic shape for that session.
     deserializeCanvas({ nodes: [], edges: [], view: { x: 0, y: 0, zoom: 1 } });
   }
+  // Load campaign-scope blocks (frame contents) for the new session's
+  // parent campaign. We pull from the cached campaigns list when possible
+  // to avoid an extra round-trip — they were fetched alongside sessions.
+  loadCampaignBlocksForCurrentSession();
+  renderCampaignFrame();
   loadingSession = false;
   // Loaded state is by definition not dirty.
   saveGen = lastSavedGen = 0;
+  sessionState.campaignSaveGen = sessionState.campaignLastSavedGen = 0;
   setCanvasSavedState('saved');
   updateEmptyHint();
 }
+
+// Load campaign blocks for the current campaign into sessionState.
+// Pulls from the cached campaigns list (same fetch as the picker).
+function loadCampaignBlocksForCurrentSession() {
+  const cid = sessionState.currentCampaignId;
+  if (!cid) {
+    sessionState.campaignBlocks = { nodes: [], edges: [] };
+    return;
+  }
+  const camp = sessionState.campaigns.find(c => String(c.id) === String(cid));
+  const blocks = (camp && camp.blocks) || { nodes: [], edges: [] };
+  // Tolerate the column being missing (e.g. migration not yet run): default
+  // to empty without throwing.
+  sessionState.campaignBlocks = {
+    nodes: Array.isArray(blocks.nodes) ? blocks.nodes : [],
+    edges: Array.isArray(blocks.edges) ? blocks.edges : [],
+  };
+}
+
+// Mark campaign blocks dirty so they get autosaved.
+function markCampaignDirty() {
+  if (loadingSession) return;
+  if (!sessionState.currentCampaignId) return;
+  sessionState.campaignSaveGen++;
+  setCanvasSavedState('dirty');
+  if (sessionState.campaignSaveTimer) clearTimeout(sessionState.campaignSaveTimer);
+  sessionState.campaignSaveTimer = setTimeout(attemptCampaignAutosave, AUTOSAVE_DEBOUNCE_MS);
+}
+
+async function attemptCampaignAutosave() {
+  sessionState.campaignSaveTimer = null;
+  const cid = sessionState.currentCampaignId;
+  if (!cid) return;
+  if (sessionState.campaignSaveGen === sessionState.campaignLastSavedGen) return;
+  if (sessionState.campaignSaveInFlight) return;     // simple lock; another change will retry
+  sessionState.campaignSaveInFlight = true;
+  setCanvasSavedState('saving');
+  try {
+    const payload = {
+      nodes: sessionState.campaignBlocks.nodes || [],
+      edges: sessionState.campaignBlocks.edges || [],
+    };
+    await sbFetch('campaigns?id=eq.' + cid, {
+      method: 'PATCH',
+      prefer: 'return=minimal',
+      body: JSON.stringify({ blocks: payload }),
+    });
+    // Update cached campaigns list so subsequent reads are consistent
+    const camp = sessionState.campaigns.find(c => String(c.id) === String(cid));
+    if (camp) camp.blocks = payload;
+    sessionState.campaignLastSavedGen = sessionState.campaignSaveGen;
+    setCanvasSavedState('saved');
+  } catch (e) {
+    console.warn('Campaign autosave failed:', e.message);
+    setCanvasSavedState('error');
+  } finally {
+    sessionState.campaignSaveInFlight = false;
+  }
+}
+
+// Resolve a node ID across all three scopes (session canvas, campaign
+// frame). Used by edge-resolution code so cross-scope edges work.
+function resolveNodeAnyScope(nodeId) {
+  const sn = state.nodes.get(nodeId);
+  if (sn) return { node: sn, scope: 'session', el: sn.el };
+  const cn = (sessionState.campaignBlocks.nodes || []).find(n => n.id === nodeId);
+  if (cn) {
+    // Frame nodes don't have an `el` like canvas nodes do; the renderer
+    // gives each frame card a data-frame-node-id attribute we can lookup.
+    const el = document.querySelector('.frame-card[data-frame-node-id="' + nodeId + '"]');
+    return { node: cn, scope: 'campaign', el };
+  }
+  return null;
+}
+
+// ── CAMPAIGN FRAME RENDER ────────────────────────────────
+// Each campaign-scope node either:
+//   • appears on the canvas interior of its home session, or
+//   • appears in the left frame on every other session of this campaign.
+//
+// Decision rule: is this node's home_session_id === currentSessionId?
+function renderCampaignFrame() {
+  const list = document.getElementById('campaign-frame-list');
+  if (!list) return;
+  const cid  = sessionState.currentSessionId;
+  const all  = sessionState.campaignBlocks.nodes || [];
+  // Filter: nodes NOT native to this session (those render on the canvas
+  // interior via deserializeCanvas's merge step).
+  const frameNodes = all.filter(n => n.home_session_id !== cid);
+  if (!frameNodes.length) {
+    list.innerHTML = '<div style="color:var(--steel-pale);font-size:0.55rem;font-family:JetBrains Mono,monospace;letter-spacing:0.05em;text-align:center;padding:14px 4px;opacity:0.5;line-height:1.4;">No promoted nodes yet. Use the <b>Wrap Session</b> button after a session to promote recurring NPCs, items, or scenes here.</div>';
+    return;
+  }
+  list.innerHTML = frameNodes.map(n => {
+    const def = BLOCK_TYPES[n.type] || BLOCK_TYPES.scene;
+    const icon = def.icon;
+    return `
+      <div class="frame-card" data-frame-node-id="${n.id}" title="${escAttr(def.label + ': ' + (n.title || ''))}">
+        <span class="frame-card-icon">${icon}</span>
+        <span class="frame-card-title">${escHtml(n.title || def.defaultTitle || 'Node')}</span>
+        <span class="frame-card-type">${escHtml(def.label)}</span>
+        <div class="anchor" data-anchor="mr" data-node-id="${n.id}" data-scope="campaign"></div>
+      </div>`;
+  }).join('');
+  // Wire interactions
+  list.querySelectorAll('.frame-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      // Anchor clicks shouldn't open the side panel
+      if (e.target.classList.contains('anchor')) return;
+      const id = card.dataset.frameNodeId;
+      openFrameNodeInSidePanel(id);
+    });
+  });
+  // Anchor click → start/finish a connector. Mirrors the per-node
+  // attachAnchorClicks path but reads the frame node via campaignBlocks.
+  list.querySelectorAll('.anchor').forEach(a => {
+    a.addEventListener('mousedown', (e) => {
+      if (e.button === 0) e.stopPropagation();
+    });
+    a.addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleFrameAnchorClick(a);
+    });
+  });
+}
+
+function handleFrameAnchorClick(anchorEl) {
+  const nodeId = anchorEl.dataset.nodeId;
+  const anchorKey = anchorEl.dataset.anchor;
+  if (!state.pendingAnchor) {
+    // Start a pending connection from a frame node
+    anchorEl.classList.add('active');
+    state.pendingAnchor = { nodeId, anchor: anchorKey, anchorEl, scope: 'campaign' };
+    document.body.classList.add('connecting');
+    showPendingFrom(anchorEl);
+    return;
+  }
+  const p = state.pendingAnchor;
+  if (p.nodeId === nodeId && p.anchor === anchorKey) { clearPending(); return; }
+  if (p.nodeId === nodeId) { clearPending(); return; }
+  // Other end could be canvas or another frame card.
+  createEdge(
+    { nodeId: p.nodeId, anchor: p.anchor },
+    { nodeId,           anchor: anchorKey },
+    'forward'
+  );
+  clearPending();
+  redrawEdges();
+}
+
+// Open a campaign-frame node in the side panel for editing.
+// Edits write back to sessionState.campaignBlocks (then autosave to
+// campaigns.blocks via markCampaignDirty()).
+function openFrameNodeInSidePanel(nodeId) {
+  const cn = (sessionState.campaignBlocks.nodes || []).find(n => n.id === nodeId);
+  if (!cn) return;
+  // We need a node-shaped object for renderSidePanelBody. The campaign
+  // node has the same fields/title/etc. as canvas nodes, just lacks the
+  // DOM `.el`. We mark openNodeId here to a special string scheme so the
+  // commit path knows to write back to campaign blocks instead of canvas.
+  const def = BLOCK_TYPES[cn.type] || BLOCK_TYPES.scene;
+  // Stash a stand-in object on a per-side-panel-session key
+  spOpenFrameNode = cn;
+  openNodeId = '__frame__' + cn.id;
+  spTitle.value = cn.title || def.defaultTitle || 'Untitled';
+  renderSidePanelBody({ ...cn, type: cn.type, fields: cn.fields || {} }, def);
+  sidePanel.classList.add('open');
+  // Mark the matching frame card as selected
+  document.querySelectorAll('.frame-card.selected').forEach(el => el.classList.remove('selected'));
+  const card = document.querySelector('.frame-card[data-frame-node-id="' + nodeId + '"]');
+  if (card) card.classList.add('selected');
+}
+let spOpenFrameNode = null;
 
 // ── SAVE NOW (toolbar button + Save & Close) ──
 async function saveCurrentSession() {
@@ -2919,6 +3643,14 @@ function applyTransform() {
     `translate(${VIEW.x}px, ${VIEW.y}px) scale(${VIEW.zoom})`;
   drawGrid();
   zoomHud.textContent = Math.round(VIEW.zoom * 100) + '%';
+  // Cross-scope edges live in the screen-fixed layer but their canvas
+  // endpoints move with pan/zoom. Redraw them so they keep up.
+  state.edges.forEach(e => {
+    const aRes = resolveEdgeEndpoint(e.from.nodeId);
+    const bRes = resolveEdgeEndpoint(e.to.nodeId);
+    if (!aRes || !bRes) return;
+    if (aRes.where === 'frame' || bRes.where === 'frame') redrawEdge(e);
+  });
 }
 
 // ── BACKGROUND GRID (drawn separately so it tiles correctly) ──
@@ -3249,11 +3981,82 @@ function removeNode(node) {
   doomed.forEach(removeEdge);
   // Remove from selection if present
   state.selectedNodes.delete(node.id);
-  // Remove from DOM and registry
+
+  // Campaign-scope nodes: per the delete-policy, deletion DEMOTES rather
+  // than destroys. Behavior depends on whether this is the home session:
+  //   • Home session (node lives on canvas as scope=campaign):
+  //       Just flip its scope back to 'session'. Stays on canvas.
+  //   • Non-home session (node would be in the frame, not canvas):
+  //       removeNode is reached via the frame card path. Pull from
+  //       campaignBlocks and push into the home session's blocks.
+  if (node.scope === 'campaign') {
+    const cid = sessionState.currentSessionId;
+    if (node.home_session_id === cid) {
+      // Demote in place: stays on canvas, just no longer campaign-scoped
+      node.scope = 'session';
+      delete node.home_session_id;
+      delete node.promoted_at;
+      if (node.el) node.el.dataset.scope = 'session';
+      // Also remove from campaignBlocks since it's no longer campaign-scoped
+      sessionState.campaignBlocks.nodes = (sessionState.campaignBlocks.nodes || [])
+        .filter(n => n.id !== node.id);
+      markDirty();
+      markCampaignDirty();
+      renderCampaignFrame();
+      updateEmptyHint();
+      return;
+    }
+    // Else: this can't happen via removeNode normally because non-home
+    // campaign nodes don't appear on the canvas as draggable elements.
+    // Defensive fallthrough: just remove from campaignBlocks.
+    sessionState.campaignBlocks.nodes = (sessionState.campaignBlocks.nodes || [])
+      .filter(n => n.id !== node.id);
+    if (node.el && node.el.parentNode) node.el.parentNode.removeChild(node.el);
+    state.nodes.delete(node.id);
+    markCampaignDirty();
+    renderCampaignFrame();
+    updateEmptyHint();
+    return;
+  }
+
+  // Session-scope: standard delete.
   if (node.el && node.el.parentNode) node.el.parentNode.removeChild(node.el);
   state.nodes.delete(node.id);
   updateEmptyHint();
   markDirty();
+}
+
+// Delete a frame node (clicked on a frame card while having Del / Backspace?
+// or via its own UI hook). Per the delete policy, this DEMOTES — pushes the
+// node back into its home session's blocks and removes from campaignBlocks.
+function demoteFrameNode(nodeId) {
+  const cn = (sessionState.campaignBlocks.nodes || []).find(n => n.id === nodeId);
+  if (!cn) return;
+  const homeId = cn.home_session_id;
+  // Remove from campaignBlocks
+  sessionState.campaignBlocks.nodes = sessionState.campaignBlocks.nodes
+    .filter(n => n.id !== nodeId);
+  // Push back into home session's blocks (PATCH that row)
+  if (homeId) {
+    const homeRow = sessionState.sessions.find(s => String(s.id) === String(homeId));
+    if (homeRow) {
+      const blocks = homeRow.blocks && homeRow.blocks.nodes ? homeRow.blocks : { nodes: [], edges: [] };
+      blocks.nodes = blocks.nodes || [];
+      blocks.nodes.push({
+        id: cn.id, type: cn.type, x: cn.x, y: cn.y,
+        title: cn.title, summary: cn.summary || '',
+        fields: cn.fields || {},
+      });
+      homeRow.blocks = blocks;
+      sbFetch('sessions?id=eq.' + homeId, {
+        method: 'PATCH',
+        prefer: 'return=minimal',
+        body: JSON.stringify({ blocks }),
+      }).catch(e => console.warn('Demote: home-session PATCH failed:', e.message));
+    }
+  }
+  markCampaignDirty();
+  renderCampaignFrame();
 }
 
 function escHtml(s) {
@@ -3430,9 +4233,57 @@ function applyEdgeMarkers(edge) {
 const DIR_GLYPH = { both: '↔', forward: '→', backward: '←', none: '—' };
 
 function redrawEdge(edge) {
-  const a = state.nodes.get(edge.from.nodeId);
-  const b = state.nodes.get(edge.to.nodeId);
-  if (!a || !b) return;
+  // Endpoints may be in different scopes. Resolve each to either:
+  //   • a canvas node (state.nodes — has DOM .el inside #canvas-content), or
+  //   • a frame card (campaignBlocks node — DOM .frame-card in #campaign-frame).
+  const aRes = resolveEdgeEndpoint(edge.from.nodeId);
+  const bRes = resolveEdgeEndpoint(edge.to.nodeId);
+  if (!aRes || !bRes) return;
+
+  const isCrossScope = (aRes.where === 'frame') || (bRes.where === 'frame');
+  if (isCrossScope) {
+    // Move the edge's DOM into the cross-scope SVG layer if it isn't there.
+    const csSvg = document.getElementById('cross-scope-svg');
+    if (csSvg && edge.groupEl.parentNode !== csSvg) {
+      csSvg.appendChild(edge.groupEl);
+    }
+    edge.pathEl.classList.add('edge', 'cross-scope');
+    edge.hitEl.classList.add('edge-hitbox');     // unchanged
+    // Compute screen-space anchor positions for both endpoints.
+    const p1 = getAnchorScreenPos(aRes);
+    const p2 = getAnchorScreenPos(bRes);
+    if (!p1 || !p2) return;
+    // Adjust to layer-local coords. cross-scope-svg is screen-anchored at
+    // top:44px left:0; subtract its bounding-rect offset.
+    const rect = csSvg.getBoundingClientRect();
+    const q1 = { x: p1.x - rect.left, y: p1.y - rect.top };
+    const q2 = { x: p2.x - rect.left, y: p2.y - rect.top };
+    // Pick rough normals: frame anchors point right (mr), canvas anchors face
+    // back toward the frame (ml). For simplicity, use horizontal normals.
+    const n1 = aRes.where === 'frame' ? ANCHOR_NORMAL.mr : ANCHOR_NORMAL.ml;
+    const n2 = bRes.where === 'frame' ? ANCHOR_NORMAL.mr : ANCHOR_NORMAL.ml;
+    const d  = pathDFor(q1, q2, n1, n2);
+    edge.pathEl.setAttribute('d', d);
+    edge.hitEl.setAttribute('d', d);
+    let mx, my;
+    try {
+      const total = edge.pathEl.getTotalLength();
+      const pt = edge.pathEl.getPointAtLength(total / 2);
+      mx = pt.x; my = pt.y;
+    } catch (e) {
+      mx = (q1.x + q2.x) / 2; my = (q1.y + q2.y) / 2;
+    }
+    edge.pillFOEl.setAttribute('x', mx - 13);
+    edge.pillFOEl.setAttribute('y', my - 13);
+    return;
+  }
+
+  // Both endpoints are canvas nodes — render in canvas space as before.
+  if (edge.groupEl.parentNode !== svg) {
+    svg.appendChild(edge.groupEl);
+    edge.pathEl.classList.remove('cross-scope');
+  }
+  const a = aRes.node, b = bRes.node;
   const pair = pickBestAnchorPair(a, b);
   edge.currentFromAnchor = pair.fromAnchor;
   edge.currentToAnchor   = pair.toAnchor;
@@ -3443,18 +4294,41 @@ function redrawEdge(edge) {
   const d  = pathDFor(p1, p2, n1, n2);
   edge.pathEl.setAttribute('d', d);
   edge.hitEl.setAttribute('d', d);
-  // Pill at the actual midpoint of the curve
   let mx, my;
   try {
     const total = edge.pathEl.getTotalLength();
     const pt = edge.pathEl.getPointAtLength(total / 2);
     mx = pt.x; my = pt.y;
   } catch (e) {
-    // Fallback if SVG not yet laid out
     mx = (p1.x + p2.x) / 2; my = (p1.y + p2.y) / 2;
   }
-  edge.pillFOEl.setAttribute('x', mx - 13);   // 13 = half pill width
+  edge.pillFOEl.setAttribute('x', mx - 13);
   edge.pillFOEl.setAttribute('y', my - 13);
+}
+
+// Resolve an edge endpoint id → { where: 'canvas'|'frame', node, el }.
+function resolveEdgeEndpoint(nodeId) {
+  const sn = state.nodes.get(nodeId);
+  if (sn) return { where: 'canvas', node: sn, el: sn.el };
+  const cn = (sessionState.campaignBlocks.nodes || []).find(n => n.id === nodeId);
+  if (cn) {
+    const el = document.querySelector('.frame-card[data-frame-node-id="' + nodeId + '"]');
+    if (el) return { where: 'frame', node: cn, el };
+  }
+  return null;
+}
+
+// Get anchor position in screen space for any endpoint kind.
+// Used by cross-scope edge drawing.
+function getAnchorScreenPos(res) {
+  if (!res || !res.el) return null;
+  const r = res.el.getBoundingClientRect();
+  if (res.where === 'frame') {
+    // Use the right-middle anchor on frame cards
+    return { x: r.right, y: r.top + r.height / 2 };
+  }
+  // Canvas node — pick the side closest to the frame (ml) for simplicity
+  return { x: r.left, y: r.top + r.height / 2 };
 }
 function redrawEdges() { state.edges.forEach(redrawEdge); }
 
@@ -3685,22 +4559,21 @@ function attachAnchorClicks(el, data) {
         // Second click
         const p = state.pendingAnchor;
         if (p.nodeId === data.id && p.anchor === anchorKey) {
-          // Clicked the same anchor → cancel
           clearPending();
           return;
         }
         if (p.nodeId === data.id) {
-          // Clicked a different anchor on the SAME node — also cancel,
-          // self-loops aren't useful in a session-planning context.
           clearPending();
           return;
         }
-        // Different node → make the edge. No snap; user places nodes wherever they like.
-        const srcNode = state.nodes.get(p.nodeId);
-        const dstNode = data;
+        // Resolve the source from any scope. The pending might have been
+        // started from a frame anchor (state.pendingAnchor.scope === 'campaign')
+        // so we don't insist on state.nodes.get returning a value.
+        const srcResolved = resolveEdgeEndpoint(p.nodeId);
+        if (!srcResolved) { clearPending(); return; }
         createEdge(
-          { nodeId: srcNode.id, anchor: p.anchor },
-          { nodeId: dstNode.id, anchor: anchorKey },
+          { nodeId: p.nodeId, anchor: p.anchor },
+          { nodeId: data.id,  anchor: anchorKey },
           'forward'
         );
         clearPending();
@@ -5747,6 +6620,24 @@ function dispatchMonsterRoll(imported, action, advantage) {
 
 function commitOpenNodeFromForm() {
   if (!openNodeId) return;
+  // Frame-node editing path: openNodeId is prefixed `__frame__` and the
+  // active node lives in sessionState.campaignBlocks (no DOM .el).
+  if (typeof openNodeId === 'string' && openNodeId.startsWith('__frame__')) {
+    const cn = spOpenFrameNode;
+    if (!cn) return;
+    cn.title = spTitle.value || (BLOCK_TYPES[cn.type]?.defaultTitle || 'Untitled');
+    cn.fields = cn.fields || {};
+    spBody.querySelectorAll('[data-field-key]').forEach(el => {
+      cn.fields[el.dataset.fieldKey] = el.value;
+    });
+    const def = BLOCK_TYPES[cn.type] || BLOCK_TYPES.scene;
+    const sumField = (def.fields || []).find(f => f.summary);
+    if (sumField) cn.summary = cn.fields[sumField.key] || '';
+    // Update the cached campaignBlocks entry (cn IS that entry by reference).
+    renderCampaignFrame();
+    markCampaignDirty();
+    return;
+  }
   const node = state.nodes.get(openNodeId);
   if (!node) return;
   // Title
@@ -5765,7 +6656,22 @@ function commitOpenNodeFromForm() {
   // Repaint face — but preserve anchors (don't blow them away during a connection)
   refreshNodeFace(node);
   redrawEdges();
-  markDirty();
+  // Routing: campaign-scope nodes write back to campaign.blocks; session
+  // nodes follow the regular session autosave path.
+  if (node.scope === 'campaign') {
+    // Sync this node's data into the cached campaignBlocks entry
+    const idx = sessionState.campaignBlocks.nodes.findIndex(n => n.id === node.id);
+    if (idx >= 0) {
+      sessionState.campaignBlocks.nodes[idx] = {
+        ...sessionState.campaignBlocks.nodes[idx],
+        title: node.title, x: node.x, y: node.y,
+        summary: node.summary, fields: node.fields,
+      };
+    }
+    markCampaignDirty();
+  } else {
+    markDirty();
+  }
 }
 
 // Repaint a node's face HTML in place. Keeps anchors fresh because we
