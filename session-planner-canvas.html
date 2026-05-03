@@ -995,6 +995,110 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 .node-mon-roll-btn .roll-icon { font-size: 0.95rem; }
 .node-mon-roll-btn.save { border-color: rgba(184,134,11,0.3); }     /* save-or-damage style */
 
+/* Roll button + edit-pencil pair. Both buttons hug each other; the
+   wrap is what `node-mon-actions` flex-flows. */
+.node-mon-roll-wrap {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+}
+.node-mon-roll-wrap .node-mon-roll-btn {
+  border-top-right-radius: 0; border-bottom-right-radius: 0;
+  border-right-width: 0;
+}
+.node-mon-edit-btn {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(184,134,11,0.4);
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+  border-radius: 0 3px 3px 0;
+  color: var(--steel-pale);
+  font-size: 0.7rem;
+  padding: 0 6px;
+  cursor: pointer;
+  display: inline-flex; align-items: center;
+}
+.node-mon-edit-btn:hover { color: var(--gold-pale); border-color: var(--gold); background: rgba(184,134,11,0.15); }
+/* When the wrap has an override applied, mark the roll button with a
+   subtle gold underline so the user can see at a glance which actions
+   have been customized. */
+.node-mon-roll-wrap.has-override .node-mon-roll-btn {
+  background: linear-gradient(180deg, rgba(184,134,11,0.32), rgba(139,90,43,0.28));
+  box-shadow: inset 0 -2px 0 0 var(--gold);
+}
+
+/* ── ACTION OVERRIDE EDITOR ──────────────────────────────
+   Renders inline below the actions row when the user clicks ✎. Edits
+   override fields on the snapshot's action object. Empty fields = no
+   override (resolver falls back to structured / parsed values). */
+.node-mon-override {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: rgba(184,134,11,0.06);
+  border: 1px solid rgba(184,134,11,0.3);
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+}
+.node-mon-override-title {
+  font-family: 'Cinzel', serif;
+  letter-spacing: 0.1em;
+  color: var(--gold-pale);
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  margin-bottom: 6px;
+  display: flex; align-items: center; gap: 8px;
+}
+.node-mon-override-title .ov-name {
+  color: var(--bone);
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-style: italic;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 0.85rem;
+}
+.node-mon-override-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px 10px;
+  margin-bottom: 8px;
+}
+.node-mon-override-grid label {
+  display: flex; flex-direction: column; gap: 2px;
+  color: var(--steel-pale);
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.node-mon-override-grid input,
+.node-mon-override-grid select {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(184,134,11,0.3);
+  color: var(--bone);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  padding: 3px 6px;
+  border-radius: 2px;
+}
+.node-mon-override-grid input::placeholder { color: rgba(200,180,140,0.4); font-style: italic; }
+.node-mon-override-actions {
+  display: flex; gap: 6px; justify-content: flex-end;
+}
+.node-mon-override-actions button {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(184,134,11,0.4);
+  color: var(--gold-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  padding: 4px 10px;
+  border-radius: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+.node-mon-override-actions button:hover { filter: brightness(1.3); }
+.node-mon-override-actions .clear { color: var(--steel-pale); }
+.node-mon-override-actions .clear:hover { color: var(--ember-pale); border-color: var(--ember-pale); }
+
 /* ── PEEK EXPANSION (mini stat-block on canvas card) ─────── */
 .node-mon-peek-toggle {
   background: transparent;
@@ -1546,7 +1650,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 5f / prose parse + triggers</span>
+  <span class="topbar-version">stage 5g / action overrides</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -1583,7 +1687,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 5f · prose parse + triggers</div>
+  <div id="stage-label">Stage 5g · action overrides</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -2416,6 +2520,25 @@ function serializeCanvas() {
   // Walk state.nodes preserving insertion order. State.edges already an array.
   const nodes = [];
   state.nodes.forEach(n => {
+    // Deep-clean encounter monsters of `_editingAction` (a UI-only flag for
+    // the override editor — purely "is this card currently editing"). Other
+    // transient fields like `_peekOpen` are intentionally preserved.
+    const fields = n.fields ? { ...n.fields } : {};
+    if (Array.isArray(fields.monsters)) {
+      fields.monsters = fields.monsters.map(m => {
+        if (m && m._editingAction) {
+          const clean = { ...m };
+          delete clean._editingAction;
+          return clean;
+        }
+        return m;
+      });
+    }
+    // Same scrub for NPC stat-skin editor state
+    if (fields.skin && fields.skin._editingAction) {
+      fields.skin = { ...fields.skin };
+      delete fields.skin._editingAction;
+    }
     nodes.push({
       id:      n.id,
       type:    n.type,
@@ -2423,7 +2546,7 @@ function serializeCanvas() {
       y:       n.y,
       title:   n.title,
       summary: n.summary || '',
-      fields:  n.fields  || {},
+      fields:  fields,
     });
   });
   const edges = state.edges.map(e => ({
@@ -4539,13 +4662,6 @@ function renderOneMonsterCard(m, idx, isSingleton) {
   // Special abilities (Death Burst, Frightful Presence, etc.) live under
   // `special_abilities` (DB column) or `special` (SRD bundled shape).
   const specials = (sn.special_abilities || sn.special || []).slice(0, 8);
-  // Diagnostic: see exactly what's in the snapshot at render time so we
-  // can tell if specials are missing because the snapshot lacks them or
-  // because the parser is rejecting them.
-  console.log('[render card]', sn.name, '| actions:', sn.actions?.length || 0, '| special_abilities:', sn.special_abilities?.length || 0, '| special:', sn.special?.length || 0);
-  if (sn.actions) console.log('  actions raw:', sn.actions);
-  if (sn.special_abilities) console.log('  special_abilities raw:', sn.special_abilities);
-  if (sn.special) console.log('  special raw:', sn.special);
   const peekOpen = !!m._peekOpen;
   const isDead = (typeof m.hp_current === 'number') && m.hp_current <= 0;
   const isDeactivated = !!m._deactivated;
@@ -4572,8 +4688,70 @@ function renderOneMonsterCard(m, idx, isSingleton) {
           ${actions.map((a, ai) => renderActionButton(a, idx, ai)).join('')}
         </div>` : '<div class="node-mon-stats" style="opacity:0.6;">No rollable actions on this stat block.</div>'}
       ${renderTriggerButtons(specials, idx)}
+      ${renderOverrideEditor(m, idx)}
       <div class="node-mon-peek ${peekOpen ? 'open' : ''}" data-peek-body="${idx}">
         ${renderMonsterPeekBody(m, idx)}
+      </div>
+    </div>`;
+}
+
+// ── ACTION OVERRIDE EDITOR ────────────────────────────────
+// Inline editor that opens when the user clicks ✎ on an action or
+// trigger button. Edits write to action._override on the snapshot;
+// resolveAbilityMechanics reads the override first.
+//
+// Per-instance UI state: `m._editingAction = { kind: 'action'|'trigger', i: actIdx }`
+// indicates which action this card is currently editing. Closed when null.
+function renderOverrideEditor(m, monIdx) {
+  const editing = m._editingAction;
+  if (!editing) return '';
+  const sn = m.snapshot || {};
+  const list = editing.kind === 'trigger'
+    ? (sn.special_abilities || sn.special || [])
+    : (sn.actions || []);
+  const a = list[editing.i];
+  if (!a) return '';
+  const ov = a._override || {};
+  const r  = resolveAbilityMechanics(a);
+  const ab = (val) => ['STR','DEX','CON','INT','WIS','CHA'].map(k =>
+    `<option value="${k}" ${val === k ? 'selected' : ''}>${k}</option>`
+  ).join('');
+  // Show resolver's current value as placeholder so DM sees what they
+  // have right now without needing to open Workshop. Override value (if
+  // any) shows in the input itself.
+  const ph = (val) => val == null || val === '' ? '' : `placeholder="${escAttr(String(val))}"`;
+  return `
+    <div class="node-mon-override" data-mon-override="${monIdx}">
+      <div class="node-mon-override-title">
+        Override <span class="ov-name">${escHtml(a.name || '?')}</span>
+      </div>
+      <div class="node-mon-override-grid">
+        <label>To-Hit
+          <input type="text" data-ov-key="toHit"       value="${escAttr(ov.toHit || '')}"       ${ph(r.toHit)}>
+        </label>
+        <label>Reach / Range
+          <input type="text" data-ov-key="reach"       value="${escAttr(ov.reach || '')}"       ${ph(r.reach || r.range)}>
+        </label>
+        <label>Save DC
+          <input type="text" data-ov-key="saveDC"      value="${escAttr(ov.saveDC || '')}"      ${ph(r.saveDC)}>
+        </label>
+        <label>Save Ability
+          <select data-ov-key="saveAbility">
+            <option value="" ${!ov.saveAbility ? 'selected' : ''}>— use parsed (${escHtml(r.saveAbility || '?')}) —</option>
+            ${ab(ov.saveAbility)}
+          </select>
+        </label>
+        <label>Damage Dice
+          <input type="text" data-ov-key="damage"      value="${escAttr(ov.damage || '')}"      ${ph(r.damage)}>
+        </label>
+        <label>Damage Type
+          <input type="text" data-ov-key="damageType"  value="${escAttr(ov.damageType || '')}"  ${ph(r.damageType)}>
+        </label>
+      </div>
+      <div class="node-mon-override-actions">
+        <button class="clear" data-ov-action="clear" type="button">Clear All</button>
+        <button data-ov-action="cancel" type="button">Cancel</button>
+        <button data-ov-action="apply" type="button">Apply</button>
       </div>
     </div>`;
 }
@@ -4724,26 +4902,35 @@ function parseAbilityProse(desc) {
   return out;
 }
 
-// Resolve an ability's mechanics. Structured fields on the action (or
-// special_ability) override prose parsing. Returns the fully-resolved
-// shape that dispatchers can consume.
+// Resolve an ability's mechanics. Priority order:
+//   1. Per-action override (a._override) — set via the canvas peek editor
+//   2. Structured fields on the action (a.toHit, a.saveDC, a.damage, ...)
+//   3. Prose-parsed values from a.desc
+//
+// Overrides let a DM patch a wrong damage formula, save DC, or damage
+// type without leaving the canvas — useful when imported stat blocks
+// have bad data baked in.
 function resolveAbilityMechanics(a) {
   if (!a) return {};
+  const ov = a._override || {};
   const parsed = parseAbilityProse(a.desc || '');
+  // Helper: pick first non-empty value among override, structured, parsed.
+  const pick = (ovV, structV, parsedV) => {
+    if (ovV !== undefined && ovV !== null && ovV !== '') return ovV;
+    if (structV !== undefined && structV !== null && structV !== '') return structV;
+    return parsedV;
+  };
   return {
     name:        a.name || 'Ability',
     desc:        a.desc || '',
-    // Attack info — only structured (Workshop never auto-parses to-hit
-    // numbers from prose because they're rare in save-or-damage abilities).
-    toHit:       a.toHit,
+    toHit:       pick(ov.toHit, a.toHit, undefined),
     attackType:  a.attackType,
-    reach:       a.reach,
-    range:       a.range || parsed.range,
-    // Save / damage — structured fields win, prose fills the gaps.
-    saveDC:      (a.saveDC ?? a.save_dc ?? a.dc) || parsed.saveDC,
-    saveAbility: (a.saveAbility || a.save_ability || a.save) || parsed.saveAbility,
-    damage:      a.damage || (a.damages && a.damages[0]) || parsed.damage,
-    damageType:  a.dmgType || a.damageType || (a.damageTypes && a.damageTypes[0]) || parsed.damageType,
+    reach:       pick(ov.reach, a.reach, undefined),
+    range:       pick(ov.range, a.range, parsed.range),
+    saveDC:      pick(ov.saveDC, (a.saveDC ?? a.save_dc ?? a.dc), parsed.saveDC),
+    saveAbility: pick(ov.saveAbility, (a.saveAbility || a.save_ability || a.save), parsed.saveAbility),
+    damage:      pick(ov.damage, (a.damage || (a.damages && a.damages[0])), parsed.damage),
+    damageType:  pick(ov.damageType, (a.dmgType || a.damageType || (a.damageTypes && a.damageTypes[0])), parsed.damageType),
   };
 }
 
@@ -4757,10 +4944,15 @@ function renderActionButton(a, monIdx, actIdx) {
   const cls = (isSave && !isAttack) ? 'node-mon-roll-btn save' : 'node-mon-roll-btn';
   // Append range if known and not already in the name (helps DM situate the AoE)
   const rangeChip = (m.range && !a.name.includes('ft')) ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
-  return `<button class="${cls}" data-mon-roll="${monIdx}-${actIdx}" type="button"
-            title="Roll ${escAttr(a.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}">
+  const hasOverride = !!(a._override && Object.keys(a._override).some(k => a._override[k] !== '' && a._override[k] != null));
+  return `<span class="node-mon-roll-wrap${hasOverride ? ' has-override' : ''}">
+    <button class="${cls}" data-mon-roll="${monIdx}-${actIdx}" type="button"
+            title="Roll ${escAttr(a.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}">
             <span class="roll-icon">🎲</span>${escHtml(a.name)}${rangeChip}
-          </button>`;
+    </button>
+    <button class="node-mon-edit-btn" data-mon-edit="${monIdx}-${actIdx}-action" type="button"
+            title="Override action values">✎</button>
+  </span>`;
 }
 
 // Render special-ability buttons (Death Burst, Frightful Presence, etc.)
@@ -4769,28 +4961,24 @@ function renderActionButton(a, monIdx, actIdx) {
 // Returned in their own `node-mon-triggers` row, visually distinct from
 // the on-turn actions.
 function renderTriggerButtons(specials, monIdx) {
-  if (!Array.isArray(specials) || !specials.length) {
-    console.log('[triggers] no specials array for monster', monIdx, '— input:', specials);
-    return '';
-  }
-  console.group('[triggers] scanning', specials.length, 'special(s) for monster', monIdx);
+  if (!Array.isArray(specials) || !specials.length) return '';
   const items = [];
   specials.forEach((s, sIdx) => {
-    if (!s || !s.name) {
-      console.log('  skip entry', sIdx, '— no name. raw:', s);
-      return;
-    }
+    if (!s || !s.name) return;
     const m = resolveAbilityMechanics(s);
     const isSave = !!(m.saveDC || m.damage);
-    console.log('  ' + s.name, '→ resolved:', {saveDC: m.saveDC, damage: m.damage, range: m.range}, isSave ? '✓ button' : '✗ no mechanics');
     if (!isSave) return;
     const rangeChip = m.range ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
-    items.push(`<button class="node-mon-roll-btn save" data-mon-trigger="${monIdx}-${sIdx}" type="button"
-                  title="Trigger ${escAttr(s.name)}">
-                  <span class="roll-icon">⚡</span>${escHtml(s.name)}${rangeChip}
-                </button>`);
+    const hasOverride = !!(s._override && Object.keys(s._override).some(k => s._override[k] !== '' && s._override[k] != null));
+    items.push(`<span class="node-mon-roll-wrap${hasOverride ? ' has-override' : ''}">
+      <button class="node-mon-roll-btn save" data-mon-trigger="${monIdx}-${sIdx}" type="button"
+              title="Trigger ${escAttr(s.name)}${hasOverride ? ' — has override' : ''}">
+              <span class="roll-icon">⚡</span>${escHtml(s.name)}${rangeChip}
+      </button>
+      <button class="node-mon-edit-btn" data-mon-edit="${monIdx}-${sIdx}-trigger" type="button"
+              title="Override trigger values">✎</button>
+    </span>`);
   });
-  console.groupEnd();
   if (!items.length) return '';
   return `<div class="node-mon-actions" style="margin-top:4px;border-top:1px dashed rgba(184,134,11,0.15);padding-top:5px;">
     <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--steel-pale);margin-right:4px;">Triggers</span>
@@ -4838,6 +5026,94 @@ function wireMonsterRollClicks(nodeEl, node) {
       const s = specials[sIdx];
       if (!s) return;
       dispatchMonsterRoll(m, s, _advFromEvent(e));
+    });
+  });
+
+  // ── ✎ EDIT — open the override editor for an action or trigger ──
+  // Toggle behavior: clicking ✎ on the same action that's already being
+  // edited closes the editor. Clicking on a different action switches
+  // the editor to that action.
+  nodeEl.querySelectorAll('button[data-mon-edit]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const parts = btn.dataset.monEdit.split('-');
+      const monIdx = parseInt(parts[0]);
+      const i      = parseInt(parts[1]);
+      const kind   = parts[2];   // 'action' or 'trigger'
+      const m = monsters[monIdx];
+      if (!m) return;
+      const cur = m._editingAction;
+      if (cur && cur.kind === kind && cur.i === i) {
+        m._editingAction = null;
+      } else {
+        m._editingAction = { kind, i };
+      }
+      refreshNodeFace(node);
+      wireMonsterRollClicks(node.el, node);
+      wireTrapRollClicks(node.el, node);
+      wireSceneHazardClicks(node.el, node);
+      wireNpcPeekClicks(node.el, node);
+      redrawEdges();
+    });
+  });
+
+  // Override editor apply/cancel/clear + input plumbing.
+  nodeEl.querySelectorAll('.node-mon-override').forEach(panel => {
+    const monIdx = parseInt(panel.dataset.monOverride);
+    const m = monsters[monIdx];
+    if (!m || !m._editingAction) return;
+    const { kind, i } = m._editingAction;
+    const list = kind === 'trigger'
+      ? (m.snapshot.special_abilities || m.snapshot.special || [])
+      : (m.snapshot.actions || []);
+    const a = list[i];
+    if (!a) return;
+
+    // Stop click/mousedown from bubbling so panel doesn't close and the
+    // canvas doesn't react to text-selection inside the inputs.
+    panel.querySelectorAll('input, select').forEach(el => {
+      el.addEventListener('mousedown', (ev) => ev.stopPropagation());
+      el.addEventListener('click',     (ev) => ev.stopPropagation());
+    });
+
+    panel.querySelectorAll('button[data-ov-action]').forEach(btn => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const what = btn.dataset.ovAction;
+        if (what === 'cancel') {
+          m._editingAction = null;
+        } else if (what === 'clear') {
+          delete a._override;
+          m._editingAction = null;
+          markDirty();
+        } else if (what === 'apply') {
+          // Read every override input, only keep keys with non-empty values.
+          const next = {};
+          panel.querySelectorAll('[data-ov-key]').forEach(input => {
+            const k = input.dataset.ovKey;
+            const v = (input.value || '').trim();
+            if (v !== '') next[k] = v;
+          });
+          // Coerce saveDC to number if present (dispatcher accepts both)
+          if (next.saveDC) {
+            const n = parseInt(next.saveDC);
+            if (!isNaN(n)) next.saveDC = n;
+          }
+          if (Object.keys(next).length) {
+            a._override = next;
+          } else {
+            delete a._override;
+          }
+          m._editingAction = null;
+          markDirty();
+        }
+        refreshNodeFace(node);
+        wireMonsterRollClicks(node.el, node);
+        wireTrapRollClicks(node.el, node);
+        wireSceneHazardClicks(node.el, node);
+        wireNpcPeekClicks(node.el, node);
+        redrawEdges();
+      });
     });
   });
 
@@ -5002,7 +5278,8 @@ function renderNpcSkinFaceHtml(node) {
   const peekOpen = !!skin.peek_open;
   const isDead = (typeof skin.hp_current === 'number') && skin.hp_current <= 0;
   const isDeact = !!skin.deactivated;
-  const actions = (sn.actions || []).slice(0, 8);
+  const actions  = (sn.actions || []).slice(0, 8);
+  const specials = (sn.special_abilities || sn.special || []).slice(0, 8);
   return `
     <div class="node-npc-peek-wrap">
       <span class="node-npc-skin-chip">stats: <b>${escHtml(sn.name || '?')}</b> · ${escHtml(stats)}</span>
@@ -5021,9 +5298,91 @@ function renderNpcSkinFaceHtml(node) {
           <div class="node-mon-actions">
             ${actions.map((a, ai) => renderNpcActionButton(a, ai)).join('')}
           </div>` : '<div class="node-mon-stats" style="opacity:0.6;">No rollable actions on this stat block.</div>'}
+        ${renderNpcTriggerButtons(specials)}
+        ${renderNpcOverrideEditor(skin)}
         <div class="node-mon-peek ${peekOpen ? 'open' : ''}" data-npc-peek-body="1">
           ${renderNpcPeekBody(skin)}
         </div>
+      </div>
+    </div>`;
+}
+
+// NPC trigger buttons — same shape as encounter triggers, NPC-prefixed
+// data attributes so click handlers don't collide.
+function renderNpcTriggerButtons(specials) {
+  if (!Array.isArray(specials) || !specials.length) return '';
+  const items = [];
+  specials.forEach((s, sIdx) => {
+    if (!s || !s.name) return;
+    const m = resolveAbilityMechanics(s);
+    const isSave = !!(m.saveDC || m.damage);
+    if (!isSave) return;
+    const rangeChip = m.range ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
+    const hasOverride = !!(s._override && Object.keys(s._override).some(k => s._override[k] !== '' && s._override[k] != null));
+    items.push(`<span class="node-mon-roll-wrap${hasOverride ? ' has-override' : ''}">
+      <button class="node-mon-roll-btn save" data-npc-trigger="${sIdx}" type="button"
+              title="Trigger ${escAttr(s.name)}${hasOverride ? ' — has override' : ''}">
+              <span class="roll-icon">⚡</span>${escHtml(s.name)}${rangeChip}
+      </button>
+      <button class="node-mon-edit-btn" data-npc-edit="${sIdx}-trigger" type="button"
+              title="Override trigger values">✎</button>
+    </span>`);
+  });
+  if (!items.length) return '';
+  return `<div class="node-mon-actions" style="margin-top:4px;border-top:1px dashed rgba(184,134,11,0.15);padding-top:5px;">
+    <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--steel-pale);margin-right:4px;">Triggers</span>
+    ${items.join('')}
+  </div>`;
+}
+
+// NPC override editor — same UI as encounter, drives skin._editingAction.
+function renderNpcOverrideEditor(skin) {
+  const editing = skin._editingAction;
+  if (!editing) return '';
+  const sn = skin.snapshot || {};
+  const list = editing.kind === 'trigger'
+    ? (sn.special_abilities || sn.special || [])
+    : (sn.actions || []);
+  const a = list[editing.i];
+  if (!a) return '';
+  const ov = a._override || {};
+  const r  = resolveAbilityMechanics(a);
+  const ab = (val) => ['STR','DEX','CON','INT','WIS','CHA'].map(k =>
+    `<option value="${k}" ${val === k ? 'selected' : ''}>${k}</option>`
+  ).join('');
+  const ph = (val) => val == null || val === '' ? '' : `placeholder="${escAttr(String(val))}"`;
+  return `
+    <div class="node-mon-override" data-npc-override="1">
+      <div class="node-mon-override-title">
+        Override <span class="ov-name">${escHtml(a.name || '?')}</span>
+      </div>
+      <div class="node-mon-override-grid">
+        <label>To-Hit
+          <input type="text" data-ov-key="toHit"       value="${escAttr(ov.toHit || '')}"       ${ph(r.toHit)}>
+        </label>
+        <label>Reach / Range
+          <input type="text" data-ov-key="reach"       value="${escAttr(ov.reach || '')}"       ${ph(r.reach || r.range)}>
+        </label>
+        <label>Save DC
+          <input type="text" data-ov-key="saveDC"      value="${escAttr(ov.saveDC || '')}"      ${ph(r.saveDC)}>
+        </label>
+        <label>Save Ability
+          <select data-ov-key="saveAbility">
+            <option value="" ${!ov.saveAbility ? 'selected' : ''}>— use parsed (${escHtml(r.saveAbility || '?')}) —</option>
+            ${ab(ov.saveAbility)}
+          </select>
+        </label>
+        <label>Damage Dice
+          <input type="text" data-ov-key="damage"      value="${escAttr(ov.damage || '')}"      ${ph(r.damage)}>
+        </label>
+        <label>Damage Type
+          <input type="text" data-ov-key="damageType"  value="${escAttr(ov.damageType || '')}"  ${ph(r.damageType)}>
+        </label>
+      </div>
+      <div class="node-mon-override-actions">
+        <button class="clear" data-ov-action="clear" type="button">Clear All</button>
+        <button data-ov-action="cancel" type="button">Cancel</button>
+        <button data-ov-action="apply" type="button">Apply</button>
       </div>
     </div>`;
 }
@@ -5037,10 +5396,15 @@ function renderNpcActionButton(a, actIdx) {
   if (!isAttack && !isSave) return '';
   const cls = (isSave && !isAttack) ? 'node-mon-roll-btn save' : 'node-mon-roll-btn';
   const rangeChip = (m.range && !a.name.includes('ft')) ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
-  return `<button class="${cls}" data-npc-roll="${actIdx}" type="button"
-            title="Roll ${escAttr(a.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}">
+  const hasOverride = !!(a._override && Object.keys(a._override).some(k => a._override[k] !== '' && a._override[k] != null));
+  return `<span class="node-mon-roll-wrap${hasOverride ? ' has-override' : ''}">
+    <button class="${cls}" data-npc-roll="${actIdx}" type="button"
+            title="Roll ${escAttr(a.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}">
             <span class="roll-icon">🎲</span>${escHtml(a.name)}${rangeChip}
-          </button>`;
+    </button>
+    <button class="node-mon-edit-btn" data-npc-edit="${actIdx}-action" type="button"
+            title="Override action values">✎</button>
+  </span>`;
 }
 
 // NPC peek body: HP/multiplier, ability grid, save row. NO horde row
@@ -5124,6 +5488,94 @@ function wireNpcPeekClicks(nodeEl, node) {
       const a = (sn.actions || [])[actIdx];
       if (!a) return;
       dispatchNpcRoll(node, skin, a, _advFromEvent(e));
+    });
+  });
+
+  // NPC trigger buttons (special_abilities)
+  nodeEl.querySelectorAll('button[data-npc-trigger]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sIdx = parseInt(btn.dataset.npcTrigger);
+      const specials = sn.special_abilities || sn.special || [];
+      const s = specials[sIdx];
+      if (!s) return;
+      dispatchNpcRoll(node, skin, s, _advFromEvent(e));
+    });
+  });
+
+  // ✎ open NPC override editor
+  nodeEl.querySelectorAll('button[data-npc-edit]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const parts = btn.dataset.npcEdit.split('-');
+      const i    = parseInt(parts[0]);
+      const kind = parts[1];
+      const cur = skin._editingAction;
+      if (cur && cur.kind === kind && cur.i === i) {
+        skin._editingAction = null;
+      } else {
+        skin._editingAction = { kind, i };
+      }
+      refreshNodeFace(node);
+      wireMonsterRollClicks(node.el, node);
+      wireTrapRollClicks(node.el, node);
+      wireSceneHazardClicks(node.el, node);
+      wireNpcPeekClicks(node.el, node);
+      redrawEdges();
+    });
+  });
+
+  // NPC override editor: apply / cancel / clear
+  nodeEl.querySelectorAll('.node-mon-override[data-npc-override]').forEach(panel => {
+    if (!skin._editingAction) return;
+    const { kind, i } = skin._editingAction;
+    const list = kind === 'trigger'
+      ? (sn.special_abilities || sn.special || [])
+      : (sn.actions || []);
+    const a = list[i];
+    if (!a) return;
+
+    panel.querySelectorAll('input, select').forEach(el => {
+      el.addEventListener('mousedown', (ev) => ev.stopPropagation());
+      el.addEventListener('click',     (ev) => ev.stopPropagation());
+    });
+
+    panel.querySelectorAll('button[data-ov-action]').forEach(btn => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const what = btn.dataset.ovAction;
+        if (what === 'cancel') {
+          skin._editingAction = null;
+        } else if (what === 'clear') {
+          delete a._override;
+          skin._editingAction = null;
+          markDirty();
+        } else if (what === 'apply') {
+          const next = {};
+          panel.querySelectorAll('[data-ov-key]').forEach(input => {
+            const k = input.dataset.ovKey;
+            const v = (input.value || '').trim();
+            if (v !== '') next[k] = v;
+          });
+          if (next.saveDC) {
+            const n = parseInt(next.saveDC);
+            if (!isNaN(n)) next.saveDC = n;
+          }
+          if (Object.keys(next).length) {
+            a._override = next;
+          } else {
+            delete a._override;
+          }
+          skin._editingAction = null;
+          markDirty();
+        }
+        refreshNodeFace(node);
+        wireMonsterRollClicks(node.el, node);
+        wireTrapRollClicks(node.el, node);
+        wireSceneHazardClicks(node.el, node);
+        wireNpcPeekClicks(node.el, node);
+        redrawEdges();
+      });
     });
   });
 
@@ -5261,20 +5713,8 @@ function dispatchMonsterRoll(imported, action, advantage) {
   const ac = sn.ac || '';
   const hp = sn.hp || '';
 
-  // Resolve mechanics from structured fields + prose-parsed fallback.
+  // Resolve mechanics from override + structured + prose-parsed in priority.
   const resolved = resolveAbilityMechanics(action);
-
-  // ── DIAGNOSTIC LOGGING ───────────────────────────────────
-  // Helps narrow down "wrong action / wrong damage" bugs. See console
-  // when clicking an action button to confirm the dispatcher is reading
-  // what you expect it to.
-  console.group('[encounter dispatch] ' + (action.name || '?'));
-  console.log('action object (raw):', action);
-  console.log('action.desc:', action.desc);
-  console.log('action.damage / dmgType:', action.damage, '/', action.dmgType);
-  console.log('parsed (from desc):', parseAbilityProse(action.desc || ''));
-  console.log('resolved:', resolved);
-  console.groupEnd();
 
   if (resolved.toHit || resolved.toHit === 0) {
     // Attack roll. Rebuild damages array from action shape.
@@ -5302,7 +5742,6 @@ function dispatchMonsterRoll(imported, action, advantage) {
   const saveAbility = resolved.saveAbility || 'DEX';
   const dmgFormula  = resolved.damage      || '2d6';
   const dmgType     = resolved.damageType  || 'damage';
-  console.log('[encounter dispatch] firing save-or-damage:', saveAbility, 'DC', saveDC, '→', dmgFormula, dmgType);
   b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
 }
 
