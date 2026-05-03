@@ -897,25 +897,6 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   font-size: 0.95rem;
 }
 
-/* ── FORMAT MISMATCH BANNER ─────────────────────────────── */
-#format-banner {
-  position: absolute;
-  top: 56px; left: 50%;
-  transform: translateX(-50%);
-  background: rgba(60,40,12,0.95);
-  border: 1px solid var(--gold);
-  color: var(--gold-pale);
-  padding: 10px 16px;
-  border-radius: 4px;
-  font-family: 'Crimson Pro', Georgia, serif;
-  font-size: 0.95rem;
-  z-index: 80;
-  display: none;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.5);
-}
-#format-banner.visible { display: block; }
-#format-banner a { color: var(--gold-bright); margin-left: 10px; }
-
 /* ── CURRENT SESSION TITLE in topbar ────────────────────── */
 .topbar-session {
   font-family: 'Crimson Pro', Georgia, serif;
@@ -962,7 +943,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 4b+ / picker fix &amp; SSO</span>
+  <span class="topbar-version">stage 4c / autosave</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -979,11 +960,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   </div>
 </div>
 
-<!-- Format mismatch banner (shown when loaded session is classic-format) -->
-<div id="format-banner">
-  This session was authored in the classic planner.
-  <a href="session-planner.html" target="_blank">Open it there</a>
-</div>
+<!-- Format banner removed in 4c — canvas is the only format going forward. -->
 
 <!-- ── CANVAS ── -->
 <div id="canvas-wrap">
@@ -1002,7 +979,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 4b+ · picker fix &amp; SSO</div>
+  <div id="stage-label">Stage 4c · autosave</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -1022,7 +999,8 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <b>Connect</b>: click an anchor, then click another<br>
     <b>Direction</b>: click the arrow pill to cycle<br>
     <b>Select multiple</b>: <kbd>Shift</kbd>+drag to marquee<br>
-    <b>Delete</b>: <kbd>Del</kbd> on selected node(s) or connector
+    <b>Delete</b>: <kbd>Del</kbd> on selected node(s) or connector<br>
+    <b>Saving</b>: autosaved 600ms after each change
   </div>
 </div>
 
@@ -1208,16 +1186,21 @@ async function rqDoLogin() {
   }
 }
 
-function rqLogout() {
+async function rqLogout() {
+  // If there are unsaved changes, try to flush before signing out.
+  // (This best-effort save still goes through the user's current token.)
+  if (sessionState.currentSessionId && saveGen > lastSavedGen) {
+    try { await flushSaveNow(); } catch (e) { /* token may already be expired */ }
+  }
   rqClearAuth();
   // Clear loaded session and canvas state
   sessionState.currentSessionId = null;
   document.getElementById('topbarSession').textContent = 'No session loaded';
-  document.getElementById('format-banner').classList.remove('visible');
   state.edges.slice().forEach(removeEdge);
   state.nodes.forEach(n => { if (n.el && n.el.parentNode) n.el.parentNode.removeChild(n.el); });
   state.nodes.clear();
   state.selectedNodes.clear();
+  saveGen = lastSavedGen = 0;
   updateEmptyHint && updateEmptyHint();
   setCanvasSavedState('idle');
   rqShowLogin();
@@ -1244,6 +1227,104 @@ function setCanvasSavedState(s) {
   el.classList.add(s);
   el.textContent = ({ idle:'Idle', dirty:'Unsaved', saving:'Saving…', saved:'Saved', error:'Error' })[s] || s;
 }
+
+// ── AUTOSAVE STATE MACHINE ──
+// Generation counters protect against stale-response races. Every dirty event
+// bumps `saveGen`. When a save kicks off, it captures the current saveGen as
+// `inFlightGen`. On success, `lastSavedGen = inFlightGen`; we only flip the
+// status to 'saved' if no further changes happened in the meantime.
+let saveGen        = 0;
+let inFlightGen    = 0;
+let lastSavedGen   = 0;
+let saveTimer4c    = null;     // debounce timer
+let savePending    = false;    // true if a save fired while one was in flight
+let loadingSession = false;    // suppress markDirty during deserialization
+const AUTOSAVE_DEBOUNCE_MS = 600;
+
+function markDirty() {
+  if (loadingSession) return;
+  if (!sessionState.currentSessionId) return;   // nothing to save into
+  saveGen++;
+  setCanvasSavedState('dirty');
+  if (saveTimer4c) clearTimeout(saveTimer4c);
+  saveTimer4c = setTimeout(attemptAutosave, AUTOSAVE_DEBOUNCE_MS);
+}
+
+async function attemptAutosave() {
+  saveTimer4c = null;
+  if (!sessionState.currentSessionId) return;
+  if (saveGen === lastSavedGen) return;        // nothing to do
+
+  // Only one save in flight at a time. Anything that comes in during a
+  // save will bump saveGen; when this save returns we'll see the gap and
+  // schedule another.
+  if (inFlightGen !== 0) {
+    savePending = true;
+    return;
+  }
+
+  inFlightGen = saveGen;
+  setCanvasSavedState('saving');
+  try {
+    const payload = serializeCanvas();
+    await sbFetch('sessions?id=eq.' + sessionState.currentSessionId, {
+      method: 'PATCH',
+      prefer: 'return=minimal',
+      body: JSON.stringify({ blocks: payload }),
+    });
+    // Success: cache the saved row data
+    const row = sessionState.sessions.find(s => String(s.id) === String(sessionState.currentSessionId));
+    if (row) row.blocks = payload;
+    lastSavedGen = inFlightGen;
+    inFlightGen = 0;
+    if (saveGen === lastSavedGen) {
+      setCanvasSavedState('saved');
+    } else {
+      // More changes arrived while we were saving — we'll flush them next.
+      setCanvasSavedState('dirty');
+    }
+  } catch (e) {
+    inFlightGen = 0;
+    setCanvasSavedState('error');
+    console.warn('Autosave failed:', e.message);
+    // Try again in a moment if the user keeps editing or just sits idle.
+    setTimeout(() => {
+      if (saveGen > lastSavedGen && !saveTimer4c) {
+        saveTimer4c = setTimeout(attemptAutosave, AUTOSAVE_DEBOUNCE_MS);
+      }
+    }, 2500);
+    // If a queued save came in during the failed attempt, drain it via the
+    // same retry timer (don't fire another immediate attempt that would
+    // likely also fail).
+    savePending = false;
+    return;
+  }
+  // If a save got queued while we were running, fire it now.
+  if (savePending) {
+    savePending = false;
+    setTimeout(attemptAutosave, 50);
+  }
+}
+
+// Synchronous flush — used by Save button and Save & Close. Cancels any
+// pending debounce, fires immediately. Returns the awaitable.
+async function flushSaveNow() {
+  if (saveTimer4c) { clearTimeout(saveTimer4c); saveTimer4c = null; }
+  // If something is already in-flight, wait briefly and try again.
+  if (inFlightGen !== 0) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return attemptAutosave();
+}
+
+// beforeunload — warn if there's unsaved work.
+window.addEventListener('beforeunload', (e) => {
+  if (sessionState.currentSessionId && saveGen > lastSavedGen) {
+    e.preventDefault();
+    e.returnValue = '';   // Modern browsers ignore the message but require a truthy returnValue
+    return '';
+  }
+});
 
 // ── SESSION STATE ──
 const sessionState = {
@@ -1399,6 +1480,10 @@ window.toggleArc = function(id) {
 
 // ── PICKING / CREATING SESSIONS ──
 async function pickSession(id) {
+  // If the current session has unsaved changes, flush them before swapping.
+  if (sessionState.currentSessionId && saveGen > lastSavedGen) {
+    await flushSaveNow();
+  }
   closeSessionPicker();
   const row = sessionState.sessions.find(s => String(s.id) === String(id));
   if (!row) { console.warn('Session not in cached list:', id); return; }
@@ -1538,45 +1623,38 @@ function deserializeCanvas(data) {
 
 // ── LOAD A SESSION INTO THE CANVAS ──
 async function loadSessionData(sessionRow) {
+  loadingSession = true;
   sessionState.currentSessionId = sessionRow.id;
   document.getElementById('topbarSession').textContent = sessionRow.title || 'Untitled Session';
 
   const fmt = detectSessionFormat(sessionRow);
-  document.getElementById('format-banner').classList.toggle('visible', fmt === 'classic');
-
   if (fmt === 'canvas') {
     deserializeCanvas(sessionRow.blocks);
   } else {
-    // Classic format — leave canvas empty. User can switch to classic planner.
+    // Classic-format (or empty/unknown): start with an empty canvas. The
+    // first save from canvas will overwrite the row's blocks with
+    // canvas-shaped data, retiring the classic shape for that session.
     deserializeCanvas({ nodes: [], edges: [], view: { x: 0, y: 0, zoom: 1 } });
   }
+  loadingSession = false;
+  // Loaded state is by definition not dirty.
+  saveGen = lastSavedGen = 0;
   setCanvasSavedState('saved');
   updateEmptyHint();
 }
 
-// ── SAVE CURRENT CANVAS BACK TO ITS SESSION ──
+// ── SAVE NOW (toolbar button + Save & Close) ──
 async function saveCurrentSession() {
   if (!sessionState.currentSessionId) {
     alert('No session loaded — open one from the Sessions menu first.');
     return;
   }
-  const id = sessionState.currentSessionId;
-  setCanvasSavedState('saving');
-  try {
-    const payload = serializeCanvas();
-    await sbFetch('sessions?id=eq.' + id, {
-      method: 'PATCH',
-      prefer: 'return=minimal',
-      body: JSON.stringify({ blocks: payload }),
-    });
-    // Update cached session row
-    const row = sessionState.sessions.find(s => String(s.id) === String(id));
-    if (row) row.blocks = payload;
+  // If nothing is dirty, still feel responsive — flash 'saved' so the user gets feedback
+  if (saveGen === lastSavedGen) {
     setCanvasSavedState('saved');
-  } catch (e) {
-    setCanvasSavedState('error');
-    alert('Save failed: ' + e.message);
+    return;
   }
+  await flushSaveNow();
 }
 
 // ── BLOCK TYPE REGISTRY ──────────────────────────────────
@@ -2083,6 +2161,7 @@ function createNode({ x, y, type = 'scene', title = null, summary = '' } = {}) {
   attachAnchorClicks(el, data);
   wireNodeBodyClickToOpenPanel(el, data);
   updateEmptyHint();
+  markDirty();
   return data;
 }
 
@@ -2126,6 +2205,7 @@ function removeNode(node) {
   if (node.el && node.el.parentNode) node.el.parentNode.removeChild(node.el);
   state.nodes.delete(node.id);
   updateEmptyHint();
+  markDirty();
 }
 
 function escHtml(s) {
@@ -2194,6 +2274,8 @@ function attachNodeDrag(el, data) {
     // Plain click = select only this; the selection is single-node.
     if (!didDrag) {
       selectNode(data, false);
+    } else {
+      markDirty();
     }
     dragSnapshot = null;
   }
@@ -2376,12 +2458,14 @@ function createEdge(from, to, dir = 'forward') {
   // Right-click on the hitbox is now reserved for canvas pan, so no
   // direction-cycle shortcut here. The pill button is the only way to cycle.
 
+  markDirty();
   return edge;
 }
 function removeEdge(edge) {
   edge.groupEl.remove();
   state.edges = state.edges.filter(e => e !== edge);
   if (state.selectedEdge === edge) state.selectedEdge = null;
+  markDirty();
 }
 function selectEdge(edge) {
   if (state.selectedEdge && state.selectedEdge !== edge) {
@@ -2482,6 +2566,7 @@ function cycleEdgeDirection(edge) {
   const i = DIR_CYCLE.indexOf(edge.dir);
   edge.dir = DIR_CYCLE[(i + 1) % DIR_CYCLE.length];
   applyEdgeMarkers(edge);
+  markDirty();
 }
 
 // ── PENDING CONNECTION (transient dashed line) ───────────
@@ -2858,6 +2943,7 @@ function commitOpenNodeFromForm() {
   // Repaint face — but preserve anchors (don't blow them away during a connection)
   refreshNodeFace(node);
   redrawEdges();
+  markDirty();
 }
 
 // Repaint a node's face HTML in place. Keeps anchors fresh because we
