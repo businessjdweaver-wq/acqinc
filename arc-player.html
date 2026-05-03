@@ -373,28 +373,19 @@ body {
 
   <!-- AUTH / IDENTITY -->
   <div class="auth-panel" id="authPanel">
-    <div class="auth-title">👤 Your Identity</div>
+    <div class="auth-title">👤 Sign In</div>
     <div id="authContent">
-      <div class="auth-tabs">
-        <button class="auth-tab active" onclick="setAuthTab('anon',this)">Continue as Guest</button>
-        <button class="auth-tab" onclick="setAuthTab('magic',this)">Sign in with Email</button>
+      <div style="font-size:0.78rem;color:var(--bone);line-height:1.5;margin-bottom:10px;">
+        Enter your email to receive a sign-in link. No password needed — your notes will be saved to your account so you can access them on any device.
       </div>
-      <div id="anonTab">
-        <input class="auth-input" id="playerNameInput" type="text" placeholder="Your character or player name…">
-        <button class="btn-player" onclick="setAnonIdentity()">Continue →</button>
-        <div style="font-size:0.65rem;color:var(--steel-pale);margin-top:6px;">Guest notes are saved to this browser. Use email sign-in to access your notes on any device.</div>
-      </div>
-      <div id="magicTab" style="display:none;">
-        <input class="auth-input" id="playerEmailInput" type="email" placeholder="your@email.com">
-        <button class="btn-player" onclick="sendMagicLink()">Send Magic Link →</button>
-        <div style="font-size:0.65rem;color:var(--steel-pale);margin-top:6px;">We'll email you a sign-in link. No password needed.</div>
-      </div>
+      <input class="auth-input" id="playerEmailInput" type="email" placeholder="your@email.com">
+      <button class="btn-player" onclick="sendMagicLink()">Send Magic Link →</button>
     </div>
     <div id="identityConfirmed" style="display:none;">
       <div class="player-identity">
         <span class="player-name-badge" id="confirmedName">—</span>
-        <span class="player-type" id="confirmedType">Guest</span>
-        <button onclick="changeIdentity()" style="background:none;border:none;cursor:pointer;color:var(--steel-pale);font-size:0.65rem;text-decoration:underline;">Change</button>
+        <span class="player-type" id="confirmedType">Signed in</span>
+        <button onclick="changeIdentity()" style="background:none;border:none;cursor:pointer;color:var(--steel-pale);font-size:0.65rem;text-decoration:underline;">Sign out</button>
       </div>
     </div>
   </div>
@@ -446,16 +437,29 @@ async function init() {
     document.getElementById('arcTitle').textContent = 'No arc specified';
     return;
   }
-  loadIdentityFromStorage();
-  await loadArc();
-  await loadPartyNotes();
+  // Check for magic-link return in URL hash first; this may sign us in
+  const hash = window.location.hash;
+  if (hash.includes('access_token')) {
+    await handleMagicLinkReturn(hash);
+  } else {
+    loadIdentityFromStorage();
+  }
+  // Only load the arc + notes once we have a real (magic-link) identity.
+  // The underlying tables now require an authenticated user (RLS).
+  if (identity && identity.token) {
+    await loadArc();
+    await loadPartyNotes();
+  } else {
+    // Show the sign-in panel with helpful messaging.
+    document.getElementById('arcTitle').textContent = 'Sign in to view this arc';
+    document.getElementById('authPanel').style.display = 'block';
+  }
 }
 
 // ── LOAD ARC ──
 async function loadArc() {
   try {
-    const res = await fetch(`${SB_URL}/rest/v1/rq_arcs?id=eq.${ARC_ID}&limit=1`, { headers: SB_HDRS });
-    const rows = await res.json();
+    const rows = await sbGet('rq_arcs', `?id=eq.${ARC_ID}&limit=1`);
     if (!rows.length) { document.getElementById('arcTitle').textContent = 'Arc not found'; return; }
     currentArc = rows[0];
     renderArc();
@@ -527,21 +531,21 @@ function pasteMacro(text) {
 }
 
 // ── IDENTITY ──
-function setAuthTab(tab, btn) {
-  document.querySelectorAll('.auth-tab').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('anonTab').style.display  = tab === 'anon'  ? 'block' : 'none';
-  document.getElementById('magicTab').style.display = tab === 'magic' ? 'block' : 'none';
-}
-
-function setAnonIdentity() {
-  const name = document.getElementById('playerNameInput').value.trim();
-  if (!name) { showToast('Please enter your name', true); return; }
-  identity = { name, type: 'anon' };
-  try { localStorage.setItem('rq_player_identity_' + ARC_ID, JSON.stringify(identity)); } catch(e) {}
-  showIdentityConfirmed();
-  loadMyNote();
-  showNotesPanel();
+function loadIdentityFromStorage() {
+  try {
+    const raw = localStorage.getItem('rq_player_identity_' + ARC_ID);
+    if (raw) {
+      const cached = JSON.parse(raw);
+      // Only restore identities that are magic-link based (have a token).
+      // Old guest identities are discarded — they can't read the now-RLS-protected tables.
+      if (cached && cached.token && cached.type === 'magic') {
+        identity = cached;
+        showIdentityConfirmed();
+      } else {
+        try { localStorage.removeItem('rq_player_identity_' + ARC_ID); } catch(e) {}
+      }
+    }
+  } catch(e) {}
 }
 
 async function sendMagicLink() {
@@ -555,7 +559,7 @@ async function sendMagicLink() {
     });
     if (res.ok) {
       showToast('✓ Magic link sent to ' + email + ' — check your inbox');
-      document.getElementById('magicTab').innerHTML = `<div style="font-size:0.8rem;color:var(--bone);line-height:1.5;">✉️ Check your email at <strong>${escHtml(email)}</strong> for a sign-in link. Click it to return here and your notes will be saved to your account.</div>`;
+      document.getElementById('authContent').innerHTML = `<div style="font-size:0.8rem;color:var(--bone);line-height:1.5;">✉️ Check your email at <strong>${escHtml(email)}</strong> for a sign-in link. Click it to return here and your notes will be saved to your account.</div>`;
     } else {
       showToast('Could not send link — check email and try again', true);
     }
@@ -564,32 +568,25 @@ async function sendMagicLink() {
   }
 }
 
-function loadIdentityFromStorage() {
-  try {
-    const raw = localStorage.getItem('rq_player_identity_' + ARC_ID);
-    if (raw) {
-      identity = JSON.parse(raw);
-      showIdentityConfirmed();
-    }
-  } catch(e) {}
-
-  // Check for Supabase auth session (magic link return)
-  const hash = window.location.hash;
-  if (hash.includes('access_token')) {
-    handleMagicLinkReturn(hash);
-  }
-}
-
 async function handleMagicLinkReturn(hash) {
   try {
     const params  = new URLSearchParams(hash.replace('#','?'));
     const token   = params.get('access_token');
+    const refresh = params.get('refresh_token');
+    const expIn   = parseInt(params.get('expires_in') || '3600', 10);
     const userRes = await fetch(`${SB_URL}/auth/v1/user`, {
       headers: { ...SB_HDRS, 'Authorization': 'Bearer ' + token }
     });
     const user = await userRes.json();
     if (user.email) {
-      identity = { name: user.email.split('@')[0], email: user.email, type: 'magic', token };
+      identity = {
+        name: user.email.split('@')[0],
+        email: user.email,
+        type: 'magic',
+        token,
+        refresh_token: refresh,
+        expires_at: Math.floor(Date.now()/1000) + expIn
+      };
       try { localStorage.setItem('rq_player_identity_' + ARC_ID, JSON.stringify(identity)); } catch(e) {}
       // Clean URL
       history.replaceState({}, '', window.location.pathname + window.location.search);
@@ -606,7 +603,7 @@ function showIdentityConfirmed() {
   document.getElementById('authContent').style.display = 'none';
   document.getElementById('identityConfirmed').style.display = 'block';
   document.getElementById('confirmedName').textContent = identity.name;
-  document.getElementById('confirmedType').textContent = identity.type === 'magic' ? '✉️ Signed in' : '👤 Guest';
+  document.getElementById('confirmedType').textContent = '✉️ Signed in';
 }
 
 function changeIdentity() {

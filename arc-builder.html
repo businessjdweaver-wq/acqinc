@@ -562,9 +562,36 @@ body {
 .toast.error { background: #2a1010; border-color: #6a2d2d; color: #bf6a6a; }
 
 @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+/* ── LOGIN OVERLAY ── */
+#rqAuthOverlay { position:fixed; inset:0; background:var(--ash,#1a1610); z-index:9999; display:flex; align-items:center; justify-content:center; font-family:'Crimson Pro',Georgia,serif; }
+#rqAuthOverlay .auth-card { background:#231d14; border:1px solid rgba(184,134,11,0.4); border-radius:6px; padding:32px 36px; width:360px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+#rqAuthOverlay h2 { font-family:'Cinzel',serif; color:var(--gold,#b8860b); font-size:1.15rem; letter-spacing:0.15em; text-align:center; margin:0 0 4px 0; text-transform:uppercase; }
+#rqAuthOverlay .auth-sub { color:var(--steel-pale,#8a9bb0); font-size:0.78rem; text-align:center; margin-bottom:22px; letter-spacing:0.05em; }
+#rqAuthOverlay label { display:block; font-family:'JetBrains Mono',monospace; font-size:0.6rem; letter-spacing:0.12em; color:var(--steel-pale,#8a9bb0); text-transform:uppercase; margin:12px 0 4px 0; }
+#rqAuthOverlay input { width:100%; background:rgba(0,0,0,0.3); border:1px solid rgba(184,134,11,0.3); border-radius:3px; padding:8px 10px; color:#e8dcc4; font-family:'Crimson Pro',Georgia,serif; font-size:0.95rem; box-sizing:border-box; }
+#rqAuthOverlay input:focus { outline:none; border-color:var(--gold,#b8860b); }
+#rqAuthOverlay .auth-btn { width:100%; margin-top:18px; padding:10px; background:linear-gradient(180deg,rgba(184,134,11,0.4),rgba(139,90,43,0.4)); border:1px solid var(--gold,#b8860b); color:#f5e8c8; font-family:'Cinzel',serif; font-size:0.85rem; letter-spacing:0.15em; text-transform:uppercase; border-radius:3px; cursor:pointer; }
+#rqAuthOverlay .auth-btn:hover { filter:brightness(1.15); }
+#rqAuthOverlay .auth-btn:disabled { opacity:0.5; cursor:wait; }
+#rqAuthOverlay .auth-err { color:#d97070; background:rgba(139,26,26,0.2); border:1px solid rgba(139,26,26,0.5); padding:8px 10px; border-radius:3px; font-size:0.78rem; margin-top:14px; display:none; }
+#rqAuthOverlay .auth-err.visible { display:block; }
 </style>
 </head>
 <body>
+
+<!-- LOGIN OVERLAY -->
+<div id="rqAuthOverlay">
+  <div class="auth-card">
+    <h2>Relentless Quest</h2>
+    <div class="auth-sub">Arc Builder — Sign In</div>
+    <label for="rqAuthEmail">Email</label>
+    <input id="rqAuthEmail" type="email" autocomplete="username" autofocus>
+    <label for="rqAuthPass">Password</label>
+    <input id="rqAuthPass" type="password" autocomplete="current-password">
+    <button class="auth-btn" id="rqAuthBtn" onclick="rqDoLogin()">Sign In</button>
+    <div class="auth-err" id="rqAuthErr"></div>
+  </div>
+</div>
 
 <!-- TOPBAR -->
 <div class="topbar">
@@ -572,11 +599,12 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Arc Builder</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.1.0</span>
+  <span class="topbar-version">v0.2.0</span>
   <div class="topbar-actions">
     <a href="session-planner.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">📋 Sessions</a>
     <a href="campaign-calendar.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">📅 Calendar</a>
     <a href="monster-workshop.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">🐉 Workshop</a>
+    <button class="btn btn-ghost btn-sm" id="btnLogout" onclick="rqLogout()" title="Sign out" style="display:none;">⎋ Logout</button>
   </div>
 </div>
 
@@ -614,7 +642,33 @@ body {
 // ── SUPABASE ──
 const SB_URL  = 'https://burtvenqfzextswpjziw.supabase.co';
 const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1cnR2ZW5xZnpleHRzd3Bqeml3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyNTkxMzEsImV4cCI6MjA5MDgzNTEzMX0.M9krIdktkO1wMeKYMm_HoR_tEykewbRUVHdjerg1XIo';
-const SB_HDRS = { 'Content-Type':'application/json', 'apikey':SB_KEY, 'Authorization':'Bearer '+SB_KEY };
+
+// ── AUTH STATE ──
+const RQ_AUTH_KEY = 'rq_ab_auth';
+function rqGetAuth() { try { const r = sessionStorage.getItem(RQ_AUTH_KEY); return r ? JSON.parse(r) : null; } catch(e) { return null; } }
+function rqSetAuth(o)  { try { sessionStorage.setItem(RQ_AUTH_KEY, JSON.stringify(o)); } catch(e) {} }
+function rqClearAuth() { try { sessionStorage.removeItem(RQ_AUTH_KEY); } catch(e) {} }
+
+async function rqRefreshToken() {
+  const auth = rqGetAuth();
+  if (!auth || !auth.refresh_token) return false;
+  const res = await fetch(SB_URL + '/auth/v1/token?grant_type=refresh_token', {
+    method:'POST', headers:{ 'Content-Type':'application/json', 'apikey':SB_KEY },
+    body: JSON.stringify({ refresh_token: auth.refresh_token })
+  });
+  if (!res.ok) { rqClearAuth(); return false; }
+  const data = await res.json();
+  rqSetAuth({ access_token:data.access_token, refresh_token:data.refresh_token,
+              expires_at: Math.floor(Date.now()/1000) + (data.expires_in||3600),
+              user: data.user || (auth.user||null) });
+  return true;
+}
+
+function rqHeaders(extra = {}) {
+  const auth = rqGetAuth();
+  const tok = auth && auth.access_token ? auth.access_token : SB_KEY;
+  return { 'Content-Type':'application/json', 'apikey':SB_KEY, 'Authorization':'Bearer '+tok, ...extra };
+}
 
 const BASE_URL = window.location.origin + window.location.pathname.replace('arc-builder.html','');
 
@@ -636,34 +690,88 @@ async function init() {
   }
 }
 
-// ── SUPABASE HELPERS ──
-async function sbGet(table, query = '') {
-  const res = await fetch(`${SB_URL}/rest/v1/${table}${query}`, { headers: SB_HDRS });
-  if (!res.ok) throw new Error(await res.text());
+// ── SUPABASE HELPERS (with token + 401 retry) ──
+async function _sbDo(method, table, opts = {}) {
+  const { id, query, body, prefer } = opts;
+  const path = id ? `${table}?id=eq.${id}` : (table + (query || ''));
+  const headers = rqHeaders(prefer ? { 'Prefer': prefer } : {});
+  const init = { method, headers };
+  if (body !== undefined) init.body = JSON.stringify(body);
+  let res = await fetch(`${SB_URL}/rest/v1/${path}`, init);
+  if (res.status === 401 && (rqGetAuth() || {}).refresh_token) {
+    const ok = await rqRefreshToken();
+    if (ok) {
+      init.headers = rqHeaders(prefer ? { 'Prefer': prefer } : {});
+      res = await fetch(`${SB_URL}/rest/v1/${path}`, init);
+    }
+  }
+  if (!res.ok) {
+    const txt = await res.text();
+    if (res.status === 401) { rqClearAuth(); rqShowLogin(); }
+    throw new Error(txt);
+  }
+  if (res.status === 204 || method === 'DELETE') return null;
   return res.json();
 }
-async function sbPost(table, data) {
-  const res = await fetch(`${SB_URL}/rest/v1/${table}`, {
-    method: 'POST', headers: { ...SB_HDRS, 'Prefer': 'return=representation' },
-    body: JSON.stringify(data)
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+async function sbGet(table, query = '')   { return _sbDo('GET',    table, { query }); }
+async function sbPost(table, data)        { return _sbDo('POST',   table, { body: data, prefer: 'return=representation' }); }
+async function sbPatch(table, id, data)   { return _sbDo('PATCH',  table, { id, body: data, prefer: 'return=representation' }); }
+async function sbDelete(table, id)        { return _sbDo('DELETE', table, { id }); }
+
+// ── LOGIN OVERLAY CONTROL ──
+function rqShowLogin() {
+  const ov = document.getElementById('rqAuthOverlay'); if (ov) ov.style.display = 'flex';
+  const lb = document.getElementById('btnLogout');     if (lb) lb.style.display = 'none';
 }
-async function sbPatch(table, id, data) {
-  const res = await fetch(`${SB_URL}/rest/v1/${table}?id=eq.${id}`, {
-    method: 'PATCH', headers: { ...SB_HDRS, 'Prefer': 'return=representation' },
-    body: JSON.stringify(data)
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+function rqHideLogin() {
+  const ov = document.getElementById('rqAuthOverlay'); if (ov) ov.style.display = 'none';
+  const lb = document.getElementById('btnLogout');     if (lb) lb.style.display = '';
 }
-async function sbDelete(table, id) {
-  const res = await fetch(`${SB_URL}/rest/v1/${table}?id=eq.${id}`, {
-    method: 'DELETE', headers: SB_HDRS
-  });
-  if (!res.ok) throw new Error(await res.text());
+function rqShowAuthError(msg) { const e = document.getElementById('rqAuthErr'); if (e) { e.textContent = msg; e.classList.add('visible'); } }
+function rqClearAuthError()   { const e = document.getElementById('rqAuthErr'); if (e) { e.textContent = ''; e.classList.remove('visible'); } }
+
+async function rqDoLogin() {
+  rqClearAuthError();
+  const email = (document.getElementById('rqAuthEmail').value || '').trim();
+  const pass  = document.getElementById('rqAuthPass').value || '';
+  const btn   = document.getElementById('rqAuthBtn');
+  if (!email || !pass) { rqShowAuthError('Email and password are required.'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+  try {
+    const res = await fetch(SB_URL + '/auth/v1/token?grant_type=password', {
+      method:'POST', headers:{ 'Content-Type':'application/json', 'apikey':SB_KEY },
+      body: JSON.stringify({ email, password: pass })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      rqShowAuthError(data.error_description || data.msg || data.message || ('Login failed (' + res.status + ')'));
+      if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+      return;
+    }
+    rqSetAuth({ access_token:data.access_token, refresh_token:data.refresh_token,
+                expires_at: Math.floor(Date.now()/1000) + (data.expires_in||3600),
+                user: data.user || null });
+    document.getElementById('rqAuthPass').value = '';
+    rqHideLogin();
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+    init();
+  } catch(e) {
+    rqShowAuthError('Network error: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+  }
 }
+function rqLogout() {
+  rqClearAuth();
+  arcs = []; currentArc = null;
+  rqShowLogin();
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const ov = document.getElementById('rqAuthOverlay');
+  if (!ov || ov.style.display === 'none') return;
+  const t = e.target;
+  if (t && (t.id === 'rqAuthEmail' || t.id === 'rqAuthPass')) { e.preventDefault(); rqDoLogin(); }
+});
 
 // ── LOAD ARCS ──
 async function loadArcs() {
@@ -1055,7 +1163,20 @@ function showToast(msg, isError = false) {
   setTimeout(() => t.style.display = 'none', 3000);
 }
 
-init();
+// ── BOOT ──
+window.addEventListener('load', () => {
+  const auth = rqGetAuth();
+  if (auth && auth.access_token) {
+    const now = Math.floor(Date.now()/1000);
+    if (auth.expires_at && auth.expires_at - now < 60) {
+      rqRefreshToken().then(ok => { if (ok) { rqHideLogin(); init(); } else { rqShowLogin(); } });
+    } else {
+      rqHideLogin(); init();
+    }
+  } else {
+    rqShowLogin();
+  }
+});
 </script>
 </body>
 </html>
