@@ -1,0 +1,2902 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Session Planner — Canvas (Stage 1)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #0e0c08;
+  --ash: #1a1610;
+  --panel: #231d14;
+  --panel-light: #2d2618;
+  --gold: #b8860b;
+  --gold-bright: #d4a017;
+  --gold-pale: #e8d080;
+  --parchment: #f2ead8;
+  --parchment-deep: #e6d9be;
+  --steel: #3a4455;
+  --steel-pale: #8a9bb0;
+  --bone: #d4c9a8;
+  --node-bg: #2a2218;
+  --node-border: rgba(184,134,11,0.5);
+  --node-border-hover: var(--gold-bright);
+  --anchor: rgba(184,134,11,0.6);
+  --anchor-hover: var(--gold-bright);
+  --anchor-active: #d4a017;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--ash);
+  color: var(--parchment);
+  font-family: 'Crimson Pro', Georgia, serif;
+  overflow: hidden;
+}
+
+/* ── TOPBAR ──────────────────────────────────────────────── */
+.topbar {
+  height: 44px;
+  background: linear-gradient(180deg, #2a2218, #1a1410);
+  border-bottom: 1px solid rgba(184,134,11,0.3);
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 16px;
+  font-size: 0.85rem;
+  position: relative;
+  z-index: 100;
+}
+.topbar-brand { font-family: 'Cinzel', serif; color: var(--gold); letter-spacing: 0.18em; font-size: 0.85rem; }
+.topbar-sep { color: var(--steel-pale); opacity: 0.5; }
+.topbar-title { color: var(--bone); }
+.topbar-version { font-family: 'JetBrains Mono', monospace; font-size: 0.55rem; color: var(--steel-pale); letter-spacing: 0.08em; }
+.topbar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.topbar-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.05em;
+}
+.btn {
+  background: linear-gradient(180deg, rgba(184,134,11,0.25), rgba(139,90,43,0.25));
+  border: 1px solid rgba(184,134,11,0.6);
+  color: var(--parchment);
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 5px 12px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.btn:hover { filter: brightness(1.2); }
+.btn-ghost { background: transparent; border-color: rgba(184,134,11,0.3); color: var(--steel-pale); }
+.btn-ghost:hover { color: var(--bone); border-color: rgba(184,134,11,0.6); }
+
+/* ── CANVAS ──────────────────────────────────────────────── */
+#canvas-wrap {
+  position: absolute;
+  top: 44px; left: 0; right: 0; bottom: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at center, #1f1a12 0%, #14110b 100%);
+  cursor: grab;
+}
+#canvas-wrap.panning { cursor: grabbing; }
+#canvas-wrap.spacedown { cursor: grab; }
+
+/* The transform layer — both the SVG (connectors) and the nodes
+   live inside this and share its pan/zoom. */
+#canvas-content {
+  position: absolute;
+  top: 0; left: 0;
+  width: 1px; height: 1px;            /* zero-sized origin; children use absolute coords */
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* Background grid is drawn by a separate SVG that DOES tile.
+   It lives behind canvas-content and uses its own transform sync. */
+#canvas-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+}
+
+/* Connector layer (Stage 2 will use this) */
+#canvas-svg {
+  position: absolute;
+  top: 0; left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* ── NODES ──────────────────────────────────────────────── */
+.node {
+  position: absolute;
+  background: var(--node-bg);
+  border: 1px solid var(--node-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+  min-width: 440px;
+  max-width: 480px;
+  cursor: grab;
+  user-select: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.node.dragging { cursor: grabbing; box-shadow: 0 8px 24px rgba(0,0,0,0.7); }
+.node:hover { border-color: var(--node-border-hover); }
+.node.selected {
+  border-color: var(--gold-bright);
+  box-shadow: 0 0 0 2px rgba(212,160,23,0.4), 0 4px 14px rgba(0,0,0,0.5);
+}
+
+/* ── MARQUEE ─────────────────────────────────────────────── */
+#marquee {
+  position: absolute;
+  border: 1.5px dashed var(--gold-bright);
+  background: rgba(212,160,23,0.08);
+  pointer-events: none;
+  z-index: 60;
+  display: none;
+}
+
+.node-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(184,134,11,0.2);
+  font-family: 'Cinzel', serif;
+  font-size: 1.55rem;
+  letter-spacing: 0.1em;
+  color: var(--gold-pale);
+  text-transform: uppercase;
+}
+.node-icon { font-size: 1.9rem; }
+.node-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-body {
+  padding: 18px 22px;
+  font-size: 1.9rem;
+  line-height: 1.4;
+  color: var(--bone);
+}
+
+/* ── ANCHORS ────────────────────────────────────────────── */
+.node-anchors {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.node:hover .node-anchors,
+.node.anchors-visible .node-anchors {
+  opacity: 1;
+}
+.anchor {
+  position: absolute;
+  width: 12px; height: 12px;
+  margin: -6px 0 0 -6px;            /* center on the coordinate */
+  border-radius: 50%;
+  background: var(--anchor);
+  border: 1.5px solid var(--ash);
+  pointer-events: auto;
+  cursor: crosshair;
+  transition: background 0.12s, transform 0.12s;
+}
+.anchor:hover {
+  background: var(--anchor-hover);
+  transform: scale(1.4);
+}
+.anchor.active {
+  background: var(--anchor-active);
+  box-shadow: 0 0 8px var(--gold-bright);
+}
+
+/* The 8 anchor positions on the node bounding box */
+.anchor.tl { top: 0;   left: 0; }
+.anchor.tc { top: 0;   left: 50%; }
+.anchor.tr { top: 0;   left: 100%; }
+.anchor.ml { top: 50%; left: 0; }
+.anchor.mr { top: 50%; left: 100%; }
+.anchor.bl { top: 100%; left: 0; }
+.anchor.bc { top: 100%; left: 50%; }
+.anchor.br { top: 100%; left: 100%; }
+
+/* When an anchor is selected (waiting for the other end of a connection),
+   make ALL anchors on ALL nodes visible — they're now valid click targets. */
+body.connecting .node-anchors { opacity: 1; }
+body.connecting #canvas-wrap { cursor: crosshair; }
+
+/* ── CONNECTORS (SVG paths) ─────────────────────────────── */
+.edge-path {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 2.5;
+  pointer-events: none;       /* hit detection lives on the hitbox */
+  transition: stroke 0.12s, stroke-width 0.12s;
+}
+.edge-hitbox {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 18;            /* fat target so clicking the line is forgiving */
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.edge-hitbox:hover + .edge-path,
+.edge-group:hover .edge-path { stroke: var(--gold-bright); stroke-width: 3.5; }
+.edge-path.selected { stroke: var(--gold-bright); stroke-width: 3.5; filter: drop-shadow(0 0 4px rgba(212,160,23,0.6)); }
+
+/* The transient pending line drawn while waiting for the second click */
+.edge-pending {
+  fill: none;
+  stroke: var(--gold-pale);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+/* ── DIRECTION PILL ─────────────────────────────────────── */
+/* A small circular button at the midpoint of each edge that cycles direction.
+   Lives inside a foreignObject so we can use proper HTML hover states. */
+.dir-pill {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1.5px solid var(--gold);
+  color: var(--gold-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+  transition: transform 0.1s, background 0.1s, color 0.1s;
+  user-select: none;
+  line-height: 1;
+}
+.dir-pill:hover {
+  background: var(--gold);
+  color: var(--ink);
+  transform: scale(1.15);
+}
+
+/* ── HUD ────────────────────────────────────────────────── */
+#zoom-hud {
+  position: absolute;
+  bottom: 12px; left: 12px;
+  background: rgba(20,17,11,0.85);
+  border: 1px solid rgba(184,134,11,0.3);
+  border-radius: 4px;
+  padding: 4px 9px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.08em;
+  z-index: 50;
+}
+#help-hud {
+  position: absolute;
+  bottom: 12px; right: 12px;
+  background: rgba(20,17,11,0.85);
+  border: 1px solid rgba(184,134,11,0.3);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.05em;
+  line-height: 1.5;
+  z-index: 50;
+  max-width: 260px;
+}
+#help-hud b { color: var(--bone); font-weight: normal; }
+#help-hud kbd {
+  display: inline-block;
+  padding: 0 5px;
+  background: rgba(184,134,11,0.2);
+  border: 1px solid rgba(184,134,11,0.4);
+  border-radius: 2px;
+  color: var(--bone);
+  font-family: inherit;
+  font-size: 0.95em;
+}
+
+/* Stage label — temporary, removed in later stages */
+#stage-label {
+  position: absolute;
+  top: 56px; left: 12px;
+  background: rgba(184,134,11,0.18);
+  border: 1px solid rgba(184,134,11,0.4);
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  color: var(--gold-pale);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  z-index: 50;
+}
+
+/* ── TYPED-NODE PALETTE (topbar) ─────────────────────────── */
+.type-palette {
+  display: inline-flex;
+  gap: 2px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(184,134,11,0.3);
+  border-radius: 4px;
+  padding: 2px;
+}
+.type-btn {
+  background: transparent;
+  border: 0;
+  color: var(--bone);
+  font-family: 'Cinzel', serif;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 10px 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.type-btn:hover { background: rgba(184,134,11,0.2); color: var(--parchment); }
+.type-btn .type-icon { font-size: 1.05rem; line-height: 1; }
+
+/* ── NODE TYPE ACCENTS ──────────────────────────────────── */
+/* Each type gets a thin colored stripe along the top edge so they're
+   identifiable at a glance even when zoomed out. */
+.node[data-type="scene"]           { --accent: #5b8fb9; }
+.node[data-type="encounter"]       { --accent: #c84235; }
+.node[data-type="trap"]            { --accent: #d68429; }
+.node[data-type="npc"]             { --accent: #6aaf6a; }
+.node[data-type="clue"]            { --accent: #4ec0c4; }
+.node[data-type="reward"]          { --accent: #d4a017; }
+.node[data-type="skillchallenge"]  { --accent: #9a6cb6; }
+.node::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+  background: var(--accent, var(--gold));
+  border-radius: 4px 4px 0 0;
+  pointer-events: none;
+}
+
+/* ── NODE SIZE VARIANTS ─────────────────────────────────── */
+/* Default size lives on .node (set by Stage 1 already: 440-480px wide).
+   Variants apply to the node element via data-size attribute. */
+.node[data-size="single"]       { min-width: 440px; max-width: 480px; }
+.node[data-size="double-tall"]  { min-width: 440px; max-width: 480px; }
+.node[data-size="double-tall"] .node-body  { min-height: 420px; }
+.node[data-size="double-square"]{ min-width: 880px; max-width: 960px; }
+.node[data-size="double-square"] .node-body { min-height: 420px; }
+
+/* ── NODE TYPE-SPECIFIC FACE FIELDS ─────────────────────── */
+/* The default face is just the title + a "type label" + an optional summary
+   line. Stage 3b will replace this with proper read-only field rows pulled
+   from the side-panel data. */
+.node-typebadge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  color: var(--steel-pale);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.node-summary {
+  font-style: italic;
+  color: var(--steel-pale);
+  opacity: 0.75;
+  font-size: 1.4rem;
+  line-height: 1.4;
+}
+
+/* ── EMPTY STATE HINT ───────────────────────────────────── */
+#empty-hint {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  font-family: 'Cinzel', serif;
+  color: var(--steel-pale);
+  letter-spacing: 0.1em;
+  pointer-events: none;
+  z-index: 40;
+  user-select: none;
+  transition: opacity 0.3s;
+}
+#empty-hint.hidden { opacity: 0; }
+#empty-hint .empty-headline {
+  font-size: 1.6rem;
+  color: var(--gold-pale);
+  letter-spacing: 0.2em;
+  margin-bottom: 14px;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+#empty-hint .empty-body {
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 1.1rem;
+  font-style: italic;
+  letter-spacing: 0;
+  opacity: 0.5;
+}
+
+/* ── SIDE PANEL EDITOR ──────────────────────────────────── */
+#side-panel {
+  position: fixed;
+  top: 44px;                       /* below topbar */
+  right: 0;
+  bottom: 0;
+  width: 1040px;                   /* wider — two columns of form */
+  max-width: 95vw;
+  background: var(--panel);
+  border-left: 1px solid rgba(184,134,11,0.4);
+  box-shadow: -8px 0 24px rgba(0,0,0,0.5);
+  z-index: 150;
+  transform: translateX(100%);
+  transition: transform 0.18s ease-out;
+  display: flex;
+  flex-direction: column;
+  font-family: 'Crimson Pro', Georgia, serif;
+}
+#side-panel.open { transform: translateX(0); }
+
+.sp-header {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 24px;
+  border-bottom: 1px solid rgba(184,134,11,0.3);
+  background: linear-gradient(180deg, rgba(184,134,11,0.08), transparent);
+}
+.sp-header .sp-icon { font-size: 2.6rem; line-height: 1; }
+.sp-header .sp-typebadge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.05rem;
+  letter-spacing: 0.12em;
+  color: var(--steel-pale);
+  text-transform: uppercase;
+}
+.sp-header .sp-title-input {
+  flex: 1;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom-color: rgba(184,134,11,0.3);
+  color: var(--gold-pale);
+  font-family: 'Cinzel', serif;
+  font-size: 2rem;
+  letter-spacing: 0.08em;
+  padding: 8px 10px;
+  outline: none;
+}
+.sp-header .sp-title-input:focus { border-color: var(--gold); border-radius: 3px; }
+.sp-saved {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.05rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.08em;
+  min-width: 90px;
+  text-align: left;
+  transition: color 0.2s, opacity 0.2s;
+}
+.sp-saved.dirty { color: #d4a017; }
+.sp-saved.saved { color: #6aaf6a; }
+.sp-close {
+  background: transparent;
+  border: 1px solid rgba(184,134,11,0.3);
+  color: var(--steel-pale);
+  font-size: 1.6rem;
+  width: 44px; height: 44px;
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  line-height: 1;
+}
+.sp-close:hover { color: var(--bone); border-color: rgba(184,134,11,0.6); background: rgba(184,134,11,0.12); }
+
+/* The body is a 2-column outer grid. Each .sp-row item is one outer-column
+   cell; section titles span both columns. Inside a .sp-row, paired narrow
+   fields still sit side-by-side via the inner 1fr 1fr grid. */
+.sp-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px 24px 10px 24px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 24px;
+  align-content: start;
+}
+.sp-section-title {
+  grid-column: 1 / -1;
+  font-family: 'Cinzel', serif;
+  font-size: 1.44rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold-pale);
+  margin: 16px 0 6px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(184,134,11,0.18);
+}
+.sp-section-title:first-child { margin-top: 0; }
+
+.sp-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.sp-row.full   { grid-template-columns: 1fr; }
+.sp-row.span2  { grid-column: 1 / -1; }    /* large fields can span both outer columns */
+
+.sp-field { display: flex; flex-direction: column; gap: 5px; }
+.sp-field label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.05rem;
+  letter-spacing: 0.1em;
+  color: var(--steel-pale);
+  text-transform: uppercase;
+}
+.sp-input, .sp-select, .sp-textarea {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(184,134,11,0.3);
+  border-radius: 3px;
+  color: #e8dcc4;
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 1.6rem;
+  padding: 10px 12px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+.sp-textarea { resize: vertical; min-height: 110px; line-height: 1.4; }
+.sp-select { appearance: none; -webkit-appearance: none; background-image:
+  linear-gradient(45deg, transparent 50%, var(--steel-pale) 50%),
+  linear-gradient(135deg, var(--steel-pale) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 55%, calc(100% - 12px) 55%;
+  background-size: 7px 7px; background-repeat: no-repeat; padding-right: 32px; }
+.sp-input:focus, .sp-select:focus, .sp-textarea:focus { border-color: var(--gold); }
+
+.sp-footer {
+  display: flex;
+  gap: 14px;
+  padding: 16px 24px;
+  border-top: 1px solid rgba(184,134,11,0.3);
+  background: rgba(0,0,0,0.25);
+}
+.sp-btn {
+  flex: 1;
+  padding: 14px;
+  border-radius: 3px;
+  font-family: 'Cinzel', serif;
+  font-size: 1.4rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border: 1px solid;
+}
+.sp-btn-save {
+  background: linear-gradient(180deg, rgba(184,134,11,0.4), rgba(139,90,43,0.4));
+  border-color: var(--gold);
+  color: #f5e8c8;
+}
+.sp-btn-save:hover { filter: brightness(1.15); }
+.sp-btn-save-alt {
+  background: rgba(184,134,11,0.12);
+  border-color: rgba(184,134,11,0.5);
+  color: var(--gold-pale);
+}
+.sp-btn-save-alt:hover { background: rgba(184,134,11,0.22); border-color: var(--gold); }
+.sp-btn-delete {
+  background: transparent;
+  border-color: rgba(200, 66, 50, 0.5);
+  color: #d97070;
+}
+.sp-btn-delete:hover { background: rgba(200,66,50,0.15); border-color: rgba(200,66,50,0.8); }
+
+/* ── TYPE CHOOSER (middle-click selector) ───────────────── */
+#type-chooser {
+  position: fixed;
+  z-index: 200;
+  background: var(--panel);
+  border: 1px solid rgba(184,134,11,0.5);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  padding: 4px;
+  min-width: 220px;
+  font-family: 'Crimson Pro', Georgia, serif;
+  display: none;
+}
+#type-chooser.visible { display: block; }
+.tc-header {
+  padding: 8px 12px 6px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  color: var(--steel-pale);
+  text-transform: uppercase;
+}
+.tc-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 1.05rem;
+  color: var(--bone);
+  cursor: pointer;
+  border-radius: 3px;
+}
+.tc-item:hover { background: rgba(184,134,11,0.18); color: var(--parchment); }
+.tc-item-icon { font-size: 1.4rem; line-height: 1; }
+
+/* ── LOGIN OVERLAY ──────────────────────────────────────── */
+#rqAuthOverlay {
+  position: fixed; inset: 0;
+  background: var(--ash, #1a1610);
+  z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Crimson Pro', Georgia, serif;
+}
+#rqAuthOverlay .auth-card {
+  background: var(--panel, #231d14);
+  border: 1px solid rgba(184,134,11,0.4);
+  border-radius: 6px;
+  padding: 32px 36px;
+  width: 360px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+#rqAuthOverlay h2 {
+  font-family: 'Cinzel', serif;
+  color: var(--gold, #b8860b);
+  font-size: 1.15rem;
+  letter-spacing: 0.15em;
+  text-align: center;
+  margin: 0 0 4px 0;
+  text-transform: uppercase;
+}
+#rqAuthOverlay .auth-sub {
+  color: var(--steel-pale, #8a9bb0);
+  font-size: 0.78rem;
+  text-align: center;
+  margin-bottom: 22px;
+  letter-spacing: 0.05em;
+}
+#rqAuthOverlay label {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  color: var(--steel-pale, #8a9bb0);
+  text-transform: uppercase;
+  margin: 12px 0 4px 0;
+}
+#rqAuthOverlay input {
+  width: 100%;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(184,134,11,0.3);
+  border-radius: 3px;
+  padding: 8px 10px;
+  color: #e8dcc4;
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.95rem;
+  box-sizing: border-box;
+}
+#rqAuthOverlay input:focus { outline: none; border-color: var(--gold, #b8860b); }
+#rqAuthOverlay .auth-btn {
+  width: 100%;
+  margin-top: 18px;
+  padding: 10px;
+  background: linear-gradient(180deg, rgba(184,134,11,0.4), rgba(139,90,43,0.4));
+  border: 1px solid var(--gold, #b8860b);
+  color: #f5e8c8;
+  font-family: 'Cinzel', serif;
+  font-size: 0.85rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  border-radius: 3px;
+  cursor: pointer;
+}
+#rqAuthOverlay .auth-btn:hover { filter: brightness(1.15); }
+#rqAuthOverlay .auth-btn:disabled { opacity: 0.5; cursor: wait; }
+#rqAuthOverlay .auth-err {
+  color: #d97070;
+  background: rgba(139,26,26,0.2);
+  border: 1px solid rgba(139,26,26,0.5);
+  padding: 8px 10px;
+  border-radius: 3px;
+  font-size: 0.78rem;
+  margin-top: 14px;
+  display: none;
+}
+#rqAuthOverlay .auth-err.visible { display: block; }
+
+/* ── CANVAS SAVED INDICATOR (topbar) ────────────────────── */
+#canvas-saved-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  color: var(--steel-pale);
+  padding: 4px 8px;
+  border: 1px solid rgba(184,134,11,0.2);
+  border-radius: 3px;
+  background: rgba(0,0,0,0.25);
+  text-transform: uppercase;
+  min-width: 80px;
+  text-align: center;
+  transition: color 0.2s, border-color 0.2s;
+}
+#canvas-saved-status.idle    { color: var(--steel-pale); }
+#canvas-saved-status.dirty   { color: #d4a017; border-color: rgba(212,160,23,0.4); }
+#canvas-saved-status.saving  { color: #d4a017; border-color: rgba(212,160,23,0.4); }
+#canvas-saved-status.saved   { color: #6aaf6a; border-color: rgba(106,175,106,0.4); }
+#canvas-saved-status.error   { color: #d97070; border-color: rgba(217,112,112,0.5); }
+
+/* ── LOGOUT BUTTON ──────────────────────────────────────── */
+#btnLogout { display: none; }                 /* hidden until auth completes */
+
+/* ── SESSION PICKER OVERLAY ─────────────────────────────── */
+#session-picker {
+  position: fixed; inset: 0;
+  background: rgba(10,8,5,0.85);
+  z-index: 500;
+  display: none;
+  align-items: center; justify-content: center;
+  font-family: 'Crimson Pro', Georgia, serif;
+}
+#session-picker.open { display: flex; }
+#session-picker .sp-card {
+  background: var(--panel);
+  border: 1px solid rgba(184,134,11,0.4);
+  border-radius: 6px;
+  width: 720px;
+  max-width: 95vw;
+  max-height: 80vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.7);
+}
+#session-picker .sp-card-header {
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px 22px;
+  border-bottom: 1px solid rgba(184,134,11,0.3);
+  background: linear-gradient(180deg, rgba(184,134,11,0.08), transparent);
+}
+#session-picker .sp-card-title {
+  flex: 1;
+  font-family: 'Cinzel', serif;
+  font-size: 1.2rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold-pale);
+}
+#session-picker .sp-card-close {
+  background: transparent;
+  border: 1px solid rgba(184,134,11,0.3);
+  color: var(--steel-pale);
+  width: 32px; height: 32px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 1.2rem;
+}
+#session-picker .sp-card-close:hover { color: var(--bone); border-color: rgba(184,134,11,0.6); }
+
+#session-picker .sp-card-body {
+  flex: 1; overflow-y: auto;
+  padding: 16px 22px;
+}
+
+.sp-camp {
+  margin-bottom: 10px;
+  border: 1px solid rgba(184,134,11,0.18);
+  border-radius: 4px;
+  background: rgba(0,0,0,0.18);
+}
+.sp-camp-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-family: 'Cinzel', serif;
+  letter-spacing: 0.12em;
+  color: var(--gold-pale);
+  font-size: 1rem;
+  text-transform: uppercase;
+  user-select: none;
+}
+.sp-camp-header:hover { background: rgba(184,134,11,0.08); }
+.sp-camp-caret { font-size: 0.7rem; color: var(--steel-pale); transition: transform 0.12s; }
+.sp-camp.open .sp-camp-caret { transform: rotate(90deg); }
+.sp-camp-system {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  color: var(--steel-pale);
+  margin-left: auto;
+}
+
+.sp-camp-body { display: none; padding: 4px 14px 12px 26px; }
+.sp-camp.open .sp-camp-body { display: block; }
+
+.sp-arc {
+  margin-top: 6px;
+}
+.sp-arc-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px;
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.95rem;
+  font-style: italic;
+  color: var(--bone);
+  cursor: pointer;
+  user-select: none;
+  border-radius: 3px;
+}
+.sp-arc-header:hover { background: rgba(184,134,11,0.06); }
+.sp-arc-caret { font-size: 0.7rem; color: var(--steel-pale); transition: transform 0.12s; }
+.sp-arc.open .sp-arc-caret { transform: rotate(90deg); }
+.sp-arc-body { display: none; padding-left: 18px; }
+.sp-arc.open .sp-arc-body { display: block; }
+
+.sp-session {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px;
+  margin: 3px 0;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(184,134,11,0.15);
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--bone);
+}
+.sp-session:hover { background: rgba(184,134,11,0.12); border-color: rgba(184,134,11,0.4); color: var(--parchment); }
+.sp-session-title { flex: 1; font-size: 0.95rem; }
+.sp-session-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.08em;
+}
+.sp-session-fmt {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 2px;
+}
+.sp-session-fmt.canvas  { background: rgba(184,134,11,0.2); color: var(--gold-pale); border: 1px solid rgba(184,134,11,0.4); }
+.sp-session-fmt.classic { background: rgba(58,68,85,0.3);  color: var(--steel-pale); border: 1px solid rgba(58,68,85,0.5); }
+
+.sp-new-session-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 6px; margin-left: 8px;
+  background: transparent;
+  border: 1px dashed rgba(184,134,11,0.4);
+  color: var(--steel-pale);
+  padding: 5px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.sp-new-session-btn:hover { color: var(--gold-pale); border-color: var(--gold); }
+
+.sp-empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--steel-pale);
+  font-style: italic;
+  font-size: 0.95rem;
+}
+
+/* ── FORMAT MISMATCH BANNER ─────────────────────────────── */
+#format-banner {
+  position: absolute;
+  top: 56px; left: 50%;
+  transform: translateX(-50%);
+  background: rgba(60,40,12,0.95);
+  border: 1px solid var(--gold);
+  color: var(--gold-pale);
+  padding: 10px 16px;
+  border-radius: 4px;
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.95rem;
+  z-index: 80;
+  display: none;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+}
+#format-banner.visible { display: block; }
+#format-banner a { color: var(--gold-bright); margin-left: 10px; }
+
+/* ── CURRENT SESSION TITLE in topbar ────────────────────── */
+.topbar-session {
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-style: italic;
+  color: var(--bone);
+  font-size: 0.95rem;
+  max-width: 280px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+</style>
+</head>
+<body>
+
+<!-- LOGIN OVERLAY (shown until authenticated) -->
+<div id="rqAuthOverlay">
+  <div class="auth-card">
+    <h2>Relentless Quest</h2>
+    <div class="auth-sub">Session Planner — Canvas — Sign In</div>
+    <label for="rqAuthEmail">Email</label>
+    <input id="rqAuthEmail" type="email" autocomplete="username" autofocus>
+    <label for="rqAuthPass">Password</label>
+    <input id="rqAuthPass" type="password" autocomplete="current-password">
+    <button class="auth-btn" id="rqAuthBtn" onclick="rqDoLogin()">Sign In</button>
+    <div class="auth-err" id="rqAuthErr"></div>
+  </div>
+</div>
+
+<!-- SESSION PICKER OVERLAY (campaigns → arcs → sessions) -->
+<div id="session-picker">
+  <div class="sp-card">
+    <div class="sp-card-header">
+      <span class="sp-card-title">Choose a Session</span>
+      <button class="sp-card-close" id="spCloseBtn" onclick="closeSessionPicker()" title="Close">✕</button>
+    </div>
+    <div class="sp-card-body" id="spPickerBody">
+      <div class="sp-empty">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── TOPBAR ── -->
+<div class="topbar">
+  <span class="topbar-brand">Relentless Quest</span>
+  <span class="topbar-sep">›</span>
+  <span class="topbar-title">Session Planner — Canvas</span>
+  <span class="topbar-sep">›</span>
+  <span class="topbar-version">stage 4b / load + save</span>
+  <span class="topbar-sep">·</span>
+  <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
+  <div class="topbar-actions">
+    <a href="session-planner.html" class="btn btn-ghost" style="text-decoration:none;">↩ Classic Planner</a>
+    <button class="btn btn-ghost" onclick="openSessionPicker()" title="Choose / create session">📚 Sessions</button>
+    <div class="type-palette" id="typePalette" role="toolbar" aria-label="Add node">
+      <!-- buttons injected from BLOCK_TYPES at boot -->
+    </div>
+    <button class="btn btn-ghost" onclick="frameSelection()" title="Frame selection or all nodes (F)">⌗ Frame</button>
+    <button class="btn btn-ghost" onclick="resetView()">⌖ Reset View</button>
+    <button class="btn" id="btnSaveNow" onclick="saveCurrentSession()" title="Save canvas to current session">💾 Save</button>
+    <span id="canvas-saved-status" class="idle" title="Save status">Idle</span>
+    <button class="btn btn-ghost" id="btnLogout" onclick="rqLogout()" title="Sign out">⎋ Logout</button>
+  </div>
+</div>
+
+<!-- Format mismatch banner (shown when loaded session is classic-format) -->
+<div id="format-banner">
+  This session was authored in the classic planner.
+  <a href="session-planner.html" target="_blank">Open it there</a>
+</div>
+
+<!-- ── CANVAS ── -->
+<div id="canvas-wrap">
+  <svg id="canvas-grid"></svg>
+  <div id="canvas-content">
+    <svg id="canvas-svg" width="1" height="1">
+      <defs>
+        <!-- Single arrowhead marker. orient="auto-start-reverse" makes SVG flip
+             it automatically when used as marker-start (vs marker-end). -->
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--gold)"/>
+        </marker>
+      </defs>
+    </svg>
+    <!-- Nodes live here, injected by JS -->
+  </div>
+
+  <div id="stage-label">Stage 4b · load + save</div>
+  <div id="marquee"></div>
+  <div id="empty-hint">
+    <div class="empty-headline">Empty Canvas</div>
+    <div class="empty-body">
+      Use the typed palette above to add a node,<br>
+      or middle-click here for a type chooser.
+    </div>
+  </div>
+  <div id="zoom-hud">100%</div>
+  <div id="help-hud">
+    <b>Pan</b>: right-click drag &nbsp;·&nbsp; <kbd>Space</kbd>+drag<br>
+    <b>Zoom</b>: scroll wheel<br>
+    <b>Frame view</b>: <kbd>F</kbd> (selection or all)<br>
+    <b>New node</b>: topbar palette &nbsp;·&nbsp; middle-click for type chooser<br>
+    <b>Edit node</b>: click the node body<br>
+    <b>Move node</b>: drag the header<br>
+    <b>Connect</b>: click an anchor, then click another<br>
+    <b>Direction</b>: click the arrow pill to cycle<br>
+    <b>Select multiple</b>: <kbd>Shift</kbd>+drag to marquee<br>
+    <b>Delete</b>: <kbd>Del</kbd> on selected node(s) or connector
+  </div>
+</div>
+
+<!-- (Right-click context menu removed in Stage 3a++ — right-click is now pan.) -->
+
+<!-- Middle-click type chooser — populated and positioned at click time -->
+<div id="type-chooser" role="menu"></div>
+
+<!-- ── SIDE PANEL EDITOR ── -->
+<div id="side-panel" role="dialog" aria-label="Edit node">
+  <div class="sp-header">
+    <button class="sp-close" onclick="closeSidePanel()" title="Close (Esc)">✕</button>
+    <span class="sp-saved" id="spSaved" title="Save status">Saved</span>
+    <span class="sp-icon"   id="spIcon">◆</span>
+    <div style="display:flex; flex-direction:column; flex:1; gap:2px; min-width:0;">
+      <span class="sp-typebadge" id="spTypeBadge">Type</span>
+      <input class="sp-title-input" id="spTitle" type="text" placeholder="Title…">
+    </div>
+  </div>
+  <div class="sp-body" id="spBody"><!-- form rendered per-type --></div>
+  <div class="sp-footer">
+    <button class="sp-btn sp-btn-save"     onclick="saveAndCloseOpenNode()">💾 Save &amp; Close</button>
+    <button class="sp-btn sp-btn-save-alt" onclick="saveOpenNode()">💾 Save</button>
+    <button class="sp-btn sp-btn-delete"   onclick="deleteOpenNode()">⌫ Delete Node</button>
+  </div>
+</div>
+
+<script>
+// ── SUPABASE CONFIG ──
+const SB_URL  = 'https://burtvenqfzextswpjziw.supabase.co';
+const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1cnR2ZW5xZnpleHRzd3Bqeml3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyNTkxMzEsImV4cCI6MjA5MDgzNTEzMX0.M9krIdktkO1wMeKYMm_HoR_tEykewbRUVHdjerg1XIo';
+
+// ── AUTH ──
+// Per the v0.4.2 pattern: tokens cached in sessionStorage so the user stays
+// signed in across reloads in the same tab. Key is namespaced so other RQ
+// tools (classic planner, arc-builder, etc.) keep their own login state.
+const RQ_AUTH_KEY = 'rq_sp_canvas_auth';
+
+function rqGetAuth() {
+  try { const r = sessionStorage.getItem(RQ_AUTH_KEY); return r ? JSON.parse(r) : null; }
+  catch (e) { return null; }
+}
+function rqSetAuth(o)   { try { sessionStorage.setItem(RQ_AUTH_KEY, JSON.stringify(o)); } catch (e) {} }
+function rqClearAuth()  { try { sessionStorage.removeItem(RQ_AUTH_KEY); } catch (e) {} }
+
+async function rqRefreshToken() {
+  const auth = rqGetAuth();
+  if (!auth || !auth.refresh_token) return false;
+  const res = await fetch(SB_URL + '/auth/v1/token?grant_type=refresh_token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+    body: JSON.stringify({ refresh_token: auth.refresh_token })
+  });
+  if (!res.ok) { rqClearAuth(); return false; }
+  const data = await res.json();
+  rqSetAuth({
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    expires_at: Math.floor(Date.now() / 1000) + (data.expires_in || 3600),
+    user: data.user || (auth.user || null)
+  });
+  return true;
+}
+
+async function sbFetch(path, opts = {}) {
+  const auth = rqGetAuth();
+  const token = auth && auth.access_token ? auth.access_token : SB_KEY;
+  const doFetch = (tok) => fetch(SB_URL + '/rest/v1/' + path, {
+    headers: {
+      'apikey': SB_KEY,
+      'Authorization': 'Bearer ' + tok,
+      'Content-Type': 'application/json',
+      'Prefer': opts.prefer || 'return=representation',
+      ...(opts.headers || {})
+    },
+    ...opts
+  });
+  let res = await doFetch(token);
+  if (res.status === 401 && auth && auth.refresh_token) {
+    const ok = await rqRefreshToken();
+    if (ok) {
+      const fresh = rqGetAuth();
+      res = await doFetch(fresh.access_token);
+    }
+  }
+  if (!res.ok) {
+    const txt = await res.text();
+    if (res.status === 401) {
+      rqClearAuth();
+      rqShowLogin();
+    }
+    throw new Error(res.status + ': ' + txt);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+// ── LOGIN OVERLAY CONTROL ──
+
+function rqShowLogin() {
+  const ov = document.getElementById('rqAuthOverlay');
+  if (ov) ov.style.display = 'flex';
+  const lb = document.getElementById('btnLogout');
+  if (lb) lb.style.display = 'none';
+}
+function rqHideLogin() {
+  const ov = document.getElementById('rqAuthOverlay');
+  if (ov) ov.style.display = 'none';
+  const lb = document.getElementById('btnLogout');
+  if (lb) lb.style.display = '';
+}
+function rqShowAuthError(msg) {
+  const e = document.getElementById('rqAuthErr');
+  if (!e) return;
+  e.textContent = msg;
+  e.classList.add('visible');
+}
+function rqClearAuthError() {
+  const e = document.getElementById('rqAuthErr');
+  if (e) { e.textContent = ''; e.classList.remove('visible'); }
+}
+
+async function rqDoLogin() {
+  rqClearAuthError();
+  const emailEl = document.getElementById('rqAuthEmail');
+  const passEl  = document.getElementById('rqAuthPass');
+  const btn     = document.getElementById('rqAuthBtn');
+  const email   = (emailEl && emailEl.value || '').trim();
+  const pass    = passEl && passEl.value || '';
+  if (!email || !pass) {
+    rqShowAuthError('Email and password are required.');
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+  try {
+    const res = await fetch(SB_URL + '/auth/v1/token?grant_type=password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+      body: JSON.stringify({ email, password: pass })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = data.error_description || data.msg || data.message || ('Login failed (' + res.status + ')');
+      rqShowAuthError(msg);
+      if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+      return;
+    }
+    rqSetAuth({
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      expires_at: Math.floor(Date.now() / 1000) + (data.expires_in || 3600),
+      user: data.user || null
+    });
+    if (passEl) passEl.value = '';
+    rqHideLogin();
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+    // Now that we're authed, kick off the normal page bootstrap.
+    rqBootstrapAfterAuth();
+  } catch (e) {
+    rqShowAuthError('Network error: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+  }
+}
+
+function rqLogout() {
+  rqClearAuth();
+  // Clear loaded session and canvas state
+  sessionState.currentSessionId = null;
+  document.getElementById('topbarSession').textContent = 'No session loaded';
+  document.getElementById('format-banner').classList.remove('visible');
+  state.edges.slice().forEach(removeEdge);
+  state.nodes.forEach(n => { if (n.el && n.el.parentNode) n.el.parentNode.removeChild(n.el); });
+  state.nodes.clear();
+  state.selectedNodes.clear();
+  updateEmptyHint && updateEmptyHint();
+  setCanvasSavedState('idle');
+  rqShowLogin();
+}
+
+// Submit-on-Enter inside the auth fields
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const ov = document.getElementById('rqAuthOverlay');
+  if (!ov || ov.style.display === 'none') return;
+  const t = e.target;
+  if (t && (t.id === 'rqAuthEmail' || t.id === 'rqAuthPass')) {
+    e.preventDefault();
+    rqDoLogin();
+  }
+});
+
+// ── CANVAS SAVED INDICATOR (topbar) ──
+// Stage 4a wires the visual; 4c will drive it from continuous autosaves.
+function setCanvasSavedState(s) {
+  const el = document.getElementById('canvas-saved-status');
+  if (!el) return;
+  el.classList.remove('idle','dirty','saving','saved','error');
+  el.classList.add(s);
+  el.textContent = ({ idle:'Idle', dirty:'Unsaved', saving:'Saving…', saved:'Saved', error:'Error' })[s] || s;
+}
+
+// ── SESSION STATE ──
+const sessionState = {
+  campaigns: [],   // [{id,name,system}]
+  arcs: [],        // [{id,campaign_id,title}]
+  sessions: [],    // [{id,arc_id,campaign_id,title,session_date,blocks,...}]
+  currentSessionId: null,
+};
+
+// ── PICKER FETCH ──
+async function loadCampaignsAndArcsAndSessions() {
+  // Fetch in parallel — all three tables are small.
+  try {
+    const [camps, arcs, sess] = await Promise.all([
+      sbFetch('campaigns?select=id,name,system&order=name.asc'),
+      sbFetch('arcs?select=id,campaign_id,title,sort_order&order=campaign_id.asc,sort_order.asc'),
+      sbFetch('sessions?select=id,campaign_id,arc_id,title,session_date,status,blocks,sort_order&order=campaign_id.asc,sort_order.asc'),
+    ]);
+    sessionState.campaigns = camps || [];
+    sessionState.arcs      = arcs  || [];
+    sessionState.sessions  = sess  || [];
+  } catch (e) {
+    console.warn('Could not load campaigns/arcs/sessions:', e.message);
+    sessionState.campaigns = [];
+    sessionState.arcs      = [];
+    sessionState.sessions  = [];
+  }
+}
+
+// ── PICKER UI ──
+const sessionPicker = document.getElementById('session-picker');
+const pickerBody    = document.getElementById('spPickerBody');
+
+async function openSessionPicker() {
+  // If no session is loaded yet, hide the close button — user must pick.
+  const closeBtn = document.getElementById('spCloseBtn');
+  if (closeBtn) closeBtn.style.display = sessionState.currentSessionId ? '' : 'none';
+  sessionPicker.classList.add('open');
+  pickerBody.innerHTML = '<div class="sp-empty">Loading…</div>';
+  await loadCampaignsAndArcsAndSessions();
+  renderSessionPicker();
+}
+function closeSessionPicker() {
+  sessionPicker.classList.remove('open');
+}
+
+function renderSessionPicker() {
+  const camps = sessionState.campaigns;
+  if (!camps.length) {
+    pickerBody.innerHTML = `
+      <div class="sp-empty">
+        No campaigns yet.<br>
+        Create one in the <a href="session-planner.html" style="color:var(--gold-pale);">classic planner</a>
+        (or the campaign manager) and come back here.
+      </div>`;
+    return;
+  }
+  let html = '';
+  camps.forEach(c => {
+    const campArcs = sessionState.arcs.filter(a => String(a.campaign_id) === String(c.id));
+    // Sessions for this campaign with no arc go into a virtual "Loose Sessions" bucket
+    const looseSessions = sessionState.sessions.filter(s =>
+      String(s.campaign_id) === String(c.id) && !s.arc_id);
+    const sysBadge = c.system && c.system !== 'both' ? `<span class="sp-camp-system">${escHtml(c.system.toUpperCase())}</span>` : '';
+    html += `
+      <div class="sp-camp" data-camp-id="${c.id}">
+        <div class="sp-camp-header" onclick="toggleCampaign('${c.id}')">
+          <span class="sp-camp-caret">▶</span>
+          <span class="sp-camp-name">${escHtml(c.name)}</span>
+          ${sysBadge}
+        </div>
+        <div class="sp-camp-body">
+          ${campArcs.map(a => renderArcInPicker(a)).join('')}
+          ${looseSessions.length ? `
+            <div class="sp-arc open">
+              <div class="sp-arc-header"><span class="sp-arc-caret">▶</span>(no arc)</div>
+              <div class="sp-arc-body">
+                ${looseSessions.map(s => renderSessionInPicker(s)).join('')}
+                <button class="sp-new-session-btn" onclick="createNewSession('${c.id}', null)">+ New Session</button>
+              </div>
+            </div>` : ''}
+        </div>
+      </div>`;
+  });
+  pickerBody.innerHTML = html;
+}
+
+function renderArcInPicker(arc) {
+  const arcSessions = sessionState.sessions.filter(s => String(s.arc_id) === String(arc.id));
+  return `
+    <div class="sp-arc" data-arc-id="${arc.id}">
+      <div class="sp-arc-header" onclick="toggleArc('${arc.id}')">
+        <span class="sp-arc-caret">▶</span>${escHtml(arc.title || 'Untitled Arc')}
+      </div>
+      <div class="sp-arc-body">
+        ${arcSessions.map(s => renderSessionInPicker(s)).join('')}
+        <button class="sp-new-session-btn" onclick="createNewSession('${arc.campaign_id}', '${arc.id}')">+ New Session</button>
+      </div>
+    </div>`;
+}
+
+function renderSessionInPicker(s) {
+  const fmt = detectSessionFormat(s);
+  const dateStr = s.session_date ? new Date(s.session_date).toLocaleDateString() : '';
+  return `
+    <div class="sp-session" onclick="pickSession('${s.id}')">
+      <span class="sp-session-fmt ${fmt}">${fmt}</span>
+      <span class="sp-session-title">${escHtml(s.title || 'Untitled Session')}</span>
+      ${dateStr ? `<span class="sp-session-meta">${escHtml(dateStr)}</span>` : ''}
+    </div>`;
+}
+
+function detectSessionFormat(sessionRow) {
+  const b = sessionRow.blocks;
+  if (b && typeof b === 'object' && !Array.isArray(b) && b.format === 'canvas') return 'canvas';
+  return 'classic';
+}
+
+window.toggleCampaign = function(id) {
+  const el = document.querySelector(`.sp-camp[data-camp-id="${id}"]`);
+  if (el) el.classList.toggle('open');
+};
+window.toggleArc = function(id) {
+  const el = document.querySelector(`.sp-arc[data-arc-id="${id}"]`);
+  if (el) el.classList.toggle('open');
+};
+
+// ── PICKING / CREATING SESSIONS ──
+async function pickSession(id) {
+  closeSessionPicker();
+  const row = sessionState.sessions.find(s => String(s.id) === String(id));
+  if (!row) { console.warn('Session not in cached list:', id); return; }
+  await loadSessionData(row);
+}
+
+async function createNewSession(campaignId, arcId) {
+  const title = prompt('Session title:', 'New Canvas Session');
+  if (!title) return;
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const result = await sbFetch('sessions', {
+      method: 'POST',
+      prefer: 'return=representation',
+      body: JSON.stringify({
+        campaign_id: parseInt(campaignId),
+        arc_id: arcId ? parseInt(arcId) : null,
+        title,
+        session_date: today,
+        status: 'Planning',
+        blocks: { format: 'canvas', version: 1, nodes: [], edges: [], view: { x: 0, y: 0, zoom: 1 } },
+        sort_order: 0,
+      })
+    });
+    const row = Array.isArray(result) ? result[0] : result;
+    sessionState.sessions.push(row);
+    closeSessionPicker();
+    await loadSessionData(row);
+  } catch (e) {
+    alert('Could not create session: ' + e.message);
+  }
+}
+
+// ── SERIALIZE / DESERIALIZE THE CANVAS ──
+function serializeCanvas() {
+  // Walk state.nodes preserving insertion order. State.edges already an array.
+  const nodes = [];
+  state.nodes.forEach(n => {
+    nodes.push({
+      id:      n.id,
+      type:    n.type,
+      x:       n.x,
+      y:       n.y,
+      title:   n.title,
+      summary: n.summary || '',
+      fields:  n.fields  || {},
+    });
+  });
+  const edges = state.edges.map(e => ({
+    id: e.id,
+    from_node: e.from.nodeId,
+    to_node:   e.to.nodeId,
+    dir:       e.dir,
+  }));
+  return {
+    format: 'canvas',
+    version: 1,
+    nodes,
+    edges,
+    view: { x: VIEW.x, y: VIEW.y, zoom: VIEW.zoom },
+  };
+}
+
+// Replace current canvas with the supplied saved-state object.
+function deserializeCanvas(data) {
+  // Tear down existing
+  state.edges.slice().forEach(removeEdge);
+  state.nodes.forEach(n => {
+    if (n.el && n.el.parentNode) n.el.parentNode.removeChild(n.el);
+  });
+  state.nodes.clear();
+  state.selectedNodes.clear();
+  state.selectedEdge = null;
+  state.pendingAnchor = null;
+  document.body.classList.remove('connecting');
+
+  // Restore nodes — build directly with the saved id so anchor handlers
+  // close over the correct identity from the start (going through createNode
+  // and renaming afterward leaves stale ids in event-handler closures).
+  let maxIdSeq = 0;
+  (data.nodes || []).forEach(nd => {
+    const def = BLOCK_TYPES[nd.type] || BLOCK_TYPES.scene;
+    const node = {
+      id: nd.id,
+      x: nd.x,
+      y: nd.y,
+      type: nd.type,
+      title: nd.title || def.defaultTitle,
+      icon: def.icon,
+      summary: nd.summary || '',
+      fields: nd.fields || {},
+    };
+    const el = document.createElement('div');
+    el.className = 'node';
+    el.dataset.nodeId = nd.id;
+    el.dataset.type   = nd.type;
+    el.dataset.size   = def.size;
+    el.style.left = nd.x + 'px';
+    el.style.top  = nd.y + 'px';
+    el.innerHTML = renderNodeFace(node);
+    content.appendChild(el);
+    node.el = el;
+    state.nodes.set(nd.id, node);
+    attachNodeDrag(el, node);
+    attachAnchorClicks(el, node);
+    wireNodeBodyClickToOpenPanel(el, node);
+    // Track highest numeric suffix so future createNode IDs don't collide
+    const m = String(nd.id).match(/^n(\d+)$/);
+    if (m) { const n = parseInt(m[1]); if (n > maxIdSeq) maxIdSeq = n; }
+  });
+  // Bump the sequence past the max loaded id
+  if (maxIdSeq >= nodeIdSeq) nodeIdSeq = maxIdSeq + 1;
+
+  // Restore edges (target nodes exist by now)
+  (data.edges || []).forEach(ed => {
+    const a = state.nodes.get(ed.from_node);
+    const b = state.nodes.get(ed.to_node);
+    if (!a || !b) return;
+    createEdge(
+      { nodeId: ed.from_node },
+      { nodeId: ed.to_node },
+      ed.dir || 'forward'
+    );
+  });
+
+  // Restore view
+  if (data.view) {
+    VIEW.x = data.view.x || 0;
+    VIEW.y = data.view.y || 0;
+    VIEW.zoom = data.view.zoom || 1;
+    applyTransform();
+  }
+  updateEmptyHint();
+  // Force a redraw so edges line up with their nodes' final positions
+  requestAnimationFrame(() => redrawEdges());
+}
+
+// ── LOAD A SESSION INTO THE CANVAS ──
+async function loadSessionData(sessionRow) {
+  sessionState.currentSessionId = sessionRow.id;
+  document.getElementById('topbarSession').textContent = sessionRow.title || 'Untitled Session';
+
+  const fmt = detectSessionFormat(sessionRow);
+  document.getElementById('format-banner').classList.toggle('visible', fmt === 'classic');
+
+  if (fmt === 'canvas') {
+    deserializeCanvas(sessionRow.blocks);
+  } else {
+    // Classic format — leave canvas empty. User can switch to classic planner.
+    deserializeCanvas({ nodes: [], edges: [], view: { x: 0, y: 0, zoom: 1 } });
+  }
+  setCanvasSavedState('saved');
+  updateEmptyHint();
+}
+
+// ── SAVE CURRENT CANVAS BACK TO ITS SESSION ──
+async function saveCurrentSession() {
+  if (!sessionState.currentSessionId) {
+    alert('No session loaded — open one from the Sessions menu first.');
+    return;
+  }
+  const id = sessionState.currentSessionId;
+  setCanvasSavedState('saving');
+  try {
+    const payload = serializeCanvas();
+    await sbFetch('sessions?id=eq.' + id, {
+      method: 'PATCH',
+      prefer: 'return=minimal',
+      body: JSON.stringify({ blocks: payload }),
+    });
+    // Update cached session row
+    const row = sessionState.sessions.find(s => String(s.id) === String(id));
+    if (row) row.blocks = payload;
+    setCanvasSavedState('saved');
+  } catch (e) {
+    setCanvasSavedState('error');
+    alert('Save failed: ' + e.message);
+  }
+}
+
+// ── BLOCK TYPE REGISTRY ──────────────────────────────────
+// Single source of truth for the seven node types. Each `fields` entry is
+// a row in the side-panel form. `summary: true` marks the field whose value
+// gets shown on the canvas face beneath the title.
+const BLOCK_TYPES = {
+
+  scene: {
+    label: 'Scene', icon: '🏔️', size: 'double-tall', defaultTitle: 'New Scene',
+    fields: [
+      { key: 'location',    label: 'Location Name',  type: 'text',   group: 'Location', placeholder: 'e.g. The Sunken Crypt' },
+      { key: 'area_type',   label: 'Area Type',      type: 'select', group: 'Location',
+        options: ['Dungeon','Wilderness','Urban','Aquatic','Aerial','Planar','Cave','Ruin'] },
+      { key: 'description', label: 'Description / Boxed Text', type: 'textarea', group: 'Location',
+        placeholder: 'What the party sees, hears, smells on arrival…', rows: 4, fullWidth: true, summary: true },
+      { key: 'lighting',    label: 'Lighting',       type: 'select', group: 'Environment',
+        options: ['Darkness','Dim Light','Bright Light','Magical Darkness'] },
+      { key: 'terrain',     label: 'Terrain',        type: 'select', group: 'Environment',
+        options: ['Normal','Difficult','Very Difficult','Underwater','Aerial'] },
+      { key: 'air',         label: 'Air / Atmosphere', type: 'select', group: 'Environment',
+        options: ['Clean','Toxic / Gas','Smoky','Poisonous','Thin Air'] },
+      { key: 'sound',       label: 'Sound',          type: 'select', group: 'Environment',
+        options: ['Normal','Echoing','Silent','Loud','Muffled'] },
+      { key: 'event_trigger', label: 'Random Event Trigger', type: 'select', group: 'Encounters & Events',
+        options: ['Enter scene','End of each round','On loud noise','On failed save','Manually only'], fullWidth: true },
+      { key: 'hazard',      label: 'Custom Hazard / Effect', type: 'textarea', group: 'Encounters & Events',
+        placeholder: 'e.g. Rising water +1 ft per round after round 3…', rows: 2, fullWidth: true },
+      { key: 'notes',       label: 'Director Notes', type: 'textarea', group: 'Director Notes',
+        placeholder: 'Pacing, hooks, transitions…', rows: 3, fullWidth: true },
+    ],
+  },
+
+  encounter: {
+    label: 'Encounter', icon: '⚔️', size: 'double-square', defaultTitle: 'New Encounter',
+    fields: [
+      { key: 'tactics',    label: 'Tactics Notes',   type: 'textarea', group: 'Combat Setup',
+        placeholder: 'Opening moves, positioning, focus targets…', rows: 3, fullWidth: true, summary: true },
+      { key: 'difficulty', label: 'Difficulty',      type: 'select', group: 'Combat Setup',
+        options: ['Trivial','Easy','Medium','Hard','Deadly','Extreme'] },
+      { key: 'xp',         label: 'XP Award',        type: 'text',   group: 'Combat Setup', placeholder: 'e.g. 11,500' },
+      { key: 'cr',         label: 'Total CR',        type: 'text',   group: 'Combat Setup', placeholder: 'e.g. 10' },
+      { key: 'ev',         label: 'Encounter Budget (EV)', type: 'text', group: 'Combat Setup', placeholder: 'Draw Steel EV total' },
+      { key: 'map',        label: 'Map / Location Description', type: 'textarea', group: 'Battlefield',
+        placeholder: 'Layout, cover, elevation, choke points…', rows: 2, fullWidth: true },
+      { key: 'terrain',    label: 'Special Terrain / Hazards',  type: 'textarea', group: 'Battlefield',
+        placeholder: 'e.g. Lava pits, rotating pillars, magical fields…', rows: 2, fullWidth: true },
+      { key: 'victory',    label: 'Victory Condition',  type: 'textarea', group: 'Victory & Defeat',
+        placeholder: 'What counts as winning?', rows: 2 },
+      { key: 'defeat',     label: 'Defeat / Complication', type: 'textarea', group: 'Victory & Defeat',
+        placeholder: 'What happens if they lose or flee?', rows: 2 },
+      { key: 'notes',      label: 'Director Notes',  type: 'textarea', group: 'Director Notes',
+        placeholder: 'Post-combat hooks, loot narrative…', rows: 3, fullWidth: true },
+    ],
+  },
+
+  trap: {
+    label: 'Trap / Hazard', icon: '🪤', size: 'double-tall', defaultTitle: 'New Trap',
+    fields: [
+      { key: 'trigger', label: 'Trigger', type: 'select', group: 'Trap Details',
+        options: ['Pressure plate','Trip wire','Magic sensor','Proximity','Weight','Sound','Ranged touch'] },
+      { key: 'reset',   label: 'Reset',   type: 'select', group: 'Trap Details',
+        options: ['Manual','Automatic','Once only','Magical'] },
+      { key: 'trigger_desc', label: 'Trigger Description', type: 'textarea', group: 'Trap Details',
+        placeholder: 'Where it is, how it\'s hidden…', rows: 2, fullWidth: true, summary: true },
+      { key: 'perc_dc',    label: 'Perception DC',    type: 'number', group: 'Detection & Disarming', placeholder: '13' },
+      { key: 'inv_dc',     label: 'Investigation DC', type: 'number', group: 'Detection & Disarming', placeholder: '15' },
+      { key: 'disarm_dc',  label: 'Disarm DC',        type: 'number', group: 'Detection & Disarming', placeholder: '15' },
+      { key: 'disarm_method', label: 'Disarm Method', type: 'textarea', group: 'Detection & Disarming',
+        placeholder: 'Tools required, skill checks…', rows: 2, fullWidth: true },
+      { key: 'save_stat',  label: 'Saving Throw',     type: 'select', group: 'Effect',
+        options: ['DEX','CON','STR','WIS','INT','CHA'] },
+      { key: 'save_dc',    label: 'Save DC',          type: 'number', group: 'Effect', placeholder: '15' },
+      { key: 'damage',     label: 'Damage Dice',      type: 'text',   group: 'Effect', placeholder: '2d10' },
+      { key: 'dmg_type',   label: 'Damage Type',      type: 'select', group: 'Effect',
+        options: ['poison','piercing','bludgeoning','slashing','fire','cold','lightning','acid','necrotic','radiant','thunder','psychic','force'] },
+      { key: 'condition',  label: 'Condition on Fail', type: 'text',  group: 'Effect', placeholder: 'e.g. Poisoned, Prone…' },
+      { key: 'effect',     label: 'Full Effect Description', type: 'textarea', group: 'Effect',
+        placeholder: 'What happens on hit / fail…', rows: 3, fullWidth: true },
+      { key: 'notes',      label: 'Director Notes',   type: 'textarea', group: 'Director Notes',
+        placeholder: 'Narrative context, loot inside…', rows: 2, fullWidth: true },
+    ],
+  },
+
+  npc: {
+    label: 'NPC', icon: '🧑', size: 'single', defaultTitle: 'New NPC',
+    fields: [
+      { key: 'name',       label: 'Full Name', type: 'text',   group: 'Identity', placeholder: 'e.g. Vrakar the Bound' },
+      { key: 'role',       label: 'Role',      type: 'select', group: 'Identity',
+        options: ['Ally','Neutral','Enemy','Boss','Patron','Contact','Bystander'] },
+      { key: 'ancestry',   label: 'Ancestry / Race', type: 'text', group: 'Identity', placeholder: 'e.g. Human, Elf, Undead…' },
+      { key: 'occupation', label: 'Occupation / Title', type: 'text', group: 'Identity', placeholder: 'e.g. Cult Leader, Merchant' },
+      { key: 'appearance', label: 'Appearance / First Impression', type: 'textarea', group: 'Identity',
+        placeholder: 'What the party notices first…', rows: 2, fullWidth: true, summary: true },
+      { key: 'motivations', label: 'Motivations (comma-separated)', type: 'text', group: 'Psychology',
+        placeholder: 'Power, Revenge, Survival…', fullWidth: true },
+      { key: 'pitfalls',    label: 'Pitfalls / Weaknesses',         type: 'text', group: 'Psychology',
+        placeholder: 'Pride, Fear of failure…', fullWidth: true },
+      { key: 'mannerism',   label: 'Mannerism / Voice',             type: 'textarea', group: 'Psychology',
+        placeholder: 'Speaks in riddles, never makes eye contact…', rows: 2, fullWidth: true },
+      { key: 'patience',    label: 'Patience (rounds)', type: 'number', group: 'Interaction', placeholder: '4' },
+      { key: 'attitude',    label: 'Starting Attitude', type: 'select', group: 'Interaction',
+        options: ['Hostile','Unfriendly','Indifferent','Friendly','Helpful'] },
+      { key: 'hook1',       label: 'Dialogue Hook 1',   type: 'text', group: 'Interaction',
+        placeholder: 'Opening line or key phrase…', fullWidth: true },
+      { key: 'hook2',       label: 'Dialogue Hook 2',   type: 'text', group: 'Interaction',
+        placeholder: 'Information they might reveal…', fullWidth: true },
+      { key: 'secret',      label: 'Secret (hidden until revealed)', type: 'textarea', group: 'Interaction',
+        placeholder: 'What they\'re hiding, their true agenda…', rows: 2, fullWidth: true },
+      { key: 'notes',       label: 'Director Notes',    type: 'textarea', group: 'Director Notes',
+        placeholder: 'Tactics if combat, fallback plans…', rows: 2, fullWidth: true },
+    ],
+  },
+
+  clue: {
+    label: 'Clue', icon: '🔍', size: 'single', defaultTitle: 'New Clue',
+    fields: [
+      { key: 'clue_title', label: 'Clue Title / Name', type: 'text', group: 'Clue Details',
+        placeholder: 'e.g. The Missing Symbol', fullWidth: true },
+      { key: 'where',      label: 'Where Found', type: 'textarea', group: 'Clue Details',
+        placeholder: 'Location, container, person…', rows: 2, fullWidth: true },
+      { key: 'reveals',    label: 'What It Reveals', type: 'textarea', group: 'Clue Details',
+        placeholder: 'The information or lead this clue provides…', rows: 3, fullWidth: true, summary: true },
+      { key: 'passive_dc', label: 'Passive DC', type: 'number', group: 'Discovery', placeholder: '14' },
+      { key: 'check_skill', label: 'Active Check', type: 'select', group: 'Discovery',
+        options: ['Investigation','Perception','Arcana','History','Nature','Religion','Insight','Medicine'] },
+      { key: 'active_dc',  label: 'Active DC',  type: 'number', group: 'Discovery', placeholder: '12' },
+      { key: 'connects',   label: 'Connects To (scenes, NPCs, rewards…)', type: 'text', group: 'Connections',
+        placeholder: 'e.g. Entry Hall Scene, Vrakar the Bound', fullWidth: true },
+      { key: 'stakes',     label: 'Urgency / Stakes if Missed', type: 'textarea', group: 'Connections',
+        placeholder: 'What happens if the party misses this clue?', rows: 2, fullWidth: true },
+      { key: 'notes',      label: 'Director Notes', type: 'textarea', group: 'Director Notes',
+        placeholder: 'How to surface the clue if players struggle…', rows: 2, fullWidth: true },
+    ],
+  },
+
+  reward: {
+    label: 'Reward', icon: '💰', size: 'single', defaultTitle: 'New Reward',
+    fields: [
+      { key: 'xp',        label: 'XP',           type: 'text',   group: 'Currency & Experience', placeholder: '11,500' },
+      { key: 'gp',        label: 'Gold (gp)',    type: 'number', group: 'Currency & Experience', placeholder: '1200' },
+      { key: 'sp',        label: 'Silver (sp)',  type: 'number', group: 'Currency & Experience', placeholder: '340' },
+      { key: 'victories', label: 'Victories (DS)', type: 'number', group: 'Currency & Experience', placeholder: '2' },
+      { key: 'item1',     label: 'Item 1',       type: 'text',   group: 'Magic Items',
+        placeholder: 'e.g. Boots of Speed (requires attunement)', fullWidth: true, summary: true },
+      { key: 'item2',     label: 'Item 2',       type: 'text',   group: 'Magic Items',
+        placeholder: 'e.g. Scroll of Fireball', fullWidth: true },
+      { key: 'item3',     label: 'Item 3',       type: 'text',   group: 'Magic Items',
+        placeholder: 'e.g. Potion of Healing', fullWidth: true },
+      { key: 'mundane',   label: 'Mundane Loot', type: 'textarea', group: 'Other',
+        placeholder: 'Weapons, armor, supplies, gear…', rows: 2, fullWidth: true },
+      { key: 'lore',      label: 'Lore / Story Reward', type: 'textarea', group: 'Other',
+        placeholder: 'Information, contacts, favors, titles earned…', rows: 2, fullWidth: true },
+      { key: 'notes',     label: 'Director Notes', type: 'textarea', group: 'Director Notes',
+        placeholder: 'Distribution notes, who gets what…', rows: 2, fullWidth: true },
+    ],
+  },
+
+  skillchallenge: {
+    label: 'Skill Challenge', icon: '🎲', size: 'double-tall', defaultTitle: 'New Skill Challenge',
+    fields: [
+      { key: 'goal',       label: 'Goal / Objective', type: 'textarea', group: 'Setup',
+        placeholder: 'What the party is trying to accomplish…', rows: 2, fullWidth: true, summary: true },
+      { key: 'complexity', label: 'Complexity', type: 'select', group: 'Setup',
+        options: ['1 (4 successes)','2 (6 successes)','3 (8 successes)','4 (10 successes)','5 (12 successes)'] },
+      { key: 'failures',   label: 'Failures Allowed', type: 'number', group: 'Setup', placeholder: '3' },
+      { key: 'time_limit', label: 'Time Limit',  type: 'text',   group: 'Setup', placeholder: 'e.g. 5 rounds, 1 hour, none' },
+      { key: 'primary_dc', label: 'Primary DC',  type: 'number', group: 'Setup', placeholder: '15' },
+      { key: 'primary_skills', label: 'Primary Skills', type: 'text', group: 'Skills',
+        placeholder: 'e.g. Athletics, Acrobatics, Survival', fullWidth: true },
+      { key: 'secondary_skills', label: 'Secondary Skills (one success only)', type: 'text', group: 'Skills',
+        placeholder: 'e.g. Insight, Persuasion', fullWidth: true },
+      { key: 'success',    label: 'On Success', type: 'textarea', group: 'Outcomes',
+        placeholder: 'What the party achieves…', rows: 2 },
+      { key: 'failure',    label: 'On Failure', type: 'textarea', group: 'Outcomes',
+        placeholder: 'Consequence of running out of attempts…', rows: 2 },
+      { key: 'twist',      label: 'Mid-Challenge Twist',  type: 'textarea', group: 'Outcomes',
+        placeholder: 'Optional complication that changes the stakes…', rows: 2, fullWidth: true },
+      { key: 'notes',      label: 'Director Notes', type: 'textarea', group: 'Director Notes',
+        placeholder: 'Pacing, narration cues…', rows: 2, fullWidth: true },
+    ],
+  },
+};
+// Order for menus and palette
+const BLOCK_TYPE_ORDER = ['scene','encounter','trap','npc','clue','reward','skillchallenge'];
+
+// ── STATE ────────────────────────────────────────────────
+const state = {
+  // pan/zoom of the canvas
+  view: { x: 0, y: 0, zoom: 1 },
+  // nodes by id
+  nodes: new Map(),
+  // edges: { id, from:{nodeId}, to:{nodeId}, dir, groupEl, hitEl, pathEl, pillEl, pillFOEl,
+  //          currentFromAnchor, currentToAnchor }
+  // Anchor keys on `from`/`to` are no longer authoritative — `redrawEdge` picks
+  // optimal anchors every frame so the line follows whichever sides face each other.
+  // dir is one of: 'forward', 'backward', 'both'
+  edges: [],
+  // While selecting the second anchor of a connection, this holds the first.
+  pendingAnchor: null,    // { nodeId, anchor, anchorEl }
+  selectedEdge: null,
+  selectedNodes: new Set(),    // Set of node ids
+  // input modes
+  isPanning: false,
+  isSpaceDown: false,
+  draggingNode: null,
+  marquee: null,                // { startScreen:{x,y}, currentScreen:{x,y} }
+};
+
+const VIEW = state.view;
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 2.5;
+
+// ── DOM REFS ─────────────────────────────────────────────
+const wrap    = document.getElementById('canvas-wrap');
+const content = document.getElementById('canvas-content');
+const grid    = document.getElementById('canvas-grid');
+const zoomHud = document.getElementById('zoom-hud');
+
+// ── TRANSFORM APPLICATION ────────────────────────────────
+function applyTransform() {
+  content.style.transform =
+    `translate(${VIEW.x}px, ${VIEW.y}px) scale(${VIEW.zoom})`;
+  drawGrid();
+  zoomHud.textContent = Math.round(VIEW.zoom * 100) + '%';
+}
+
+// ── BACKGROUND GRID (drawn separately so it tiles correctly) ──
+function drawGrid() {
+  const w = wrap.clientWidth;
+  const h = wrap.clientHeight;
+  const step = 40 * VIEW.zoom;
+  // Skip drawing at extreme zooms where the grid would be useless
+  if (step < 8) { grid.innerHTML = ''; return; }
+
+  const offX = ((VIEW.x % step) + step) % step;
+  const offY = ((VIEW.y % step) + step) % step;
+
+  let lines = '';
+  for (let x = offX; x < w; x += step) {
+    lines += `<line x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="rgba(184,134,11,0.08)" stroke-width="1"/>`;
+  }
+  for (let y = offY; y < h; y += step) {
+    lines += `<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="rgba(184,134,11,0.08)" stroke-width="1"/>`;
+  }
+  grid.setAttribute('width',  w);
+  grid.setAttribute('height', h);
+  grid.innerHTML = lines;
+}
+
+window.addEventListener('resize', drawGrid);
+
+// ── MOUSE BUTTON HANDLING ────────────────────────────────
+// Layout:
+//   Left  (0) — node drag, anchor click, marquee select on empty canvas
+//   Middle(1) — drop a Scene node at the cursor (on empty canvas)
+//   Right (2) — pan the canvas (anywhere)
+// Plus Space+left-drag as an alternate pan gesture.
+let panStart = null;
+wrap.addEventListener('mousedown', (e) => {
+  if (state.draggingNode) return;
+
+  // Right-click = pan, regardless of what's under the cursor. We swallow
+  // contextmenu separately so the browser menu never appears.
+  if (e.button === 2) {
+    panStart = { x: e.clientX, y: e.clientY, vx: VIEW.x, vy: VIEW.y };
+    state.isPanning = true;
+    wrap.classList.add('panning');
+    e.preventDefault();
+    return;
+  }
+
+  // Middle-click on empty canvas = open the type chooser at the cursor.
+  // We always preventDefault on middle-button to suppress browser autoscroll
+  // / open-link-in-tab regardless of where on the canvas the click landed.
+  if (e.button === 1) {
+    e.preventDefault();
+    const onNode = e.target.closest('.node');
+    if (!onNode && !e.target.closest('.edge-group')) {
+      showTypeChooser(e.clientX, e.clientY);
+    }
+    return;
+  }
+
+  // Left-button branch from here on
+  if (e.button !== 0) return;
+
+  // Don't start a marquee or alt-pan if the click landed on a node/edge.
+  const onNode = e.target.closest('.node');
+  if (onNode && !state.isSpaceDown) return;
+
+  // Space+left-drag = alternate pan
+  if (state.isSpaceDown) {
+    panStart = { x: e.clientX, y: e.clientY, vx: VIEW.x, vy: VIEW.y };
+    state.isPanning = true;
+    wrap.classList.add('panning');
+    e.preventDefault();
+    return;
+  }
+
+  // Plain left-drag on empty canvas = marquee select.
+  // (A click that doesn't actually drag falls through to wrap.click which
+  // clears selection.)
+  marqueeStart(e.clientX, e.clientY);
+  e.preventDefault();
+});
+window.addEventListener('mousemove', (e) => {
+  if (state.isPanning && panStart) {
+    VIEW.x = panStart.vx + (e.clientX - panStart.x);
+    VIEW.y = panStart.vy + (e.clientY - panStart.y);
+    applyTransform();
+    return;
+  }
+  if (state.marquee) {
+    marqueeUpdate(e.clientX, e.clientY);
+    return;
+  }
+  // Pending connection: keep the dashed line trailing the cursor
+  if (state.pendingAnchor) {
+    updatePending(screenToCanvas(e.clientX, e.clientY));
+  }
+});
+window.addEventListener('mouseup', (e) => {
+  if (state.isPanning) { state.isPanning = false; wrap.classList.remove('panning'); panStart = null; }
+  if (state.marquee)   { marqueeFinish(e.shiftKey); }
+});
+
+// Click on empty canvas → cancel any pending connection and clear all selections.
+// (Node/anchor/edge clicks stop propagation, so they won't trigger this.)
+// Skip when we just finished a marquee (mouseup already handled selection).
+wrap.addEventListener('click', (e) => {
+  if (e.target.closest('.node') || e.target.closest('.edge-group') || e.target.closest('.dir-pill')) return;
+  if (state.pendingAnchor) clearPending();
+  if (state.selectedEdge)  clearEdgeSelection();
+  if (!e.shiftKey) clearNodeSelection();
+});
+
+// Esc cancels pending; Delete/Backspace removes selected edge
+window.addEventListener('keydown', (e) => {
+  // Esc → priority order: picker > side panel > everything else.
+  if (e.key === 'Escape' && sessionPicker.classList.contains('open')) {
+    // Don't close the picker if the user has no session loaded (would leave
+    // them in a useless state); they need to pick or sign out.
+    if (sessionState.currentSessionId) {
+      closeSessionPicker();
+      e.preventDefault();
+    }
+    return;
+  }
+  if (e.key === 'Escape' && sidePanel.classList.contains('open')) {
+    closeSidePanel();
+    e.preventDefault();
+    return;
+  }
+  if (isTypingTarget(e.target)) return;
+  if (e.key === 'Escape') {
+    if (state.pendingAnchor) clearPending();
+    if (state.selectedEdge)  clearEdgeSelection();
+    if (state.marquee)       marqueeCancel();
+    if (typeChooser.classList.contains('visible')) hideTypeChooser();
+    clearNodeSelection();
+  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (state.selectedEdge) {
+      removeEdge(state.selectedEdge);
+      e.preventDefault();
+    } else if (state.selectedNodes.size > 0) {
+      [...state.selectedNodes].forEach(id => {
+        const n = state.nodes.get(id);
+        if (n) removeNode(n);
+      });
+      e.preventDefault();
+    }
+  } else if (e.key === 'f' || e.key === 'F') {
+    // Frame selection (or all nodes if nothing is selected).
+    // Modifier keys excluded so this doesn't conflict with browser/system shortcuts.
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    frameSelection();
+    e.preventDefault();
+  }
+});
+
+// Space-as-pan-modifier (so dragging a node header doesn't conflict)
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !state.isSpaceDown && !isTypingTarget(e.target)) {
+    state.isSpaceDown = true;
+    wrap.classList.add('spacedown');
+    e.preventDefault();
+  }
+});
+window.addEventListener('keyup', (e) => {
+  if (e.code === 'Space') {
+    state.isSpaceDown = false;
+    wrap.classList.remove('spacedown');
+  }
+});
+function isTypingTarget(el) {
+  if (!el) return false;
+  const t = el.tagName;
+  return t === 'INPUT' || t === 'TEXTAREA' || el.isContentEditable;
+}
+
+// ── ZOOM (wheel + trackpad pinch) ────────────────────────
+wrap.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const rect = wrap.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  // Zoom factor: pinch (ctrlKey) is finer; wheel is coarser
+  const factor = e.ctrlKey ? Math.exp(-e.deltaY * 0.01) : Math.exp(-e.deltaY * 0.0015);
+  const newZoom = clamp(VIEW.zoom * factor, ZOOM_MIN, ZOOM_MAX);
+  if (newZoom === VIEW.zoom) return;
+
+  // Zoom toward cursor: keep the canvas-space point under the cursor stationary.
+  // canvas-space coord that's under the cursor right now:
+  const cx = (mx - VIEW.x) / VIEW.zoom;
+  const cy = (my - VIEW.y) / VIEW.zoom;
+  VIEW.zoom = newZoom;
+  VIEW.x = mx - cx * VIEW.zoom;
+  VIEW.y = my - cy * VIEW.zoom;
+  applyTransform();
+}, { passive: false });
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ── RESET VIEW ───────────────────────────────────────────
+function resetView() {
+  VIEW.x = 0; VIEW.y = 0; VIEW.zoom = 1;
+  applyTransform();
+}
+
+// ── FRAME (zoom-to-fit) ──────────────────────────────────
+// Frame the selected nodes if any are selected; otherwise frame all nodes.
+// Padding is in screen pixels so the frame leaves visual breathing room
+// regardless of zoom level.
+function frameSelection() {
+  let targets;
+  if (state.selectedNodes.size > 0) {
+    targets = [...state.selectedNodes].map(id => state.nodes.get(id)).filter(Boolean);
+  } else {
+    targets = [...state.nodes.values()];
+  }
+  if (targets.length === 0) return;
+
+  // Compute canvas-space bounding box
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  targets.forEach(n => {
+    const { w, h } = nodeSize(n);
+    if (n.x < minX) minX = n.x;
+    if (n.y < minY) minY = n.y;
+    if (n.x + w > maxX) maxX = n.x + w;
+    if (n.y + h > maxY) maxY = n.y + h;
+  });
+  const boxW = Math.max(1, maxX - minX);
+  const boxH = Math.max(1, maxY - minY);
+
+  // Available viewport (in screen pixels) minus padding on each side.
+  // Use generous padding so framed nodes feel comfortably nested in view.
+  const PAD = 80;
+  const availW = Math.max(100, wrap.clientWidth  - 2 * PAD);
+  const availH = Math.max(100, wrap.clientHeight - 2 * PAD);
+
+  // Required zoom to fit. Clamp to existing min/max so we don't blow past
+  // ZOOM_MAX when framing a single small node.
+  const newZoom = clamp(Math.min(availW / boxW, availH / boxH), ZOOM_MIN, ZOOM_MAX);
+
+  // Center the bbox in the viewport at the new zoom.
+  // viewport_center_screen = VIEW + bbox_center_canvas * zoom
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  VIEW.zoom = newZoom;
+  VIEW.x = wrap.clientWidth  / 2 - cx * newZoom;
+  VIEW.y = wrap.clientHeight / 2 - cy * newZoom;
+  applyTransform();
+}
+
+// ── NODE MODEL ───────────────────────────────────────────
+// Stage 1: just one node type, hardcoded. Stage 3 introduces real types.
+let nodeIdSeq = 1;
+function createNode({ x, y, type = 'scene', title = null, summary = '' } = {}) {
+  const def = BLOCK_TYPES[type] || BLOCK_TYPES.scene;
+  const id = 'n' + (nodeIdSeq++);
+  const data = {
+    id, x, y, type,
+    title: title || def.defaultTitle,
+    icon: def.icon,
+    summary,                       // brief read-only line shown on the face
+    fields: {},                    // Stage 3b will fill this from the side panel
+  };
+
+  const el = document.createElement('div');
+  el.className = 'node';
+  el.dataset.nodeId = id;
+  el.dataset.type   = type;
+  el.dataset.size   = def.size;
+  el.style.left = x + 'px';
+  el.style.top  = y + 'px';
+  el.innerHTML = renderNodeFace(data);
+  content.appendChild(el);
+  data.el = el;
+  state.nodes.set(id, data);
+
+  attachNodeDrag(el, data);
+  attachAnchorClicks(el, data);
+  wireNodeBodyClickToOpenPanel(el, data);
+  updateEmptyHint();
+  return data;
+}
+
+function updateEmptyHint() {
+  const hint = document.getElementById('empty-hint');
+  if (!hint) return;
+  hint.classList.toggle('hidden', state.nodes.size > 0);
+}
+
+// Renders the inner HTML of a node based on its data. Read-only — full
+// editing happens in the Stage 3b side panel.
+function renderNodeFace(data) {
+  const def = BLOCK_TYPES[data.type] || BLOCK_TYPES.scene;
+  const summaryHtml = data.summary
+    ? `<div class="node-summary">${escHtml(data.summary)}</div>`
+    : `<div class="node-summary">Click to edit (side panel — Stage 3b).</div>`;
+  return `
+    <div class="node-header">
+      <span class="node-icon">${data.icon}</span>
+      <span class="node-title">${escHtml(data.title)}</span>
+    </div>
+    <div class="node-body">
+      <div class="node-typebadge">${escHtml(def.label)}</div>
+      ${summaryHtml}
+    </div>
+    <div class="node-anchors">
+      ${['tl','tc','tr','ml','mr','bl','bc','br'].map(p =>
+        `<div class="anchor ${p}" data-anchor="${p}" data-node-id="${data.id}"></div>`
+      ).join('')}
+    </div>
+  `;
+}
+
+function removeNode(node) {
+  // Drop any edges that touch this node
+  const doomed = state.edges.filter(e => e.from.nodeId === node.id || e.to.nodeId === node.id);
+  doomed.forEach(removeEdge);
+  // Remove from selection if present
+  state.selectedNodes.delete(node.id);
+  // Remove from DOM and registry
+  if (node.el && node.el.parentNode) node.el.parentNode.removeChild(node.el);
+  state.nodes.delete(node.id);
+  updateEmptyHint();
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ── NODE DRAG ────────────────────────────────────────────
+// Drag is initiated from the header. Body is reserved for future content
+// interactions; in Stage 3 we may make the whole node draggable.
+function attachNodeDrag(el, data) {
+  const header = el.querySelector('.node-header');
+  let startMouse = null;
+  // For group drag: snapshot starting positions of every node we're moving
+  let dragSnapshot = null;     // Array of { node, sx, sy }
+  let didDrag = false;
+
+  function onDown(e) {
+    if (e.button !== 0) return;
+    if (state.isSpaceDown) return;       // space-drag means pan
+    // Shift+click on a header = toggle this node's selection, no drag
+    if (e.shiftKey) {
+      e.stopPropagation();
+      e.preventDefault();
+      toggleNodeSelection(data);
+      return;
+    }
+    e.stopPropagation();
+    didDrag = false;
+
+    // Build the set of nodes to drag together. If this node is part of the
+    // current selection, drag the whole selection. Otherwise drag this one.
+    let group;
+    if (state.selectedNodes.has(data.id)) {
+      group = [...state.selectedNodes].map(id => state.nodes.get(id)).filter(Boolean);
+    } else {
+      group = [data];
+    }
+    dragSnapshot = group.map(n => ({ node: n, sx: n.x, sy: n.y }));
+
+    startMouse = { x: e.clientX, y: e.clientY };
+    el.classList.add('dragging');
+    state.draggingNode = data;
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup',  onUp);
+    e.preventDefault();
+  }
+  function onMove(e) {
+    const dx = (e.clientX - startMouse.x) / VIEW.zoom;
+    const dy = (e.clientY - startMouse.y) / VIEW.zoom;
+    if (Math.abs(dx) + Math.abs(dy) > 1) didDrag = true;
+    dragSnapshot.forEach(({ node, sx, sy }) => {
+      node.x = Math.round(sx + dx);
+      node.y = Math.round(sy + dy);
+      node.el.style.left = node.x + 'px';
+      node.el.style.top  = node.y + 'px';
+    });
+    redrawEdges();
+  }
+  function onUp() {
+    el.classList.remove('dragging');
+    state.draggingNode = null;
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup',  onUp);
+    // Click-without-drag on a node header is treated as a selection.
+    // Plain click = select only this; the selection is single-node.
+    if (!didDrag) {
+      selectNode(data, false);
+    }
+    dragSnapshot = null;
+  }
+  header.addEventListener('mousedown', onDown);
+}
+
+// ── ANCHOR GEOMETRY ──────────────────────────────────────
+// Map an anchor key → fractional (x,y) within the node's bounding box.
+const ANCHOR_FRAC = {
+  tl: [0,   0  ],  tc: [0.5, 0  ],  tr: [1,   0  ],
+  ml: [0,   0.5],                   mr: [1,   0.5],
+  bl: [0,   1  ],  bc: [0.5, 1  ],  br: [1,   1  ],
+};
+// Outward normal of each anchor (used for snap-on-connect placement)
+const ANCHOR_NORMAL = {
+  tl: [-0.7,-0.7], tc: [ 0,-1  ],  tr: [ 0.7,-0.7],
+  ml: [-1,  0  ],                  mr: [ 1,  0  ],
+  bl: [-0.7, 0.7], bc: [ 0, 1  ],  br: [ 0.7, 0.7],
+};
+
+function nodeSize(node) {
+  // getBoundingClientRect is in screen pixels; we want canvas-space size.
+  const r = node.el.getBoundingClientRect();
+  return { w: r.width / VIEW.zoom, h: r.height / VIEW.zoom };
+}
+function getAnchorCanvasPos(node, anchorKey) {
+  const { w, h } = nodeSize(node);
+  const [fx, fy] = ANCHOR_FRAC[anchorKey];
+  return { x: node.x + w * fx, y: node.y + h * fy };
+}
+
+// ── EDGE RENDERING ───────────────────────────────────────
+const svg = document.getElementById('canvas-svg');
+
+// All eight anchor keys, in the order we prefer them: edge midpoints first
+// (cleaner-looking lines), then corners as fallbacks.
+const ALL_ANCHORS = ['mr','ml','tc','bc','tr','tl','br','bl'];
+
+function nodeCenter(node) {
+  const { w, h } = nodeSize(node);
+  return { x: node.x + w/2, y: node.y + h/2 };
+}
+
+// Pick the anchor pair that produces the shortest connector while preferring
+// edge-midpoint anchors over corners. Called every redraw — cheap (8×8=64 distance checks).
+function pickBestAnchorPair(nodeA, nodeB) {
+  let best = null;
+  let bestScore = Infinity;
+  for (const ka of ALL_ANCHORS) {
+    const pa = getAnchorCanvasPos(nodeA, ka);
+    for (const kb of ALL_ANCHORS) {
+      const pb = getAnchorCanvasPos(nodeB, kb);
+      const dx = pb.x - pa.x;
+      const dy = pb.y - pa.y;
+      // Distance is the base score…
+      let score = Math.hypot(dx, dy);
+      // …with a penalty for anchors whose outward normal points the wrong way.
+      // Normal should point roughly toward the OTHER node, otherwise the line
+      // goes backwards through this node first.
+      const [nax, nay] = ANCHOR_NORMAL[ka];
+      const [nbx, nby] = ANCHOR_NORMAL[kb];
+      // Vector from A to B
+      const len = score || 1;
+      const ux = dx / len, uy = dy / len;
+      const aDot = nax * ux + nay * uy;          // want positive (A's normal aligns with A→B)
+      const bDot = nbx * (-ux) + nby * (-uy);    // want positive (B's normal aligns with B→A)
+      if (aDot < 0) score += 200;                // wrong side — heavy penalty
+      if (bDot < 0) score += 200;
+      // Slight nudge toward edge midpoints over corners for tidier lines
+      if (ka === 'mr' || ka === 'ml' || ka === 'tc' || ka === 'bc') score -= 5;
+      if (kb === 'mr' || kb === 'ml' || kb === 'tc' || kb === 'bc') score -= 5;
+      if (score < bestScore) { bestScore = score; best = { fromAnchor: ka, toAnchor: kb }; }
+    }
+  }
+  return best;
+}
+
+// Cubic Bézier connector that exits each endpoint along the anchor's outward
+// normal. Control-point distance scales with line length so short connections
+// don't form weird loops and long ones don't go wildly arc-y.
+function pathDFor(p1, p2, n1 = null, n2 = null) {
+  if (!n1 || !n2) {
+    // Fallback (used by the pending dashed line during a connection drag —
+    // we don't yet know the second anchor). A gentle bias is fine.
+    return `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`;
+  }
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  // Curve handle length: a fraction of the line distance, capped.
+  const k = Math.min(Math.max(dist * 0.35, 40), 220);
+  const c1x = p1.x + n1[0] * k;
+  const c1y = p1.y + n1[1] * k;
+  const c2x = p2.x + n2[0] * k;
+  const c2y = p2.y + n2[1] * k;
+  return `M ${p1.x} ${p1.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p2.x} ${p2.y}`;
+}
+function applyEdgeMarkers(edge) {
+  const dir = edge.dir;
+  edge.pathEl.setAttribute('marker-end',   dir === 'forward' || dir === 'both' ? 'url(#arrow)' : '');
+  edge.pathEl.setAttribute('marker-start', dir === 'backward'|| dir === 'both' ? 'url(#arrow)' : '');
+  // Update the pill's glyph so it reads the current direction at a glance
+  if (edge.pillEl) edge.pillEl.textContent = DIR_GLYPH[dir];
+}
+const DIR_GLYPH = { both: '↔', forward: '→', backward: '←', none: '—' };
+
+function redrawEdge(edge) {
+  const a = state.nodes.get(edge.from.nodeId);
+  const b = state.nodes.get(edge.to.nodeId);
+  if (!a || !b) return;
+  const pair = pickBestAnchorPair(a, b);
+  edge.currentFromAnchor = pair.fromAnchor;
+  edge.currentToAnchor   = pair.toAnchor;
+  const p1 = getAnchorCanvasPos(a, pair.fromAnchor);
+  const p2 = getAnchorCanvasPos(b, pair.toAnchor);
+  const n1 = ANCHOR_NORMAL[pair.fromAnchor];
+  const n2 = ANCHOR_NORMAL[pair.toAnchor];
+  const d  = pathDFor(p1, p2, n1, n2);
+  edge.pathEl.setAttribute('d', d);
+  edge.hitEl.setAttribute('d', d);
+  // Pill at the actual midpoint of the curve
+  let mx, my;
+  try {
+    const total = edge.pathEl.getTotalLength();
+    const pt = edge.pathEl.getPointAtLength(total / 2);
+    mx = pt.x; my = pt.y;
+  } catch (e) {
+    // Fallback if SVG not yet laid out
+    mx = (p1.x + p2.x) / 2; my = (p1.y + p2.y) / 2;
+  }
+  edge.pillFOEl.setAttribute('x', mx - 13);   // 13 = half pill width
+  edge.pillFOEl.setAttribute('y', my - 13);
+}
+function redrawEdges() { state.edges.forEach(redrawEdge); }
+
+let edgeIdSeq = 1;
+function createEdge(from, to, dir = 'forward') {
+  // <g> grouping so hitbox + path + pill move together
+  const g    = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  g.setAttribute('class', 'edge-group');
+  const hit  = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  hit.setAttribute('class', 'edge-hitbox');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('class', 'edge-path');
+  // Direction pill — HTML inside foreignObject so it's easy to style/click
+  const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+  fo.setAttribute('width',  '26');
+  fo.setAttribute('height', '26');
+  fo.setAttribute('overflow', 'visible');
+  const pill = document.createElement('div');
+  pill.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+  pill.className = 'dir-pill';
+  pill.textContent = DIR_GLYPH[dir];
+  fo.appendChild(pill);
+
+  g.appendChild(hit);
+  g.appendChild(path);
+  g.appendChild(fo);
+  svg.appendChild(g);
+
+  const edge = {
+    id: 'e' + (edgeIdSeq++),
+    from, to, dir,
+    groupEl: g, hitEl: hit, pathEl: path, pillEl: pill, pillFOEl: fo,
+    currentFromAnchor: from.anchor, currentToAnchor: to.anchor,
+  };
+  state.edges.push(edge);
+  applyEdgeMarkers(edge);
+  redrawEdge(edge);
+
+  // Hitbox click → select. Pill click → cycle direction. Both stop propagation
+  // so the empty-canvas click handler doesn't swallow them.
+  hit.addEventListener('click', (e) => {
+    e.stopPropagation();
+    selectEdge(edge);
+  });
+  pill.addEventListener('click', (e) => {
+    e.stopPropagation();
+    cycleEdgeDirection(edge);
+  });
+  // Right-click on the hitbox is now reserved for canvas pan, so no
+  // direction-cycle shortcut here. The pill button is the only way to cycle.
+
+  return edge;
+}
+function removeEdge(edge) {
+  edge.groupEl.remove();
+  state.edges = state.edges.filter(e => e !== edge);
+  if (state.selectedEdge === edge) state.selectedEdge = null;
+}
+function selectEdge(edge) {
+  if (state.selectedEdge && state.selectedEdge !== edge) {
+    state.selectedEdge.pathEl.classList.remove('selected');
+  }
+  state.selectedEdge = edge;
+  edge.pathEl.classList.add('selected');
+}
+function clearEdgeSelection() {
+  if (state.selectedEdge) {
+    state.selectedEdge.pathEl.classList.remove('selected');
+    state.selectedEdge = null;
+  }
+}
+
+// ── NODE SELECTION ───────────────────────────────────────
+function selectNode(node, additive = false) {
+  if (!additive) clearNodeSelection();
+  state.selectedNodes.add(node.id);
+  node.el.classList.add('selected');
+}
+function deselectNode(node) {
+  state.selectedNodes.delete(node.id);
+  node.el.classList.remove('selected');
+}
+function toggleNodeSelection(node) {
+  if (state.selectedNodes.has(node.id)) deselectNode(node);
+  else selectNode(node, true);
+}
+function clearNodeSelection() {
+  state.selectedNodes.forEach(id => {
+    const n = state.nodes.get(id);
+    if (n) n.el.classList.remove('selected');
+  });
+  state.selectedNodes.clear();
+}
+
+// ── MARQUEE (Shift+drag on empty canvas) ─────────────────
+const marqueeEl = document.getElementById('marquee');
+function marqueeStart(clientX, clientY) {
+  const rect = wrap.getBoundingClientRect();
+  state.marquee = {
+    startScreen: { x: clientX - rect.left, y: clientY - rect.top },
+    currentScreen: { x: clientX - rect.left, y: clientY - rect.top },
+  };
+  marqueeEl.style.display = 'block';
+  marqueeUpdate(clientX, clientY);
+}
+function marqueeUpdate(clientX, clientY) {
+  if (!state.marquee) return;
+  const rect = wrap.getBoundingClientRect();
+  state.marquee.currentScreen = { x: clientX - rect.left, y: clientY - rect.top };
+  const s = state.marquee.startScreen;
+  const c = state.marquee.currentScreen;
+  const x = Math.min(s.x, c.x), y = Math.min(s.y, c.y);
+  const w = Math.abs(c.x - s.x), h = Math.abs(c.y - s.y);
+  marqueeEl.style.left   = x + 'px';
+  marqueeEl.style.top    = y + 'px';
+  marqueeEl.style.width  = w + 'px';
+  marqueeEl.style.height = h + 'px';
+}
+function marqueeFinish(additive) {
+  if (!state.marquee) return;
+  // Convert marquee screen-space rect to canvas-space rect, then test each node.
+  const s = state.marquee.startScreen;
+  const c = state.marquee.currentScreen;
+  const sx = Math.min(s.x, c.x) - 0;          // already canvas-wrap-relative
+  const sy = Math.min(s.y, c.y) - 0;
+  const ex = Math.max(s.x, c.x);
+  const ey = Math.max(s.y, c.y);
+  // Canvas-space:
+  const csx = (sx - VIEW.x) / VIEW.zoom;
+  const csy = (sy - VIEW.y) / VIEW.zoom;
+  const cex = (ex - VIEW.x) / VIEW.zoom;
+  const cey = (ey - VIEW.y) / VIEW.zoom;
+  if (!additive) clearNodeSelection();
+  state.nodes.forEach(node => {
+    const { w, h } = nodeSize(node);
+    // Intersect rather than fully-contain — feels more forgiving.
+    const overlaps =
+      node.x < cex && node.x + w > csx &&
+      node.y < cey && node.y + h > csy;
+    if (overlaps) {
+      state.selectedNodes.add(node.id);
+      node.el.classList.add('selected');
+    }
+  });
+  marqueeEl.style.display = 'none';
+  state.marquee = null;
+}
+function marqueeCancel() {
+  marqueeEl.style.display = 'none';
+  state.marquee = null;
+}
+
+const DIR_CYCLE = ['both', 'forward', 'backward', 'none'];
+function cycleEdgeDirection(edge) {
+  const i = DIR_CYCLE.indexOf(edge.dir);
+  edge.dir = DIR_CYCLE[(i + 1) % DIR_CYCLE.length];
+  applyEdgeMarkers(edge);
+}
+
+// ── PENDING CONNECTION (transient dashed line) ───────────
+let pendingPath = null;
+function showPendingFrom(anchorEl) {
+  if (!pendingPath) {
+    pendingPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    pendingPath.setAttribute('class', 'edge-pending');
+    svg.appendChild(pendingPath);
+  }
+}
+function updatePending(toCanvas) {
+  if (!pendingPath || !state.pendingAnchor) return;
+  const node = state.nodes.get(state.pendingAnchor.nodeId);
+  if (!node) return;
+  const p1 = getAnchorCanvasPos(node, state.pendingAnchor.anchor);
+  pendingPath.setAttribute('d', pathDFor(p1, toCanvas));
+}
+function clearPending() {
+  if (pendingPath) { pendingPath.remove(); pendingPath = null; }
+  if (state.pendingAnchor) {
+    if (state.pendingAnchor.anchorEl) state.pendingAnchor.anchorEl.classList.remove('active');
+    state.pendingAnchor = null;
+  }
+  document.body.classList.remove('connecting');
+}
+
+// Convert a screen-space (clientX, clientY) to canvas-space coords
+function screenToCanvas(clientX, clientY) {
+  const rect = wrap.getBoundingClientRect();
+  return {
+    x: (clientX - rect.left - VIEW.x) / VIEW.zoom,
+    y: (clientY - rect.top  - VIEW.y) / VIEW.zoom,
+  };
+}
+
+// ── ANCHOR CLICKS ────────────────────────────────────────
+function attachAnchorClicks(el, data) {
+  el.querySelectorAll('.anchor').forEach(a => {
+    a.addEventListener('mousedown', (e) => {
+      // Only block left-button so right-click can bubble up to start a pan.
+      if (e.button === 0) e.stopPropagation();
+    });
+    a.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const anchorKey = a.dataset.anchor;
+
+      if (!state.pendingAnchor) {
+        // First click — start a pending connection
+        a.classList.add('active');
+        state.pendingAnchor = { nodeId: data.id, anchor: anchorKey, anchorEl: a };
+        document.body.classList.add('connecting');
+        showPendingFrom(a);
+        // Initialize the dashed line at the same point so it isn't (0,0) before mousemove
+        const p = getAnchorCanvasPos(data, anchorKey);
+        updatePending(p);
+      } else {
+        // Second click
+        const p = state.pendingAnchor;
+        if (p.nodeId === data.id && p.anchor === anchorKey) {
+          // Clicked the same anchor → cancel
+          clearPending();
+          return;
+        }
+        if (p.nodeId === data.id) {
+          // Clicked a different anchor on the SAME node — also cancel,
+          // self-loops aren't useful in a session-planning context.
+          clearPending();
+          return;
+        }
+        // Different node → make the edge. No snap; user places nodes wherever they like.
+        const srcNode = state.nodes.get(p.nodeId);
+        const dstNode = data;
+        createEdge(
+          { nodeId: srcNode.id, anchor: p.anchor },
+          { nodeId: dstNode.id, anchor: anchorKey },
+          'forward'
+        );
+        clearPending();
+        redrawEdges();
+      }
+    });
+  });
+}
+
+// ── ADDING NODES ─────────────────────────────────────────
+// Internal: place a node so its top-left lands at canvas-space (cx, cy),
+// then re-center it so the requested point is the *node center* instead.
+function addNodeAtCanvasPos(type, cx, cy) {
+  const node = createNode({ type, x: Math.round(cx), y: Math.round(cy) });
+  // After the layout pass, recenter so the click-point is at the node's middle.
+  requestAnimationFrame(() => {
+    const r = node.el.getBoundingClientRect();
+    const w = r.width / VIEW.zoom, h = r.height / VIEW.zoom;
+    node.x = Math.round(cx - w / 2);
+    node.y = Math.round(cy - h / 2);
+    node.el.style.left = node.x + 'px';
+    node.el.style.top  = node.y + 'px';
+    redrawEdges();
+  });
+  return node;
+}
+// Add at viewport center (palette buttons use this)
+function addNodeOfType(type) {
+  const cx = (wrap.clientWidth  / 2 - VIEW.x) / VIEW.zoom;
+  const cy = (wrap.clientHeight / 2 - VIEW.y) / VIEW.zoom;
+  // Slight cascade so successive adds of the same type don't stack exactly
+  const jitter = (state.nodes.size % 8) * 30;
+  return addNodeAtCanvasPos(type, cx + jitter, cy + jitter);
+}
+// Add at a screen-space point (right-click menu uses this)
+function addNodeAtScreen(type, clientX, clientY) {
+  const p = screenToCanvas(clientX, clientY);
+  return addNodeAtCanvasPos(type, p.x, p.y);
+}
+
+// ── BUILD TOPBAR PALETTE ─────────────────────────────────
+function buildTypePalette() {
+  const root = document.getElementById('typePalette');
+  if (!root) return;
+  root.innerHTML = BLOCK_TYPE_ORDER.map(t => {
+    const def = BLOCK_TYPES[t];
+    return `<button class="type-btn" data-type="${t}" title="Add ${escHtml(def.label)}">
+              <span class="type-icon">${def.icon}</span>${escHtml(def.label)}
+            </button>`;
+  }).join('');
+  root.querySelectorAll('.type-btn').forEach(btn => {
+    btn.addEventListener('click', () => addNodeOfType(btn.dataset.type));
+  });
+}
+
+// ── TYPE CHOOSER (middle-click selector) ────────────────
+const typeChooser = document.getElementById('type-chooser');
+let chooserClient = null;     // remembers click point so menu items can drop a node there
+
+function showTypeChooser(clientX, clientY) {
+  chooserClient = { x: clientX, y: clientY };
+  typeChooser.innerHTML = `
+    <div class="tc-header">New Node Here</div>
+    ${BLOCK_TYPE_ORDER.map(t => {
+      const def = BLOCK_TYPES[t];
+      return `<div class="tc-item" data-type="${t}">
+                <span class="tc-item-icon">${def.icon}</span>${escHtml(def.label)}
+              </div>`;
+    }).join('')}
+  `;
+  // Position with viewport clamping
+  const margin = 8;
+  typeChooser.style.left = '0px';
+  typeChooser.style.top  = '0px';
+  typeChooser.classList.add('visible');
+  const r = typeChooser.getBoundingClientRect();
+  let x = clientX, y = clientY;
+  if (x + r.width  > window.innerWidth  - margin) x = window.innerWidth  - r.width  - margin;
+  if (y + r.height > window.innerHeight - margin) y = window.innerHeight - r.height - margin;
+  typeChooser.style.left = x + 'px';
+  typeChooser.style.top  = y + 'px';
+
+  typeChooser.querySelectorAll('.tc-item').forEach(item => {
+    item.addEventListener('click', () => {
+      if (chooserClient) {
+        addNodeAtScreen(item.dataset.type, chooserClient.x, chooserClient.y);
+      }
+      hideTypeChooser();
+    });
+  });
+}
+function hideTypeChooser() { typeChooser.classList.remove('visible'); }
+
+// Click outside the chooser hides it. Use capture so we run before other
+// mousedown handlers (e.g., the canvas pan starter).
+window.addEventListener('mousedown', (e) => {
+  if (!typeChooser.classList.contains('visible')) return;
+  if (!e.target.closest('#type-chooser')) hideTypeChooser();
+}, true);
+
+// ── CONTEXT MENU SUPPRESSION ─────────────────────────────
+// Right-click is reassigned to pan, so we suppress the browser context menu
+// across the whole canvas wrap (and on edge hitboxes which had their own
+// suppressor already).
+wrap.addEventListener('contextmenu', (e) => { e.preventDefault(); });
+
+// ── SIDE PANEL EDITOR ────────────────────────────────────
+const sidePanel = document.getElementById('side-panel');
+const spIcon      = document.getElementById('spIcon');
+const spTypeBadge = document.getElementById('spTypeBadge');
+const spTitle     = document.getElementById('spTitle');
+const spBody      = document.getElementById('spBody');
+const spSaved     = document.getElementById('spSaved');
+
+let openNodeId = null;
+let saveTimer  = null;
+
+function openSidePanel(node) {
+  // If switching from a different node, flush any pending autosave first
+  // so the previous node's edits land in the right node's data.
+  if (openNodeId && openNodeId !== node.id && saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    commitOpenNodeFromForm();
+  }
+  openNodeId = node.id;
+  const def = BLOCK_TYPES[node.type] || BLOCK_TYPES.scene;
+  spIcon.textContent      = def.icon;
+  spTypeBadge.textContent = def.label;
+  spTitle.value           = node.title || '';
+  renderSidePanelBody(node, def);
+  sidePanel.classList.add('open');
+  setSavedState('saved');
+  // Focus the title for fast editing on open
+  setTimeout(() => spTitle.focus(), 200);
+}
+
+function closeSidePanel() {
+  // Flush any pending autosave
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; commitOpenNodeFromForm(); }
+  sidePanel.classList.remove('open');
+  openNodeId = null;
+}
+
+function deleteOpenNode() {
+  const node = openNodeId ? state.nodes.get(openNodeId) : null;
+  if (!node) return;
+  if (!confirm(`Delete "${node.title}"? This will also remove its connections.`)) return;
+  removeNode(node);
+  closeSidePanel();
+}
+
+function saveOpenNode() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  commitOpenNodeFromForm();
+  setSavedState('saved');
+}
+
+function saveAndCloseOpenNode() {
+  saveOpenNode();
+  closeSidePanel();
+}
+
+function setSavedState(state /* 'saved' | 'dirty' */) {
+  if (!spSaved) return;
+  spSaved.classList.remove('saved', 'dirty');
+  spSaved.classList.add(state);
+  spSaved.textContent = state === 'dirty' ? 'Saving…' : 'Saved';
+}
+
+// Render the per-type form into the panel body.
+function renderSidePanelBody(node, def) {
+  // Group fields by their `group` property, preserving definition order.
+  const groups = [];
+  let current = null;
+  (def.fields || []).forEach(f => {
+    if (!current || current.name !== (f.group || '')) {
+      current = { name: f.group || '', fields: [] };
+      groups.push(current);
+    }
+    current.fields.push(f);
+  });
+
+  // Build HTML. Within the 2-column outer grid:
+  //   - section titles span both columns (handled in CSS)
+  //   - textareas span both columns so they get full reading width
+  //   - fullWidth non-textarea fields take a single outer column
+  //   - narrow fields pair up 2-at-a-time into a single outer column
+  let html = '';
+  groups.forEach(g => {
+    if (g.name) html += `<div class="sp-section-title">${escHtml(g.name)}</div>`;
+    let i = 0;
+    while (i < g.fields.length) {
+      const f = g.fields[i];
+      if (f.type === 'textarea') {
+        html += `<div class="sp-row full span2">${renderField(node, f)}</div>`;
+        i++;
+      } else if (f.fullWidth) {
+        html += `<div class="sp-row full">${renderField(node, f)}</div>`;
+        i++;
+      } else {
+        // Try to pair with the next field if it's also narrow.
+        const next = g.fields[i + 1];
+        if (next && !next.fullWidth && next.type !== 'textarea') {
+          html += `<div class="sp-row">${renderField(node, f)}${renderField(node, next)}</div>`;
+          i += 2;
+        } else {
+          html += `<div class="sp-row full">${renderField(node, f)}</div>`;
+          i++;
+        }
+      }
+    }
+  });
+  spBody.innerHTML = html;
+
+  // Wire input handlers — autosave on input/change with 200ms debounce.
+  spBody.querySelectorAll('[data-field-key]').forEach(el => {
+    const evt = (el.tagName === 'SELECT') ? 'change' : 'input';
+    el.addEventListener(evt, () => {
+      setSavedState('dirty');
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        commitOpenNodeFromForm();
+        setSavedState('saved');
+        saveTimer = null;
+      }, 200);
+    });
+    // Save on blur immediately
+    el.addEventListener('blur', () => {
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+      commitOpenNodeFromForm();
+      setSavedState('saved');
+    });
+  });
+
+  // Also handle title separately (lives in the header, not the body)
+  spTitle.oninput = () => {
+    setSavedState('dirty');
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      commitOpenNodeFromForm();
+      setSavedState('saved');
+      saveTimer = null;
+    }, 200);
+  };
+  spTitle.onblur = () => {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    commitOpenNodeFromForm();
+    setSavedState('saved');
+  };
+}
+
+function renderField(node, f) {
+  const v = (node.fields && f.key in node.fields) ? node.fields[f.key] : '';
+  const lbl = `<label>${escHtml(f.label)}</label>`;
+  const ph  = f.placeholder ? `placeholder="${escAttr(f.placeholder)}"` : '';
+  if (f.type === 'select') {
+    const opts = (f.options || []).map(o =>
+      `<option value="${escAttr(o)}"${o === v ? ' selected' : ''}>${escHtml(o)}</option>`
+    ).join('');
+    return `<div class="sp-field">${lbl}
+      <select class="sp-select" data-field-key="${f.key}">
+        <option value=""${v === '' ? ' selected' : ''}>—</option>${opts}
+      </select></div>`;
+  }
+  if (f.type === 'textarea') {
+    return `<div class="sp-field">${lbl}
+      <textarea class="sp-textarea" data-field-key="${f.key}" rows="${f.rows || 3}" ${ph}>${escHtml(v)}</textarea>
+    </div>`;
+  }
+  if (f.type === 'number') {
+    return `<div class="sp-field">${lbl}
+      <input class="sp-input" data-field-key="${f.key}" type="number" value="${escAttr(v)}" ${ph}></div>`;
+  }
+  // default text
+  return `<div class="sp-field">${lbl}
+    <input class="sp-input" data-field-key="${f.key}" type="text" value="${escAttr(v)}" ${ph}></div>`;
+}
+
+// Read every input back into node.fields and re-render the canvas face.
+function commitOpenNodeFromForm() {
+  if (!openNodeId) return;
+  const node = state.nodes.get(openNodeId);
+  if (!node) return;
+  // Title
+  node.title = spTitle.value || (BLOCK_TYPES[node.type]?.defaultTitle || 'Untitled');
+  // Fields
+  const def = BLOCK_TYPES[node.type] || BLOCK_TYPES.scene;
+  node.fields = node.fields || {};
+  spBody.querySelectorAll('[data-field-key]').forEach(el => {
+    node.fields[el.dataset.fieldKey] = el.value;
+  });
+  // Update summary on the face from whichever field is marked summary:true
+  const sumField = (def.fields || []).find(f => f.summary);
+  if (sumField) {
+    node.summary = node.fields[sumField.key] || '';
+  }
+  // Repaint face — but preserve anchors (don't blow them away during a connection)
+  refreshNodeFace(node);
+  redrawEdges();
+}
+
+// Repaint a node's face HTML in place. Keeps anchors fresh because we
+// re-emit the whole inner HTML; re-attaches handlers since they were
+// attached to the previous DOM nodes.
+function refreshNodeFace(node) {
+  if (!node || !node.el) return;
+  const wasConnecting = node.el.querySelector('.anchor.active');
+  const activeKey = wasConnecting ? wasConnecting.dataset.anchor : null;
+  node.el.innerHTML = renderNodeFace(node);
+  // Re-mark active anchor if a pending connection started from this node
+  if (activeKey) {
+    const a = node.el.querySelector(`.anchor[data-anchor="${activeKey}"]`);
+    if (a) a.classList.add('active');
+  }
+  // Re-attach handlers for the new inner nodes (anchors). Header drag is
+  // bound to the header element, which is also new.
+  attachNodeDrag(node.el, node);
+  attachAnchorClicks(node.el, node);
+  wireNodeBodyClickToOpenPanel(node.el, node);
+  // Restore selected styling if applicable
+  if (state.selectedNodes.has(node.id)) node.el.classList.add('selected');
+}
+
+function escAttr(s) { return escHtml(s).replace(/"/g, '&quot;'); }
+
+// Click on a node body opens the panel. Header click stays as drag/select.
+// We attach this in createNode below by listening on the body element.
+function wireNodeBodyClickToOpenPanel(el, data) {
+  const body = el.querySelector('.node-body');
+  if (!body) return;
+  body.addEventListener('mousedown', (e) => {
+    // Only left-click; right-click pans, middle-click adds, anchor clicks bubble.
+    if (e.button !== 0) return;
+    if (e.target.closest('.anchor')) return;
+    e.stopPropagation();
+  });
+  body.addEventListener('click', (e) => {
+    if (e.target.closest('.anchor')) return;
+    e.stopPropagation();
+    openSidePanel(data);
+  });
+}
+
+// Esc closes the panel — handled in the main keydown listener above so it
+// runs before the selection-clearing behavior.
+
+// ── BOOT ─────────────────────────────────────────────────
+// Stage 4a structure: split boot into two phases. The auth-independent
+// parts (transform + palette) run on every page load so the topbar is
+// usable. The app-content parts (live in Stage 4b: load session, restore
+// nodes/edges) only run once we have an auth token.
+
+function boot() {
+  applyTransform();
+  buildTypePalette();
+  // Decide whether to show login or proceed straight to the app.
+  const auth = rqGetAuth();
+  if (auth && auth.access_token) {
+    const now = Math.floor(Date.now() / 1000);
+    if (auth.expires_at && auth.expires_at - now < 60) {
+      rqRefreshToken().then(ok => {
+        if (ok) { rqHideLogin(); rqBootstrapAfterAuth(); }
+        else   { rqShowLogin(); }
+      });
+    } else {
+      rqHideLogin();
+      rqBootstrapAfterAuth();
+    }
+  } else {
+    rqShowLogin();
+  }
+}
+
+// Runs after a successful login (or on reload with a still-valid token).
+// Opens the session picker so the user can pick or create a session.
+function rqBootstrapAfterAuth() {
+  setCanvasSavedState('idle');
+  // Don't auto-open if a session is already loaded (could happen on token-refresh
+  // path, but in practice 4b doesn't preserve session id across reloads yet).
+  if (!sessionState.currentSessionId) {
+    openSessionPicker();
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
