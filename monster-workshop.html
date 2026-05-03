@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.3.6</span>
+  <span class="topbar-version">v0.3.7</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -1983,15 +1983,32 @@ function isSessionExpiringSoon() {
   if (!currentUser || !currentUser.expires_at) return false;
   return (Date.now() + 60000) >= (currentUser.expires_at * 1000);
 }
+// Shared across all RQ tools: single `rq_auth` key, sessionStorage primary,
+// localStorage fallback (cross-tab + survives tab close). The legacy
+// `mw_auth` localStorage key is kept as a one-time migration source.
+const RQ_AUTH_KEY     = 'rq_auth';
+const RQ_AUTH_KEY_OLD = 'mw_auth';
+
 function persistSession() {
   try {
-    if (currentUser) localStorage.setItem('mw_auth', JSON.stringify(currentUser));
-    else localStorage.removeItem('mw_auth');
+    if (currentUser) {
+      const j = JSON.stringify(currentUser);
+      sessionStorage.setItem(RQ_AUTH_KEY, j);
+      localStorage.setItem(RQ_AUTH_KEY, j);
+      // Clear legacy key after first persist so we have one source of truth.
+      try { localStorage.removeItem(RQ_AUTH_KEY_OLD); } catch(e) {}
+    } else {
+      sessionStorage.removeItem(RQ_AUTH_KEY);
+      localStorage.removeItem(RQ_AUTH_KEY);
+      try { localStorage.removeItem(RQ_AUTH_KEY_OLD); } catch(e) {}
+    }
   } catch(e) {}
 }
 function restoreSession() {
   try {
-    const raw = localStorage.getItem('mw_auth');
+    let raw = sessionStorage.getItem(RQ_AUTH_KEY);
+    if (!raw) raw = localStorage.getItem(RQ_AUTH_KEY);
+    if (!raw) raw = localStorage.getItem(RQ_AUTH_KEY_OLD);  // legacy migration
     if (raw) currentUser = JSON.parse(raw);
   } catch(e) { currentUser = null; }
 }

@@ -270,7 +270,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 /* ── HUD ────────────────────────────────────────────────── */
 #zoom-hud {
   position: absolute;
-  bottom: 12px; left: 12px;
+  bottom: 12px; right: 12px;
   background: rgba(20,17,11,0.85);
   border: 1px solid rgba(184,134,11,0.3);
   border-radius: 4px;
@@ -283,7 +283,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 }
 #help-hud {
   position: absolute;
-  bottom: 12px; right: 12px;
+  bottom: 12px; left: 12px;
   background: rgba(20,17,11,0.85);
   border: 1px solid rgba(184,134,11,0.3);
   border-radius: 4px;
@@ -943,15 +943,13 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 4c / autosave</span>
+  <span class="topbar-version">stage 4c+ / polish</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
     <a href="session-planner.html" class="btn btn-ghost" style="text-decoration:none;">↩ Classic Planner</a>
     <button class="btn btn-ghost" onclick="openSessionPicker()" title="Choose / create session">📚 Sessions</button>
-    <div class="type-palette" id="typePalette" role="toolbar" aria-label="Add node">
-      <!-- buttons injected from BLOCK_TYPES at boot -->
-    </div>
+    <button class="btn" onclick="openTypeChooserFromButton(event)" title="Add node — opens type chooser">+ Add Node</button>
     <button class="btn btn-ghost" onclick="frameSelection()" title="Frame selection or all nodes (F)">⌗ Frame</button>
     <button class="btn btn-ghost" onclick="resetView()">⌖ Reset View</button>
     <button class="btn" id="btnSaveNow" onclick="saveCurrentSession()" title="Save canvas to current session">💾 Save</button>
@@ -979,7 +977,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 4c · autosave</div>
+  <div id="stage-label">Stage 4c+ · polish</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -2684,28 +2682,22 @@ function addNodeAtScreen(type, clientX, clientY) {
 }
 
 // ── BUILD TOPBAR PALETTE ─────────────────────────────────
-function buildTypePalette() {
-  const root = document.getElementById('typePalette');
-  if (!root) return;
-  root.innerHTML = BLOCK_TYPE_ORDER.map(t => {
-    const def = BLOCK_TYPES[t];
-    return `<button class="type-btn" data-type="${t}" title="Add ${escHtml(def.label)}">
-              <span class="type-icon">${def.icon}</span>${escHtml(def.label)}
-            </button>`;
-  }).join('');
-  root.querySelectorAll('.type-btn').forEach(btn => {
-    btn.addEventListener('click', () => addNodeOfType(btn.dataset.type));
-  });
-}
+// (Old typed palette + buildTypePalette removed in 4c-polish — the topbar
+//  now has a single "+ Add Node" button that opens the same chooser as
+//  middle-click on empty canvas.)
 
-// ── TYPE CHOOSER (middle-click selector) ────────────────
+// ── TYPE CHOOSER (middle-click selector + topbar + button) ────────────────
 const typeChooser = document.getElementById('type-chooser');
-let chooserClient = null;     // remembers click point so menu items can drop a node there
+// `dropClient` is where the new node will be placed (canvas coords derived from this).
+// `anchorClient` is where the chooser menu visually appears.
+// Usually they're the same, but the topbar button opens the menu near the button
+// and drops the node at viewport center for ergonomic reasons.
+let dropClient = null;
 
-function showTypeChooser(clientX, clientY) {
-  chooserClient = { x: clientX, y: clientY };
+function showTypeChooser(anchorX, anchorY, dropX, dropY) {
+  dropClient = { x: dropX != null ? dropX : anchorX, y: dropY != null ? dropY : anchorY };
   typeChooser.innerHTML = `
-    <div class="tc-header">New Node Here</div>
+    <div class="tc-header">New Node</div>
     ${BLOCK_TYPE_ORDER.map(t => {
       const def = BLOCK_TYPES[t];
       return `<div class="tc-item" data-type="${t}">
@@ -2719,7 +2711,7 @@ function showTypeChooser(clientX, clientY) {
   typeChooser.style.top  = '0px';
   typeChooser.classList.add('visible');
   const r = typeChooser.getBoundingClientRect();
-  let x = clientX, y = clientY;
+  let x = anchorX, y = anchorY;
   if (x + r.width  > window.innerWidth  - margin) x = window.innerWidth  - r.width  - margin;
   if (y + r.height > window.innerHeight - margin) y = window.innerHeight - r.height - margin;
   typeChooser.style.left = x + 'px';
@@ -2727,14 +2719,26 @@ function showTypeChooser(clientX, clientY) {
 
   typeChooser.querySelectorAll('.tc-item').forEach(item => {
     item.addEventListener('click', () => {
-      if (chooserClient) {
-        addNodeAtScreen(item.dataset.type, chooserClient.x, chooserClient.y);
+      if (dropClient) {
+        addNodeAtScreen(item.dataset.type, dropClient.x, dropClient.y);
       }
       hideTypeChooser();
     });
   });
 }
 function hideTypeChooser() { typeChooser.classList.remove('visible'); }
+
+// Topbar "+ Add Node" button: open chooser anchored just below the button,
+// but drop the resulting node at viewport center (rather than way up at the topbar).
+function openTypeChooserFromButton(e) {
+  const btn = e.currentTarget;
+  const r = btn.getBoundingClientRect();
+  const anchorX = r.left;
+  const anchorY = r.bottom + 4;
+  const dropX = wrap.clientWidth  / 2;
+  const dropY = wrap.clientHeight / 2 + 44;     // +topbar offset
+  showTypeChooser(anchorX, anchorY, dropX, dropY);
+}
 
 // Click outside the chooser hides it. Use capture so we run before other
 // mousedown handlers (e.g., the canvas pan starter).
@@ -2999,7 +3003,6 @@ function wireNodeBodyClickToOpenPanel(el, data) {
 
 function boot() {
   applyTransform();
-  buildTypePalette();
   // Decide whether to show login or proceed straight to the app.
   const auth = rqGetAuth();
   if (auth && auth.access_token) {

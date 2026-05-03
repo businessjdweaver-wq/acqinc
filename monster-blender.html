@@ -649,9 +649,105 @@ body {
 }
 .toast.error { background: #2a1010; border-color: #6a2d2d; color: #bf6a6a; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* ── LOGIN OVERLAY ───────────────────────────────── */
+#rqAuthOverlay {
+  position: fixed; inset: 0;
+  background: var(--ash, #1a1610);
+  z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Crimson Pro', Georgia, serif;
+}
+#rqAuthOverlay .auth-card {
+  background: var(--panel, #231d14);
+  border: 1px solid rgba(184,134,11,0.4);
+  border-radius: 6px;
+  padding: 32px 36px;
+  width: 360px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+#rqAuthOverlay h2 {
+  font-family: 'Cinzel', serif;
+  color: var(--gold, #b8860b);
+  font-size: 1.15rem;
+  letter-spacing: 0.15em;
+  text-align: center;
+  margin: 0 0 4px 0;
+  text-transform: uppercase;
+}
+#rqAuthOverlay .auth-sub {
+  color: var(--steel-pale, #8a9bb0);
+  font-size: 0.78rem;
+  text-align: center;
+  margin-bottom: 22px;
+  letter-spacing: 0.05em;
+}
+#rqAuthOverlay label {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  color: var(--steel-pale, #8a9bb0);
+  text-transform: uppercase;
+  margin: 12px 0 4px 0;
+}
+#rqAuthOverlay input {
+  width: 100%;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(184,134,11,0.3);
+  border-radius: 3px;
+  padding: 8px 10px;
+  color: #e8dcc4;
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.95rem;
+  box-sizing: border-box;
+}
+#rqAuthOverlay input:focus { outline: none; border-color: var(--gold, #b8860b); }
+#rqAuthOverlay .auth-btn {
+  width: 100%;
+  margin-top: 18px;
+  padding: 10px;
+  background: linear-gradient(180deg, rgba(184,134,11,0.4), rgba(139,90,43,0.4));
+  border: 1px solid var(--gold, #b8860b);
+  color: #f5e8c8;
+  font-family: 'Cinzel', serif;
+  font-size: 0.85rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  border-radius: 3px;
+  cursor: pointer;
+}
+#rqAuthOverlay .auth-btn:hover { filter: brightness(1.15); }
+#rqAuthOverlay .auth-btn:disabled { opacity: 0.5; cursor: wait; }
+#rqAuthOverlay .auth-err {
+  color: #d97070;
+  background: rgba(139,26,26,0.2);
+  border: 1px solid rgba(139,26,26,0.5);
+  padding: 8px 10px;
+  border-radius: 3px;
+  font-size: 0.78rem;
+  margin-top: 14px;
+  display: none;
+}
+#rqAuthOverlay .auth-err.visible { display: block; }
+#btnLogout { display: none; }                 /* hidden until auth completes */
 </style>
 </head>
 <body>
+
+<!-- LOGIN OVERLAY (shown until authenticated) -->
+<div id="rqAuthOverlay">
+  <div class="auth-card">
+    <h2>Relentless Quest</h2>
+    <div class="auth-sub">Monster Blender — Sign In</div>
+    <label for="rqAuthEmail">Email</label>
+    <input id="rqAuthEmail" type="email" autocomplete="username" autofocus>
+    <label for="rqAuthPass">Password</label>
+    <input id="rqAuthPass" type="password" autocomplete="current-password">
+    <button class="auth-btn" id="rqAuthBtn" onclick="rqDoLogin()">Sign In</button>
+    <div class="auth-err" id="rqAuthErr"></div>
+  </div>
+</div>
 
 <!-- TOPBAR -->
 <div class="topbar">
@@ -659,10 +755,11 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Blender</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.1.5</span>
+  <span class="topbar-version">v0.2.0</span>
   <div class="topbar-actions">
     <a href="monster-workshop.html" class="btn">🐉 Workshop</a>
     <a href="session-planner.html" class="btn">📋 Planner</a>
+    <button class="btn" id="btnLogout" onclick="rqLogout()" title="Sign out">⎋ Logout</button>
   </div>
 </div>
 
@@ -773,7 +870,124 @@ body {
 // ── SUPABASE ──
 const SB_URL = 'https://burtvenqfzextswpjziw.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1cnR2ZW5xZnpleHRzd3Bqeml3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyNTkxMzEsImV4cCI6MjA5MDgzNTEzMX0.M9krIdktkO1wMeKYMm_HoR_tEykewbRUVHdjerg1XIo';
-const SB_HEADERS = { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY };
+
+// ── AUTH (SSO with other RQ tools via shared `rq_auth` key) ──
+const RQ_AUTH_KEY = 'rq_auth';
+let currentUser = null;
+
+function rqRestoreSession() {
+  try {
+    let raw = sessionStorage.getItem(RQ_AUTH_KEY);
+    if (!raw) raw = localStorage.getItem(RQ_AUTH_KEY);
+    if (raw) currentUser = JSON.parse(raw);
+  } catch(e) { currentUser = null; }
+}
+function rqPersistSession() {
+  try {
+    if (currentUser) {
+      const j = JSON.stringify(currentUser);
+      sessionStorage.setItem(RQ_AUTH_KEY, j);
+      localStorage.setItem(RQ_AUTH_KEY, j);
+    } else {
+      sessionStorage.removeItem(RQ_AUTH_KEY);
+      localStorage.removeItem(RQ_AUTH_KEY);
+    }
+  } catch(e) {}
+}
+function rqIsExpiringSoon() {
+  if (!currentUser || !currentUser.expires_at) return false;
+  return (Date.now() + 60000) >= (currentUser.expires_at * 1000);
+}
+async function rqRefreshToken(force) {
+  if (!currentUser || !currentUser.refresh_token) return false;
+  if (!force && !rqIsExpiringSoon()) return true;
+  try {
+    const r = await fetch(SB_URL + '/auth/v1/token?grant_type=refresh_token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+      body: JSON.stringify({ refresh_token: currentUser.refresh_token })
+    });
+    if (!r.ok) { currentUser = null; rqPersistSession(); return false; }
+    const d = await r.json();
+    if (d && d.access_token) {
+      currentUser = d;
+      rqPersistSession();
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+// Auth-aware header builder. Falls back to anon key when not signed in
+// (which will return zero rows under owner-only RLS — but won't error out).
+function sbHeaders() {
+  const h = { 'Content-Type': 'application/json', 'apikey': SB_KEY };
+  if (currentUser && currentUser.access_token) h.Authorization = 'Bearer ' + currentUser.access_token;
+  else h.Authorization = 'Bearer ' + SB_KEY;
+  return h;
+}
+async function sbAuthFetch(url, opts) {
+  opts = opts || {};
+  await rqRefreshToken(false);
+  const req = Object.assign({}, opts);
+  req.headers = Object.assign({}, sbHeaders(), opts.headers || {});
+  return fetch(url, req);
+}
+
+// Login UI
+function rqShowLogin()    { const ov = document.getElementById('rqAuthOverlay'); if (ov) ov.style.display = 'flex'; const b = document.getElementById('btnLogout'); if (b) b.style.display = 'none'; }
+function rqHideLogin()    { const ov = document.getElementById('rqAuthOverlay'); if (ov) ov.style.display = 'none'; const b = document.getElementById('btnLogout'); if (b) b.style.display = ''; }
+function rqShowAuthError(msg) { const e = document.getElementById('rqAuthErr'); if (e) { e.textContent = msg; e.classList.add('visible'); } }
+function rqClearAuthError()   { const e = document.getElementById('rqAuthErr'); if (e) { e.textContent = ''; e.classList.remove('visible'); } }
+
+async function rqDoLogin() {
+  rqClearAuthError();
+  const email = (document.getElementById('rqAuthEmail').value || '').trim();
+  const pass  = document.getElementById('rqAuthPass').value || '';
+  const btn   = document.getElementById('rqAuthBtn');
+  if (!email || !pass) { rqShowAuthError('Email and password are required.'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+  try {
+    const r = await fetch(SB_URL + '/auth/v1/token?grant_type=password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY },
+      body: JSON.stringify({ email, password: pass })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      rqShowAuthError(d.error_description || d.msg || ('Login failed (' + r.status + ')'));
+      if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+      return;
+    }
+    currentUser = d;
+    rqPersistSession();
+    document.getElementById('rqAuthPass').value = '';
+    rqHideLogin();
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+    rqBootAfterAuth();
+  } catch(e) {
+    rqShowAuthError('Network error: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign In'; }
+  }
+}
+function rqLogout() {
+  currentUser = null;
+  rqPersistSession();
+  rqShowLogin();
+}
+window.rqDoLogin = rqDoLogin;
+window.rqLogout  = rqLogout;
+
+// Submit on Enter inside auth fields
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const ov = document.getElementById('rqAuthOverlay');
+  if (!ov || ov.style.display === 'none') return;
+  const t = e.target;
+  if (t && (t.id === 'rqAuthEmail' || t.id === 'rqAuthPass')) {
+    e.preventDefault();
+    rqDoLogin();
+  }
+});
 
 // ── STATE ──
 let baseMonster  = null;
@@ -907,7 +1121,7 @@ async function loadCustomMonstersForPicker() {
     while (true) {
       const res = await fetch(
         `${SB_URL}/rest/v1/rq_monsters?select=*&order=name.asc&limit=${PAGE}&offset=${offset}`,
-        { headers: { ...SB_HEADERS, 'Prefer': 'count=none' } }
+        { headers: { ...sbHeaders(), 'Prefer': 'count=none' } }
       );
       if (!res.ok) {
         const err = await res.text();
@@ -1490,7 +1704,7 @@ async function saveBlend() {
   try {
     const res = await fetch(`${SB_URL}/rest/v1/rq_monsters`, {
       method: 'POST',
-      headers: { ...SB_HEADERS, 'Prefer': 'return=minimal' },
+      headers: { ...sbHeaders(), 'Prefer': 'return=minimal' },
       body: JSON.stringify(payload)
     });
 
@@ -1547,11 +1761,33 @@ function showToast(msg, isError = false) {
 }
 
 // ── INIT ──
-loadCustomMonstersForPicker();
+// Auth-gated boot. If a shared session exists, proceed straight to the app.
+// Otherwise show the login overlay; rqDoLogin → rqBootAfterAuth handles the
+// post-login transition.
+function rqBootAfterAuth() {
+  loadCustomMonstersForPicker();
+}
+
+rqRestoreSession();
+if (currentUser && currentUser.access_token) {
+  // If the cached token is near expiry, refresh first; otherwise proceed.
+  if (rqIsExpiringSoon()) {
+    rqRefreshToken(true).then(ok => {
+      if (ok) { rqHideLogin(); rqBootAfterAuth(); }
+      else   { rqShowLogin(); }
+    });
+  } else {
+    rqHideLogin();
+    rqBootAfterAuth();
+  }
+} else {
+  rqShowLogin();
+}
 
 // Re-fetch custom monsters when tab regains focus (catches Workshop saves)
 let lastDirtyCheck = Date.now();
 window.addEventListener('focus', () => {
+  if (!currentUser) return;       // not signed in yet — ignore
   try {
     const dirty = parseInt(localStorage.getItem('rq_custom_monsters_dirty') || '0');
     if (dirty > lastDirtyCheck) {

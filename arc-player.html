@@ -531,21 +531,55 @@ function pasteMacro(text) {
 }
 
 // ── IDENTITY ──
+// Per-arc identity is stored at `rq_player_identity_<ARC_ID>`. We also
+// piggyback on the shared `rq_auth` token used by other RQ tools so that
+// signing into the canvas planner (or classic, arc-builder, etc.) lets
+// you open arc-player without re-clicking a magic link.
+const RQ_AUTH_KEY = 'rq_auth';
+
+function _readSharedRqAuth() {
+  try {
+    let r = sessionStorage.getItem(RQ_AUTH_KEY);
+    if (!r) r = localStorage.getItem(RQ_AUTH_KEY);
+    return r ? JSON.parse(r) : null;
+  } catch (e) { return null; }
+}
+function _writeSharedRqAuth(blob) {
+  const j = JSON.stringify(blob);
+  try { sessionStorage.setItem(RQ_AUTH_KEY, j); } catch (e) {}
+  try { localStorage.setItem(RQ_AUTH_KEY, j); }   catch (e) {}
+}
+
 function loadIdentityFromStorage() {
+  // 1) Per-arc magic-link cache wins if present.
   try {
     const raw = localStorage.getItem('rq_player_identity_' + ARC_ID);
     if (raw) {
       const cached = JSON.parse(raw);
-      // Only restore identities that are magic-link based (have a token).
-      // Old guest identities are discarded — they can't read the now-RLS-protected tables.
       if (cached && cached.token && cached.type === 'magic') {
         identity = cached;
         showIdentityConfirmed();
+        return;
       } else {
         try { localStorage.removeItem('rq_player_identity_' + ARC_ID); } catch(e) {}
       }
     }
   } catch(e) {}
+
+  // 2) No per-arc identity? Fall back to the shared `rq_auth` token (DM SSO).
+  const shared = _readSharedRqAuth();
+  if (shared && shared.access_token) {
+    identity = {
+      name: (shared.user && shared.user.email && shared.user.email.split('@')[0]) || 'You',
+      email: shared.user && shared.user.email || '',
+      type: 'magic',
+      token: shared.access_token,
+      refresh_token: shared.refresh_token,
+      expires_at: shared.expires_at,
+    };
+    showIdentityConfirmed();
+    // Don't write to per-arc storage — this identity rides the shared token's lifetime.
+  }
 }
 
 async function sendMagicLink() {
@@ -588,6 +622,13 @@ async function handleMagicLinkReturn(hash) {
         expires_at: Math.floor(Date.now()/1000) + expIn
       };
       try { localStorage.setItem('rq_player_identity_' + ARC_ID, JSON.stringify(identity)); } catch(e) {}
+      // Also populate shared rq_auth so other RQ tools see this player's session.
+      _writeSharedRqAuth({
+        access_token: token,
+        refresh_token: refresh,
+        expires_at: identity.expires_at,
+        user: { email: user.email, id: user.id }
+      });
       // Clean URL
       history.replaceState({}, '', window.location.pathname + window.location.search);
       showIdentityConfirmed();
