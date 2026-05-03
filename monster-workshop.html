@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.3.8</span>
+  <span class="topbar-version">v0.3.9</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3864,6 +3864,10 @@ async function loadCustomMonsters() {
 // ── DEEP LINK: ?edit=<monster_id> ─────────────────────────
 // Called by other RQ tools (canvas planner) to jump straight to a specific
 // monster for editing. Switches to the My Monsters tab and selects the row.
+//
+// Diagnostic: if the lookup fails, log a clear message with the id so the
+// user knows whether the deep-link param made it through, whether the
+// monster row is in customMonsters, etc.
 function tryDeepLinkSelect() {
   let editId = null;
   try {
@@ -3871,18 +3875,57 @@ function tryDeepLinkSelect() {
     editId = params.get('edit');
   } catch (e) {}
   if (!editId) return;
-  const target = customMonsters.find(m => String(m.id) === String(editId));
-  if (!target) {
-    showToast && showToast('Monster #' + editId.slice(0,8) + '… not found in your library', true);
+
+  console.log('[Workshop deep-link] Looking for monster id:', editId);
+  console.log('[Workshop deep-link] customMonsters loaded:', customMonsters.length, 'rows');
+
+  // First try My Monsters (custom). This is the most common case since
+  // any monster that landed in rq_monsters would be visible here.
+  let target = customMonsters.find(m => String(m.id) === String(editId));
+  if (target) {
+    console.log('[Workshop deep-link] Match in customMonsters:', target.name);
+    const tabs = document.querySelectorAll('.browser-tab');
+    if (tabs[2]) setTab && setTab('custom', tabs[2]);
+    selectMonster(target.slug);
+    cleanDeepLinkUrl();
     return;
   }
-  // Switch to My Monsters tab so the row is visible/highlighted
-  const tabs = document.querySelectorAll('.browser-tab');
-  if (tabs[2]) {
-    setTab && setTab('custom', tabs[2]);
+
+  // Fallback: maybe the canvas accidentally stored an SRD slug or the id
+  // matches an SRD entry's slug field (defensive — shouldn't happen with
+  // current addMonsterToEncounter, but harmless to check).
+  target = SRD_MONSTERS.find(m => m.slug === editId || String(m.id) === String(editId));
+  if (target) {
+    console.log('[Workshop deep-link] Match in SRD:', target.name);
+    const tabs = document.querySelectorAll('.browser-tab');
+    if (tabs[0]) setTab && setTab('srd', tabs[0]);
+    selectMonster(target.slug);
+    cleanDeepLinkUrl();
+    return;
   }
-  selectMonster(target.slug);
-  // Strip the param from the URL so reloads don't keep re-navigating
+  if (typeof DS_MONSTERS !== 'undefined' && Array.isArray(DS_MONSTERS)) {
+    target = DS_MONSTERS.find(m => m.slug === editId || String(m.id) === String(editId));
+    if (target) {
+      console.log('[Workshop deep-link] Match in Draw-Steel:', target.name);
+      const tabs = document.querySelectorAll('.browser-tab');
+      if (tabs[1]) setTab && setTab('ds', tabs[1]);
+      selectMonster(target.slug);
+      cleanDeepLinkUrl();
+      return;
+    }
+  }
+
+  // No match anywhere — surface the failure visibly.
+  console.warn('[Workshop deep-link] Monster not found for id:', editId);
+  console.warn('[Workshop deep-link] First few customMonsters ids for comparison:',
+    customMonsters.slice(0, 5).map(m => ({id: m.id, name: m.name})));
+  if (typeof showToast === 'function') {
+    showToast('Monster not found in your library. Check console for the lookup id (' + editId.slice(0, 8) + '…).', true);
+  }
+  // Don't strip the URL yet — leave it so the user can retry / reload.
+}
+
+function cleanDeepLinkUrl() {
   try {
     const cleanUrl = window.location.pathname + window.location.hash;
     history.replaceState({}, '', cleanUrl);
