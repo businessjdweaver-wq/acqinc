@@ -3110,7 +3110,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7168</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7169</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3505,6 +3505,23 @@ body.dev-active #app{margin-top:36px;}
   <div style="display:flex;gap:8px;justify-content:space-between;margin-top:8px">
     <button class="btn bink sm" id="ov-undo-clear" style="opacity:.7">Clear history</button>
     <button class="btn bg sm" id="ov-undo-close">Close</button>
+  </div>
+</div></div>
+
+<!-- v1.7169 / Phase 3.2 RESOLUTION MODAL — shows the post-quest resolution
+     plan for the player to review before accepting. Built by
+     showResolutionModal(plan). The plan itself is built by resolveQuest()
+     in the engine (Phase 3.1). On Accept, applyResolution(plan) commits
+     the gold/xp/conditions/etc. described by the plan. On Cancel, nothing
+     happens — the player can either run Full Resolution again (different
+     roll) or use Quick Collect to bail out. -->
+<div class="ov" id="ov-resolve"><div class="modal" style="max-width:520px;max-height:92vh;display:flex;flex-direction:column">
+  <h3 style="margin-bottom:6px;font-size:1em" id="ov-resolve-title">⚔ Quest Resolution</h3>
+  <div class="hint" style="margin-bottom:10px;font-size:.78em" id="ov-resolve-subtitle"></div>
+  <div id="ov-resolve-body" style="overflow-y:auto;flex:1;margin-bottom:12px;font-size:.85em"></div>
+  <div style="display:flex;gap:8px;justify-content:space-between;margin-top:8px">
+    <button class="btn bink sm" id="ov-resolve-cancel">Cancel</button>
+    <button class="btn bg sm" id="ov-resolve-accept">Accept Outcome</button>
   </div>
 </div></div>
 
@@ -4081,7 +4098,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7168
+      Version 1.7169
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -28333,6 +28350,30 @@ function _resBaselineLevel(quest) {
   return 1;
 }
 
+// v1.7169 / Phase 3.2 — Determines whether a quest has enough authoring
+// metadata for the resolution engine to produce a meaningful result.
+// A quest qualifies if it has at least one of:
+//   • encounter (with monster, terrain, traits)
+//   • boostTraits or penaltyTraits (even outside an encounter section —
+//     some authors put trait references at the top level)
+//   • flavorHint (a free-text hint shown in the resolution modal)
+// Returns {resolvable: bool, missing: [list of what's missing]}.
+function _resQuestIsResolvable(quest) {
+  if (!quest) return { resolvable: false, missing: ['quest is null'] };
+  var has = {
+    encounter: !!(quest.encounter && Object.keys(quest.encounter).length),
+    boostTraits: Array.isArray(quest.boostTraits) && quest.boostTraits.length > 0,
+    encBoostTraits: !!(quest.encounter && Array.isArray(quest.encounter.boostTraits) && quest.encounter.boostTraits.length),
+    flavorHint: !!(quest.flavorHint || (quest.encounter && quest.encounter.flavorHint))
+  };
+  var ok = has.encounter || has.boostTraits || has.encBoostTraits || has.flavorHint;
+  var missing = [];
+  if (!has.encounter) missing.push('encounter section');
+  if (!has.boostTraits && !has.encBoostTraits) missing.push('boost traits');
+  if (!has.flavorHint) missing.push('flavor hint');
+  return { resolvable: ok, missing: missing };
+}
+
 function _resGameRules(contentLib) {
   // Find the franchise game_rules row or fall back to defaults.
   if (!contentLib) return _RESOLUTION_DEFAULTS;
@@ -28752,30 +28793,238 @@ function resolveQuest(quest, party, scoutTier, contentLib, rng) {
 }
 
 // applyResolution(plan) — performs the mutations described by a plan.
-// PHASE 3.1 STUB: only implements the obvious effects (gold, xp). Other
-// effect types are logged for later phases. This intentionally does NOT
-// call collectQuest's existing reward-distribution logic — that runs as
-// a separate path in Phase 3.2 when the user clicks ⚔ Full Resolution.
-function applyResolution(plan) {
-  if (!plan || !plan.outcome || !Array.isArray(plan.outcome.effects)) {
-    console.warn('[applyResolution] plan has no effects'); return;
-  }
-  plan.outcome.effects.forEach(function(eff){
-    if (eff.type === 'gold_award' && typeof eff.amount === 'number') {
-      goldAdd(eff.amount, 'Quest resolution: ' + plan.questLabel, 'adv');
-    } else if (eff.type === 'xp_award' && typeof eff.amount === 'number') {
-      // Award XP to all party chars in the plan
-      (plan.partyChars || []).forEach(function(pc){
-        var c = (S.party || []).filter(function(x){ return x && x.name === pc.name; })[0];
-        if (!c) return;
-        if (!c.xp) c.xp = {};
-        var track = eff.track || 'adv';
-        c.xp[track] = (c.xp[track] || 0) + eff.amount;
-      });
-    } else {
-      console.log('[applyResolution] effect type', eff.type, 'not yet implemented in Phase 3.1:', eff);
+// v1.7169 / Phase 3.2 — Render a ResolutionPlan into the resolution modal
+// and open it. The modal HTML lives at #ov-resolve. The Accept button's
+// handler reads window._currentResolution.plan and dispatches to
+// applyResolution(); Cancel just closes.
+function showResolutionModal(plan) {
+  if (!plan) return;
+  var titleEl = document.getElementById('ov-resolve-title');
+  var subEl   = document.getElementById('ov-resolve-subtitle');
+  var bodyEl  = document.getElementById('ov-resolve-body');
+  if (!titleEl || !subEl || !bodyEl) return;
+
+  // Title — quest name + outcome tier with semantic color
+  var tier = plan.outcome.tier;
+  var tierLabel = {
+    crit_fail: '💥 Critical Failure',
+    fail: '✗ Failure',
+    partial: '◐ Partial Success',
+    success: '✓ Success',
+    crit_success: '⭐ Critical Success'
+  }[tier] || tier;
+  var tierColor = {
+    crit_fail:    '#aa1f1f',
+    fail:         '#8a4a1f',
+    partial:      '#8a7a2a',
+    success:      '#2a7a3a',
+    crit_success: '#c9922a'
+  }[tier] || 'var(--ink)';
+  titleEl.innerHTML = '⚔ ' + esc(plan.questLabel) +
+    ' — <span style="color:' + tierColor + '">' + tierLabel + '</span>';
+  subEl.textContent = 'Roll: d20=' + plan.roll.d20 +
+    (plan.roll.levelMod ? (plan.roll.levelMod>0?' +':' ')+plan.roll.levelMod+' lvl':'') +
+    (plan.roll.traitMod ? (plan.roll.traitMod>0?' +':' ')+plan.roll.traitMod+' trait':'') +
+    ' = ' + plan.roll.total + ' vs DC ' + plan.roll.dc +
+    ' (margin ' + (plan.roll.margin>=0?'+':'') + plan.roll.margin + ')';
+
+  // Body sections
+  var html = '';
+
+  // Party chars
+  html += '<div style="margin-bottom:12px"><div style="font-weight:600;color:var(--gold-dark);margin-bottom:4px;font-family:Cinzel,serif">Party</div>';
+  (plan.partyChars||[]).forEach(function(pc){
+    html += '<div style="margin-bottom:3px;color:var(--ink)">' +
+      '<strong>' + esc(pc.name) + '</strong> · Lv ' + pc.level +
+      ' · ' + esc(pc.cls||'?') + ' · ' + esc(pc.species||'?') +
+      (pc.specialty ? ' · ' + esc(pc.specialty) : '') + '</div>';
+    if (pc.traits && pc.traits.length) {
+      html += '<div style="font-size:.78em;color:var(--ink-light);margin-left:14px;margin-bottom:3px">Traits: ' +
+        pc.traits.map(function(t){return esc(t);}).join(', ') + '</div>';
     }
   });
+  html += '</div>';
+
+  // Difficulty
+  html += '<div style="margin-bottom:12px"><div style="font-weight:600;color:var(--gold-dark);margin-bottom:4px;font-family:Cinzel,serif">Difficulty</div>';
+  html += '<div>Rarity: <strong>' + esc(plan.difficulty.tier||'?') + '</strong> · Bucket: ' + esc(plan.difficulty.label) + '</div>';
+  html += '<div>Base DC: ' + plan.difficulty.baseDC + ' · Party avg level: ' + plan.difficulty.partyAvgLevel +
+    ' (baseline ' + plan.difficulty.baselineLevel + ')</div>';
+  if (plan.difficulty.levelMod !== 0) {
+    html += '<div style="color:var(--ink-light);font-size:.85em">' +
+      'Level mismatch mod: ' + (plan.difficulty.levelMod>0?'+':'') + plan.difficulty.levelMod + '</div>';
+  }
+  html += '</div>';
+
+  // Encounter (if any)
+  if (plan.encounter) {
+    html += '<div style="margin-bottom:12px"><div style="font-weight:600;color:var(--gold-dark);margin-bottom:4px;font-family:Cinzel,serif">Encounter</div>';
+    if (plan.encounter.monsterLabel) {
+      html += '<div>Monster: <strong>' + esc(plan.encounter.monsterLabel) + '</strong></div>';
+    }
+    if (plan.encounter.terrain) {
+      html += '<div>Terrain: ' + esc(plan.encounter.terrain) + '</div>';
+    }
+    if (plan.encounter.flavorHint) {
+      html += '<div style="font-style:italic;color:var(--ink-light);margin-top:3px">"' + esc(plan.encounter.flavorHint) + '"</div>';
+    }
+    if (plan.encounter.traitContribs && plan.encounter.traitContribs.length) {
+      html += '<div style="margin-top:5px;font-size:.85em">Trait contributions:</div><ul style="margin:2px 0 0 18px;padding:0">';
+      plan.encounter.traitContribs.forEach(function(tc){
+        var sign = tc.value > 0 ? '+' : '';
+        var color = tc.value > 0 ? '#2a7a3a' : '#aa1f1f';
+        html += '<li style="font-size:.85em;color:var(--ink)">' +
+          esc(tc.trait) + ' (' + esc(tc.source) + '): <span style="color:' + color + ';font-weight:600">' + sign + tc.value + '</span></li>';
+      });
+      html += '</ul>';
+    }
+    html += '</div>';
+  }
+
+  // Effects — what will happen on Accept
+  html += '<div style="margin-bottom:12px"><div style="font-weight:600;color:var(--gold-dark);margin-bottom:4px;font-family:Cinzel,serif">Effects on Accept</div>';
+  if (!plan.outcome.effects || !plan.outcome.effects.length) {
+    html += '<div style="font-style:italic;color:var(--ink-light)">No effects.</div>';
+  } else {
+    html += '<ul style="margin:0 0 0 18px;padding:0">';
+    plan.outcome.effects.forEach(function(eff){
+      html += '<li style="margin-bottom:3px">';
+      if (eff.type === 'gold_award') {
+        html += '💰 Gold: <strong>' + eff.amount + ' gp</strong>' +
+          (eff.target === 'all' ? ' (split per existing collect-quest distribution)' : '');
+      } else if (eff.type === 'xp_award') {
+        html += '✨ XP: <strong>+' + eff.amount + '</strong>' +
+          (eff.track ? ' on the ' + esc(eff.track) + ' track' : '') +
+          (eff.target === 'all' ? ' for the whole party' : '');
+      } else if (eff.type === 'condition_apply') {
+        html += '🩹 Condition: <strong>' + esc(eff.condition||'?') + '</strong>';
+        if (eff.targetChar) html += ' applied to ' + esc(eff.targetChar);
+        if (eff.source) html += ' (from ' + esc(eff.source) + ')';
+        if (eff.counter) {
+          html += '<div style="margin-top:2px;padding:4px 7px;background:rgba(42,122,58,.15);border:1px solid #2a7a3a;border-radius:4px;color:#2a7a3a;font-size:.85em">' +
+            '🛡 ' + esc(eff.counter.char) + "'s " + esc(eff.counter.item) +
+            ' prevented ' + esc(eff.condition) +
+            (eff.counter.consumed ? ' (consumed)' : '') + '</div>';
+        }
+      } else if (eff.type === 'item_grant') {
+        html += '🎁 Item: <strong>' + esc(eff.item||'?') + '</strong>' +
+          (eff.targetChar ? ' to ' + esc(eff.targetChar) : '');
+      } else {
+        html += '· ' + esc(eff.type) + ': ' + esc(JSON.stringify(eff));
+      }
+      html += '</li>';
+    });
+    html += '</ul>';
+  }
+  html += '</div>';
+
+  // Phase 3.2 caveat
+  html += '<div style="font-size:.72em;color:var(--ink-light);font-style:italic;margin-top:6px;padding-top:6px;border-top:1px solid var(--border-light)">' +
+    'Phase 3.2 — gold and XP commit fully. Conditions and item grants are logged but not yet applied to character state (Phase 3.4+).' +
+    '</div>';
+
+  bodyEl.innerHTML = html;
+  openOv('ov-resolve');
+}
+
+// v1.7169 / Phase 3.2 — Apply a ResolutionPlan to game state.
+// Layering on top of collectQuest:
+//   1. Temporarily rescale pq.reward by the outcome weight (so collectQuest
+//      distributes the right amount of gold per its existing logic).
+//   2. Call collectQuest(qi, pq, q, set) — this handles franchise/character
+//      pay split, item purchases, XP-track increment of 1, capstone rewards,
+//      and quest cleanup (removes from pending, adds to done, etc.).
+//   3. Restore pq.reward (mostly cosmetic — pq is removed from pending after
+//      collectQuest runs anyway, but we restore for cleanliness).
+//   4. Apply engine-only XP delta if the plan's XP differs from collectQuest's
+//      default 1.
+//   5. Log non-implemented effect types (conditions, item_grants) for
+//      Phases 3.4+.
+//
+// Returns true on success, false if context is missing.
+function applyResolution(plan) {
+  if (!plan || !plan.outcome) {
+    console.warn('[applyResolution] plan is missing outcome'); return false;
+  }
+  var ctx = window._currentResolution;
+  if (!ctx || !ctx.pq || !ctx.q || ctx.set === undefined) {
+    console.warn('[applyResolution] no _currentResolution context — was the modal opened via the proper flow?');
+    return false;
+  }
+  var pq = ctx.pq, q = ctx.q, set = ctx.set, qi = ctx.qi;
+
+  // Look up planned gold and XP
+  var planGold = 0, planXp = 0, planXpTrack = q.type;
+  (plan.outcome.effects||[]).forEach(function(eff){
+    if (eff.type === 'gold_award') planGold = eff.amount;
+    else if (eff.type === 'xp_award') {
+      planXp = eff.amount;
+      planXpTrack = eff.track || planXpTrack;
+    }
+  });
+
+  // Temporarily replace pq.reward with the outcome-scaled amount.
+  // collectQuest reads pq.reward to compute charPool / franchiseCut.
+  var origReward = pq.reward;
+  pq.reward = planGold;
+
+  // Capture pre-state for XP delta computation
+  var preXp = {};
+  (pq.chars||[]).forEach(function(ci){
+    var c = S.party[ci]; if (!c || !c.xp) return;
+    preXp[ci] = (c.xp[planXpTrack] || 0);
+  });
+
+  try {
+    collectQuest(qi, pq, q, set);
+  } catch(err) {
+    console.error('[applyResolution] collectQuest threw:', err);
+    pq.reward = origReward;
+    return false;
+  }
+
+  // collectQuest awards exactly 1 XP per char on the q.type track. The plan
+  // may have specified 0 or 2; adjust by the delta.
+  var xpDelta = planXp - 1;
+  if (xpDelta !== 0) {
+    (pq.chars||[]).forEach(function(ci){
+      var c = S.party[ci]; if (!c) return;
+      if (!c.xp) c.xp = {};
+      c.xp[planXpTrack] = Math.max(0, (c.xp[planXpTrack] || 0) + xpDelta);
+    });
+    if (xpDelta > 0) {
+      logAdd('Critical success bonus: +' + xpDelta + ' XP per character on ' + planXpTrack + ' track', 'adv');
+    } else if (planXp === 0) {
+      logAdd('No XP awarded (' + plan.outcome.tier.replace('_',' ') + ')', 'adv');
+    }
+  }
+
+  // Log effects we don't yet apply (Phase 3.4+ work).
+  (plan.outcome.effects||[]).forEach(function(eff){
+    if (eff.type === 'condition_apply') {
+      var msg = '🩹 ' + (eff.condition||'condition') +
+        (eff.targetChar ? ' on ' + eff.targetChar : '') +
+        (eff.source ? ' (from ' + eff.source + ')' : '');
+      if (eff.counter) {
+        msg = '🛡 ' + (eff.counter.char||'?') + "'s " + (eff.counter.item||'?') +
+          ' prevented ' + (eff.condition||'condition') +
+          (eff.counter.consumed ? ' (consumed)' : '');
+      }
+      logAdd(msg, 'adv');
+    } else if (eff.type === 'item_grant') {
+      logAdd('🎁 Item grant: ' + (eff.item||'?') +
+             (eff.targetChar ? ' to ' + eff.targetChar : '') +
+             ' (Phase 3.4+ will apply this)', 'adv');
+    }
+  });
+
+  // collectQuest already restored pq.reward via removing pq from pending,
+  // but keep this for cleanliness in case pq still exists (it shouldn't).
+  if (pq.reward !== undefined) pq.reward = origReward;
+
+  // Clear the resolution context so a stale plan can't be reapplied.
+  window._currentResolution = null;
+  return true;
 }
 
 // Console-callable test entry point. Picks the quest at index qIdx in the
@@ -28839,6 +29088,8 @@ function testResolveQuest(qIdx) {
 window.testResolveQuest = testResolveQuest;
 window.resolveQuest = resolveQuest;
 window.applyResolution = applyResolution;
+window._resQuestIsResolvable = _resQuestIsResolvable;
+window.showResolutionModal = showResolutionModal;
 
 /* ════════════════════════════════════════════════════════════════════════ */
 
@@ -31063,7 +31314,23 @@ function renderAdv(){
         '<div style="font-size:.72em;color:var(--ink-light);margin-top:2px">'+
         names.map(function(n){return '<span style="background:rgba(139,26,26,.1);border:1px solid rgba(139,26,26,.3);border-radius:5px;padding:1px 5px;color:var(--crimson)">⚔ '+esc(n)+'</span>';}).join(' ')+
         '</div><div style="font-size:.72em;color:var(--gold-dark);margin-top:2px">💰 Reward: '+pq.reward+' gp</div>'+
-        (ready?'<button class="btn bgn sm" style="margin-top:6px" data-a="qcollect" data-qi="'+q.idx+'">🏆 Collect '+pq.reward+' gp</button>':'')+
+        (ready?(function(){
+          // v1.7169 / Phase 3.2 — Two collection paths offered when ready:
+          //   Quick Collect: existing behavior (full reward, no roll, no risk)
+          //   Full Resolution: engine path (roll vs DC, scaled reward, possible conditions)
+          // Full Resolution is disabled with a tooltip when the quest lacks
+          // Phase-3 authoring metadata (encounter / boostTraits / flavorHint).
+          var info = (typeof _resQuestIsResolvable==='function') ? _resQuestIsResolvable(q) : {resolvable:false, missing:[]};
+          var quickBtn = '<button class="btn bgn sm" style="margin-top:6px;margin-right:6px" data-a="qcollect" data-qi="'+q.idx+'">⚡ Quick Collect '+pq.reward+' gp</button>';
+          var fullBtn;
+          if (info.resolvable) {
+            fullBtn = '<button class="btn bg sm" style="margin-top:6px" data-a="qresolve" data-qi="'+q.idx+'" title="Roll for outcome — reward scales with success, conditions may apply.">⚔ Full Resolution</button>';
+          } else {
+            var tip = 'Full Resolution requires authoring metadata: '+info.missing.join(', ')+'. Use Quick Collect for now.';
+            fullBtn = '<button class="btn bg sm" style="margin-top:6px;opacity:.5;cursor:not-allowed" data-qi="'+q.idx+'" disabled title="'+esc(tip)+'">⚔ Full Resolution</button>';
+          }
+          return quickBtn + fullBtn;
+        })():'')+
         (function(){
         var _btns='';
         if(!ready&&qpEnabled()){
@@ -31266,6 +31533,32 @@ var bc=e.target.closest('[data-a="qcollect"]');
     collectQuest(qi,pq2,q,set);
     save();setGold();renderAdv();
     if(uid())sbPush(false); // force push — quest completions must not be lost to debounce
+    return;
+  }
+
+  // v1.7169 / Phase 3.2 — Full Resolution click. Builds a ResolutionPlan
+  // via the Phase 3.1 engine, opens the resolution modal for player review.
+  // The plan is held in window._currentResolution until the modal's Accept
+  // or Cancel handler fires; Accept commits via applyResolution(plan) +
+  // collectQuest path; Cancel discards (no state changes).
+  var br=e.target.closest('[data-a="qresolve"]');
+  if(br){
+    var rqi=parseInt(br.getAttribute('data-qi'));
+    var rpqIdx=-1;
+    (qs.pending||[]).forEach(function(pq,pi){if(pq.idx===rqi)rpqIdx=pi;});
+    if(rpqIdx===-1)return;
+    var rpq=qs.pending[rpqIdx];
+    if(rpq.doneAt>Date.now()){alert('Not ready yet! '+fmtCountdown(rpq.doneAt-Date.now()));return;}
+    var rq=questByIdx(set,rqi);if(!rq)return;
+    var rparty=(rpq.chars||[]).map(function(ci){return S.party[ci];}).filter(Boolean);
+    if(!rparty.length){alert('No party assigned.');return;}
+    rq._pq = rpq;  // give engine access to pq.reward
+    var rqKey = (rq.id != null ? rq.id : rq.idx != null ? rq.idx : null);
+    var rscoutTier = (S.scoutedQuests && rqKey != null && S.scoutedQuests[rqKey] && S.scoutedQuests[rqKey].tier) || 0;
+    var plan = resolveQuest(rq, rparty, rscoutTier, CONTENT_LIB);
+    // Stash plan + context so the Accept button can apply it without rebuilding.
+    window._currentResolution = { plan: plan, qi: rqi, pq: rpq, q: rq, set: set };
+    showResolutionModal(plan);
     return;
   }
 
@@ -36258,7 +36551,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7168';
+var RQ_CLIENT_VERSION='v1.7169';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -39247,6 +39540,36 @@ document.getElementById('btn-nav-archive').addEventListener('click',function(){n
       S.undoLog=[];
       save();
       renderUndoList();
+    });
+  }
+  // v1.7169 / Phase 3.2 — Resolution modal handlers
+  var btnResAccept = document.getElementById('ov-resolve-accept');
+  if (btnResAccept && !btnResAccept.dataset.bound) {
+    btnResAccept.dataset.bound = '1';
+    btnResAccept.addEventListener('click', function(){
+      var ctx = window._currentResolution;
+      if (!ctx || !ctx.plan) {
+        closeOv('ov-resolve');
+        return;
+      }
+      var ok = applyResolution(ctx.plan);
+      closeOv('ov-resolve');
+      if (ok) {
+        save();
+        if (typeof setGold === 'function') setGold();
+        if (typeof renderAdv === 'function') renderAdv();
+        if (uid()) sbPush(false);
+      } else {
+        alert('Resolution failed to apply — see console.');
+      }
+    });
+  }
+  var btnResCancel = document.getElementById('ov-resolve-cancel');
+  if (btnResCancel && !btnResCancel.dataset.bound) {
+    btnResCancel.dataset.bound = '1';
+    btnResCancel.addEventListener('click', function(){
+      window._currentResolution = null;
+      closeOv('ov-resolve');
     });
   }
   var listEl=document.getElementById('ov-undo-list');
