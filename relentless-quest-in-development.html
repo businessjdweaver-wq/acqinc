@@ -3110,7 +3110,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7166</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7167</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4081,7 +4081,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7166
+      Version 1.7167
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -28290,7 +28290,33 @@ var _RESOLUTION_DEFAULTS = {
 
 // Tier average levels used for level-mismatch calc when a quest has a
 // tier set but no explicit baseline. Mirrors DIFFICULTY_PROFILES.
+// (Kept for compatibility; the engine now prefers rarity-based mismatch
+// via QTIERS — see _resBaselineLevel below.)
 var _RESOLUTION_TIER_AVG_LEVEL = { 1:2, 2:7, 3:13, 4:18 };
+
+// v1.7167 — Resolves the baseline party level a quest is intended for.
+// The codebase has two competing "tier" concepts:
+//   • q.tier is RARITY (common, uncommon, rare, perilous, legendary) —
+//     looked up in QTIERS[rarity].minLv for the recommended minimum
+//     party level. This is the right reference point for level-mismatch
+//     bonus/penalty calc.
+//   • set.dndTier (1–4) describes the quest set's player tier. We use
+//     this as a fallback when q.tier isn't a known rarity.
+// If neither is available, we default to baseline level 1.
+function _resBaselineLevel(quest) {
+  // Prefer rarity → QTIERS lookup
+  if (quest && typeof quest.tier === 'string' &&
+      typeof QTIERS !== 'undefined' && QTIERS[quest.tier]) {
+    var minLv = QTIERS[quest.tier].minLv;
+    if (typeof minLv === 'number') return minLv;
+  }
+  // Fall back to D&D player-tier average (only if quest.tier is numeric 1-4)
+  if (quest && typeof quest.tier === 'number' && _RESOLUTION_TIER_AVG_LEVEL[quest.tier]) {
+    return _RESOLUTION_TIER_AVG_LEVEL[quest.tier];
+  }
+  // Last resort
+  return 1;
+}
 
 function _resGameRules(contentLib) {
   // Find the franchise game_rules row or fall back to defaults.
@@ -28378,11 +28404,13 @@ function _resCharTraits(char, contentLib) {
   return out;
 }
 
-// Adjusts a roll based on (party avg level) - (quest tier avg level).
+// Adjusts a roll based on (party avg level) - (quest's recommended baseline level).
 // Positive = party over-leveled, gets bonus. Capped per gameRules.
-function _resLevelMismatchMod(partyAvgLevel, questTier, gameRules) {
-  var tierAvg = _RESOLUTION_TIER_AVG_LEVEL[questTier] || 5;
-  var diff = partyAvgLevel - tierAvg;
+// v1.7167 — Now takes the resolved baseline directly (caller resolves via
+// _resBaselineLevel) so this function doesn't have to know about either
+// rarity strings or numeric D&D tiers.
+function _resLevelMismatchMod(partyAvgLevel, baselineLevel, gameRules) {
+  var diff = partyAvgLevel - baselineLevel;
   var perLevel = (gameRules.levelMismatch && gameRules.levelMismatch.perLevel) || 1;
   var cap = (gameRules.levelMismatch && gameRules.levelMismatch.cap) || 5;
   var mod = diff * perLevel;
@@ -28620,14 +28648,21 @@ function resolveQuest(quest, party, scoutTier, contentLib, rng) {
   var gameRules = _resGameRules(contentLib);
 
   // Difficulty
+  // v1.7167 — diffKey is the DC-ladder bucket (easy/moderate/hard/etc.).
+  // Quests in this codebase don't author this directly today — it would
+  // come from the encounter section. We default to 'moderate' if absent.
   var diffKey = (quest && quest.difficulty) || 'moderate';
   var baseDC = (gameRules.dcLadder && gameRules.dcLadder[diffKey]) ||
                _RESOLUTION_DEFAULTS.dcLadder[diffKey] || 14;
   var avgLevel = party.length
     ? (party.reduce(function(s,c){ return s + (c.level||1); }, 0) / party.length)
     : 1;
-  var qTier = (quest && quest.tier) || 1;
-  var levelMod = _resLevelMismatchMod(avgLevel, qTier, gameRules);
+  // v1.7167 — Resolve the recommended baseline party level for this quest.
+  // Reads quest.tier (rarity string) → QTIERS[rarity].minLv, falling back
+  // to numeric D&D tier or level 1.
+  var baselineLevel = _resBaselineLevel(quest);
+  var qTierLabel = (quest && quest.tier) || null;
+  var levelMod = _resLevelMismatchMod(avgLevel, baselineLevel, gameRules);
 
   // Trait mod from encounter
   var traitResult = _resTraitMod(quest, party, contentLib, gameRules);
@@ -28651,7 +28686,7 @@ function resolveQuest(quest, party, scoutTier, contentLib, rng) {
   }
 
   return {
-    questId: (quest && quest.id) || null,
+    questId: (quest && (quest.id != null ? quest.id : quest.idx != null ? quest.idx : null)),
     questLabel: (quest && quest.title) || (quest && quest.label) || '(unnamed quest)',
     partyChars: party.map(function(c){
       return {
@@ -28664,10 +28699,11 @@ function resolveQuest(quest, party, scoutTier, contentLib, rng) {
       };
     }),
     difficulty: {
-      tier: qTier,
-      label: diffKey,
+      tier: qTierLabel,                     // rarity string (e.g. 'uncommon') or null
+      label: diffKey,                        // DC-ladder bucket (easy/moderate/hard/...)
       baseDC: baseDC,
       partyAvgLevel: Math.round(avgLevel * 10) / 10,
+      baselineLevel: baselineLevel,          // recommended min party level for this rarity
       levelMod: levelMod,
       finalDC: baseDC  // we adjust the roll, not the DC; finalDC kept for modal
     },
@@ -28776,7 +28812,10 @@ function testResolveQuest(qIdx) {
   // Pass the pending entry through to the engine via q._pq so the default-
   // effects synthesizer can read pq.reward.
   q._pq = pq;
-  var scoutTier = (S.scoutedQuests && S.scoutedQuests[q.id] && S.scoutedQuests[q.id].tier) || 0;
+  // v1.7167 — Quest scout state may key on either q.id or q.idx depending
+  // on how Phase 3.7 (Scout) is wired. Try id first, fall back to idx.
+  var qKey = (q.id != null ? q.id : q.idx != null ? q.idx : null);
+  var scoutTier = (S.scoutedQuests && qKey != null && S.scoutedQuests[qKey] && S.scoutedQuests[qKey].tier) || 0;
   var plan = resolveQuest(q, party, scoutTier, CONTENT_LIB);
   console.log('═══ ResolutionPlan for "' + plan.questLabel + '" ═══');
   console.log(JSON.stringify(plan, null, 2));
@@ -36204,7 +36243,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7166';
+var RQ_CLIENT_VERSION='v1.7167';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
