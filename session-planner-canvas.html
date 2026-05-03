@@ -1073,26 +1073,22 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 }
 
 /* Deactivate toggle button inside peek */
-.node-mon-deact-row {
-  display: flex; align-items: center; gap: 6px;
-  margin-bottom: 8px;
-}
+/* Deactivate button now lives in the .node-mon-header next to the peek
+   toggle — slim icon-style so the two siblings read as a button group. */
 .node-mon-deact-btn {
-  flex: 1;
-  background: rgba(0,0,0,0.3);
-  border: 1px solid rgba(184,134,11,0.25);
+  background: transparent;
+  border: 1px solid rgba(184,134,11,0.3);
   color: var(--steel-pale);
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  padding: 5px 10px;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
   border-radius: 2px;
   cursor: pointer;
-  text-transform: uppercase;
 }
 .node-mon-deact-btn:hover { color: var(--gold-pale); border-color: var(--gold); }
 .node-mon-deact-btn.is-deactivated {
-  background: rgba(184,134,11,0.18);
+  background: rgba(184,134,11,0.12);
   color: var(--gold-pale);
   border-color: var(--gold);
 }
@@ -1146,6 +1142,74 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 }
 /* Singleton card (group of 1) — no group wrapper, no flavor letter */
 .node-mon.singleton .node-mon-flav { display: none; }
+
+/* ── NPC SIDE PANEL: stat-skin section ──────────────────── */
+.npc-skin-current {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  background: rgba(184,134,11,0.08);
+  border: 1px solid rgba(184,134,11,0.4);
+  border-radius: 3px;
+  margin-bottom: 10px;
+}
+.npc-skin-name {
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 1.05rem;
+  color: var(--bone);
+}
+.npc-skin-name b { color: var(--gold-pale); font-weight: 600; }
+.npc-skin-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.05em;
+}
+.npc-skin-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--steel-pale);
+  font-style: italic;
+  font-size: 0.95rem;
+  border: 1px dashed rgba(184,134,11,0.2);
+  border-radius: 3px;
+  margin-bottom: 10px;
+}
+
+/* ── NPC CANVAS FACE: skin chip below the standard summary ──── */
+.node-npc-skin-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 6px;
+  padding: 3px 8px;
+  background: rgba(184,134,11,0.1);
+  border: 1px solid rgba(184,134,11,0.3);
+  border-radius: 2px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  color: var(--steel-pale);
+  text-transform: uppercase;
+}
+.node-npc-skin-chip b {
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--gold-pale);
+  font-size: 0.85rem;
+}
+
+/* The NPC peek wrapper reuses encounter peek styles directly — same DOM
+   shape, just different data-attribute prefix. We only need to scope the
+   container so it doesn't pick up encounter-specific selectors. */
+.node-npc-peek-wrap {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(184,134,11,0.2);
+}
 
 /* Ability grid (STR DEX CON INT WIS CHA) */
 .node-mon-abilities {
@@ -1482,7 +1546,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 5c++ / adv-dis fix</span>
+  <span class="topbar-version">stage 5e / scene hazards</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -1519,7 +1583,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 5c++ · adv-dis values fixed (3/4)</div>
+  <div id="stage-label">Stage 5e · scene hazards</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -2420,7 +2484,7 @@ function deserializeCanvas(data) {
     attachNodeDrag(el, node);
     attachAnchorClicks(el, node);
     wireNodeBodyClickToOpenPanel(el, node);
-    wireMonsterRollClicks(el, node); wireTrapRollClicks(el, node);
+    wireMonsterRollClicks(el, node); wireTrapRollClicks(el, node); wireSceneHazardClicks(el, node); wireNpcPeekClicks(el, node);
     // Track highest numeric suffix so future createNode IDs don't collide
     const m = String(nd.id).match(/^n(\d+)$/);
     if (m) { const n = parseInt(m[1]); if (n > maxIdSeq) maxIdSeq = n; }
@@ -2512,8 +2576,29 @@ const BLOCK_TYPES = {
         options: ['Normal','Echoing','Silent','Loud','Muffled'] },
       { key: 'event_trigger', label: 'Random Event Trigger', type: 'select', group: 'Encounters & Events',
         options: ['Enter scene','End of each round','On loud noise','On failed save','Manually only'], fullWidth: true },
-      { key: 'hazard',      label: 'Custom Hazard / Effect', type: 'textarea', group: 'Encounters & Events',
+      { key: 'hazard',      label: 'Custom Hazard / Effect (descriptive)', type: 'textarea', group: 'Encounters & Events',
         placeholder: 'e.g. Rising water +1 ft per round after round 3…', rows: 2, fullWidth: true },
+
+      // ── Embedded hazard mechanics. Same shape as Trap. Field keys are
+      //    prefixed `haz_` so they don't collide with any future Scene field
+      //    additions, and so the rollout helpers can disambiguate.
+      { key: 'haz_kind',     label: 'Hazard Kind',  type: 'select', group: 'Hazard Mechanics',
+        options: ['Atmospheric','Magical Effect','Environmental','Trap-like','Other'] },
+      { key: 'haz_trigger',  label: 'Hazard Trigger', type: 'textarea', group: 'Hazard Mechanics',
+        placeholder: 'When does the hazard fire? e.g. "Each round inside the cloud", "On crossing the threshold"', rows: 2, fullWidth: true },
+      { key: 'haz_perc_dc',  label: 'Perception DC (notice)',    type: 'number', group: 'Hazard Mechanics', placeholder: '13' },
+      { key: 'haz_inv_dc',   label: 'Investigation DC (analyze)', type: 'number', group: 'Hazard Mechanics', placeholder: '15' },
+      { key: 'haz_disarm_dc',label: 'Disarm DC (suppress)',       type: 'number', group: 'Hazard Mechanics', placeholder: '15' },
+      { key: 'haz_save_stat',label: 'Saving Throw',  type: 'select', group: 'Hazard Mechanics',
+        options: ['DEX','CON','STR','WIS','INT','CHA'] },
+      { key: 'haz_save_dc',  label: 'Save DC',       type: 'number', group: 'Hazard Mechanics', placeholder: '15' },
+      { key: 'haz_damage',   label: 'Damage Dice',   type: 'text',   group: 'Hazard Mechanics', placeholder: '2d6' },
+      { key: 'haz_dmg_type', label: 'Damage Type',   type: 'select', group: 'Hazard Mechanics',
+        options: ['poison','piercing','bludgeoning','slashing','fire','cold','lightning','acid','necrotic','radiant','thunder','psychic','force'] },
+      { key: 'haz_condition',label: 'Condition on Fail', type: 'text', group: 'Hazard Mechanics', placeholder: 'e.g. Poisoned, Restrained…' },
+      { key: 'haz_effect',   label: 'Full Effect Description', type: 'textarea', group: 'Hazard Mechanics',
+        placeholder: 'What happens on hit / fail / save…', rows: 3, fullWidth: true },
+
       { key: 'notes',       label: 'Director Notes', type: 'textarea', group: 'Director Notes',
         placeholder: 'Pacing, hooks, transitions…', rows: 3, fullWidth: true },
     ],
@@ -2991,7 +3076,7 @@ function createNode({ x, y, type = 'scene', title = null, summary = '' } = {}) {
   attachNodeDrag(el, data);
   attachAnchorClicks(el, data);
   wireNodeBodyClickToOpenPanel(el, data);
-  wireMonsterRollClicks(el, data); wireTrapRollClicks(el, data);
+  wireMonsterRollClicks(el, data); wireTrapRollClicks(el, data); wireSceneHazardClicks(el, data); wireNpcPeekClicks(el, data);
   updateEmptyHint();
   markDirty();
   return data;
@@ -3010,8 +3095,10 @@ function renderNodeFace(data) {
   const summaryHtml = data.summary
     ? `<div class="node-summary">${escHtml(data.summary)}</div>`
     : `<div class="node-summary">Click to edit (side panel — Stage 3b).</div>`;
-  const monstersHtml = renderMonsterCardsHtml(data);
-  const trapRollsHtml = renderTrapRollsHtml(data);
+  const monstersHtml      = renderMonsterCardsHtml(data);
+  const trapRollsHtml     = renderTrapRollsHtml(data);
+  const sceneHazardsHtml  = renderSceneHazardRollsHtml(data);
+  const npcSkinHtml       = renderNpcSkinFaceHtml(data);
   return `
     <div class="node-header">
       <span class="node-icon">${data.icon}</span>
@@ -3022,6 +3109,8 @@ function renderNodeFace(data) {
       ${summaryHtml}
       ${monstersHtml}
       ${trapRollsHtml}
+      ${sceneHazardsHtml}
+      ${npcSkinHtml}
     </div>
     <div class="node-anchors">
       ${['tl','tc','tr','ml','mr','bl','bc','br'].map(p =>
@@ -3712,6 +3801,10 @@ function renderSidePanelBody(node, def) {
   if (node.type === 'encounter') {
     html += renderMonsterSection(node);
   }
+  // For NPC nodes, append the stat-skin section so they can attach a Workshop monster.
+  if (node.type === 'npc') {
+    html += renderNpcSkinSection(node);
+  }
   spBody.innerHTML = html;
 
   // Wire input handlers — autosave on input/change with 200ms debounce.
@@ -3752,6 +3845,10 @@ function renderSidePanelBody(node, def) {
   // Wire monster-section interactions for encounter nodes
   if (node.type === 'encounter') {
     wireMonsterSection(node);
+  }
+  // Wire NPC stat-skin section interactions
+  if (node.type === 'npc') {
+    wireNpcSkinSection(node);
   }
 }
 
@@ -3958,6 +4055,190 @@ function addAnotherInstance(node, groupKey) {
   markDirty();
 }
 
+// ── NPC STAT SKINNING ─────────────────────────────────────
+// NPCs may attach a single monster from the Workshop as a "stat skin" —
+// the NPC keeps its name, role, motivations, dialogue, etc. (its own
+// fields), but inherits the monster's mechanical stat block (HP, AC,
+// abilities, saves, attacks). On the canvas face, a skinned NPC shows
+// the same peek surface as encounter monsters: HP cur/max, multiplier,
+// ability check buttons, saving-throw buttons, action buttons. No horde
+// row (NPCs are individuals, not packs).
+//
+// Persistence: unlike encounter peek state, NPC peek state PERSISTS
+// across saves. This is intentional — DMs track an NPC's HP between
+// sessions ("the BBEG has 47 HP left from last session").
+//
+// Schema:
+//   node.fields.skin = {
+//     monster_id:  <uuid>,
+//     snapshot:    { ... full rq_monsters row ... },
+//     hp_current:  <number>,    // persisted
+//     mult:        <number>,    // persisted (rare for NPCs but cheap)
+//     peek_open:   <boolean>,   // persisted
+//     deactivated: <boolean>    // persisted
+//   }
+//
+// All four state fields are first-class on `skin` so they serialize
+// cleanly through the existing canvas autosave (no special handling
+// needed in serialize/deserialize — the JSONB column carries them).
+
+function renderNpcSkinSection(node) {
+  const skin = node.fields && node.fields.skin;
+  const sn = (skin && skin.snapshot) || null;
+  const meta = sn ? [
+    sn.cr ? 'CR ' + sn.cr : '',
+    sn.hp ? 'HP ' + sn.hp : '',
+    sn.ac ? 'AC ' + sn.ac : '',
+  ].filter(Boolean).join(' · ') : '';
+  return `
+    <div class="mon-section" id="npcSkinSection">
+      <div class="mon-section-title">
+        <span>🧬 Stats from Monster</span>
+        <span class="mon-count">${sn ? 'skinned' : 'unskinned'}</span>
+      </div>
+      ${sn ? `
+        <div class="npc-skin-current">
+          <span class="npc-skin-name">stats from <b>${escHtml(sn.name || 'Unknown')}</b></span>
+          <span class="npc-skin-meta">${escHtml(meta)}</span>
+          <button class="mon-imp-btn"     data-npc-skin-action="edit"    title="Open in Monster Workshop">✎</button>
+          <button class="mon-imp-btn"     data-npc-skin-action="refresh" title="Refresh from Workshop">↻</button>
+          <button class="mon-imp-btn del" data-npc-skin-action="detach"  title="Detach the stat skin (keeps NPC, drops the mechanics)">✕</button>
+        </div>` : `
+        <div class="npc-skin-empty">No stat skin attached. Search to give this NPC rollable stats.</div>`}
+      <div class="mon-search">
+        <input type="text" id="npcSkinSearchInput" autocomplete="off"
+               placeholder="${sn ? 'Replace stat skin from Workshop…' : 'Search monsters from your Workshop…'}">
+      </div>
+      <div class="mon-results" id="npcSkinResults"></div>
+    </div>`;
+}
+
+let npcSkinSearchTimer = null;
+function wireNpcSkinSection(node) {
+  const input   = document.getElementById('npcSkinSearchInput');
+  const results = document.getElementById('npcSkinResults');
+  const section = document.getElementById('npcSkinSection');
+  if (!input || !results || !section) return;
+
+  // Search-as-you-type identical to encounter, but feeds attachNpcSkin instead.
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    if (npcSkinSearchTimer) clearTimeout(npcSkinSearchTimer);
+    if (!q) { results.classList.remove('visible'); results.innerHTML = ''; return; }
+    npcSkinSearchTimer = setTimeout(() => doNpcSkinSearch(q, results, node), 300);
+  });
+  input.addEventListener('blur', () => {
+    setTimeout(() => results.classList.remove('visible'), 180);
+  });
+
+  // Skin-row buttons: edit, refresh, detach
+  section.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-npc-skin-action]');
+    if (!btn) return;
+    const what = btn.dataset.npcSkinAction;
+    if (what === 'edit')    editNpcSkinInWorkshop(node);
+    else if (what === 'refresh') refreshNpcSkin(node);
+    else if (what === 'detach')  detachNpcSkin(node);
+  });
+}
+
+async function doNpcSkinSearch(query, resultsEl, node) {
+  resultsEl.classList.add('visible');
+  resultsEl.innerHTML = '<div class="mon-empty">Searching…</div>';
+  try {
+    const enc = encodeURIComponent('%' + query + '%');
+    const rows = await sbFetch(
+      'rq_monsters?select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula' +
+      '&name=ilike.' + enc +
+      '&order=name.asc&limit=30'
+    );
+    if (!rows || !rows.length) {
+      resultsEl.innerHTML = '<div class="mon-empty">No monsters match.</div>';
+      return;
+    }
+    resultsEl.innerHTML = rows.map(r => `
+      <div class="mon-result-row" data-mon-id="${r.id}">
+        <span class="mon-result-name">${escHtml(r.name)}</span>
+        <span class="mon-result-meta">${escHtml(r.size||'')} ${escHtml(r.monster_type||'')}</span>
+        <span class="mon-result-meta">CR ${escHtml(r.cr||'?')}</span>
+        <span class="mon-result-meta">HP ${escHtml(String(r.hp||'?'))} AC ${escHtml(String(r.ac||'?'))}</span>
+      </div>`).join('');
+    resultsEl.querySelectorAll('.mon-result-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const id = row.dataset.monId;
+        const r = rows.find(x => String(x.id) === String(id));
+        if (r) attachNpcSkin(node, r);
+      });
+    });
+  } catch (e) {
+    resultsEl.innerHTML = '<div class="mon-empty">Search failed: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+// Attach (or replace) the stat skin. We only carry over hp_current /
+// peek_open / etc. when REPLACING with the same monster_id (rare); a fresh
+// monster gets fresh play state.
+function attachNpcSkin(node, row) {
+  node.fields = node.fields || {};
+  const prev = node.fields.skin;
+  const sameMonster = prev && prev.monster_id === row.id;
+  node.fields.skin = {
+    monster_id:  row.id,
+    snapshot:    row,
+    hp_current:  sameMonster ? prev.hp_current : (parseInt(row.hp) || 0),
+    mult:        sameMonster ? (prev.mult || 1) : 1,
+    peek_open:   sameMonster ? !!prev.peek_open : false,
+    deactivated: sameMonster ? !!prev.deactivated : false,
+  };
+  if (sidePanel.classList.contains('open') && openNodeId === node.id) {
+    renderSidePanelBody(node, BLOCK_TYPES.npc);
+  }
+  refreshNodeFace(node);
+  redrawEdges();
+  markDirty();
+}
+
+function detachNpcSkin(node) {
+  if (!node.fields || !node.fields.skin) return;
+  delete node.fields.skin;
+  if (sidePanel.classList.contains('open') && openNodeId === node.id) {
+    renderSidePanelBody(node, BLOCK_TYPES.npc);
+  }
+  refreshNodeFace(node);
+  redrawEdges();
+  markDirty();
+}
+
+async function refreshNpcSkin(node) {
+  const skin = node.fields && node.fields.skin;
+  if (!skin || !skin.monster_id) return;
+  try {
+    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(skin.monster_id) +
+      '&select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula');
+    if (!rows || !rows.length) {
+      alert('Source monster not found in Workshop. It may have been deleted.');
+      return;
+    }
+    skin.snapshot = rows[0];
+    // Don't reset HP/peek state — the user may have HP-tracked into combat.
+    if (sidePanel.classList.contains('open') && openNodeId === node.id) {
+      renderSidePanelBody(node, BLOCK_TYPES.npc);
+    }
+    refreshNodeFace(node);
+    redrawEdges();
+    markDirty();
+  } catch (e) {
+    alert('Refresh failed: ' + e.message);
+  }
+}
+
+function editNpcSkinInWorkshop(node) {
+  const skin = node.fields && node.fields.skin;
+  if (!skin || !skin.monster_id) { alert('No skin to edit.'); return; }
+  const url = 'monster-workshop.html?edit=' + encodeURIComponent(skin.monster_id);
+  window.open(url, '_blank', 'noopener');
+}
+
 function editInWorkshop(node, idx) {
   const m = node.fields && node.fields.monsters && node.fields.monsters[idx];
   if (!m || !m.monster_id) {
@@ -4095,9 +4376,13 @@ async function refreshImportedMonster(node, idx) {
 // Returns an HTML string to append to the encounter face, listing each
 // imported monster as a mini-card with rollable action buttons.
 // ── TRAP CANVAS-FACE ROLL BUTTONS ─────────────────────────
+// ── HAZARD ROLLS (shared by Trap and Scene blocks) ─────────
 // Renders a row of detection rolls (perception/investigation/disarm) and
-// a row of effect rolls (save / damage) — each button is conditional on
-// having the relevant fields populated in the side-panel form.
+// a row of effect rolls (save / damage / save→damage) — each button is
+// conditional on having the relevant fields populated. Trap and Scene
+// share the exact same UI; the only difference is the field-key prefix
+// (Trap uses `perc_dc`, Scene uses `haz_perc_dc`) and the source label
+// shown in the rolled chat card.
 //
 // Skill ability map: classic D&D 5e standards.
 //   Perception     → WIS
@@ -4105,32 +4390,37 @@ async function refreshImportedMonster(node, idx) {
 //   Disarm (sleight of hand / thieves' tools) → DEX
 const TRAP_SKILL_ABIL = { Perception: 'WIS', Investigation: 'INT', Disarm: 'DEX' };
 
-function renderTrapRollsHtml(node) {
-  if (node.type !== 'trap') return '';
+// `prefix` is '' for Trap and 'haz_' for Scene — used to read field keys.
+// `tag`    is a short identifier embedded in the data-* attributes
+//          (`'trap'` or `'haz'`) so click handlers know which dispatcher
+//          set to invoke and don't collide if a node ever rendered both
+//          (defensive — currently each block type uses just one).
+function _renderHazardRollsHtml(node, prefix, tag) {
   const f = node.fields || {};
-  const percDC   = f.perc_dc   ? parseInt(f.perc_dc)   : null;
-  const invDC    = f.inv_dc    ? parseInt(f.inv_dc)    : null;
-  const disDC    = f.disarm_dc ? parseInt(f.disarm_dc) : null;
-  const saveStat = (f.save_stat || '').toString().toUpperCase();
-  const saveDC   = f.save_dc ? parseInt(f.save_dc) : null;
-  const dmg      = (f.damage  || '').toString().trim();
-  const dmgType  = (f.dmg_type || 'damage').toString();
+  const get = (k) => f[prefix + k];
+
+  const percDC   = get('perc_dc')   ? parseInt(get('perc_dc'))   : null;
+  const invDC    = get('inv_dc')    ? parseInt(get('inv_dc'))    : null;
+  const disDC    = get('disarm_dc') ? parseInt(get('disarm_dc')) : null;
+  const saveStat = (get('save_stat') || '').toString().toUpperCase();
+  const saveDC   = get('save_dc') ? parseInt(get('save_dc')) : null;
+  const dmg      = (get('damage')  || '').toString().trim();
+  const dmgType  = (get('dmg_type') || 'damage').toString();
 
   const detectBtns = [];
-  if (percDC) detectBtns.push(`<button class="node-trap-btn detect" data-trap-roll="perc" type="button">
+  if (percDC) detectBtns.push(`<button class="node-trap-btn detect" data-${tag}-roll="perc" type="button">
     <span class="roll-icon">🔍</span>Perception DC ${percDC}</button>`);
-  if (invDC)  detectBtns.push(`<button class="node-trap-btn detect" data-trap-roll="inv" type="button">
+  if (invDC)  detectBtns.push(`<button class="node-trap-btn detect" data-${tag}-roll="inv" type="button">
     <span class="roll-icon">🔬</span>Investigation DC ${invDC}</button>`);
-  if (disDC)  detectBtns.push(`<button class="node-trap-btn detect" data-trap-roll="dis" type="button">
+  if (disDC)  detectBtns.push(`<button class="node-trap-btn detect" data-${tag}-roll="dis" type="button">
     <span class="roll-icon">🛠</span>Disarm DC ${disDC}</button>`);
 
   const effectBtns = [];
-  if (saveDC && saveStat) effectBtns.push(`<button class="node-trap-btn" data-trap-roll="save" type="button">
+  if (saveDC && saveStat) effectBtns.push(`<button class="node-trap-btn" data-${tag}-roll="save" type="button">
     <span class="roll-icon">🎯</span>${escHtml(saveStat)} Save DC ${saveDC}</button>`);
-  if (dmg) effectBtns.push(`<button class="node-trap-btn damage" data-trap-roll="dmg" type="button">
+  if (dmg) effectBtns.push(`<button class="node-trap-btn damage" data-${tag}-roll="dmg" type="button">
     <span class="roll-icon">🩸</span>${escHtml(dmg)} ${escHtml(dmgType)}</button>`);
-  // Combined save→damage convenience button when both halves are present.
-  if (saveDC && saveStat && dmg) effectBtns.push(`<button class="node-trap-btn damage" data-trap-roll="savedmg" type="button">
+  if (saveDC && saveStat && dmg) effectBtns.push(`<button class="node-trap-btn damage" data-${tag}-roll="savedmg" type="button">
     <span class="roll-icon">⚡</span>Save → Damage</button>`);
 
   if (!detectBtns.length && !effectBtns.length) return '';
@@ -4148,40 +4438,58 @@ function renderTrapRollsHtml(node) {
     </div>`;
 }
 
-function wireTrapRollClicks(nodeEl, node) {
-  if (node.type !== 'trap') return;
-  nodeEl.querySelectorAll('button[data-trap-roll]').forEach(btn => {
+function _wireHazardRollClicks(nodeEl, node, prefix, tag, sourceLabel) {
+  const f = () => node.fields || {};
+  const get = (k) => f()[prefix + k];
+  nodeEl.querySelectorAll(`button[data-${tag}-roll]`).forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();    // don't open side panel
-      const what = btn.dataset.trapRoll;
-      const f = node.fields || {};
-      const trapName = node.title || 'Trap';
-      if (what === 'perc' && f.perc_dc) {
-        b20RollSkillCheck(trapName, 'Perception', TRAP_SKILL_ABIL.Perception, parseInt(f.perc_dc));
-      } else if (what === 'inv' && f.inv_dc) {
-        b20RollSkillCheck(trapName, 'Investigation', TRAP_SKILL_ABIL.Investigation, parseInt(f.inv_dc));
-      } else if (what === 'dis' && f.disarm_dc) {
-        b20RollSkillCheck(trapName, 'Disarm', TRAP_SKILL_ABIL.Disarm, parseInt(f.disarm_dc));
+      const what = btn.dataset[tag + 'Roll'];
+      const name = node.title || sourceLabel;
+      if (what === 'perc' && get('perc_dc')) {
+        b20RollSkillCheck(name, 'Perception', TRAP_SKILL_ABIL.Perception, parseInt(get('perc_dc')));
+      } else if (what === 'inv' && get('inv_dc')) {
+        b20RollSkillCheck(name, 'Investigation', TRAP_SKILL_ABIL.Investigation, parseInt(get('inv_dc')));
+      } else if (what === 'dis' && get('disarm_dc')) {
+        b20RollSkillCheck(name, 'Disarm', TRAP_SKILL_ABIL.Disarm, parseInt(get('disarm_dc')));
       } else if (what === 'save') {
-        const saveStat = (f.save_stat || 'DEX').toString().toUpperCase();
-        const saveDC   = f.save_dc ? parseInt(f.save_dc) : null;
-        b20RollSavingThrow(trapName, saveStat, saveDC);
+        const saveStat = (get('save_stat') || 'DEX').toString().toUpperCase();
+        const saveDC   = get('save_dc') ? parseInt(get('save_dc')) : null;
+        b20RollSavingThrow(name, saveStat, saveDC);
       } else if (what === 'dmg') {
-        const dmg     = (f.damage || '').toString().trim();
-        const dmgType = (f.dmg_type || 'damage').toString();
-        if (dmg) b20RollTrapDamage(trapName, dmg, dmgType);
+        const dmg     = (get('damage') || '').toString().trim();
+        const dmgType = (get('dmg_type') || 'damage').toString();
+        if (dmg) b20RollTrapDamage(name, dmg, dmgType);
       } else if (what === 'savedmg') {
-        const saveStat = (f.save_stat || 'DEX').toString().toUpperCase();
-        const saveDC   = f.save_dc ? parseInt(f.save_dc) : null;
-        const dmg      = (f.damage   || '').toString().trim();
-        const dmgType  = (f.dmg_type  || 'damage').toString();
-        // Two-step: announce save vs DC, then roll damage 300ms later so
-        // VTT chat shows them in the right order.
-        b20RollSavingThrow(trapName, saveStat, saveDC);
-        if (dmg) setTimeout(() => b20RollTrapDamage(trapName, dmg, dmgType), 300);
+        const saveStat = (get('save_stat') || 'DEX').toString().toUpperCase();
+        const saveDC   = get('save_dc') ? parseInt(get('save_dc')) : null;
+        const dmg      = (get('damage')   || '').toString().trim();
+        const dmgType  = (get('dmg_type')  || 'damage').toString();
+        b20RollSavingThrow(name, saveStat, saveDC);
+        if (dmg) setTimeout(() => b20RollTrapDamage(name, dmg, dmgType), 300);
       }
     });
   });
+}
+
+// Trap blocks: roll buttons read unprefixed fields (legacy schema).
+function renderTrapRollsHtml(node) {
+  if (node.type !== 'trap') return '';
+  return _renderHazardRollsHtml(node, '', 'trap');
+}
+function wireTrapRollClicks(nodeEl, node) {
+  if (node.type !== 'trap') return;
+  _wireHazardRollClicks(nodeEl, node, '', 'trap', 'Trap');
+}
+
+// Scene blocks: same UI but reads `haz_*` prefixed fields.
+function renderSceneHazardRollsHtml(node) {
+  if (node.type !== 'scene') return '';
+  return _renderHazardRollsHtml(node, 'haz_', 'haz');
+}
+function wireSceneHazardClicks(nodeEl, node) {
+  if (node.type !== 'scene') return;
+  _wireHazardRollClicks(nodeEl, node, 'haz_', 'haz', 'Scene');
 }
 
 
@@ -4244,6 +4552,10 @@ function renderOneMonsterCard(m, idx, isSingleton) {
         <span class="node-mon-flav">${showFlav ? escHtml(m.flav || m.letter || '?') : ''}</span>
         ${nameSlot}
         ${isSingleton ? `<span class="node-mon-stats">${escHtml(stats)}</span>` : ''}
+        <button class="node-mon-deact-btn ${isDeactivated ? 'is-deactivated' : ''}"
+                data-peek-deact="${idx}" type="button"
+                title="${isDeactivated ? 'Reactivate this monster' : 'Sideline this monster (kept in encounter, just out of the fight)'}"
+                >${isDeactivated ? '▶' : '⏸'}</button>
         <button class="node-mon-peek-toggle ${peekOpen ? 'open' : ''}"
                 data-peek-toggle="${idx}" type="button"
                 title="Show / hide statblock peek">${peekOpen ? '▼ peek' : '▶ peek'}</button>
@@ -4258,22 +4570,14 @@ function renderOneMonsterCard(m, idx, isSingleton) {
     </div>`;
 }
 
-// Body of the peek expansion: deactivate row, HP/multiplier, ability grid,
-// save row, horde row.
+// Body of the peek expansion: HP/multiplier, ability grid, save row, horde row.
+// (Deactivate button moved to the card header next to the peek toggle in v5c++.)
 function renderMonsterPeekBody(m, idx) {
   const sn = m.snapshot || {};
   const maxHp = parseInt(sn.hp) || 0;
   const curHp = (typeof m.hp_current === 'number') ? m.hp_current : maxHp;
   const mult  = (typeof m.mult === 'number' && m.mult >= 1) ? m.mult : 1;
-  const isDeactivated = !!m._deactivated;
   return `
-    <div class="node-mon-deact-row">
-      <button class="node-mon-deact-btn ${isDeactivated ? 'is-deactivated' : ''}"
-              data-peek-deact="${idx}" type="button"
-              title="Toggle out of the fight (kept in the encounter, just sidelined)">
-        ${isDeactivated ? '▶ Reactivate' : '⏸ Deactivate'}
-      </button>
-    </div>
     <div class="node-mon-hpmult">
       <span>HP <input type="number" data-peek-hp="${idx}" value="${curHp}" min="-99" max="999"> / ${maxHp}</span>
       <span style="margin-left:auto;">
@@ -4433,7 +4737,10 @@ function wireMonsterRollClicks(nodeEl, node) {
       const cardEl = nodeEl.querySelector(`.node-mon[data-mon-idx="${i}"]`);
       if (cardEl) cardEl.classList.toggle('deactivated', m._deactivated);
       btn.classList.toggle('is-deactivated', m._deactivated);
-      btn.textContent = m._deactivated ? '▶ Reactivate' : '⏸ Deactivate';
+      btn.textContent = m._deactivated ? '▶' : '⏸';
+      btn.title = m._deactivated
+        ? 'Reactivate this monster'
+        : 'Sideline this monster (kept in encounter, just out of the fight)';
     });
   });
 
@@ -4541,6 +4848,270 @@ function wireMonsterRollClicks(nodeEl, node) {
   });
 }
 
+// ── NPC FACE RENDER + CLICK WIRING ────────────────────────
+// Mirrors the encounter peek surface but operates on a single
+// node.fields.skin object, persists state changes through markDirty(), and
+// uses NPC-prefixed data attributes so click handlers don't collide with
+// encounter handlers when both kinds of nodes are present.
+function renderNpcSkinFaceHtml(node) {
+  if (node.type !== 'npc') return '';
+  const skin = node.fields && node.fields.skin;
+  if (!skin || !skin.snapshot) return '';
+  const sn = skin.snapshot;
+  const stats = [
+    sn.cr ? 'CR ' + sn.cr : '',
+    sn.hp ? 'HP ' + sn.hp : '',
+    sn.ac ? 'AC ' + sn.ac : '',
+  ].filter(Boolean).join(' · ');
+  const peekOpen = !!skin.peek_open;
+  const isDead = (typeof skin.hp_current === 'number') && skin.hp_current <= 0;
+  const isDeact = !!skin.deactivated;
+  const actions = (sn.actions || []).slice(0, 8);
+  return `
+    <div class="node-npc-peek-wrap">
+      <span class="node-npc-skin-chip">stats: <b>${escHtml(sn.name || '?')}</b> · ${escHtml(stats)}</span>
+      <div class="node-mon ${isDead ? 'dead' : ''} ${isDeact ? 'deactivated' : ''} singleton" data-npc-card="1" style="margin-top:6px;">
+        <div class="node-mon-header">
+          <span class="node-mon-name" style="flex:1;">${escHtml(node.title || 'NPC')}</span>
+          <button class="node-mon-deact-btn ${isDeact ? 'is-deactivated' : ''}"
+                  data-npc-peek-deact="1" type="button"
+                  title="${isDeact ? 'Reactivate this NPC' : 'Sideline this NPC (kept on the canvas, just out of the fight)'}"
+                  >${isDeact ? '▶' : '⏸'}</button>
+          <button class="node-mon-peek-toggle ${peekOpen ? 'open' : ''}"
+                  data-npc-peek-toggle="1" type="button"
+                  title="Show / hide statblock peek">${peekOpen ? '▼ peek' : '▶ peek'}</button>
+        </div>
+        ${actions.length ? `
+          <div class="node-mon-actions">
+            ${actions.map((a, ai) => renderNpcActionButton(a, ai)).join('')}
+          </div>` : '<div class="node-mon-stats" style="opacity:0.6;">No rollable actions on this stat block.</div>'}
+        <div class="node-mon-peek ${peekOpen ? 'open' : ''}" data-npc-peek-body="1">
+          ${renderNpcPeekBody(skin)}
+        </div>
+      </div>
+    </div>`;
+}
+
+// NPCs use the same action button look but with NPC-prefixed data attributes.
+function renderNpcActionButton(a, actIdx) {
+  if (!a || !a.name) return '';
+  const isAttack = !!(a.toHit || a.toHit === 0);
+  const isSave   = !!(a.saveDC || a.save_dc || a.dc);
+  if (!isAttack && !isSave) return '';
+  const cls = isSave && !isAttack ? 'node-mon-roll-btn save' : 'node-mon-roll-btn';
+  return `<button class="${cls}" data-npc-roll="${actIdx}" type="button"
+            title="Roll ${escAttr(a.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}">
+            <span class="roll-icon">🎲</span>${escHtml(a.name)}
+          </button>`;
+}
+
+// NPC peek body: HP/multiplier, ability grid, save row. NO horde row
+// (your earlier design call: NPCs are individuals, not packs).
+function renderNpcPeekBody(skin) {
+  const sn = skin.snapshot || {};
+  const maxHp = parseInt(sn.hp) || 0;
+  const curHp = (typeof skin.hp_current === 'number') ? skin.hp_current : maxHp;
+  const mult  = (typeof skin.mult === 'number' && skin.mult >= 1) ? skin.mult : 1;
+  return `
+    <div class="node-mon-hpmult">
+      <span>HP <input type="number" data-npc-peek-hp="1" value="${curHp}" min="-99" max="999"> / ${maxHp}</span>
+      <span style="margin-left:auto;">
+        × <span class="mult-stepper ${mult > 1 ? 'active' : ''}" data-npc-peek-mult-wrap="1">
+          <button class="mult-btn" data-npc-peek-mult-delta="-1" type="button">−</button>
+          <span class="mult-num">${mult}</span>
+          <button class="mult-btn" data-npc-peek-mult-delta="1" type="button">+</button>
+        </span>
+      </span>
+    </div>
+    ${renderNpcAbilityGrid(skin)}
+    ${renderNpcSaveRow(skin)}
+  `;
+}
+
+function renderNpcAbilityGrid(skin) {
+  const abs = (skin.snapshot && skin.snapshot.abilities) || {};
+  return `<div class="node-mon-abilities">
+    ${_ABIL_KEYS.map(({k, label}) => {
+      const score = _scoreOf(abs[k] || abs[k.toUpperCase()] || abs[label] || 10);
+      const mod = _modOf(score);
+      return `<div class="node-mon-abil" data-npc-peek-abil="${k}" title="Roll ${label} check (Shift = advantage, Alt = disadvantage)">
+                <div class="abil-label">${label}</div>
+                <div class="abil-score">${score}</div>
+                <div class="abil-mod">${_fmtMod(mod)}</div>
+              </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderNpcSaveRow(skin) {
+  const sn = skin.snapshot || {};
+  const abs = sn.abilities || {};
+  const saves = sn.saves || {};
+  return `<div class="node-mon-saves">
+    ${_ABIL_KEYS.map(({k, label}) => {
+      const score = _scoreOf(abs[k] || abs[k.toUpperCase()] || abs[label] || 10);
+      const baseMod = _modOf(score);
+      const explicit = saves[k] != null ? saves[k]
+                     : saves[k.toUpperCase()] != null ? saves[k.toUpperCase()]
+                     : saves[label] != null ? saves[label]
+                     : null;
+      const proficient = explicit != null && explicit !== '';
+      const bonus = proficient ? (parseInt(explicit) || baseMod) : baseMod;
+      return `<button class="node-mon-save-btn ${proficient ? 'proficient' : ''}"
+                      data-npc-peek-save="${k},${bonus},${proficient ? 1 : 0}"
+                      type="button" title="Roll ${label} saving throw (Shift = advantage, Alt = disadvantage)">
+                ${label}
+                <span class="save-bonus">${_fmtMod(bonus)}</span>
+              </button>`;
+    }).join('')}
+  </div>`;
+}
+
+// Wire the NPC peek interactions. Differences from encounter:
+// • Operates on node.fields.skin (single object, not an array)
+// • Every state change calls markDirty() — NPC peek state PERSISTS
+// • Display name in roll dispatches is the NPC's title, not the monster name
+function wireNpcPeekClicks(nodeEl, node) {
+  if (node.type !== 'npc') return;
+  const skin = node.fields && node.fields.skin;
+  if (!skin || !skin.snapshot) return;
+  const sn = skin.snapshot;
+  const npcName = node.title || 'NPC';
+
+  // Action attack / save-or-damage rolls
+  nodeEl.querySelectorAll('button[data-npc-roll]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const actIdx = parseInt(btn.dataset.npcRoll);
+      const a = (sn.actions || [])[actIdx];
+      if (!a) return;
+      dispatchNpcRoll(node, skin, a, _advFromEvent(e));
+    });
+  });
+
+  // Peek toggle — persistent, so call markDirty()
+  nodeEl.querySelectorAll('button[data-npc-peek-toggle]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      skin.peek_open = !skin.peek_open;
+      const body = nodeEl.querySelector('[data-npc-peek-body="1"]');
+      if (body) body.classList.toggle('open', skin.peek_open);
+      btn.classList.toggle('open', skin.peek_open);
+      btn.textContent = skin.peek_open ? '▼ peek' : '▶ peek';
+      markDirty();
+    });
+  });
+
+  // Deactivate — persistent
+  nodeEl.querySelectorAll('button[data-npc-peek-deact]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      skin.deactivated = !skin.deactivated;
+      const cardEl = nodeEl.querySelector('.node-mon[data-npc-card]');
+      if (cardEl) cardEl.classList.toggle('deactivated', skin.deactivated);
+      btn.classList.toggle('is-deactivated', skin.deactivated);
+      btn.textContent = skin.deactivated ? '▶' : '⏸';
+      btn.title = skin.deactivated
+        ? 'Reactivate this NPC'
+        : 'Sideline this NPC (kept on the canvas, just out of the fight)';
+      markDirty();
+    });
+  });
+
+  // HP — persistent
+  nodeEl.querySelectorAll('input[data-npc-peek-hp]').forEach(inp => {
+    inp.addEventListener('mousedown', (e) => e.stopPropagation());
+    inp.addEventListener('click', (e) => e.stopPropagation());
+    inp.addEventListener('change', (e) => {
+      e.stopPropagation();
+      skin.hp_current = parseInt(inp.value) || 0;
+      const cardEl = nodeEl.querySelector('.node-mon[data-npc-card]');
+      if (cardEl) cardEl.classList.toggle('dead', skin.hp_current <= 0);
+      markDirty();
+    });
+  });
+
+  // Multiplier — persistent (rare for NPCs but cheap)
+  nodeEl.querySelectorAll('button[data-npc-peek-mult-delta]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const delta = parseInt(btn.dataset.npcPeekMultDelta);
+      const cur = (typeof skin.mult === 'number' && skin.mult >= 1) ? skin.mult : 1;
+      skin.mult = Math.max(1, Math.min(20, cur + delta));
+      const wrap = nodeEl.querySelector('[data-npc-peek-mult-wrap="1"]');
+      if (wrap) {
+        const numEl = wrap.querySelector('.mult-num');
+        if (numEl) numEl.textContent = String(skin.mult);
+        wrap.classList.toggle('active', skin.mult > 1);
+      }
+      markDirty();
+    });
+  });
+
+  // Ability checks
+  nodeEl.querySelectorAll('[data-npc-peek-abil]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const k = el.dataset.npcPeekAbil;
+      const abs = sn.abilities || {};
+      const score = _scoreOf(abs[k] || abs[k.toUpperCase()] || 10);
+      const mod = _modOf(score);
+      const label = _ABIL_KEYS.find(a => a.k === k).label;
+      b20RollMonsterAbility(npcName, sn.cr || '', sn.ac || '', sn.hp || '', label, mod, _advFromEvent(e));
+    });
+  });
+
+  // Saving throws
+  nodeEl.querySelectorAll('button[data-npc-peek-save]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const parts = btn.dataset.npcPeekSave.split(',');
+      const k = parts[0];
+      const bonus = parseInt(parts[1]) || 0;
+      const proficient = parts[2] === '1';
+      const label = _ABIL_KEYS.find(a => a.k === k).label;
+      b20RollMonsterSavingThrow(npcName, sn.cr || '', sn.ac || '', sn.hp || '', label, bonus, proficient, _advFromEvent(e));
+    });
+  });
+}
+
+// Dispatch a roll from an NPC's stat-skin action. Display name is the
+// NPC's own title, not the source monster — the chat card reads
+// "Vrakar — Bite +5", not "Vrakar — Goblin: Bite +5".
+function dispatchNpcRoll(node, skin, action, advantage) {
+  const sn = skin.snapshot || {};
+  const displayName = node.title || 'NPC';
+  const cr = sn.cr || '';
+  const ac = sn.ac || '';
+  const hp = sn.hp || '';
+
+  if (action.toHit || action.toHit === 0) {
+    const damages = action.damages
+      ? action.damages
+      : (action.damage ? [action.damage] : ['1d6']);
+    const damageTypes = action.damageTypes
+      ? action.damageTypes
+      : (action.damageType ? [action.damageType] : ['damage']);
+    b20RollMonsterAttack(displayName, cr, ac, hp, {
+      name: action.name,
+      toHit: action.toHit,
+      damages, damageTypes,
+      attackType: action.attackType || 'Melee',
+      reach: action.reach || '',
+      range: action.range || '',
+      description: action.desc || ''
+    }, advantage);
+    return;
+  }
+  // Save-or-damage. The "save vs DC" card has no d20 to apply adv/dis to;
+  // the damage is flat. So advantage is intentionally ignored here.
+  const saveDC      = action.saveDC || action.save_dc || action.dc || 12;
+  const saveAbility = action.saveAbility || action.save_ability || action.save || 'DEX';
+  const dmgFormula  = action.damage || (action.damages && action.damages[0]) || '2d6';
+  const dmgType     = action.damageType || (action.damageTypes && action.damageTypes[0]) || 'damage';
+  b20RollMonsterSave(displayName, cr, ac, hp, action.name, saveAbility, saveDC, dmgFormula, dmgType);
+}
+
 function dispatchMonsterRoll(imported, action, advantage) {
   const sn = imported.snapshot || {};
   // Display name combines the per-instance flavor with the monster name so
@@ -4621,7 +5192,7 @@ function refreshNodeFace(node) {
   attachNodeDrag(node.el, node);
   attachAnchorClicks(node.el, node);
   wireNodeBodyClickToOpenPanel(node.el, node);
-  wireMonsterRollClicks(node.el, node); wireTrapRollClicks(node.el, node);
+  wireMonsterRollClicks(node.el, node); wireTrapRollClicks(node.el, node); wireSceneHazardClicks(node.el, node); wireNpcPeekClicks(node.el, node);
   // Restore selected styling if applicable
   if (state.selectedNodes.has(node.id)) node.el.classList.add('selected');
 }
