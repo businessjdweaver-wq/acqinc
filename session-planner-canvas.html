@@ -4539,6 +4539,13 @@ function renderOneMonsterCard(m, idx, isSingleton) {
   // Special abilities (Death Burst, Frightful Presence, etc.) live under
   // `special_abilities` (DB column) or `special` (SRD bundled shape).
   const specials = (sn.special_abilities || sn.special || []).slice(0, 8);
+  // Diagnostic: see exactly what's in the snapshot at render time so we
+  // can tell if specials are missing because the snapshot lacks them or
+  // because the parser is rejecting them.
+  console.log('[render card]', sn.name, '| actions:', sn.actions?.length || 0, '| special_abilities:', sn.special_abilities?.length || 0, '| special:', sn.special?.length || 0);
+  if (sn.actions) console.log('  actions raw:', sn.actions);
+  if (sn.special_abilities) console.log('  special_abilities raw:', sn.special_abilities);
+  if (sn.special) console.log('  special raw:', sn.special);
   const peekOpen = !!m._peekOpen;
   const isDead = (typeof m.hp_current === 'number') && m.hp_current <= 0;
   const isDeactivated = !!m._deactivated;
@@ -4762,19 +4769,28 @@ function renderActionButton(a, monIdx, actIdx) {
 // Returned in their own `node-mon-triggers` row, visually distinct from
 // the on-turn actions.
 function renderTriggerButtons(specials, monIdx) {
-  if (!Array.isArray(specials) || !specials.length) return '';
+  if (!Array.isArray(specials) || !specials.length) {
+    console.log('[triggers] no specials array for monster', monIdx, '— input:', specials);
+    return '';
+  }
+  console.group('[triggers] scanning', specials.length, 'special(s) for monster', monIdx);
   const items = [];
   specials.forEach((s, sIdx) => {
-    if (!s || !s.name) return;
+    if (!s || !s.name) {
+      console.log('  skip entry', sIdx, '— no name. raw:', s);
+      return;
+    }
     const m = resolveAbilityMechanics(s);
     const isSave = !!(m.saveDC || m.damage);
-    if (!isSave) return;        // passive flavor — skip
+    console.log('  ' + s.name, '→ resolved:', {saveDC: m.saveDC, damage: m.damage, range: m.range}, isSave ? '✓ button' : '✗ no mechanics');
+    if (!isSave) return;
     const rangeChip = m.range ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
     items.push(`<button class="node-mon-roll-btn save" data-mon-trigger="${monIdx}-${sIdx}" type="button"
                   title="Trigger ${escAttr(s.name)}">
                   <span class="roll-icon">⚡</span>${escHtml(s.name)}${rangeChip}
                 </button>`);
   });
+  console.groupEnd();
   if (!items.length) return '';
   return `<div class="node-mon-actions" style="margin-top:4px;border-top:1px dashed rgba(184,134,11,0.15);padding-top:5px;">
     <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--steel-pale);margin-right:4px;">Triggers</span>
@@ -5248,6 +5264,18 @@ function dispatchMonsterRoll(imported, action, advantage) {
   // Resolve mechanics from structured fields + prose-parsed fallback.
   const resolved = resolveAbilityMechanics(action);
 
+  // ── DIAGNOSTIC LOGGING ───────────────────────────────────
+  // Helps narrow down "wrong action / wrong damage" bugs. See console
+  // when clicking an action button to confirm the dispatcher is reading
+  // what you expect it to.
+  console.group('[encounter dispatch] ' + (action.name || '?'));
+  console.log('action object (raw):', action);
+  console.log('action.desc:', action.desc);
+  console.log('action.damage / dmgType:', action.damage, '/', action.dmgType);
+  console.log('parsed (from desc):', parseAbilityProse(action.desc || ''));
+  console.log('resolved:', resolved);
+  console.groupEnd();
+
   if (resolved.toHit || resolved.toHit === 0) {
     // Attack roll. Rebuild damages array from action shape.
     const damages = action.damages
@@ -5270,15 +5298,11 @@ function dispatchMonsterRoll(imported, action, advantage) {
   // Save-or-damage. The "save vs DC" message has no d20 to apply adv/dis to,
   // and the damage roll is flat — so the advantage modifier is meaningless
   // here. Ignore it intentionally.
-  //
-  // If the parser couldn't extract enough from prose, fall back to safe
-  // defaults so a click still does *something* useful in chat. Workshop's
-  // structured fields override these (and that's the intended fix path
-  // for any monster the parser misreads).
   const saveDC      = resolved.saveDC      || 12;
   const saveAbility = resolved.saveAbility || 'DEX';
   const dmgFormula  = resolved.damage      || '2d6';
   const dmgType     = resolved.damageType  || 'damage';
+  console.log('[encounter dispatch] firing save-or-damage:', saveAbility, 'DC', saveDC, '→', dmgFormula, dmgType);
   b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
 }
 
