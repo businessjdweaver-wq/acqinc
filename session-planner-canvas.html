@@ -578,7 +578,9 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
   border: 1px solid rgba(184,134,11,0.35);
   border-radius: 3px;
   margin-bottom: 10px;
-  overflow: hidden;
+  /* No `overflow:hidden` here — it would clip the move-to popover when
+     it drops out of the panel. The header's gradient corners look fine
+     without container clipping. */
 }
 .cm-coll-header {
   display: flex; align-items: center; gap: 8px;
@@ -714,6 +716,13 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
   gap: 3px;
   box-shadow: 0 4px 14px rgba(0,0,0,0.6);
   min-width: 160px;
+}
+/* When there's no room to drop down, the JS positioning code adds .flip-up
+   which anchors the popover to the bottom of the action button instead. */
+.cm-move-popover.flip-up {
+  top: auto; bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 2px;
 }
 .cm-move-popover .cm-move-option {
   background: transparent;
@@ -3267,6 +3276,23 @@ function renderCmMovePopover(nodeId, currentCollId) {
 function wireCollectionManagerInteractions() {
   const list = document.getElementById('cm-modal-list');
   if (!list) return;
+
+  // Position any open move-to popover. If the popover would overflow the
+  // bottom of the scrolling modal list, flip it to drop UP from the button
+  // instead. Run after the DOM is in the layout tree so getBoundingClientRect
+  // returns real numbers.
+  const popover = list.querySelector('.cm-move-popover');
+  if (popover) {
+    requestAnimationFrame(() => {
+      const popRect  = popover.getBoundingClientRect();
+      const listRect = list.getBoundingClientRect();
+      // If the popover bottom hangs below the list's visible bottom, flip up.
+      // Add a 6px slop for visual breathing room.
+      if (popRect.bottom > listRect.bottom - 6) {
+        popover.classList.add('flip-up');
+      }
+    });
+  }
 
   // Inline rename: click on title or the ✎ button
   list.querySelectorAll('[data-cm-rename]').forEach(el => {
