@@ -1546,7 +1546,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 5e / scene hazards</span>
+  <span class="topbar-version">stage 5f / prose parse + triggers</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -1583,7 +1583,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 5e · scene hazards</div>
+  <div id="stage-label">Stage 5f · prose parse + triggers</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -4536,12 +4536,12 @@ function renderOneMonsterCard(m, idx, isSingleton) {
     sn.ac ? 'AC ' + sn.ac : '',
   ].filter(Boolean).join(' · ');
   const actions = (sn.actions || []).slice(0, 8);
+  // Special abilities (Death Burst, Frightful Presence, etc.) live under
+  // `special_abilities` (DB column) or `special` (SRD bundled shape).
+  const specials = (sn.special_abilities || sn.special || []).slice(0, 8);
   const peekOpen = !!m._peekOpen;
   const isDead = (typeof m.hp_current === 'number') && m.hp_current <= 0;
   const isDeactivated = !!m._deactivated;
-  // Singletons: hide the flavor letter (no group disambiguation needed),
-  // and show the monster name as the card title (since there's no group
-  // header above to provide it).
   const showFlav = !isSingleton;
   const nameSlot = isSingleton
     ? `<span class="node-mon-name">${escHtml(sn.name || 'Unknown monster')}</span>`
@@ -4564,6 +4564,7 @@ function renderOneMonsterCard(m, idx, isSingleton) {
         <div class="node-mon-actions">
           ${actions.map((a, ai) => renderActionButton(a, idx, ai)).join('')}
         </div>` : '<div class="node-mon-stats" style="opacity:0.6;">No rollable actions on this stat block.</div>'}
+      ${renderTriggerButtons(specials, idx)}
       <div class="node-mon-peek ${peekOpen ? 'open' : ''}" data-peek-body="${idx}">
         ${renderMonsterPeekBody(m, idx)}
       </div>
@@ -4667,16 +4668,118 @@ function renderHordeRow(m, idx) {
 //   Attack  (has toHit)        → single button "🎲 <name>"  → b20RollMonsterAttack
 //   Save    (has saveDC)       → single button "🎲 <name> (Save)" → b20RollMonsterSave
 //   Other special                → no button (it's a passive trait)
+// ── ACTION DESC PROSE PARSER ──────────────────────────────
+// SRD entries encode save/damage abilities as freeform desc text rather
+// than structured fields. The Workshop UI lets users add structured
+// `saveDC` / `save_ability` / `damage` / `damageType` fields explicitly,
+// but the bundled SRD library doesn't have those fields populated.
+//
+// This parser does best-effort extraction from prose. It handles common
+// SRD shapes like:
+//   "DC 10 DEX save or 3d8 cold damage (half on save). ..."
+//   "DC 18 CON save or 16d8 poison damage, half on success."
+//   "5d6 acid damage in a 30 ft. line, DC 13 DEX save for half"
+//   "Each creature within 120 ft. ... must succeed DC 16 WIS or be frightened"
+//
+// Returns { saveDC?, saveAbility?, damage?, damageType?, range? } — any
+// of which may be undefined. Caller decides whether the result is
+// renderable.
+const _DAMAGE_TYPES_RE = /\b(piercing|bludgeoning|slashing|fire|cold|lightning|acid|poison|necrotic|radiant|thunder|psychic|force)\b/i;
+const _SAVE_RE         = /DC\s*(\d+)\s*(STR|DEX|CON|INT|WIS|CHA)/i;
+const _DICE_RE         = /(\d+d\d+(?:\s*[+\-]\s*\d+)?)/;
+const _RANGE_RE        = /(\d+\s*(?:ft\.?|feet))\s*(cone|line|radius|sphere|cube|cylinder)/i;
+
+function parseAbilityProse(desc) {
+  if (!desc || typeof desc !== 'string') return {};
+  const out = {};
+  const saveM = desc.match(_SAVE_RE);
+  if (saveM) {
+    out.saveDC      = parseInt(saveM[1]);
+    out.saveAbility = saveM[2].toUpperCase();
+  }
+  // For damage, find the dice formula closest to a damage-type word.
+  // Strategy: scan for damage-type word, then look for a dice formula in
+  // the surrounding 60 chars. This avoids picking up unrelated dice
+  // (e.g. recharge "1d6" which we never want as damage).
+  const dmgTypeM = desc.match(_DAMAGE_TYPES_RE);
+  if (dmgTypeM) {
+    const idx = dmgTypeM.index;
+    // Look 60 chars back from the damage type for a dice formula
+    const window = desc.slice(Math.max(0, idx - 60), idx);
+    const diceM = window.match(_DICE_RE);
+    if (diceM) {
+      out.damage     = diceM[1].replace(/\s+/g, '');
+      out.damageType = dmgTypeM[1].toLowerCase();
+    }
+  }
+  const rangeM = desc.match(_RANGE_RE);
+  if (rangeM) out.range = rangeM[1].replace(/\s+/g, ' ') + ' ' + rangeM[2].toLowerCase();
+  return out;
+}
+
+// Resolve an ability's mechanics. Structured fields on the action (or
+// special_ability) override prose parsing. Returns the fully-resolved
+// shape that dispatchers can consume.
+function resolveAbilityMechanics(a) {
+  if (!a) return {};
+  const parsed = parseAbilityProse(a.desc || '');
+  return {
+    name:        a.name || 'Ability',
+    desc:        a.desc || '',
+    // Attack info — only structured (Workshop never auto-parses to-hit
+    // numbers from prose because they're rare in save-or-damage abilities).
+    toHit:       a.toHit,
+    attackType:  a.attackType,
+    reach:       a.reach,
+    range:       a.range || parsed.range,
+    // Save / damage — structured fields win, prose fills the gaps.
+    saveDC:      (a.saveDC ?? a.save_dc ?? a.dc) || parsed.saveDC,
+    saveAbility: (a.saveAbility || a.save_ability || a.save) || parsed.saveAbility,
+    damage:      a.damage || (a.damages && a.damages[0]) || parsed.damage,
+    damageType:  a.dmgType || a.damageType || (a.damageTypes && a.damageTypes[0]) || parsed.damageType,
+  };
+}
+
 function renderActionButton(a, monIdx, actIdx) {
   if (!a || !a.name) return '';
-  const isAttack = !!(a.toHit || a.toHit === 0);
-  const isSave   = !!(a.saveDC || a.save_dc || a.dc);
-  if (!isAttack && !isSave) return '';   // passive trait — no button
-  const cls = isSave && !isAttack ? 'node-mon-roll-btn save' : 'node-mon-roll-btn';
+  const m = resolveAbilityMechanics(a);
+  const isAttack = !!(m.toHit || m.toHit === 0);
+  // Renderable as save-or-damage if we got either a saveDC or a damage roll.
+  const isSave   = !!(m.saveDC || m.damage);
+  if (!isAttack && !isSave) return '';   // truly passive — no roll button
+  const cls = (isSave && !isAttack) ? 'node-mon-roll-btn save' : 'node-mon-roll-btn';
+  // Append range if known and not already in the name (helps DM situate the AoE)
+  const rangeChip = (m.range && !a.name.includes('ft')) ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
   return `<button class="${cls}" data-mon-roll="${monIdx}-${actIdx}" type="button"
             title="Roll ${escAttr(a.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}">
-            <span class="roll-icon">🎲</span>${escHtml(a.name)}
+            <span class="roll-icon">🎲</span>${escHtml(a.name)}${rangeChip}
           </button>`;
+}
+
+// Render special-ability buttons (Death Burst, Frightful Presence, etc.)
+// Only ones with discoverable mechanics (saveDC or damage) become buttons —
+// pure flavor traits like "False Appearance" or "Amphibious" are skipped.
+// Returned in their own `node-mon-triggers` row, visually distinct from
+// the on-turn actions.
+function renderTriggerButtons(specials, monIdx) {
+  if (!Array.isArray(specials) || !specials.length) return '';
+  const items = [];
+  specials.forEach((s, sIdx) => {
+    if (!s || !s.name) return;
+    const m = resolveAbilityMechanics(s);
+    const isSave = !!(m.saveDC || m.damage);
+    if (!isSave) return;        // passive flavor — skip
+    const rangeChip = m.range ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
+    items.push(`<button class="node-mon-roll-btn save" data-mon-trigger="${monIdx}-${sIdx}" type="button"
+                  title="Trigger ${escAttr(s.name)}">
+                  <span class="roll-icon">⚡</span>${escHtml(s.name)}${rangeChip}
+                </button>`);
+  });
+  if (!items.length) return '';
+  return `<div class="node-mon-actions" style="margin-top:4px;border-top:1px dashed rgba(184,134,11,0.15);padding-top:5px;">
+    <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--steel-pale);margin-right:4px;">Triggers</span>
+    ${items.join('')}
+  </div>`;
 }
 
 // Click-handler delegation for the canvas-card monster controls.
@@ -4702,6 +4805,23 @@ function wireMonsterRollClicks(nodeEl, node) {
       const a = (m.snapshot.actions || [])[actIdx];
       if (!a) return;
       dispatchMonsterRoll(m, a, _advFromEvent(e));
+    });
+  });
+
+  // Trigger buttons (special_abilities — Death Burst, etc.). They share
+  // the same dispatch path as actions; the only difference is which array
+  // we pull from on the snapshot.
+  nodeEl.querySelectorAll('button[data-mon-trigger]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const [monIdx, sIdx] = btn.dataset.monTrigger.split('-').map(n => parseInt(n));
+      const m = monsters[monIdx];
+      if (!m) return;
+      const sn = m.snapshot || {};
+      const specials = sn.special_abilities || sn.special || [];
+      const s = specials[sIdx];
+      if (!s) return;
+      dispatchMonsterRoll(m, s, _advFromEvent(e));
     });
   });
 
@@ -4895,13 +5015,15 @@ function renderNpcSkinFaceHtml(node) {
 // NPCs use the same action button look but with NPC-prefixed data attributes.
 function renderNpcActionButton(a, actIdx) {
   if (!a || !a.name) return '';
-  const isAttack = !!(a.toHit || a.toHit === 0);
-  const isSave   = !!(a.saveDC || a.save_dc || a.dc);
+  const m = resolveAbilityMechanics(a);
+  const isAttack = !!(m.toHit || m.toHit === 0);
+  const isSave   = !!(m.saveDC || m.damage);
   if (!isAttack && !isSave) return '';
-  const cls = isSave && !isAttack ? 'node-mon-roll-btn save' : 'node-mon-roll-btn';
+  const cls = (isSave && !isAttack) ? 'node-mon-roll-btn save' : 'node-mon-roll-btn';
+  const rangeChip = (m.range && !a.name.includes('ft')) ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
   return `<button class="${cls}" data-npc-roll="${actIdx}" type="button"
             title="Roll ${escAttr(a.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}">
-            <span class="roll-icon">🎲</span>${escHtml(a.name)}
+            <span class="roll-icon">🎲</span>${escHtml(a.name)}${rangeChip}
           </button>`;
 }
 
@@ -5085,31 +5207,33 @@ function dispatchNpcRoll(node, skin, action, advantage) {
   const ac = sn.ac || '';
   const hp = sn.hp || '';
 
-  if (action.toHit || action.toHit === 0) {
+  const resolved = resolveAbilityMechanics(action);
+
+  if (resolved.toHit || resolved.toHit === 0) {
     const damages = action.damages
       ? action.damages
-      : (action.damage ? [action.damage] : ['1d6']);
+      : (resolved.damage ? [resolved.damage] : ['1d6']);
     const damageTypes = action.damageTypes
       ? action.damageTypes
-      : (action.damageType ? [action.damageType] : ['damage']);
+      : (resolved.damageType ? [resolved.damageType] : ['damage']);
     b20RollMonsterAttack(displayName, cr, ac, hp, {
-      name: action.name,
-      toHit: action.toHit,
+      name: resolved.name,
+      toHit: resolved.toHit,
       damages, damageTypes,
-      attackType: action.attackType || 'Melee',
-      reach: action.reach || '',
-      range: action.range || '',
-      description: action.desc || ''
+      attackType: resolved.attackType || 'Melee',
+      reach: resolved.reach || '',
+      range: resolved.range || '',
+      description: resolved.desc || ''
     }, advantage);
     return;
   }
-  // Save-or-damage. The "save vs DC" card has no d20 to apply adv/dis to;
-  // the damage is flat. So advantage is intentionally ignored here.
-  const saveDC      = action.saveDC || action.save_dc || action.dc || 12;
-  const saveAbility = action.saveAbility || action.save_ability || action.save || 'DEX';
-  const dmgFormula  = action.damage || (action.damages && action.damages[0]) || '2d6';
-  const dmgType     = action.damageType || (action.damageTypes && action.damageTypes[0]) || 'damage';
-  b20RollMonsterSave(displayName, cr, ac, hp, action.name, saveAbility, saveDC, dmgFormula, dmgType);
+  // Save-or-damage — resolved fields fall back to the prose parser when
+  // structured fields are missing.
+  const saveDC      = resolved.saveDC      || 12;
+  const saveAbility = resolved.saveAbility || 'DEX';
+  const dmgFormula  = resolved.damage      || '2d6';
+  const dmgType     = resolved.damageType  || 'damage';
+  b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
 }
 
 function dispatchMonsterRoll(imported, action, advantage) {
@@ -5121,34 +5245,41 @@ function dispatchMonsterRoll(imported, action, advantage) {
   const ac = sn.ac || '';
   const hp = sn.hp || '';
 
-  if (action.toHit || action.toHit === 0) {
+  // Resolve mechanics from structured fields + prose-parsed fallback.
+  const resolved = resolveAbilityMechanics(action);
+
+  if (resolved.toHit || resolved.toHit === 0) {
     // Attack roll. Rebuild damages array from action shape.
-    // Workshop stores action as { name, toHit, damage?, damageType?, damages?, damageTypes?, ... }
     const damages = action.damages
       ? action.damages
-      : (action.damage ? [action.damage] : ['1d6']);
+      : (resolved.damage ? [resolved.damage] : ['1d6']);
     const damageTypes = action.damageTypes
       ? action.damageTypes
-      : (action.damageType ? [action.damageType] : ['damage']);
+      : (resolved.damageType ? [resolved.damageType] : ['damage']);
     b20RollMonsterAttack(displayName, cr, ac, hp, {
-      name: action.name,
-      toHit: action.toHit,
+      name: resolved.name,
+      toHit: resolved.toHit,
       damages, damageTypes,
-      attackType: action.attackType || 'Melee',
-      reach: action.reach || '',
-      range: action.range || '',
-      description: action.desc || ''
+      attackType: resolved.attackType || 'Melee',
+      reach: resolved.reach || '',
+      range: resolved.range || '',
+      description: resolved.desc || ''
     }, advantage);
     return;
   }
   // Save-or-damage. The "save vs DC" message has no d20 to apply adv/dis to,
   // and the damage roll is flat — so the advantage modifier is meaningless
   // here. Ignore it intentionally.
-  const saveDC      = action.saveDC || action.save_dc || action.dc || 12;
-  const saveAbility = action.saveAbility || action.save_ability || action.save || 'DEX';
-  const dmgFormula  = action.damage || (action.damages && action.damages[0]) || '2d6';
-  const dmgType     = action.damageType || (action.damageTypes && action.damageTypes[0]) || 'damage';
-  b20RollMonsterSave(displayName, cr, ac, hp, action.name, saveAbility, saveDC, dmgFormula, dmgType);
+  //
+  // If the parser couldn't extract enough from prose, fall back to safe
+  // defaults so a click still does *something* useful in chat. Workshop's
+  // structured fields override these (and that's the intended fix path
+  // for any monster the parser misreads).
+  const saveDC      = resolved.saveDC      || 12;
+  const saveAbility = resolved.saveAbility || 'DEX';
+  const dmgFormula  = resolved.damage      || '2d6';
+  const dmgType     = resolved.damageType  || 'damage';
+  b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
 }
 
 function commitOpenNodeFromForm() {
