@@ -1354,7 +1354,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 5c / trap rolls</span>
+  <span class="topbar-version">stage 5c+ / adv-dis</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -1391,7 +1391,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 5c · trap rolls</div>
+  <div id="stage-label">Stage 5c+ · adv / dis on encounter rolls</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -1412,7 +1412,8 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <b>Direction</b>: click the arrow pill or middle-click the line<br>
     <b>Select multiple</b>: <kbd>Shift</kbd>+drag to marquee<br>
     <b>Delete</b>: <kbd>Del</kbd> on selected node(s) or connector<br>
-    <b>Saving</b>: autosaved 600ms after each change
+    <b>Saving</b>: autosaved 600ms after each change<br>
+    <b>Roll adv/dis</b>: <kbd>Shift</kbd>=advantage, <kbd>Alt</kbd>=disadvantage
   </div>
 </div>
 
@@ -1658,6 +1659,18 @@ function b20Send(request) {
     setTimeout(() => ind.classList.remove('flash'), 250);
   }
 }
+
+// Modifier-key helper: maps a click MouseEvent to the Beyond20 advantage value.
+//   Shift  → 1 (advantage)
+//   Alt    → 2 (disadvantage)
+//   neither → 0 (normal)
+// If both Shift and Alt are held, advantage wins (matches most VTT conventions).
+function _advFromEvent(e) {
+  if (!e) return 0;
+  if (e.shiftKey) return 1;
+  if (e.altKey)   return 2;
+  return 0;
+}
 function setB20Status(active) {
   const ind = document.getElementById('b20-status');
   if (!ind) return;
@@ -1698,7 +1711,8 @@ function b20MakeMonsterChar(name, cr, ac, hp) {
 // Monster melee/ranged attack (to-hit + damage in one card).
 //   atk = { name, toHit, damages:['1d6+3'], damageTypes:['slashing'],
 //           critDamages?, critDamageTypes?, attackType?, reach?, range? }
-function b20RollMonsterAttack(monsterName, cr, ac, hp, atk) {
+//   advantage = 0 | 1 | 2 (passed to Beyond20)
+function b20RollMonsterAttack(monsterName, cr, ac, hp, atk, advantage) {
   const toHitNum = typeof atk.toHit === 'string'
     ? parseFloat(atk.toHit.replace('+','')) || 0
     : (atk.toHit || 0);
@@ -1709,7 +1723,7 @@ function b20RollMonsterAttack(monsterName, cr, ac, hp, atk) {
     type: 'attack',
     character: b20MakeMonsterChar(monsterName, cr, ac, hp),
     roll: '1d20' + toHitStr,
-    advantage: 0,
+    advantage: advantage || 0,
     whisper: 0,
     name: atk.name,
     description: atk.description || '',
@@ -1841,14 +1855,14 @@ function b20RollCustom(sourceName, label, formula, description) {
 
 // Monster ability check (clicking an ability score — e.g. Athletics, Stealth).
 // Beyond20 has an "ability" type for these.
-function b20RollMonsterAbility(monsterName, cr, ac, hp, ability, modifier) {
+function b20RollMonsterAbility(monsterName, cr, ac, hp, ability, modifier, advantage) {
   const modStr = (modifier >= 0 ? '+' : '') + modifier;
   b20Send({
     action: 'roll',
     type: 'ability',
     character: b20MakeMonsterChar(monsterName, cr, ac, hp),
     roll: '1d20' + modStr,
-    advantage: 0,
+    advantage: advantage || 0,
     whisper: 0,
     name: ability + ' Check',
     description: '',
@@ -1858,14 +1872,14 @@ function b20RollMonsterAbility(monsterName, cr, ac, hp, ability, modifier) {
 }
 
 // Monster saving throw (clicking a save row on the monster's mini-statblock).
-function b20RollMonsterSavingThrow(monsterName, cr, ac, hp, ability, modifier, proficient) {
+function b20RollMonsterSavingThrow(monsterName, cr, ac, hp, ability, modifier, proficient, advantage) {
   const modStr = (modifier >= 0 ? '+' : '') + modifier;
   b20Send({
     action: 'roll',
     type: 'saving-throw',
     character: b20MakeMonsterChar(monsterName, cr, ac, hp),
     roll: '1d20' + modStr,
-    advantage: 0,
+    advantage: advantage || 0,
     whisper: 0,
     name: ability + ' Saving Throw',
     description: '',
@@ -1880,7 +1894,7 @@ function b20RollMonsterSavingThrow(monsterName, cr, ac, hp, ability, modifier, p
 // Beyond20 doesn't have a native "horde" mode, so we send N independent
 // save dispatches, slightly staggered so Beyond20 / VTT can render each
 // one as its own chat card.
-function b20RollHordeSaves(monsterName, cr, ac, hp, ability, modifier, proficient, n, dc) {
+function b20RollHordeSaves(monsterName, cr, ac, hp, ability, modifier, proficient, n, dc, advantage) {
   const modStr = (modifier >= 0 ? '+' : '') + modifier;
   for (let i = 0; i < n; i++) {
     setTimeout(() => {
@@ -1889,7 +1903,7 @@ function b20RollHordeSaves(monsterName, cr, ac, hp, ability, modifier, proficien
         type: 'saving-throw',
         character: b20MakeMonsterChar(monsterName + ' #' + (i + 1), cr, ac, hp),
         roll: '1d20' + modStr,
-        advantage: 0,
+        advantage: advantage || 0,
         whisper: 0,
         name: ability + ' Save vs DC ' + (dc != null ? dc : '?') + ' (' + (i+1) + '/' + n + ')',
         description: dc != null ? ('DC ' + dc) : '',
@@ -4031,7 +4045,7 @@ function renderAbilityGrid(m, idx) {
     ${_ABIL_KEYS.map(({k, label}) => {
       const score = _scoreOf(abs[k] || abs[k.toUpperCase()] || abs[label] || 10);
       const mod = _modOf(score);
-      return `<div class="node-mon-abil" data-peek-abil="${idx},${k}" title="Roll ${label} check">
+      return `<div class="node-mon-abil" data-peek-abil="${idx},${k}" title="Roll ${label} check (Shift = advantage, Alt = disadvantage)">
                 <div class="abil-label">${label}</div>
                 <div class="abil-score">${score}</div>
                 <div class="abil-mod">${_fmtMod(mod)}</div>
@@ -4057,7 +4071,7 @@ function renderSaveRow(m, idx) {
       const bonus = proficient ? (parseInt(explicit) || baseMod) : baseMod;
       return `<button class="node-mon-save-btn ${proficient ? 'proficient' : ''}"
                       data-peek-save="${idx},${k},${bonus},${proficient ? 1 : 0}"
-                      type="button" title="Roll ${label} saving throw">
+                      type="button" title="Roll ${label} saving throw (Shift = advantage, Alt = disadvantage)">
                 ${label}
                 <span class="save-bonus">${_fmtMod(bonus)}</span>
               </button>`;
@@ -4074,7 +4088,8 @@ function renderHordeRow(m, idx) {
     </select>
     <span>DC</span>
     <input type="number" data-peek-horde-dc="${idx}" placeholder="—" min="1" max="30">
-    <button class="horde-roll" data-peek-horde-roll="${idx}" type="button">🎲 Roll ×N</button>
+    <button class="horde-roll" data-peek-horde-roll="${idx}" type="button"
+            title="Roll N saves (Shift = advantage, Alt = disadvantage)">🎲 Roll ×N</button>
   </div>`;
 }
 
@@ -4088,7 +4103,8 @@ function renderActionButton(a, monIdx, actIdx) {
   const isSave   = !!(a.saveDC || a.save_dc || a.dc);
   if (!isAttack && !isSave) return '';   // passive trait — no button
   const cls = isSave && !isAttack ? 'node-mon-roll-btn save' : 'node-mon-roll-btn';
-  return `<button class="${cls}" data-mon-roll="${monIdx}-${actIdx}" type="button">
+  return `<button class="${cls}" data-mon-roll="${monIdx}-${actIdx}" type="button"
+            title="Roll ${escAttr(a.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}">
             <span class="roll-icon">🎲</span>${escHtml(a.name)}
           </button>`;
 }
@@ -4115,7 +4131,7 @@ function wireMonsterRollClicks(nodeEl, node) {
       if (!m) return;
       const a = (m.snapshot.actions || [])[actIdx];
       if (!a) return;
-      dispatchMonsterRoll(m, a);
+      dispatchMonsterRoll(m, a, _advFromEvent(e));
     });
   });
 
@@ -4185,7 +4201,7 @@ function wireMonsterRollClicks(nodeEl, node) {
       const mod = _modOf(score);
       const label = _ABIL_KEYS.find(a => a.k === k).label;
       const displayName = (m.flav ? m.flav + ' — ' : '') + (sn.name || 'Monster');
-      b20RollMonsterAbility(displayName, sn.cr || '', sn.ac || '', sn.hp || '', label, mod);
+      b20RollMonsterAbility(displayName, sn.cr || '', sn.ac || '', sn.hp || '', label, mod, _advFromEvent(e));
     });
   });
 
@@ -4203,7 +4219,7 @@ function wireMonsterRollClicks(nodeEl, node) {
       const sn = m.snapshot;
       const label = _ABIL_KEYS.find(a => a.k === k).label;
       const displayName = (m.flav ? m.flav + ' — ' : '') + (sn.name || 'Monster');
-      b20RollMonsterSavingThrow(displayName, sn.cr || '', sn.ac || '', sn.hp || '', label, bonus, proficient);
+      b20RollMonsterSavingThrow(displayName, sn.cr || '', sn.ac || '', sn.hp || '', label, bonus, proficient, _advFromEvent(e));
     });
   });
 
@@ -4229,7 +4245,7 @@ function wireMonsterRollClicks(nodeEl, node) {
       const prof    = explicit != null && explicit !== '';
       const bonus   = prof ? (parseInt(explicit) || baseMod) : baseMod;
       const displayName = (m.flav ? m.flav + ' — ' : '') + (sn.name || 'Monster');
-      b20RollHordeSaves(displayName, sn.cr || '', sn.ac || '', sn.hp || '', stat, bonus, prof, n, dc);
+      b20RollHordeSaves(displayName, sn.cr || '', sn.ac || '', sn.hp || '', stat, bonus, prof, n, dc, _advFromEvent(e));
     });
   });
 
@@ -4240,7 +4256,7 @@ function wireMonsterRollClicks(nodeEl, node) {
   });
 }
 
-function dispatchMonsterRoll(imported, action) {
+function dispatchMonsterRoll(imported, action, advantage) {
   const sn = imported.snapshot || {};
   // Display name combines the per-instance flavor with the monster name so
   // the chat card reads like "A: Ascot — Goblin: Scimitar".
@@ -4266,10 +4282,12 @@ function dispatchMonsterRoll(imported, action) {
       reach: action.reach || '',
       range: action.range || '',
       description: action.desc || ''
-    });
+    }, advantage);
     return;
   }
-  // Save-or-damage. Look for save metadata; default to DEX/half if unspecified.
+  // Save-or-damage. The "save vs DC" message has no d20 to apply adv/dis to,
+  // and the damage roll is flat — so the advantage modifier is meaningless
+  // here. Ignore it intentionally.
   const saveDC      = action.saveDC || action.save_dc || action.dc || 12;
   const saveAbility = action.saveAbility || action.save_ability || action.save || 'DEX';
   const dmgFormula  = action.damage || (action.damages && action.damages[0]) || '2d6';
