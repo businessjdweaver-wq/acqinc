@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.3.7</span>
+  <span class="topbar-version">v0.3.8</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -2088,8 +2088,12 @@ async function doLogin() {
     persistSession();
     showApp();
     // After login, refresh the local monster lists in case auth-scoped RLS
-    // affects what's visible.
-    if (typeof loadCustomMonsters === 'function') loadCustomMonsters();
+    // affects what's visible. Then honor any ?edit=<id> deep link.
+    if (typeof loadCustomMonsters === 'function') {
+      loadCustomMonsters().then(() => {
+        if (typeof tryDeepLinkSelect === 'function') tryDeepLinkSelect();
+      });
+    }
   } catch(err) {
     setLoginStatus(err.message || 'Login failed', true);
   }
@@ -3857,6 +3861,34 @@ async function loadCustomMonsters() {
   }
 }
 
+// ── DEEP LINK: ?edit=<monster_id> ─────────────────────────
+// Called by other RQ tools (canvas planner) to jump straight to a specific
+// monster for editing. Switches to the My Monsters tab and selects the row.
+function tryDeepLinkSelect() {
+  let editId = null;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    editId = params.get('edit');
+  } catch (e) {}
+  if (!editId) return;
+  const target = customMonsters.find(m => String(m.id) === String(editId));
+  if (!target) {
+    showToast && showToast('Monster #' + editId.slice(0,8) + '… not found in your library', true);
+    return;
+  }
+  // Switch to My Monsters tab so the row is visible/highlighted
+  const tabs = document.querySelectorAll('.browser-tab');
+  if (tabs[2]) {
+    setTab && setTab('custom', tabs[2]);
+  }
+  selectMonster(target.slug);
+  // Strip the param from the URL so reloads don't keep re-navigating
+  try {
+    const cleanUrl = window.location.pathname + window.location.hash;
+    history.replaceState({}, '', cleanUrl);
+  } catch (e) {}
+}
+
 // ── EXPORT ──
 function exportJSON() {
   const data = isEditing ? collectFormData() : currentMonster;
@@ -5007,7 +5039,7 @@ if (currentUser && currentUser.access_token) {
   // Have a session — try a refresh in the background, then show the app.
   refreshSession(true).then(function(){
     showApp();
-    loadCustomMonsters();
+    loadCustomMonsters().then(tryDeepLinkSelect);
   }).catch(function(){
     // Refresh failed — token is probably dead. Show login.
     currentUser = null;
