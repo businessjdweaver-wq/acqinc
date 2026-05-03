@@ -740,6 +740,29 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 #canvas-saved-status.saved   { color: #6aaf6a; border-color: rgba(106,175,106,0.4); }
 #canvas-saved-status.error   { color: #d97070; border-color: rgba(217,112,112,0.5); }
 
+/* ── BEYOND20 STATUS INDICATOR ────────────────────── */
+#b20-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  color: var(--steel-pale);
+  padding: 4px 8px;
+  border: 1px solid rgba(184,134,11,0.2);
+  border-radius: 3px;
+  background: rgba(0,0,0,0.25);
+  text-transform: uppercase;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: color 0.2s, border-color 0.2s;
+}
+#b20-status .b20-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #6a6a6a;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+#b20-status.active           { color: #6aaf6a; border-color: rgba(106,175,106,0.4); }
+#b20-status.active .b20-dot  { background: #6aaf6a; box-shadow: 0 0 6px rgba(106,175,106,0.6); }
+#b20-status.flash .b20-dot   { background: #f5e8c8; box-shadow: 0 0 12px #b8860b; }
+
 /* ── LOGOUT BUTTON ──────────────────────────────────────── */
 #btnLogout { display: none; }                 /* hidden until auth completes */
 
@@ -943,7 +966,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 4c+ / polish</span>
+  <span class="topbar-version">stage 5a / Beyond20 base</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -954,6 +977,9 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <button class="btn btn-ghost" onclick="resetView()">⌖ Reset View</button>
     <button class="btn" id="btnSaveNow" onclick="saveCurrentSession()" title="Save canvas to current session">💾 Save</button>
     <span id="canvas-saved-status" class="idle" title="Save status">Idle</span>
+    <span id="b20-status" title="Beyond20 dice roller status — green when the browser extension is detected">
+      <span class="b20-dot"></span><span class="b20-label">Beyond20?</span>
+    </span>
     <button class="btn btn-ghost" id="btnLogout" onclick="rqLogout()" title="Sign out">⎋ Logout</button>
   </div>
 </div>
@@ -977,7 +1003,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 4c+ · polish</div>
+  <div id="stage-label">Stage 5a · Beyond20 base</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -995,7 +1021,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <b>Edit node</b>: click the node body<br>
     <b>Move node</b>: drag the header<br>
     <b>Connect</b>: click an anchor, then click another<br>
-    <b>Direction</b>: click the arrow pill to cycle<br>
+    <b>Direction</b>: click the arrow pill or middle-click the line<br>
     <b>Select multiple</b>: <kbd>Shift</kbd>+drag to marquee<br>
     <b>Delete</b>: <kbd>Del</kbd> on selected node(s) or connector<br>
     <b>Saving</b>: autosaved 600ms after each change
@@ -1224,6 +1250,184 @@ function setCanvasSavedState(s) {
   el.classList.remove('idle','dirty','saving','saved','error');
   el.classList.add(s);
   el.textContent = ({ idle:'Idle', dirty:'Unsaved', saving:'Saving…', saved:'Saved', error:'Error' })[s] || s;
+}
+
+// ── BEYOND20 DISPATCH FOUNDATION ──
+// Beyond20 is a browser extension that listens for `Beyond20_SendMessage`
+// CustomEvents on `document` and routes them to your VTT (Roll20, FoundryVTT,
+// etc.). Detection works by listening for the extension's `Beyond20_Loaded`
+// announcement event on page load. The status badge in the topbar shows
+// whether the extension has been detected and pulses gold each time we
+// fire a roll, so DMs get a visual confirmation.
+let beyond20Loaded = false;
+
+function b20Send(request) {
+  document.dispatchEvent(new CustomEvent('Beyond20_SendMessage', { detail: [request] }));
+  // Visual feedback: pulse the topbar badge so the DM sees the dispatch went out.
+  const ind = document.getElementById('b20-status');
+  if (ind) {
+    ind.classList.add('flash');
+    setTimeout(() => ind.classList.remove('flash'), 250);
+  }
+}
+function setB20Status(active) {
+  const ind = document.getElementById('b20-status');
+  if (!ind) return;
+  ind.classList.toggle('active', !!active);
+  const lbl = ind.querySelector('.b20-label');
+  if (lbl) lbl.textContent = active ? 'Beyond20 ✓' : 'Beyond20?';
+}
+document.addEventListener('Beyond20_Loaded', () => {
+  beyond20Loaded = true;
+  setB20Status(true);
+});
+
+// ── ROLL TYPE BUILDERS ──
+// Wrappers that assemble the Beyond20 request shape for each roll category.
+// Ported from classic v0.4.0 with no semantic changes — Beyond20's request
+// schema is what it is and matching it bit-for-bit is the safest path.
+
+// Build a minimal "monster character" envelope. Beyond20 needs this for its
+// chat-card formatting; the abilities array can be flat 10s if we don't
+// know the real stats — Beyond20 uses it for tooltip data, not for math.
+function b20MakeMonsterChar(name, cr, ac, hp) {
+  return {
+    name: name,
+    type: 'Monster',
+    url: window.location.href,
+    cr: cr || '',
+    ac: ac || '',
+    hp: hp || '',
+    abilities: [
+      ['Strength','STR','10','+0'],['Dexterity','DEX','10','+0'],
+      ['Constitution','CON','10','+0'],['Intelligence','INT','10','+0'],
+      ['Wisdom','WIS','10','+0'],['Charisma','CHA','10','+0']
+    ],
+    saves: {}, skills: {}
+  };
+}
+
+// Monster melee/ranged attack (to-hit + damage in one card).
+//   atk = { name, toHit, damages:['1d6+3'], damageTypes:['slashing'],
+//           critDamages?, critDamageTypes?, attackType?, reach?, range? }
+function b20RollMonsterAttack(monsterName, cr, ac, hp, atk) {
+  const toHitNum = typeof atk.toHit === 'string'
+    ? parseFloat(atk.toHit.replace('+','')) || 0
+    : (atk.toHit || 0);
+  const toHitStr = (toHitNum >= 0 ? '+' : '') + toHitNum;
+
+  b20Send({
+    action: 'roll',
+    type: 'attack',
+    character: b20MakeMonsterChar(monsterName, cr, ac, hp),
+    roll: '1d20' + toHitStr,
+    advantage: 0,
+    whisper: 0,
+    name: atk.name,
+    description: atk.description || '',
+    'to-hit': toHitStr,
+    damages: atk.damages || ['1d6'],
+    'damage-types': atk.damageTypes || ['damage'],
+    'critical-damages': atk.critDamages || atk.damages || ['1d6'],
+    'critical-damage-types': atk.critDamageTypes || atk.damageTypes || ['damage'],
+    rollAttack: true,
+    rollDamage: true,
+    rollCritical: false,
+    'critical-limit': 20,
+    'attack-source': 'action',
+    'attack-type': atk.attackType || 'Melee',
+    reach: atk.reach || '',
+    range: atk.range || ''
+  });
+}
+
+// Monster save-or-damage ability (breath weapon, AoE blast, etc.) Two-step:
+// announce the DC, then roll damage. Beyond20 prints both as separate cards.
+function b20RollMonsterSave(monsterName, cr, ac, hp, abilityName, saveAbility, saveDC, damageFormula, damageType) {
+  b20Send({
+    action: 'roll',
+    type: 'chat-message',
+    character: b20MakeMonsterChar(monsterName, cr, ac, hp),
+    roll: 0,
+    advantage: 0,
+    whisper: 0,
+    name: abilityName,
+    message: abilityName + ' — DC ' + saveDC + ' ' + saveAbility + ' saving throw or take ' + damageFormula + ' ' + damageType + ' damage.'
+  });
+  setTimeout(() => {
+    b20Send({
+      action: 'roll',
+      type: 'attack',
+      character: b20MakeMonsterChar(monsterName, cr, ac, hp),
+      roll: damageFormula,
+      advantage: 0,
+      whisper: 0,
+      name: abilityName + ' Damage',
+      description: 'DC ' + saveDC + ' ' + saveAbility + ' save for half',
+      'to-hit': '0',
+      damages: [damageFormula],
+      'damage-types': [damageType],
+      'critical-damages': [],
+      'critical-damage-types': [],
+      rollAttack: false,
+      rollDamage: true,
+      rollCritical: false,
+      'attack-source': 'action',
+      'attack-type': 'Melee',
+      'save-ability': saveAbility,
+      'save-dc': saveDC
+    });
+  }, 300);
+}
+
+// Trap damage roll — simpler shape, no character envelope needed.
+function b20RollTrapDamage(trapName, formula, damageType) {
+  b20Send({
+    action: 'roll',
+    type: 'custom',
+    character: { name: trapName, type: 'Trap', url: window.location.href },
+    roll: formula,
+    advantage: 0,
+    whisper: 0,
+    name: trapName + ' Damage',
+    description: (damageType || '') + ' damage',
+    modifier: formula
+  });
+}
+
+// Player-facing saving throw prompt (env hazards, magical surges).
+// Beyond20 routes this as "the GM is asking the players to roll a save".
+function b20RollSavingThrow(sourceName, ability, dc) {
+  b20Send({
+    action: 'roll',
+    type: 'saving-throw',
+    character: { name: sourceName, type: 'Hazard', url: window.location.href },
+    roll: '1d20',
+    advantage: 0,
+    whisper: 0,
+    name: ability + ' Saving Throw',
+    description: dc != null ? ('DC ' + dc) : '',
+    ability: ability,
+    modifier: 0,
+    proficiency: 'None',
+    'save-ability': ability,
+    'save-dc': dc != null ? dc : ''
+  });
+}
+
+// Free-form custom roll — for ad-hoc dice formulas (e.g. surge tables).
+function b20RollCustom(sourceName, label, formula, description) {
+  b20Send({
+    action: 'roll',
+    type: 'custom',
+    character: { name: sourceName, type: 'Effect', url: window.location.href },
+    roll: formula,
+    advantage: 0,
+    whisper: 0,
+    name: label,
+    description: description || '',
+    modifier: formula
+  });
 }
 
 // ── AUTOSAVE STATE MACHINE ──
@@ -2453,8 +2657,18 @@ function createEdge(from, to, dir = 'forward') {
     e.stopPropagation();
     cycleEdgeDirection(edge);
   });
-  // Right-click on the hitbox is now reserved for canvas pan, so no
-  // direction-cycle shortcut here. The pill button is the only way to cycle.
+  // Middle-click on the hitbox = power-shortcut to cycle direction without
+  // having to aim for the small pill. We fire on mousedown (not click,
+  // since browsers treat middle button as auxclick), preventDefault to
+  // suppress autoscroll, and stopPropagation so the wrap mousedown handler
+  // doesn't ALSO open the type chooser.
+  hit.addEventListener('mousedown', (e) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cycleEdgeDirection(edge);
+  });
+  // Right-click on the hitbox is reserved for canvas pan.
 
   markDirty();
   return edge;
