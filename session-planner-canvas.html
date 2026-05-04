@@ -3326,6 +3326,24 @@ function b20RollMonsterAttack(monsterName, cr, ac, hp, atk, advantage) {
   });
 }
 
+// Send a free-form chat message — used to push an action's prose
+// description into the VTT chat alongside (just before) a roll. Beyond20
+// renders this as its own card in Foundry / Roll20 chat. Empty/null
+// messages are no-ops.
+function b20SendFlavor(monsterName, cr, ac, hp, abilityName, message) {
+  if (!message || !String(message).trim()) return;
+  b20Send({
+    action: 'roll',
+    type: 'chat-message',
+    character: b20MakeMonsterChar(monsterName, cr, ac, hp),
+    roll: 0,
+    advantage: 0,
+    whisper: 0,
+    name: abilityName || 'Ability',
+    message: String(message).trim(),
+  });
+}
+
 // Monster save-or-damage ability (breath weapon, AoE blast, etc.) Two-step:
 // announce the DC, then roll damage. Beyond20 prints both as separate cards.
 function b20RollMonsterSave(monsterName, cr, ac, hp, abilityName, saveAbility, saveDC, damageFormula, damageType) {
@@ -8750,72 +8768,92 @@ function dispatchNpcRoll(node, skin, action, advantage) {
 
   const resolved = resolveAbilityMechanics(action);
 
-  if (resolved.toHit || resolved.toHit === 0) {
-    const damages = action.damages
-      ? action.damages
-      : (resolved.damage ? [resolved.damage] : ['1d6']);
-    const damageTypes = action.damageTypes
-      ? action.damageTypes
-      : (resolved.damageType ? [resolved.damageType] : ['damage']);
-    b20RollMonsterAttack(displayName, cr, ac, hp, {
-      name: resolved.name,
-      toHit: resolved.toHit,
-      damages, damageTypes,
-      attackType: resolved.attackType || 'Melee',
-      reach: resolved.reach || '',
-      range: resolved.range || '',
-      description: resolved.desc || ''
-    }, advantage);
-    return;
+  // Push the action's prose description into chat as flavor before the roll.
+  if (resolved.desc && String(resolved.desc).trim()) {
+    b20SendFlavor(displayName, cr, ac, hp, resolved.name, resolved.desc);
   }
-  // Save-or-damage — resolved fields fall back to the prose parser when
-  // structured fields are missing.
-  const saveDC      = resolved.saveDC      || 12;
-  const saveAbility = resolved.saveAbility || 'DEX';
-  const dmgFormula  = resolved.damage      || '2d6';
-  const dmgType     = resolved.damageType  || 'damage';
-  b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
+
+  const fireRoll = () => {
+    if (resolved.toHit || resolved.toHit === 0) {
+      const damages = action.damages
+        ? action.damages
+        : (resolved.damage ? [resolved.damage] : ['1d6']);
+      const damageTypes = action.damageTypes
+        ? action.damageTypes
+        : (resolved.damageType ? [resolved.damageType] : ['damage']);
+      b20RollMonsterAttack(displayName, cr, ac, hp, {
+        name: resolved.name,
+        toHit: resolved.toHit,
+        damages, damageTypes,
+        attackType: resolved.attackType || 'Melee',
+        reach: resolved.reach || '',
+        range: resolved.range || '',
+        description: resolved.desc || ''
+      }, advantage);
+      return;
+    }
+    const saveDC      = resolved.saveDC      || 12;
+    const saveAbility = resolved.saveAbility || 'DEX';
+    const dmgFormula  = resolved.damage      || '2d6';
+    const dmgType     = resolved.damageType  || 'damage';
+    b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
+  };
+  if (resolved.desc && String(resolved.desc).trim()) {
+    setTimeout(fireRoll, 300);
+  } else {
+    fireRoll();
+  }
 }
 
 function dispatchMonsterRoll(imported, action, advantage) {
   const sn = imported.snapshot || {};
-  // Display name combines the per-instance flavor with the monster name so
-  // the chat card reads like "A: Ascot — Goblin: Scimitar".
   const displayName = (imported.flav ? imported.flav + ' — ' : '') + (sn.name || 'Monster');
   const cr = sn.cr || '';
   const ac = sn.ac || '';
   const hp = sn.hp || '';
 
-  // Resolve mechanics from override + structured + prose-parsed in priority.
   const resolved = resolveAbilityMechanics(action);
 
-  if (resolved.toHit || resolved.toHit === 0) {
-    // Attack roll. Rebuild damages array from action shape.
-    const damages = action.damages
-      ? action.damages
-      : (resolved.damage ? [resolved.damage] : ['1d6']);
-    const damageTypes = action.damageTypes
-      ? action.damageTypes
-      : (resolved.damageType ? [resolved.damageType] : ['damage']);
-    b20RollMonsterAttack(displayName, cr, ac, hp, {
-      name: resolved.name,
-      toHit: resolved.toHit,
-      damages, damageTypes,
-      attackType: resolved.attackType || 'Melee',
-      reach: resolved.reach || '',
-      range: resolved.range || '',
-      description: resolved.desc || ''
-    }, advantage);
-    return;
+  // Push the action's prose description into chat as flavor BEFORE the
+  // roll fires. This is what gives players the narrative context
+  // ("the stirge attaches to the target…") alongside the dice card.
+  // No-op when there's no description.
+  if (resolved.desc && String(resolved.desc).trim()) {
+    b20SendFlavor(displayName, cr, ac, hp, resolved.name, resolved.desc);
   }
-  // Save-or-damage. The "save vs DC" message has no d20 to apply adv/dis to,
-  // and the damage roll is flat — so the advantage modifier is meaningless
-  // here. Ignore it intentionally.
-  const saveDC      = resolved.saveDC      || 12;
-  const saveAbility = resolved.saveAbility || 'DEX';
-  const dmgFormula  = resolved.damage      || '2d6';
-  const dmgType     = resolved.damageType  || 'damage';
-  b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
+
+  // Stagger the roll slightly so the flavor message renders first.
+  // Using the same 300ms delay pattern as save-or-damage two-steppers.
+  const fireRoll = () => {
+    if (resolved.toHit || resolved.toHit === 0) {
+      const damages = action.damages
+        ? action.damages
+        : (resolved.damage ? [resolved.damage] : ['1d6']);
+      const damageTypes = action.damageTypes
+        ? action.damageTypes
+        : (resolved.damageType ? [resolved.damageType] : ['damage']);
+      b20RollMonsterAttack(displayName, cr, ac, hp, {
+        name: resolved.name,
+        toHit: resolved.toHit,
+        damages, damageTypes,
+        attackType: resolved.attackType || 'Melee',
+        reach: resolved.reach || '',
+        range: resolved.range || '',
+        description: resolved.desc || ''
+      }, advantage);
+      return;
+    }
+    const saveDC      = resolved.saveDC      || 12;
+    const saveAbility = resolved.saveAbility || 'DEX';
+    const dmgFormula  = resolved.damage      || '2d6';
+    const dmgType     = resolved.damageType  || 'damage';
+    b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
+  };
+  if (resolved.desc && String(resolved.desc).trim()) {
+    setTimeout(fireRoll, 300);
+  } else {
+    fireRoll();
+  }
 }
 
 function commitOpenNodeFromForm() {
