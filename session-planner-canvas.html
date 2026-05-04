@@ -3486,7 +3486,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 13 / search v2 (graph)</span>
+  <span class="topbar-version">stage 14 / new-tab + peek listener fix</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -3620,7 +3620,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 13 · search V2 (expand-in-place + connections)</div>
+  <div id="stage-label">Stage 14 · search-new-tab + peek-stat listener fix</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -9558,6 +9558,11 @@ function wireMonsterRollClicks(nodeEl, node) {
     'button[data-mon-instance-remove]',
     'button[data-mon-roll-horde]',
     'button[data-ov-action]',
+    // Peek-body rollables — these accumulate listeners across re-renders too.
+    // data-peek-abil sits on a <div>, not a <button>; the others are buttons.
+    '[data-peek-abil]',
+    'button[data-peek-save]',
+    'button[data-peek-horde-roll]',
   ];
   stripSelectors.forEach(sel => {
     nodeEl.querySelectorAll(sel).forEach(btn => {
@@ -10111,6 +10116,9 @@ function wireNpcPeekClicks(nodeEl, node) {
     'button[data-npc-peek-mult-delta]',
     'button[data-npc-peek-hp]',
     'button[data-ov-action]',
+    // NPC peek-body rollables — same accumulation issue
+    '[data-npc-peek-abil]',
+    'button[data-npc-peek-save]',
   ];
   stripSelectors.forEach(sel => {
     nodeEl.querySelectorAll(sel).forEach(btn => {
@@ -10882,13 +10890,15 @@ function renderSearchDetailConnections(hit) {
 }
 
 function wireSearchDetail(detailEl, hit, container) {
-  // "→ Open" button — actual cross-session navigation
+  // "→ Open" button — open the source session in a new tab via URL
+  // deep-link. Same-tab navigation (the old behavior) is preserved
+  // implicitly: the user can still load other sessions via the picker.
   const jump = detailEl.querySelector('.search-detail-jump');
   if (jump) {
     jump.addEventListener('mousedown', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      navigateToSearchHit(hit);
+      openSearchHitInNewTab(hit);
     });
   }
   // Wire roll buttons inside the body — same wireup chain focus mode uses
@@ -10928,6 +10938,24 @@ function wireSearchDetail(detailEl, hit, container) {
       wireSearchDetail(sub, neighborHit, container);
     });
   });
+}
+
+// Open a search hit in a new tab via URL deep-link. The target tab reads
+// ?session=<id>&node=<id> on bootstrap and auto-loads that session, then
+// focuses the node.
+function openSearchHitInNewTab(hit) {
+  const targetSessionId = (hit.source && hit.source.sessionId) || null;
+  if (!targetSessionId) {
+    // Fall back to in-place navigation if we don't have a session id (rare —
+    // a campaign-frame node without a home_session_id, e.g.)
+    navigateToSearchHit(hit);
+    return;
+  }
+  const params = new URLSearchParams();
+  params.set('session', targetSessionId);
+  params.set('node',    hit.id);
+  const url = window.location.pathname + '?' + params.toString();
+  window.open(url, '_blank', 'noopener');
 }
 
 // Cross-session navigation — only invoked from the explicit "→ Open" button
@@ -11471,11 +11499,69 @@ function boot() {
 // Opens the session picker so the user can pick or create a session.
 function rqBootstrapAfterAuth() {
   setCanvasSavedState('idle');
-  // Don't auto-open if a session is already loaded (could happen on token-refresh
-  // path, but in practice 4b doesn't preserve session id across reloads yet).
+  // Honor ?session=<id>[&node=<id>] deep-links from the search "Open in
+  // new tab" feature. Loads the campaign/arc/session list, finds the
+  // session row, loads it, and (if node is specified) focuses that node
+  // after the canvas finishes deserializing.
+  const params = new URLSearchParams(window.location.search);
+  const sessionParam = params.get('session');
+  const nodeParam    = params.get('node');
+  if (sessionParam) {
+    (async () => {
+      try {
+        await loadCampaignsAndArcsAndSessions();
+        const target = (sessionState.sessions || []).find(s => String(s.id) === String(sessionParam));
+        if (!target) {
+          // Session not visible to this user (maybe wrong account / deleted) —
+          // fall back to picker so they can pick something.
+          openSessionPicker();
+          return;
+        }
+        await loadSessionData(target);
+        if (nodeParam) {
+          // Defer focus until the canvas has had a chance to render
+          setTimeout(() => focusDeepLinkedNode(nodeParam), 200);
+        }
+        // Clean the URL so refreshing doesn't re-trigger the deep link
+        // unintentionally — keeps history neat.
+        const cleanUrl = window.location.pathname;
+        window.history.replaceState({}, '', cleanUrl);
+      } catch (e) {
+        console.warn('Deep-link bootstrap failed:', e);
+        openSessionPicker();
+      }
+    })();
+    return;
+  }
+  // No deep-link — normal flow
   if (!sessionState.currentSessionId) {
     openSessionPicker();
   }
+}
+
+// Focus a node identified by ID after a deep-link session load. Tries the
+// canvas first; falls back to opening it as a frame card if it lives in
+// the campaign or arc tier.
+function focusDeepLinkedNode(nodeId) {
+  const node = state.nodes.get(nodeId);
+  if (node) {
+    clearNodeSelection();
+    selectNode(node);
+    if (typeof frameSelection === 'function') frameSelection();
+    return;
+  }
+  // Try frame tiers
+  const cn = (sessionState.campaignBlocks.nodes || []).find(n => n.id === nodeId);
+  if (cn && typeof openFrameNodeInSidePanel === 'function') {
+    openFrameNodeInSidePanel(nodeId);
+    return;
+  }
+  const an = (sessionState.arcBlocks.nodes || []).find(n => n.id === nodeId);
+  if (an && typeof openArcFrameNodeInSidePanel === 'function') {
+    openArcFrameNodeInSidePanel(nodeId);
+    return;
+  }
+  // Couldn't find it — quiet fail. The session loaded; the user can search again.
 }
 
 boot();
