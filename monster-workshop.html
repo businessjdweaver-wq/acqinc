@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.3.9</span>
+  <span class="topbar-version">v0.3.11</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3836,7 +3836,7 @@ async function loadCustomMonsters() {
   // the main rq_monsters load and it's fine if it lags slightly.
   loadPublishedSet();
   try {
-    const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?order=created_at.desc&limit=500`, { headers: sbHeaders() });
+    const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?order=created_at.desc&limit=2000`, { headers: sbHeaders() });
     if (res.ok) {
       const rows = await res.json();
       customMonsters = rows.map(r => ({
@@ -3915,38 +3915,57 @@ function tryDeepLinkSelect() {
     }
   }
 
-  // No match anywhere — surface the failure visibly. Print clearer
-  // diagnostics so we can distinguish "the row isn't loaded" from "the row
-  // really doesn't exist" from "name conflict / wrong DB."
-  console.warn('[Workshop deep-link] Monster not found for id:', editId);
-  console.warn('[Workshop deep-link] customMonsters total rows loaded:', customMonsters.length);
-  // Try a case-insensitive substring match in case the ID is being
-  // truncated or compared as different types somewhere
-  const partial = customMonsters.filter(m => String(m.id).toLowerCase().includes(String(editId).toLowerCase().slice(0, 8)));
-  if (partial.length) {
-    console.warn('[Workshop deep-link] Partial-id match (first 8 chars):', partial.map(m => ({id: m.id, name: m.name})));
-  }
-  // Direct probe to Supabase: is the row visible to this auth context?
-  // Helps diagnose RLS issues vs missing-row vs not-loaded.
-  fetch(`${SB_URL}/rest/v1/rq_monsters?id=eq.${encodeURIComponent(editId)}&select=id,name`, { headers: sbHeaders() })
+  // No match in any in-memory list. Try a direct DB fetch by ID — this is
+  // the right path for users with libraries larger than the list-load limit
+  // (deep-link should always work even if the browser tab hasn't loaded the
+  // specific row). If the direct fetch finds it, inject it into
+  // customMonsters and select it.
+  console.warn('[Workshop deep-link] Not in any in-memory list. Trying direct DB fetch for id:', editId);
+  console.warn('[Workshop deep-link] customMonsters total rows currently loaded:', customMonsters.length);
+  fetch(`${SB_URL}/rest/v1/rq_monsters?id=eq.${encodeURIComponent(editId)}&select=*`, { headers: sbHeaders() })
     .then(r => r.json().then(rows => {
       if (rows && rows.length) {
-        console.warn('[Workshop deep-link] Direct Supabase probe DID find the row:', rows[0],
-          '— but loadCustomMonsters returned', customMonsters.length,
-          'rows (default limit=500). If you have more than 500 custom monsters, raise the limit.');
-        if (typeof showToast === 'function') {
-          showToast('Found "' + rows[0].name + '" in DB but not in workshop list — try refreshing the page.', true);
-        }
-      } else {
-        console.warn('[Workshop deep-link] Direct Supabase probe also failed — the row is missing from rq_monsters or RLS blocks it.');
+        const r = rows[0];
+        // Wrap in the same shape loadCustomMonsters produces, so the rest
+        // of the workshop (selectMonster, browser list rendering) works.
+        const wrapped = {
+          ...r,
+          slug:    'custom-' + r.id,
+          type:    r.monster_type || (Array.isArray(r.tags) ? r.tags[0] : 'custom'),
+          source:  'custom',
+          actions: r.actions || [],
+          special: r.special_abilities || [],
+        };
+        // Insert at the front of customMonsters so it appears in the list
+        // and the slug-based selectMonster can find it.
+        customMonsters.unshift(wrapped);
+        console.log('[Workshop deep-link] Recovered row from direct DB fetch:', wrapped.name);
+        // Switch to the My Monsters tab and select
+        const tabs = document.querySelectorAll('.browser-tab');
+        if (tabs[2]) setTab && setTab('custom', tabs[2]);
+        if (currentTab === 'custom') renderBrowserList(customMonsters);
+        selectMonster(wrapped.slug);
+        cleanDeepLinkUrl();
+        return;
+      }
+      // Genuinely missing — neither in memory nor in DB.
+      console.warn('[Workshop deep-link] Direct DB fetch also returned no row. The monster is missing from rq_monsters or RLS blocks it.');
+      const partial = customMonsters.filter(m => String(m.id).toLowerCase().includes(String(editId).toLowerCase().slice(0, 8)));
+      if (partial.length) {
+        console.warn('[Workshop deep-link] Partial-id match (first 8 chars):', partial.map(m => ({id: m.id, name: m.name})));
+      }
+      console.warn('[Workshop deep-link] First few customMonsters ids for comparison:',
+        customMonsters.slice(0, 5).map(m => ({id: m.id, name: m.name})));
+      if (typeof showToast === 'function') {
+        showToast('Monster not found — its source row may have been deleted from your library. Console has the id (' + editId.slice(0, 8) + '…).', true);
       }
     }))
-    .catch(e => console.warn('[Workshop deep-link] Direct probe network error:', e));
-  console.warn('[Workshop deep-link] First few customMonsters ids for comparison:',
-    customMonsters.slice(0, 5).map(m => ({id: m.id, name: m.name})));
-  if (typeof showToast === 'function') {
-    showToast('Monster not found in your library. Check console for the lookup id (' + editId.slice(0, 8) + '…).', true);
-  }
+    .catch(e => {
+      console.warn('[Workshop deep-link] Direct fetch network error:', e);
+      if (typeof showToast === 'function') {
+        showToast('Workshop deep-link failed to reach Supabase. See console.', true);
+      }
+    });
   // Don't strip the URL yet — leave it so the user can retry / reload.
 }
 
