@@ -1673,6 +1673,112 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   outline: none;
 }
 .sp-header .sp-title-input:focus { border-color: var(--gold); border-radius: 3px; }
+
+/* Scope row — the small pill below the title showing current scope/coll. */
+.sp-scope-row {
+  position: relative;
+  margin-top: 2px;
+}
+.sp-scope-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(184,134,11,0.12);
+  border: 1px solid rgba(184,134,11,0.35);
+  color: var(--gold-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.07em;
+  padding: 3px 8px;
+  border-radius: 11px;
+  cursor: pointer;
+  text-transform: uppercase;
+  outline: none;
+}
+.sp-scope-pill:hover { background: rgba(184,134,11,0.22); border-color: var(--gold); }
+.sp-scope-pill[data-scope="campaign"] {
+  background: rgba(184,134,11,0.18);
+  border-color: rgba(184,134,11,0.55);
+}
+.sp-scope-pill[data-scope="arc"] {
+  background: rgba(60,80,184,0.18);
+  border-color: rgba(120,140,220,0.55);
+  color: #c8d4ff;
+}
+.sp-scope-pill[data-scope="arc"]:hover { background: rgba(60,80,184,0.28); }
+.sp-scope-coll {
+  font-style: italic;
+  text-transform: none;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+  margin-left: 2px;
+  font-size: 0.6rem;
+}
+.sp-scope-coll:empty { display: none; }
+.sp-scope-caret {
+  font-size: 0.55rem;
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
+/* Hierarchical scope menu — appears below the pill when clicked. */
+.sp-scope-menu {
+  position: absolute;
+  top: 100%; left: 0;
+  margin-top: 4px;
+  background: linear-gradient(180deg, #1a1610 0%, #14110b 100%);
+  border: 1px solid var(--gold);
+  border-radius: 3px;
+  padding: 4px;
+  z-index: 30;
+  min-width: 220px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.65);
+}
+.sp-scope-menu .sp-scope-tier {
+  margin-bottom: 4px;
+}
+.sp-scope-menu .sp-scope-tier:last-child { margin-bottom: 0; }
+.sp-scope-tier-label {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  color: var(--gold-pale);
+  text-transform: uppercase;
+  padding: 4px 6px 2px;
+  opacity: 0.85;
+}
+.sp-scope-tier-label.disabled { color: var(--steel-pale); opacity: 0.4; }
+.sp-scope-opt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--bone);
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.85rem;
+  padding: 4px 10px 4px 18px;     /* indent for nesting under tier label */
+  border-radius: 2px;
+  cursor: pointer;
+}
+.sp-scope-opt:hover { background: rgba(184,134,11,0.18); color: var(--gold-pale); }
+.sp-scope-opt.current {
+  color: var(--gold-pale);
+  opacity: 0.55;
+  cursor: default;
+}
+.sp-scope-opt.current::before { content: '✓ '; opacity: 0.8; }
+.sp-scope-opt.disabled {
+  color: var(--steel-pale);
+  opacity: 0.35;
+  cursor: not-allowed;
+  font-style: italic;
+}
+.sp-scope-opt.new-coll { font-style: italic; opacity: 0.8; }
+.sp-scope-opt.new-coll:hover { opacity: 1; font-style: normal; }
+.sp-scope-tier-flat .sp-scope-opt { padding-left: 18px; }    /* "Session" has no children */
+
 .sp-saved {
   font-family: 'JetBrains Mono', monospace;
   font-size: 1.05rem;
@@ -3001,6 +3107,14 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <div style="display:flex; flex-direction:column; flex:1; gap:2px; min-width:0;">
       <span class="sp-typebadge" id="spTypeBadge">Type</span>
       <input class="sp-title-input" id="spTitle" type="text" placeholder="Title…">
+      <div class="sp-scope-row">
+        <button class="sp-scope-pill" id="spScopePill" onclick="openScopeMenu(event)" title="Change scope and collection">
+          <span class="sp-scope-label" id="spScopeLabel">Session</span>
+          <span class="sp-scope-coll"  id="spScopeColl"></span>
+          <span class="sp-scope-caret">▾</span>
+        </button>
+        <div class="sp-scope-menu" id="spScopeMenu" style="display:none;"></div>
+      </div>
     </div>
   </div>
   <div class="sp-body" id="spBody"><!-- form rendered per-type --></div>
@@ -5486,8 +5600,11 @@ function openArcFrameNodeInSidePanel(nodeId) {
   spOpenFrameNode = an;          // shared editing buffer with campaign frame
   spOpenFrameNodeTier = 'arc';   // route commits to arcBlocks
   openNodeId = '__frame__' + an.id;
+  spIcon.textContent      = def.icon;
+  spTypeBadge.textContent = def.label;
   spTitle.value = an.title || def.defaultTitle || 'Untitled';
   renderSidePanelBody({ ...an, type: an.type, fields: an.fields || {} }, def);
+  refreshScopePill();
   sidePanel.classList.add('open');
   document.querySelectorAll('.arc-card.selected, .frame-card.selected').forEach(el => el.classList.remove('selected'));
   const card = document.querySelector('.arc-card[data-arc-node-id="' + nodeId + '"]');
@@ -5570,8 +5687,11 @@ function openFrameNodeInSidePanel(nodeId) {
   spOpenFrameNode = cn;
   spOpenFrameNodeTier = 'campaign';
   openNodeId = '__frame__' + cn.id;
+  spIcon.textContent      = def.icon;
+  spTypeBadge.textContent = def.label;
   spTitle.value = cn.title || def.defaultTitle || 'Untitled';
   renderSidePanelBody({ ...cn, type: cn.type, fields: cn.fields || {} }, def);
+  refreshScopePill();
   sidePanel.classList.add('open');
   document.querySelectorAll('.frame-card.selected, .arc-card.selected').forEach(el => el.classList.remove('selected'));
   const card = document.querySelector('.frame-card[data-frame-node-id="' + nodeId + '"]');
@@ -6999,11 +7119,14 @@ function openSidePanel(node) {
     commitOpenNodeFromForm();
   }
   openNodeId = node.id;
+  spOpenFrameNode = null;
+  spOpenFrameNodeTier = null;
   const def = BLOCK_TYPES[node.type] || BLOCK_TYPES.scene;
   spIcon.textContent      = def.icon;
   spTypeBadge.textContent = def.label;
   spTitle.value           = node.title || '';
   renderSidePanelBody(node, def);
+  refreshScopePill();
   sidePanel.classList.add('open');
   setSavedState('saved');
   // Focus the title for fast editing on open
@@ -7041,6 +7164,303 @@ function setSavedState(state /* 'saved' | 'dirty' */) {
   spSaved.classList.remove('saved', 'dirty');
   spSaved.classList.add(state);
   spSaved.textContent = state === 'dirty' ? 'Saving…' : 'Saved';
+}
+
+// ── SIDE PANEL SCOPE PILL ─────────────────────────────────
+// Reflects the open node's current scope (Session / Campaign / Arc) and,
+// when it's a frame node, which collection it belongs to. Click opens a
+// hierarchical menu for changing scope and collection in one gesture.
+
+const spScopePill  = document.getElementById('spScopePill');
+const spScopeLabel = document.getElementById('spScopeLabel');
+const spScopeColl  = document.getElementById('spScopeColl');
+const spScopeMenu  = document.getElementById('spScopeMenu');
+
+// Identify the open node's tier from sessionState. Returns {scope, node, collectionId}.
+// scope: 'session' | 'campaign' | 'arc' | null.
+function getOpenNodeScopeInfo() {
+  if (!openNodeId) return null;
+  // Frame-edited nodes — the buffer + tier marker are authoritative
+  if (typeof openNodeId === 'string' && openNodeId.startsWith('__frame__') && spOpenFrameNode) {
+    const id = spOpenFrameNode.id;
+    if (spOpenFrameNodeTier === 'arc') {
+      const inCol = (sessionState.arcBlocks.collections || []).find(c => (c.member_node_ids || []).includes(id));
+      return { scope: 'arc', node: spOpenFrameNode, collectionId: inCol ? inCol.id : '' };
+    }
+    const inCol = (sessionState.campaignBlocks.collections || []).find(c => (c.member_node_ids || []).includes(id));
+    return { scope: 'campaign', node: spOpenFrameNode, collectionId: inCol ? inCol.id : '' };
+  }
+  // Canvas-edited nodes — read scope from the node object
+  const n = state.nodes.get(openNodeId);
+  if (!n) return null;
+  if (n.scope === 'campaign') {
+    const inCol = (sessionState.campaignBlocks.collections || []).find(c => (c.member_node_ids || []).includes(n.id));
+    return { scope: 'campaign', node: n, collectionId: inCol ? inCol.id : '' };
+  }
+  if (n.scope === 'arc') {
+    const inCol = (sessionState.arcBlocks.collections || []).find(c => (c.member_node_ids || []).includes(n.id));
+    return { scope: 'arc', node: n, collectionId: inCol ? inCol.id : '' };
+  }
+  return { scope: 'session', node: n, collectionId: '' };
+}
+
+// Pill display refresh — called whenever the side panel opens or the
+// scope changes via the menu.
+function refreshScopePill() {
+  if (!spScopePill) return;
+  const info = getOpenNodeScopeInfo();
+  if (!info) {
+    spScopePill.style.display = 'none';
+    return;
+  }
+  spScopePill.style.display = '';
+  spScopePill.dataset.scope = info.scope;
+  spScopeLabel.textContent =
+    info.scope === 'campaign' ? 'Campaign' :
+    info.scope === 'arc'      ? 'Arc'      :
+    'Session';
+  // Sub-label: the collection name (if any). Only meaningful in frame tiers.
+  let collName = '';
+  if (info.scope === 'campaign' && info.collectionId) {
+    const c = (sessionState.campaignBlocks.collections || []).find(c => c.id === info.collectionId);
+    if (c) collName = c.title || 'Untitled';
+  } else if (info.scope === 'arc' && info.collectionId) {
+    const c = (sessionState.arcBlocks.collections || []).find(c => c.id === info.collectionId);
+    if (c) collName = c.title || 'Untitled';
+  }
+  spScopeColl.textContent = collName ? '· ' + collName : '';
+}
+
+// Open the hierarchical scope menu on pill click. Anchored to the pill.
+function openScopeMenu(ev) {
+  if (ev) ev.stopPropagation();
+  if (!spScopeMenu) return;
+  // Toggle off if already open
+  if (spScopeMenu.style.display !== 'none') {
+    spScopeMenu.style.display = 'none';
+    return;
+  }
+  const info = getOpenNodeScopeInfo();
+  if (!info) return;
+  const arcAvailable = !!sessionState.currentArcId;
+  const campCols = sessionState.campaignBlocks.collections || [];
+  const arcCols  = sessionState.arcBlocks.collections      || [];
+
+  // Build the menu HTML
+  let html = '';
+  // Session tier — flat, no collection sub-options
+  html += `<div class="sp-scope-tier sp-scope-tier-flat">
+    <span class="sp-scope-tier-label">Session only</span>
+    <button class="sp-scope-opt ${info.scope === 'session' ? 'current' : ''}"
+            data-target-scope="session" data-target-coll="">Session-only</button>
+  </div>`;
+  // Campaign tier
+  html += `<div class="sp-scope-tier">
+    <span class="sp-scope-tier-label">Campaign</span>`;
+  html += `<button class="sp-scope-opt ${info.scope === 'campaign' && !info.collectionId ? 'current' : ''}"
+            data-target-scope="campaign" data-target-coll="">(no collection)</button>`;
+  campCols.forEach(c => {
+    const cur = info.scope === 'campaign' && info.collectionId === c.id;
+    html += `<button class="sp-scope-opt ${cur ? 'current' : ''}"
+              data-target-scope="campaign" data-target-coll="${c.id}">${escHtml(c.title || 'Untitled')}</button>`;
+  });
+  html += `<button class="sp-scope-opt new-coll" data-target-scope="campaign" data-target-coll="__new__">+ New collection…</button>`;
+  html += `</div>`;
+  // Arc tier — disable entirely when no current arc
+  html += `<div class="sp-scope-tier">
+    <span class="sp-scope-tier-label ${arcAvailable ? '' : 'disabled'}">Arc${arcAvailable ? '' : ' — session has no arc'}</span>`;
+  if (arcAvailable) {
+    html += `<button class="sp-scope-opt ${info.scope === 'arc' && !info.collectionId ? 'current' : ''}"
+              data-target-scope="arc" data-target-coll="">(no collection)</button>`;
+    arcCols.forEach(c => {
+      const cur = info.scope === 'arc' && info.collectionId === c.id;
+      html += `<button class="sp-scope-opt ${cur ? 'current' : ''}"
+                data-target-scope="arc" data-target-coll="${c.id}">${escHtml(c.title || 'Untitled')}</button>`;
+    });
+    html += `<button class="sp-scope-opt new-coll" data-target-scope="arc" data-target-coll="__new__">+ New collection…</button>`;
+  } else {
+    html += `<button class="sp-scope-opt disabled" disabled>Arc unavailable</button>`;
+  }
+  html += `</div>`;
+  spScopeMenu.innerHTML = html;
+  spScopeMenu.style.display = '';
+
+  // Wire option clicks
+  spScopeMenu.querySelectorAll('.sp-scope-opt').forEach(btn => {
+    if (btn.disabled || btn.classList.contains('current')) return;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const targetScope = btn.dataset.targetScope;
+      let targetColl = btn.dataset.targetColl || '';
+      // Handle "+ New collection…" inline create
+      if (targetColl === '__new__') {
+        const name = prompt(`New ${targetScope === 'arc' ? 'arc' : 'campaign'} collection name:`);
+        if (!name || !name.trim()) {
+          spScopeMenu.style.display = 'none';
+          return;
+        }
+        const newId = (targetScope === 'arc' ? 'arccol_' : 'col_') + Math.random().toString(36).slice(2, 10);
+        const collsArr = targetScope === 'arc'
+          ? (sessionState.arcBlocks.collections      = sessionState.arcBlocks.collections      || [])
+          : (sessionState.campaignBlocks.collections = sessionState.campaignBlocks.collections || []);
+        collsArr.push({ id: newId, title: name.trim(), member_node_ids: [], collapsed: false });
+        targetColl = newId;
+        if (targetScope === 'arc') markArcDirty(); else markCampaignDirty();
+      }
+      promoteOrDemoteOpenNode(targetScope, targetColl || null);
+      spScopeMenu.style.display = 'none';
+    });
+  });
+
+  // Click-outside to close. Use a one-shot listener installed on next tick
+  // so the originating pill click doesn't immediately close it.
+  setTimeout(() => {
+    const closeOnOutside = (e) => {
+      if (!spScopeMenu.contains(e.target) && !spScopePill.contains(e.target)) {
+        spScopeMenu.style.display = 'none';
+        document.removeEventListener('click', closeOnOutside);
+      }
+    };
+    document.addEventListener('click', closeOnOutside);
+  }, 0);
+}
+
+// Promote or demote the currently-open node to a target scope + collection.
+// Reuses the same transition logic as applyWrapSessionPromotions but for
+// a single node. Returns true on a real change.
+function promoteOrDemoteOpenNode(newScope, newCollectionId) {
+  const info = getOpenNodeScopeInfo();
+  if (!info) return false;
+  const cid = sessionState.currentSessionId;
+  const oldScope = info.scope;
+  const oldCollectionId = info.collectionId || '';
+  // No-op fast path: same scope and same collection
+  if (oldScope === newScope && (oldCollectionId === (newCollectionId || ''))) return false;
+
+  // Find the canvas node (if any) by underlying id, since openNodeId is
+  // prefixed `__frame__<id>` for frame edits but state.nodes uses the
+  // bare id. The bare id is the underlying node id either way.
+  const bareId = info.node.id;
+  const canvasNode = state.nodes.get(bareId);
+
+  // Helper: snapshot node data into a clean record (used when moving between tiers)
+  const snap = () => ({
+    id: info.node.id, type: info.node.type,
+    x: info.node.x, y: info.node.y,
+    title: info.node.title, summary: info.node.summary || '',
+    fields: info.node.fields || {},
+  });
+
+  // STEP 1: Remove from old tier (if any)
+  if (oldScope === 'campaign') {
+    sessionState.campaignBlocks.nodes = (sessionState.campaignBlocks.nodes || [])
+      .filter(n => n.id !== bareId);
+    removeNodeFromAllCollections(bareId);
+    if (canvasNode && canvasNode.scope === 'campaign') {
+      delete canvasNode.home_session_id;
+      delete canvasNode.promoted_at;
+      canvasNode.scope = 'session';
+      if (canvasNode.el) canvasNode.el.dataset.scope = 'session';
+    }
+  } else if (oldScope === 'arc') {
+    sessionState.arcBlocks.nodes = (sessionState.arcBlocks.nodes || [])
+      .filter(n => n.id !== bareId);
+    removeArcNodeFromAllCollections(bareId);
+    if (canvasNode && canvasNode.scope === 'arc') {
+      delete canvasNode.home_session_id;
+      delete canvasNode.promoted_at;
+      canvasNode.scope = 'session';
+      if (canvasNode.el) canvasNode.el.dataset.scope = 'session';
+    }
+  }
+
+  // STEP 2: Add to new tier
+  const nowIso = new Date().toISOString();
+  const homeForNewTier = oldScope === 'session'
+    ? cid
+    : (info.node.home_session_id || cid);
+
+  if (newScope === 'campaign') {
+    const record = {
+      ...snap(), scope: 'campaign',
+      home_session_id: homeForNewTier,
+      promoted_at: nowIso,
+    };
+    sessionState.campaignBlocks.nodes.push(record);
+    if (newCollectionId) setNodeCollection(bareId, newCollectionId);
+    if (canvasNode) {
+      canvasNode.scope = 'campaign';
+      canvasNode.home_session_id = homeForNewTier;
+      canvasNode.promoted_at = nowIso;
+      if (canvasNode.el) canvasNode.el.dataset.scope = 'campaign';
+    }
+    // If editing as a frame buffer, switch the tier marker so commits route correctly
+    if (typeof openNodeId === 'string' && openNodeId.startsWith('__frame__')) {
+      spOpenFrameNode = record;
+      spOpenFrameNodeTier = 'campaign';
+    }
+  } else if (newScope === 'arc') {
+    if (!sessionState.currentArcId) {
+      alert('This session is not assigned to an arc — cannot promote to arc scope.');
+      return false;
+    }
+    const record = {
+      ...snap(), scope: 'arc',
+      home_session_id: homeForNewTier,
+      promoted_at: nowIso,
+    };
+    sessionState.arcBlocks.nodes.push(record);
+    if (newCollectionId) setArcNodeCollection(bareId, newCollectionId);
+    if (canvasNode) {
+      canvasNode.scope = 'arc';
+      canvasNode.home_session_id = homeForNewTier;
+      canvasNode.promoted_at = nowIso;
+      if (canvasNode.el) canvasNode.el.dataset.scope = 'arc';
+    }
+    if (typeof openNodeId === 'string' && openNodeId.startsWith('__frame__')) {
+      spOpenFrameNode = record;
+      spOpenFrameNodeTier = 'arc';
+    }
+  } else if (newScope === 'session') {
+    // Demoting all the way back to session-only.
+    if (canvasNode) {
+      // Already on canvas — scope is already 'session' from STEP 1's peel-off.
+    } else {
+      // Was a non-home frame entry. Push back into home session's blocks.
+      const homeId = info.node.home_session_id;
+      if (homeId && homeId !== cid) {
+        const homeRow = sessionState.sessions.find(s => String(s.id) === String(homeId));
+        if (homeRow) {
+          const blocks = (homeRow.blocks && typeof homeRow.blocks === 'object')
+            ? homeRow.blocks : { nodes: [], edges: [] };
+          blocks.nodes = Array.isArray(blocks.nodes) ? blocks.nodes : [];
+          blocks.nodes.push(snap());
+          homeRow.blocks = blocks;
+          sbFetch('sessions?id=eq.' + homeId, {
+            method: 'PATCH', prefer: 'return=minimal',
+            body: JSON.stringify({ blocks }),
+          }).catch(e => console.warn('Promote→session: home PATCH failed:', e.message));
+        }
+      }
+      // Side panel was editing a frame buffer that no longer exists in any
+      // frame; close the panel since the node is now a session-only node
+      // in the home session, which may not be the current session.
+      if (typeof openNodeId === 'string' && openNodeId.startsWith('__frame__')) {
+        closeSidePanel();
+      }
+    }
+  }
+
+  // Mark all relevant tiers dirty (over-broad but safe — autosave debounces)
+  markDirty();
+  markCampaignDirty();
+  if (sessionState.currentArcId) markArcDirty();
+  renderCampaignFrame();
+  renderArcFrame();
+  redrawEdges();
+  refreshScopePill();
+  if (canvasNode) refreshNodeFace(canvasNode);
+  return true;
 }
 
 // Render the per-type form into the panel body.
