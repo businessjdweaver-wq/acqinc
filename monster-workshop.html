@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.3.12</span>
+  <span class="topbar-version">v0.4.0</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3269,6 +3269,41 @@ function applyCRScaling() {
   );
   const newDC = 8 + newProf + highestMentalMod;
 
+  // ── Scan every action-card's desc textarea for embedded dice formulas
+  // and save DCs. Covers:
+  //   • Main action descs (e.g. "extra 2d6 fire" rider damage in the prose)
+  //   • Special abilities (breath weapons: "16d8 poison damage" etc.)
+  //   • Legendary actions (each has its own desc with damage + DCs)
+  //   • Lair actions (same)
+  // All four containers use .action-card, so one querySelectorAll covers
+  // them. Counters track how many transformations happened so the toast
+  // can summarize, e.g. "scaled 7 formulas, 3 DCs".
+  let formulasScaled = 0;
+  let dcsUpdated = 0;
+  document.querySelectorAll('.action-card').forEach(card => {
+    const ta = card.querySelector('textarea');
+    if (!ta || ta.readOnly || !ta.value) return;
+    const original = ta.value;
+    let updated = original;
+    // 1) Dice formulas — NdM, NdM+K, NdM-K (with optional whitespace
+    //    around the modifier). Scale every match by dprRatio. The pattern
+    //    is greedy enough to match "26d8" or "1d6+4" or "4d8 + 4" but
+    //    stops cleanly at non-numerics so "8d8 fire damage" works.
+    updated = updated.replace(/(\d+)d(\d+)(\s*[+\-]\s*\d+)?/g, (whole, n, m, mod) => {
+      const normalized = `${n}d${m}${mod ? mod.replace(/\s+/g, '') : ''}`;
+      const scaled = scaleDamageFormula(normalized, dprRatio);
+      if (scaled !== normalized) formulasScaled++;
+      return scaled;
+    });
+    // 2) Save DCs — "DC NN" pattern. Replace NN with newDC.
+    updated = updated.replace(/\bDC\s+(\d+)\b/g, (whole, n) => {
+      if (parseInt(n) === newDC) return whole;     // already correct, no count
+      dcsUpdated++;
+      return 'DC ' + newDC;
+    });
+    if (updated !== original) ta.value = updated;
+  });
+
   updateCRGuidance();
 
   const summary = [
@@ -3281,7 +3316,8 @@ function applyCRScaling() {
     `WIS: ${newWisScore}`,
     `CHA: ${newChaScore}`,
     `Save DC: ${newDC}`,
-    `Dmg ×${dprRatio.toFixed(2)}`
+    `Dmg ×${dprRatio.toFixed(2)}`,
+    `Prose: ${formulasScaled} dmg, ${dcsUpdated} DC`
   ].join(' · ');
 
   showToast('⚖ Scaled to CR ' + newCR + ' — ' + summary);
