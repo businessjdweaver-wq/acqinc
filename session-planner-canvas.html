@@ -2989,7 +2989,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 6d / frame mirror</span>
+  <span class="topbar-version">stage 6d.1 / marquee fix</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -3108,7 +3108,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 6d · frame mirror (no home-session suppression)</div>
+  <div id="stage-label">Stage 6d.1 · marquee fix</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -3127,7 +3127,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <b>Move node</b>: drag the header<br>
     <b>Connect</b>: click an anchor, then click another<br>
     <b>Direction</b>: click the arrow pill or middle-click the line<br>
-    <b>Select multiple</b>: <kbd>Shift</kbd>+drag to marquee<br>
+    <b>Select multiple</b>: drag on empty canvas; hold <kbd>Shift</kbd> on release to add to selection<br>
     <b>Delete</b>: <kbd>Del</kbd> on selected node(s) or connector<br>
     <b>Saving</b>: autosaved 600ms after each change<br>
     <b>Roll adv/dis</b>: <kbd>Shift</kbd>=advantage, <kbd>Alt</kbd>=disadvantage
@@ -6113,16 +6113,28 @@ window.addEventListener('mousemove', (e) => {
 });
 window.addEventListener('mouseup', (e) => {
   if (state.isPanning) { state.isPanning = false; wrap.classList.remove('panning'); panStart = null; }
-  if (state.marquee)   { marqueeFinish(e.shiftKey); }
+  if (state.marquee)   {
+    marqueeFinish(e.shiftKey);
+    // The browser's click event will fire next on `wrap` because mousedown
+    // and mouseup were on the same element. That handler clears selection
+    // when Shift isn't held — which would wipe the selection we just made.
+    // Set a one-shot flag to tell the click handler to skip clearing.
+    state.suppressNextClickClear = true;
+  }
 });
 
 // Click on empty canvas → cancel any pending connection and clear all selections.
 // (Node/anchor/edge clicks stop propagation, so they won't trigger this.)
-// Skip when we just finished a marquee (mouseup already handled selection).
 wrap.addEventListener('click', (e) => {
   if (e.target.closest('.node') || e.target.closest('.edge-group') || e.target.closest('.dir-pill')) return;
   if (state.pendingAnchor) clearPending();
   if (state.selectedEdge)  clearEdgeSelection();
+  // Don't clear selection when we just finished a marquee — the marquee
+  // populated it and the immediately-following click would otherwise wipe it.
+  if (state.suppressNextClickClear) {
+    state.suppressNextClickClear = false;
+    return;
+  }
   if (!e.shiftKey) clearNodeSelection();
 });
 
