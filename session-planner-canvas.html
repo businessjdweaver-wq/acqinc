@@ -192,6 +192,19 @@ html, body {
 }
 .arc-card:hover { background: rgba(184,134,11,0.18); border-color: var(--gold); }
 .arc-card.selected { box-shadow: 0 0 0 1px var(--gold), inset 0 0 12px rgba(184,134,11,0.2); }
+/* Multi-select for focus mode — distinct from the "currently editing"
+   gold-ring style. Uses a small filled corner mark + a brighter top edge. */
+.arc-card.multi-selected {
+  box-shadow: 0 0 0 1px rgba(120,140,220,0.7), inset 0 0 8px rgba(120,140,220,0.2);
+}
+.arc-card.multi-selected::after {
+  content: '◉';
+  position: absolute;
+  top: 3px; right: 5px;
+  font-size: 0.7rem;
+  color: rgba(160,180,240,0.95);
+  pointer-events: none;
+}
 .arc-card.diminished { opacity: 0.32; filter: grayscale(0.7); }
 .arc-card.diminished:hover { opacity: 0.85; filter: grayscale(0.3); }
 .arc-card-icon { font-size: 1.1rem; line-height: 1; }
@@ -405,6 +418,17 @@ body.connecting .arc-collection-header .anchor { opacity: 1; }
 }
 .frame-card:hover { background: rgba(184,134,11,0.18); border-color: var(--gold); }
 .frame-card.selected { box-shadow: 0 0 0 1px var(--gold), inset 0 0 12px rgba(184,134,11,0.2); }
+.frame-card.multi-selected {
+  box-shadow: 0 0 0 1px rgba(184,134,11,0.7), inset 0 0 8px rgba(184,134,11,0.18);
+}
+.frame-card.multi-selected::after {
+  content: '◉';
+  position: absolute;
+  top: 3px; right: 5px;
+  font-size: 0.7rem;
+  color: rgba(220,180,80,0.95);
+  pointer-events: none;
+}
 .frame-card-icon { font-size: 1.3rem; line-height: 1; }
 .frame-card-title {
   font-family: 'Crimson Pro', Georgia, serif;
@@ -3047,7 +3071,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 8.1 / peek listener fix</span>
+  <span class="topbar-version">stage 10 / focus inc. frame nodes</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -3166,7 +3190,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 8.1 · peek listener stack fix</div>
+  <div id="stage-label">Stage 10 · frame cards in focus selection</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -3182,7 +3206,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <b>Pan</b>: right-click drag &nbsp;·&nbsp; <kbd>Space</kbd>+drag<br>
     <b>Zoom</b>: scroll wheel<br>
     <b>Frame view</b>: <kbd>F</kbd> (selection or all)<br>
-    <b>Focus mode</b>: <kbd>Z</kbd> on a selection (or 🔍 button on a node)<br>
+    <b>Focus mode</b>: <kbd>Z</kbd> on a selection (or 🔍 button on a node) — Shift+click frame cards to add them<br>
     <b>New node</b>: topbar palette &nbsp;·&nbsp; middle-click for type chooser<br>
     <b>Edit node</b>: click the node body<br>
     <b>Move node</b>: drag the header<br>
@@ -5309,12 +5333,18 @@ function renderCampaignFrame() {
 
   list.innerHTML = html;
 
-  // Wire frame card body clicks (open in side panel)
+  // Wire frame card body clicks (open in side panel, or shift-toggle selection)
   list.querySelectorAll('.frame-card').forEach(card => {
     card.addEventListener('click', (e) => {
       if (e.target.closest('.anchor')) return;
       if (e.target.closest('.frame-card-diminish')) return;
       const id = card.dataset.frameNodeId;
+      // Shift-click toggles selection (for focus mode multi-select).
+      // Plain click opens the side-panel editor.
+      if (e.shiftKey) {
+        toggleFrameNodeSelection(id, 'campaign');
+        return;
+      }
       openFrameNodeInSidePanel(id);
     });
   });
@@ -5390,6 +5420,8 @@ function renderCampaignFrame() {
       handleFrameAnchorClick(a);
     });
   });
+  // Re-apply multi-selected classes — innerHTML rebuilds wipe them.
+  reapplyFrameSelectionClasses();
 }
 
 // Render a single frame card. Used for both uncollected and collection-member
@@ -5547,12 +5579,16 @@ function renderArcFrame() {
 
   list.innerHTML = html;
 
-  // Wire card body clicks → open in side panel
+  // Wire card body clicks → open in side panel (plain) or toggle selection (shift)
   list.querySelectorAll('.arc-card').forEach(card => {
     card.addEventListener('click', (e) => {
       if (e.target.closest('.anchor')) return;
       if (e.target.closest('.arc-card-diminish')) return;
       const id = card.dataset.arcNodeId;
+      if (e.shiftKey) {
+        toggleFrameNodeSelection(id, 'arc');
+        return;
+      }
       openArcFrameNodeInSidePanel(id);
     });
   });
@@ -5628,6 +5664,7 @@ function renderArcFrame() {
       handleArcFrameAnchorClick(a);
     });
   });
+  reapplyFrameSelectionClasses();
 }
 
 function renderArcCardHtml(n) {
@@ -6101,7 +6138,13 @@ const state = {
   // While selecting the second anchor of a connection, this holds the first.
   pendingAnchor: null,    // { nodeId, anchor, anchorEl }
   selectedEdge: null,
-  selectedNodes: new Set(),    // Set of node ids
+  selectedNodes: new Set(),    // Set of canvas node ids
+  // Frame-side selection — used by focus mode to include frame cards in
+  // the tile set. Keeping these separate from selectedNodes because
+  // frame nodes don't live in state.nodes Map and can't be deleted via
+  // Backspace, framed via F, etc.
+  selectedFrameNodes:    new Set(),  // campaign-frame node ids
+  selectedArcFrameNodes: new Set(),  // arc-frame node ids
   // input modes
   isPanning: false,
   isSpaceDown: false,
@@ -7023,7 +7066,50 @@ function clearNodeSelection() {
     if (n) n.el.classList.remove('selected');
   });
   state.selectedNodes.clear();
+  // Also clear frame-side selections — Esc / "click empty canvas" should
+  // clear all selections, not just the canvas ones.
+  state.selectedFrameNodes.forEach(id => {
+    const card = document.querySelector(`.frame-card[data-frame-node-id="${id}"]`);
+    if (card) card.classList.remove('multi-selected');
+  });
+  state.selectedFrameNodes.clear();
+  state.selectedArcFrameNodes.forEach(id => {
+    const card = document.querySelector(`.arc-card[data-arc-node-id="${id}"]`);
+    if (card) card.classList.remove('multi-selected');
+  });
+  state.selectedArcFrameNodes.clear();
   updateFocusBtnState();
+}
+
+// Toggle a frame card's selection state for focus mode. tier is
+// 'campaign' or 'arc'.
+function toggleFrameNodeSelection(nodeId, tier) {
+  const set = tier === 'arc' ? state.selectedArcFrameNodes : state.selectedFrameNodes;
+  const sel = tier === 'arc'
+    ? `.arc-card[data-arc-node-id="${nodeId}"]`
+    : `.frame-card[data-frame-node-id="${nodeId}"]`;
+  const card = document.querySelector(sel);
+  if (set.has(nodeId)) {
+    set.delete(nodeId);
+    if (card) card.classList.remove('multi-selected');
+  } else {
+    set.add(nodeId);
+    if (card) card.classList.add('multi-selected');
+  }
+  updateFocusBtnState();
+}
+
+// Re-apply multi-selected classes to frame cards after a frame re-render.
+// Needed because innerHTML rebuilds wipe class state.
+function reapplyFrameSelectionClasses() {
+  state.selectedFrameNodes.forEach(id => {
+    const card = document.querySelector(`.frame-card[data-frame-node-id="${id}"]`);
+    if (card) card.classList.add('multi-selected');
+  });
+  state.selectedArcFrameNodes.forEach(id => {
+    const card = document.querySelector(`.arc-card[data-arc-node-id="${id}"]`);
+    if (card) card.classList.add('multi-selected');
+  });
 }
 
 // ── MARQUEE (Shift+drag on empty canvas) ─────────────────
@@ -9751,7 +9837,10 @@ let inFocusMode = false;
 function updateFocusBtnState() {
   const btn = document.getElementById('btnFocus');
   if (!btn) return;
-  btn.disabled = (state.selectedNodes.size === 0);
+  const total = state.selectedNodes.size
+              + state.selectedFrameNodes.size
+              + state.selectedArcFrameNodes.size;
+  btn.disabled = (total === 0);
 }
 
 // Wire the 🔍 button on a node's header.
@@ -9771,11 +9860,24 @@ function wireMagnifyBtn(el, node) {
 
 // Topbar Focus button entry point — uses the current canvas selection.
 function enterFocusMode() {
-  const ids = Array.from(state.selectedNodes);
-  const nodes = ids.map(id => state.nodes.get(id)).filter(Boolean);
+  // Gather from canvas, campaign frame, and arc frame selection sets.
+  // Frame nodes are plain objects (no .el, no canvas position) but
+  // enterFocusModeForNodes only reads node.fields/title/type, so they
+  // render in tiles identically to canvas nodes.
+  const canvasNodes = Array.from(state.selectedNodes)
+    .map(id => state.nodes.get(id))
+    .filter(Boolean);
+  const campaignNodes = Array.from(state.selectedFrameNodes)
+    .map(id => (sessionState.campaignBlocks.nodes || []).find(n => n.id === id))
+    .filter(Boolean);
+  const arcNodes = Array.from(state.selectedArcFrameNodes)
+    .map(id => (sessionState.arcBlocks.nodes || []).find(n => n.id === id))
+    .filter(Boolean);
+  // Order: canvas first, then campaign, then arc — gives a predictable tile
+  // sequence regardless of click order.
+  const nodes = [...canvasNodes, ...campaignNodes, ...arcNodes];
   if (!nodes.length) {
-    // Nothing selected — show a brief hint
-    if (typeof showToast === 'function') showToast('Select one or more nodes first, then press Focus (Z).');
+    if (typeof showToast === 'function') showToast('Select one or more nodes first (Shift+click frame cards too), then press Focus (Z).');
     return;
   }
   enterFocusModeForNodes(nodes);
