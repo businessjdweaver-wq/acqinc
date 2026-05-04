@@ -3915,8 +3915,33 @@ function tryDeepLinkSelect() {
     }
   }
 
-  // No match anywhere — surface the failure visibly.
+  // No match anywhere — surface the failure visibly. Print clearer
+  // diagnostics so we can distinguish "the row isn't loaded" from "the row
+  // really doesn't exist" from "name conflict / wrong DB."
   console.warn('[Workshop deep-link] Monster not found for id:', editId);
+  console.warn('[Workshop deep-link] customMonsters total rows loaded:', customMonsters.length);
+  // Try a case-insensitive substring match in case the ID is being
+  // truncated or compared as different types somewhere
+  const partial = customMonsters.filter(m => String(m.id).toLowerCase().includes(String(editId).toLowerCase().slice(0, 8)));
+  if (partial.length) {
+    console.warn('[Workshop deep-link] Partial-id match (first 8 chars):', partial.map(m => ({id: m.id, name: m.name})));
+  }
+  // Direct probe to Supabase: is the row visible to this auth context?
+  // Helps diagnose RLS issues vs missing-row vs not-loaded.
+  fetch(`${SB_URL}/rest/v1/rq_monsters?id=eq.${encodeURIComponent(editId)}&select=id,name`, { headers: sbHeaders() })
+    .then(r => r.json().then(rows => {
+      if (rows && rows.length) {
+        console.warn('[Workshop deep-link] Direct Supabase probe DID find the row:', rows[0],
+          '— but loadCustomMonsters returned', customMonsters.length,
+          'rows (default limit=500). If you have more than 500 custom monsters, raise the limit.');
+        if (typeof showToast === 'function') {
+          showToast('Found "' + rows[0].name + '" in DB but not in workshop list — try refreshing the page.', true);
+        }
+      } else {
+        console.warn('[Workshop deep-link] Direct Supabase probe also failed — the row is missing from rq_monsters or RLS blocks it.');
+      }
+    }))
+    .catch(e => console.warn('[Workshop deep-link] Direct probe network error:', e));
   console.warn('[Workshop deep-link] First few customMonsters ids for comparison:',
     customMonsters.slice(0, 5).map(m => ({id: m.id, name: m.name})));
   if (typeof showToast === 'function') {
