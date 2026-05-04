@@ -81,7 +81,8 @@ html, body {
 /* ── CANVAS ──────────────────────────────────────────────── */
 #canvas-wrap {
   position: absolute;
-  top: 44px; left: 88px; right: 0; bottom: 0;     /* leave 88px on the left for #campaign-frame */
+  /* top: 44px (topbar) + 80px (arc strip) = 124px ; left: 88px (camp frame) */
+  top: 124px; left: 88px; right: 0; bottom: 0;
   overflow: hidden;
   background:
     radial-gradient(ellipse at center, #1f1a12 0%, #14110b 100%);
@@ -90,17 +91,270 @@ html, body {
 #canvas-wrap.panning { cursor: grabbing; }
 #canvas-wrap.spacedown { cursor: grab; }
 
-/* ── CAMPAIGN FRAME (left strip) ─────────────────────────────
-   Screen-fixed column running the height of the canvas viewport.
-   Holds nodes that have been promoted to campaign scope from any
-   session in this campaign — so they appear here on EVERY session
-   except their home session (where they live on the canvas interior).
-   See stage 6a notes for the home_session_id rule.
+/* ── ARC FRAME (top strip, screen-fixed) ─────────────────────
+   Horizontal strip pinned across the top of the canvas-area-only.
+   Doesn't extend over the campaign frame on the left.
 
-   Layout: ~88px wide, vertical stack of mini-cards. Scrolls internally
-   if more nodes than fit. */
+   Layout: ~80px tall, members flow horizontally, scrollable if many. */
+#arc-frame {
+  position: absolute;
+  top: 44px; left: 88px; right: 0;
+  height: 80px;
+  background: linear-gradient(180deg, #1a1610 0%, #0f0c08 100%);
+  border-bottom: 1px solid var(--gold-faint);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.6);
+  display: flex;
+  flex-direction: row;
+  z-index: 5;
+}
+#arc-frame-title {
+  font-family: 'Cinzel', serif;
+  letter-spacing: 0.18em;
+  font-size: 0.55rem;
+  color: var(--gold-pale);
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-right: 1px solid var(--gold-faint);
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+#arc-frame-list {
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 6px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+#arc-frame-list::-webkit-scrollbar { height: 4px; }
+#arc-frame-list::-webkit-scrollbar-thumb { background: var(--gold-faint); border-radius: 2px; }
+
+/* Frame footer for arc — same buttons as campaign, but a slim vertical
+   stack on the right side of the strip. */
+#arc-frame-footer {
+  flex-shrink: 0;
+  padding: 4px 6px;
+  border-left: 1px solid var(--gold-faint);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+}
+#arc-frame-footer button {
+  background: rgba(0,0,0,0.4);
+  border: 1px dashed rgba(184,134,11,0.4);
+  color: var(--steel-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.05em;
+  padding: 4px 6px;
+  border-radius: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+#arc-frame-footer button:hover {
+  color: var(--gold-pale);
+  border-color: var(--gold);
+  background: rgba(184,134,11,0.12);
+}
+#arc-frame-empty {
+  color: var(--steel-pale);
+  font-size: 0.6rem;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.05em;
+  opacity: 0.5;
+  padding: 0 14px;
+}
+
+/* Arc card variant — same fundamental shape as campaign frame card,
+   but rendered horizontally (so member cards sit beside each other in
+   the strip rather than stacking). */
+.arc-card {
+  position: relative;
+  padding: 4px 6px;
+  background: rgba(184,134,11,0.08);
+  border: 1px solid rgba(184,134,11,0.4);
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+  user-select: none;
+  min-width: 70px;
+  flex-shrink: 0;
+}
+.arc-card:hover { background: rgba(184,134,11,0.18); border-color: var(--gold); }
+.arc-card.selected { box-shadow: 0 0 0 1px var(--gold), inset 0 0 12px rgba(184,134,11,0.2); }
+.arc-card.diminished { opacity: 0.32; filter: grayscale(0.7); }
+.arc-card.diminished:hover { opacity: 0.85; filter: grayscale(0.3); }
+.arc-card-icon { font-size: 1.1rem; line-height: 1; }
+.arc-card-title {
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.65rem;
+  color: var(--bone);
+  line-height: 1.1;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  max-width: 100px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.arc-card-type {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.5rem;
+  letter-spacing: 0.05em;
+  color: var(--steel-pale);
+  text-transform: uppercase;
+}
+/* Arc card anchor lives at the BOTTOM (cross-scope edges drop down to canvas) */
+.arc-card .anchor {
+  position: absolute;
+  width: 6px; height: 6px;
+  background: var(--gold);
+  border-radius: 50%;
+  bottom: -3px; left: 50%;
+  transform: translateX(-50%);
+  cursor: crosshair;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 2;
+}
+.arc-card:hover .anchor,
+.arc-card.selected .anchor,
+body.connecting .arc-card .anchor { opacity: 1; }
+
+.arc-card-diminish {
+  position: absolute;
+  top: 1px; right: 1px;
+  background: transparent; border: 0;
+  color: var(--steel-pale);
+  font-size: 0.55rem;
+  cursor: pointer;
+  padding: 0 3px;
+  border-radius: 1px;
+  opacity: 0.4;
+  transition: opacity 0.15s;
+}
+.arc-card:hover .arc-card-diminish,
+.arc-card.diminished .arc-card-diminish { opacity: 1; }
+.arc-card-diminish:hover { color: var(--gold-pale); }
+
+/* Horizontal collection wrapper — small label tab on the left, members
+   to the right. Collapsing hides members but keeps the label. */
+.arc-collection {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0 4px;
+  border-left: 1px dashed rgba(184,134,11,0.18);
+  border-right: 1px dashed rgba(184,134,11,0.18);
+  flex-shrink: 0;
+}
+.arc-collection.diminished .arc-card { opacity: 0.32; filter: grayscale(0.7); }
+.arc-collection.diminished .arc-collection-header { opacity: 0.5; }
+.arc-collection-header {
+  position: relative;
+  background: linear-gradient(180deg, rgba(184,134,11,0.18), rgba(139,90,43,0.18));
+  border: 1px solid rgba(184,134,11,0.5);
+  border-radius: 3px;
+  padding: 4px 12px 4px 6px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 2px;
+  user-select: none;
+  min-width: 70px;
+  max-width: 110px;
+  flex-shrink: 0;
+}
+.arc-collection-header:hover { background: rgba(184,134,11,0.28); }
+.arc-collection-tri {
+  position: absolute;
+  top: 50%; right: 4px;
+  transform: translateY(-50%);
+  font-size: 0.55rem;
+  color: var(--gold-pale);
+  transition: transform 0.15s;
+}
+.arc-collection.collapsed .arc-collection-tri { transform: translateY(-50%) rotate(-90deg); }
+.arc-collection-title {
+  font-family: 'Cinzel', serif;
+  letter-spacing: 0.06em;
+  font-size: 0.6rem;
+  color: var(--gold-pale);
+  text-transform: uppercase;
+  text-align: center;
+  word-break: break-word;
+  line-height: 1.15;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.arc-collection-title[contenteditable] {
+  outline: 1px solid var(--gold);
+  background: rgba(0,0,0,0.4);
+  cursor: text;
+  text-transform: none;
+}
+.arc-collection-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.5rem;
+  color: var(--steel-pale);
+  text-align: center;
+  letter-spacing: 0.05em;
+}
+.arc-collection-members {
+  display: flex; flex-direction: row;
+  gap: 4px;
+  align-items: center;
+}
+.arc-collection.collapsed .arc-collection-members { display: none; }
+
+/* Anchor on arc collection header — same look but at bottom for arc */
+.arc-collection-header .anchor {
+  position: absolute;
+  width: 6px; height: 6px;
+  background: var(--gold);
+  border-radius: 50%;
+  bottom: -3px; left: 50%;
+  transform: translateX(-50%);
+  cursor: crosshair;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 2;
+}
+.arc-collection-header:hover .anchor,
+.arc-collection-header.selected .anchor,
+body.connecting .arc-collection-header .anchor { opacity: 1; }
+.arc-collection-diminish {
+  position: absolute;
+  top: 1px; left: 4px;
+  background: transparent; border: 0;
+  color: var(--steel-pale);
+  font-size: 0.55rem;
+  cursor: pointer;
+  padding: 0 3px;
+  opacity: 0.4;
+}
+.arc-collection-header:hover .arc-collection-diminish { opacity: 1; }
+.arc-collection-diminish:hover { color: var(--gold-pale); }
+
+/* ── CAMPAIGN FRAME (left strip) ─────────────────────────────
+   Screen-fixed column running the height of the canvas viewport. */
 #campaign-frame {
   position: absolute;
+  /* Starts at the top of the screen so it spans the full vertical height,
+     UNDER the topbar but NOT clipped by the arc strip — they're side-by-side
+     in different x ranges. */
   top: 44px; left: 0; bottom: 0;
   width: 88px;
   background: linear-gradient(180deg, #1a1610 0%, #0f0c08 100%);
@@ -373,7 +627,7 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
   background: linear-gradient(180deg, #1a1610 0%, #14110b 100%);
   border: 1px solid var(--gold);
   border-radius: 4px;
-  width: min(720px, 92vw);
+  width: min(900px, 95vw);
   max-height: 86vh;
   display: flex;
   flex-direction: column;
@@ -416,8 +670,10 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
 }
 .wrap-row {
   display: grid;
-  grid-template-columns: auto 1fr auto auto auto auto;
-  gap: 10px;
+  /* icon | title | session radio | campaign radio | campaign-coll select |
+     arc radio | arc-coll select */
+  grid-template-columns: auto 1fr auto auto auto auto auto;
+  gap: 8px;
   align-items: center;
   padding: 7px 0;
   border-bottom: 1px solid rgba(184,134,11,0.12);
@@ -2321,7 +2577,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 6a++ / collection management</span>
+  <span class="topbar-version">stage 6b / arc frame</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -2351,6 +2607,18 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <div id="campaign-frame-footer">
     <button id="frame-add-collection-btn" onclick="addEmptyCollection()" title="Create a new empty collection">+ Coll.</button>
     <button id="frame-manage-btn" onclick="openCollectionManagerModal()" title="Manage collections — rename, reorder, delete, move members">⚙ Manage</button>
+  </div>
+</div>
+
+<!-- ── ARC FRAME (top strip, screen-fixed) ── -->
+<div id="arc-frame">
+  <div id="arc-frame-title">Arc</div>
+  <div id="arc-frame-list">
+    <!-- Arc cards + collections injected by renderArcFrame() -->
+  </div>
+  <div id="arc-frame-footer">
+    <button onclick="addEmptyArcCollection()" title="Create a new empty arc collection">+ Coll.</button>
+    <button onclick="openArcCollectionManagerModal()" title="Manage arc collections">⚙ Manage</button>
   </div>
 </div>
 
@@ -2415,7 +2683,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 6a++ · collection management</div>
+  <div id="stage-label">Stage 6b · arc frame</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -3069,6 +3337,21 @@ const sessionState = {
   // serialized back on save.
   diminishedNodeIds:       new Set(),
   diminishedCollectionIds: new Set(),
+  // ── ARC TIER (Stage 6b) ────────────────────────────────
+  // Same shape as the campaign tier but scoped to the session's arc.
+  // sessions.arc_id ties one session to one arc; that arc's `blocks`
+  // JSONB holds these nodes/collections.
+  currentArcId: null,
+  arcBlocks: { nodes: [], collections: [], edges: [] },
+  arcSaveGen: 0,
+  arcLastSavedGen: 0,
+  arcSaveTimer: null,
+  arcSaveInFlight: false,
+  // Diminish state for arc tier — separate from campaign so a node can be
+  // diminished in one tier and prominent in the other (rare but possible
+  // if a campaign-figure is also referenced via an arc-figure shadow).
+  diminishedArcNodeIds:       new Set(),
+  diminishedArcCollectionIds: new Set(),
   campaignSaveGen: 0,
   campaignLastSavedGen: 0,
   campaignSaveTimer: null,
@@ -3079,7 +3362,7 @@ const sessionState = {
 async function loadCampaignsAndArcsAndSessions() {
   const [campsR, arcsR, sessR] = await Promise.allSettled([
     sbFetch('campaigns?select=id,name,system,blocks&order=name.asc'),
-    sbFetch('arcs?select=id,campaign_id,name,sort_order&order=campaign_id.asc,sort_order.asc'),
+    sbFetch('arcs?select=id,campaign_id,name,sort_order,blocks&order=campaign_id.asc,sort_order.asc'),
     sbFetch('sessions?select=id,campaign_id,arc_id,title,session_date,status,blocks,sort_order&order=campaign_id.asc,sort_order.asc'),
   ]);
   const errors = [];
@@ -3114,8 +3397,9 @@ function closeSessionPicker() {
 // frame, with radio buttons to choose scope: session / campaign. Apply
 // pushes the choices through, moving nodes between sessions.blocks and
 // campaigns.blocks as needed.
-let wrapModalChoices = {};        // { nodeId: 'session' | 'campaign' }
-let wrapModalCollections = {};    // { nodeId: collectionId | '' | '__new__' }
+let wrapModalChoices = {};            // { nodeId: 'session' | 'campaign' | 'arc' }
+let wrapModalCollections = {};        // { nodeId: campaignCollectionId | '' | '__new__' }
+let wrapModalArcCollections = {};     // { nodeId: arcCollectionId | '' | '__new__' }
 function openWrapSessionModal() {
   if (!sessionState.currentSessionId) {
     alert('Open a session first.');
@@ -3123,21 +3407,38 @@ function openWrapSessionModal() {
   }
   wrapModalChoices = {};
   wrapModalCollections = {};
+  wrapModalArcCollections = {};
+  // Canvas nodes — initial scope from each node's existing scope
   state.nodes.forEach(n => {
-    wrapModalChoices[n.id] = n.scope === 'campaign' ? 'campaign' : 'session';
-    // Pre-fill collection: if this node is already in one, set that
-    const inCol = (sessionState.campaignBlocks.collections || []).find(c =>
-      (c.member_node_ids || []).includes(n.id)
-    );
-    wrapModalCollections[n.id] = inCol ? inCol.id : '';
+    wrapModalChoices[n.id] =
+      n.scope === 'campaign' ? 'campaign' :
+      n.scope === 'arc'      ? 'arc'      :
+      'session';
+    const inCampCol = (sessionState.campaignBlocks.collections || []).find(c =>
+      (c.member_node_ids || []).includes(n.id));
+    wrapModalCollections[n.id] = inCampCol ? inCampCol.id : '';
+    const inArcCol = (sessionState.arcBlocks.collections || []).find(c =>
+      (c.member_node_ids || []).includes(n.id));
+    wrapModalArcCollections[n.id] = inArcCol ? inArcCol.id : '';
   });
+  // Campaign frame (non-home) entries
   (sessionState.campaignBlocks.nodes || []).forEach(n => {
     if (n.home_session_id !== sessionState.currentSessionId) {
       wrapModalChoices[n.id] = 'campaign';
       const inCol = (sessionState.campaignBlocks.collections || []).find(c =>
-        (c.member_node_ids || []).includes(n.id)
-      );
+        (c.member_node_ids || []).includes(n.id));
       wrapModalCollections[n.id] = inCol ? inCol.id : '';
+      wrapModalArcCollections[n.id] = '';   // shouldn't be in arc collections at the same time
+    }
+  });
+  // Arc frame (non-home) entries
+  (sessionState.arcBlocks.nodes || []).forEach(n => {
+    if (n.home_session_id !== sessionState.currentSessionId) {
+      wrapModalChoices[n.id] = 'arc';
+      const inCol = (sessionState.arcBlocks.collections || []).find(c =>
+        (c.member_node_ids || []).includes(n.id));
+      wrapModalArcCollections[n.id] = inCol ? inCol.id : '';
+      wrapModalCollections[n.id] = '';
     }
   });
   renderWrapModalList();
@@ -3153,14 +3454,73 @@ function closeWrapSessionModal() {
 // and which member's move-to popover is currently open.
 let cmConfirmingDeleteId = null;
 let cmMovePopoverNodeId  = null;
+// Which tier is the modal currently editing? 'campaign' or 'arc'. Set
+// before opening the modal; consulted by every render/wire function.
+let cmActiveTier = 'campaign';
+
+// Tier-aware accessors — return the right blocks struct + meta based on
+// cmActiveTier. The rest of the manager code reads from these so the same
+// implementation handles both campaign and arc.
+function cmTierBlocks() {
+  return cmActiveTier === 'arc' ? sessionState.arcBlocks : sessionState.campaignBlocks;
+}
+function cmTierMarkDirty() {
+  if (cmActiveTier === 'arc') markArcDirty();
+  else                        markCampaignDirty();
+}
+function cmTierRenderFrame() {
+  if (cmActiveTier === 'arc') renderArcFrame();
+  else                        renderCampaignFrame();
+}
+function cmTierSetCollection(nodeId, collId) {
+  if (cmActiveTier === 'arc') setArcNodeCollection(nodeId, collId);
+  else                        setNodeCollection(nodeId, collId);
+}
+function cmTierRemoveFromCollections(nodeId) {
+  if (cmActiveTier === 'arc') removeArcNodeFromAllCollections(nodeId);
+  else                        removeNodeFromAllCollections(nodeId);
+}
+function cmTierEdgePrefix() {
+  return cmActiveTier === 'arc' ? 'arccol:' : 'col:';
+}
+function cmTierTitle() {
+  return cmActiveTier === 'arc' ? 'Manage Arc Collections' : 'Manage Collections';
+}
+function cmTierBlurb() {
+  return cmActiveTier === 'arc'
+    ? 'Rename, delete, or shuffle members between arc collections. Deleted collections release their members back to the uncollected pool.'
+    : 'Rename, delete, or shuffle members between collections. Deleted collections release their members back to the uncollected pool.';
+}
 
 function openCollectionManagerModal() {
   if (!sessionState.currentCampaignId) {
     alert('Open a session first.');
     return;
   }
+  cmActiveTier = 'campaign';
   cmConfirmingDeleteId = null;
   cmMovePopoverNodeId  = null;
+  // Refresh the modal head/blurb in case the tier just changed
+  const head = document.querySelector('#cm-modal-head h3');
+  if (head) head.textContent = cmTierTitle();
+  const blurb = document.getElementById('cm-modal-blurb');
+  if (blurb) blurb.textContent = cmTierBlurb();
+  renderCollectionManagerList();
+  document.getElementById('cm-modal').classList.add('open');
+}
+
+function openArcCollectionManagerModal() {
+  if (!sessionState.currentArcId) {
+    alert('This session is not assigned to an arc, so there are no arc collections to manage.');
+    return;
+  }
+  cmActiveTier = 'arc';
+  cmConfirmingDeleteId = null;
+  cmMovePopoverNodeId  = null;
+  const head = document.querySelector('#cm-modal-head h3');
+  if (head) head.textContent = cmTierTitle();
+  const blurb = document.getElementById('cm-modal-blurb');
+  if (blurb) blurb.textContent = cmTierBlurb();
   renderCollectionManagerList();
   document.getElementById('cm-modal').classList.add('open');
 }
@@ -3169,13 +3529,14 @@ function closeCollectionManagerModal() {
   document.getElementById('cm-modal').classList.remove('open');
 }
 
-// Build the modal contents from the current campaignBlocks state.
+// Build the modal contents from whichever tier is active (cmActiveTier).
 function renderCollectionManagerList() {
   const list = document.getElementById('cm-modal-list');
   if (!list) return;
 
-  const cols = sessionState.campaignBlocks.collections || [];
-  const allNodes = sessionState.campaignBlocks.nodes || [];
+  const blocks = cmTierBlocks();
+  const cols = blocks.collections || [];
+  const allNodes = blocks.nodes || [];
   // Map node id → owning collection for quick lookup of "uncollected" nodes
   const inCollectionByNode = {};
   cols.forEach(c => {
@@ -3255,9 +3616,8 @@ function renderCmMemberRow(node, parentCollId) {
 }
 
 function renderCmMovePopover(nodeId, currentCollId) {
-  const cols = sessionState.campaignBlocks.collections || [];
+  const cols = (cmTierBlocks().collections) || [];
   const opts = [];
-  // Uncollected option, always available
   opts.push(currentCollId === null
     ? `<button class="cm-move-option current">— Uncollected —</button>`
     : `<button class="cm-move-option" data-cm-move-target="" data-cm-node="${nodeId}">— Uncollected —</button>`);
@@ -3321,19 +3681,15 @@ function wireCollectionManagerInteractions() {
         deleteCollection(collId);
         cmConfirmingDeleteId = null;
         renderCollectionManagerList();
-        renderCampaignFrame();
+        cmTierRenderFrame();
         redrawEdges();
       } else if (action === 'remove-from-coll') {
-        // Remove the node from its current collection (becomes uncollected).
-        // Equivalent to setNodeCollection(nodeId, null) — but we want to
-        // preserve the rest of the modal state (no popover changes etc.).
-        removeNodeFromAllCollections(nodeId);
-        markCampaignDirty();
+        cmTierRemoveFromCollections(nodeId);
+        cmTierMarkDirty();
         renderCollectionManagerList();
-        renderCampaignFrame();
+        cmTierRenderFrame();
         redrawEdges();
       } else if (action === 'move-to') {
-        // Toggle the popover for this node
         cmMovePopoverNodeId = (cmMovePopoverNodeId === nodeId) ? null : nodeId;
         renderCollectionManagerList();
       }
@@ -3345,12 +3701,12 @@ function wireCollectionManagerInteractions() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const nodeId = btn.dataset.cmNode;
-      const target = btn.dataset.cmMoveTarget;     // collection id, or '' for uncollected
-      setNodeCollection(nodeId, target || null);
+      const target = btn.dataset.cmMoveTarget;
+      cmTierSetCollection(nodeId, target || null);
       cmMovePopoverNodeId = null;
-      markCampaignDirty();
+      cmTierMarkDirty();
       renderCollectionManagerList();
-      renderCampaignFrame();
+      cmTierRenderFrame();
       redrawEdges();
     });
   });
@@ -3371,7 +3727,6 @@ function wireCollectionManagerInteractions() {
 function startRenameInline(titleEl) {
   const collId = titleEl.dataset.cmRename;
   if (!collId) return;
-  // Avoid stacking edit modes
   if (titleEl.contentEditable === 'true') return;
   titleEl.contentEditable = 'true';
   titleEl.focus();
@@ -3385,15 +3740,15 @@ function startRenameInline(titleEl) {
     titleEl.contentEditable = 'false';
     titleEl.removeEventListener('blur', onBlur);
     titleEl.removeEventListener('keydown', onKey);
-    const c = sessionState.campaignBlocks.collections.find(c => c.id === collId);
+    const c = (cmTierBlocks().collections || []).find(c => c.id === collId);
     if (!c) return;
     if (commit) {
       const newTitle = titleEl.textContent.trim() || 'Untitled';
       if (newTitle !== c.title) {
         c.title = newTitle;
-        markCampaignDirty();
+        cmTierMarkDirty();
         renderCollectionManagerList();
-        renderCampaignFrame();
+        cmTierRenderFrame();
       }
     } else {
       titleEl.textContent = c.title || 'Untitled';
@@ -3408,26 +3763,16 @@ function startRenameInline(titleEl) {
   titleEl.addEventListener('keydown', onKey);
 }
 
-// Delete a collection. Members fall back to uncollected (just removed
-// from the collection's member list). The collection itself is dropped
-// from campaignBlocks.collections.
-//
-// Edges that targeted the COLLECTION ID (synthetic `col:<id>`) become
-// dangling — they'll silently fail to render after deletion. We sweep
-// them out here proactively so they don't accumulate cruft in
-// sessions.blocks.edges across many sessions.
+// Delete a collection in the currently-active tier. Members fall back to
+// uncollected. Synthetic edges targeting `<prefix>:<id>` are swept.
 function deleteCollection(collectionId) {
   if (!collectionId) return;
-  const cols = sessionState.campaignBlocks.collections || [];
+  const blocks = cmTierBlocks();
+  const cols = blocks.collections || [];
   const idx = cols.findIndex(c => c.id === collectionId);
   if (idx < 0) return;
   cols.splice(idx, 1);
-  // No need to demote members — they were already in campaignBlocks.nodes;
-  // they just stop being members of any collection.
-  // Sweep dangling edges from the current session that pointed at this
-  // collection. (Cross-session edges in OTHER sessions can't be cleaned
-  // from here without re-fetching them; they'll silently drop on render.)
-  const danglingId = 'col:' + collectionId;
+  const danglingId = cmTierEdgePrefix() + collectionId;
   const before = state.edges.length;
   state.edges.slice().forEach(e => {
     if (e.from.nodeId === danglingId || e.to.nodeId === danglingId) {
@@ -3435,7 +3780,7 @@ function deleteCollection(collectionId) {
     }
   });
   if (state.edges.length !== before) markDirty();
-  markCampaignDirty();
+  cmTierMarkDirty();
 }
 
 function renderWrapModalList() {
@@ -3447,7 +3792,7 @@ function renderWrapModalList() {
     const def = BLOCK_TYPES[n.type] || BLOCK_TYPES.scene;
     rows.push({
       id: n.id, title: n.title, type: n.type, def,
-      currentScope: n.scope === 'campaign' ? 'campaign' : 'session',
+      currentScope: n.scope === 'campaign' ? 'campaign' : n.scope === 'arc' ? 'arc' : 'session',
       location: 'canvas',
     });
   });
@@ -3456,9 +3801,15 @@ function renderWrapModalList() {
     const def = BLOCK_TYPES[n.type] || BLOCK_TYPES.scene;
     rows.push({
       id: n.id, title: n.title || def.defaultTitle, type: n.type, def,
-      currentScope: 'campaign',
-      location: 'frame',
-      home_session_id: n.home_session_id,
+      currentScope: 'campaign', location: 'frame', home_session_id: n.home_session_id,
+    });
+  });
+  (sessionState.arcBlocks.nodes || []).forEach(n => {
+    if (n.home_session_id === sessionState.currentSessionId) return;
+    const def = BLOCK_TYPES[n.type] || BLOCK_TYPES.scene;
+    rows.push({
+      id: n.id, title: n.title || def.defaultTitle, type: n.type, def,
+      currentScope: 'arc', location: 'arc-frame', home_session_id: n.home_session_id,
     });
   });
 
@@ -3467,26 +3818,39 @@ function renderWrapModalList() {
     return;
   }
 
-  // Build collection dropdown options for each row.
-  const cols = sessionState.campaignBlocks.collections || [];
-  const collOptions = (selected, enabled) => {
-    const opts = [`<option value="" ${selected === '' ? 'selected' : ''}>(no collection)</option>`];
-    cols.forEach(c => {
+  // Campaign collection options
+  const campCols = sessionState.campaignBlocks.collections || [];
+  const campCollOptions = (selected, enabled) => {
+    const opts = [`<option value="" ${selected === '' ? 'selected' : ''}>(no coll.)</option>`];
+    campCols.forEach(c => {
       opts.push(`<option value="${c.id}" ${selected === c.id ? 'selected' : ''}>${escHtml(c.title || 'Untitled')}</option>`);
     });
-    opts.push(`<option value="__new__">+ New collection…</option>`);
-    return `<select class="wrap-row-coll" ${enabled ? '' : 'disabled'}>${opts.join('')}</select>`;
+    opts.push(`<option value="__new__">+ New…</option>`);
+    return `<select class="wrap-row-coll wrap-row-camp-coll" ${enabled ? '' : 'disabled'}>${opts.join('')}</select>`;
+  };
+  // Arc collection options
+  const arcCols = sessionState.arcBlocks.collections || [];
+  const arcAvailable = !!sessionState.currentArcId;
+  const arcCollOptions = (selected, enabled) => {
+    const opts = [`<option value="" ${selected === '' ? 'selected' : ''}>(no coll.)</option>`];
+    arcCols.forEach(c => {
+      opts.push(`<option value="${c.id}" ${selected === c.id ? 'selected' : ''}>${escHtml(c.title || 'Untitled')}</option>`);
+    });
+    opts.push(`<option value="__new__">+ New…</option>`);
+    return `<select class="wrap-row-coll wrap-row-arc-coll" ${enabled ? '' : 'disabled'}>${opts.join('')}</select>`;
   };
 
   list.innerHTML = rows.map(r => {
-    const choice = wrapModalChoices[r.id] || r.currentScope;
+    const choice     = wrapModalChoices[r.id] || r.currentScope;
     const collChoice = wrapModalCollections[r.id] || '';
-    const isFrameOnly = r.location === 'frame';
-    const homeNote = isFrameOnly
-      ? `<span style="font-size:0.65rem;color:var(--steel-pale);margin-left:8px;opacity:0.7;">(in frame · home: another session)</span>`
-      : '';
-    // Collection dropdown only matters when this row is going to be Campaign-scoped.
-    const collEnabled = choice === 'campaign';
+    const arcChoice  = wrapModalArcCollections[r.id] || '';
+    const homeNote =
+      r.location === 'frame'     ? `<span style="font-size:0.65rem;color:var(--steel-pale);margin-left:8px;opacity:0.7;">(in campaign frame)</span>` :
+      r.location === 'arc-frame' ? `<span style="font-size:0.65rem;color:var(--steel-pale);margin-left:8px;opacity:0.7;">(in arc frame)</span>` :
+      '';
+    const campSelEnabled = choice === 'campaign';
+    const arcSelEnabled  = choice === 'arc' && arcAvailable;
+    const arcLabelDisabled = !arcAvailable;
     return `
       <div class="wrap-row" data-row-id="${r.id}">
         <span class="wrap-row-icon">${r.def.icon}</span>
@@ -3497,44 +3861,47 @@ function renderWrapModalList() {
         </div>
         <label class="${choice === 'session' ? 'checked' : ''}">
           <input type="radio" name="wrap-${r.id}" value="session" ${choice === 'session' ? 'checked' : ''}>
-          Session only
+          Session
         </label>
         <label class="${choice === 'campaign' ? 'checked' : ''}">
           <input type="radio" name="wrap-${r.id}" value="campaign" ${choice === 'campaign' ? 'checked' : ''}>
           Campaign
         </label>
-        ${collOptions(collChoice, collEnabled)}
-        <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:var(--steel-pale);opacity:0.5;">arc soon</span>
+        ${campCollOptions(collChoice, campSelEnabled)}
+        <label class="${choice === 'arc' ? 'checked' : ''}" ${arcLabelDisabled ? 'style="opacity:0.4;cursor:not-allowed;"' : ''}
+               title="${arcLabelDisabled ? 'This session is not assigned to an arc' : 'Promote to arc scope'}">
+          <input type="radio" name="wrap-${r.id}" value="arc" ${choice === 'arc' ? 'checked' : ''} ${arcLabelDisabled ? 'disabled' : ''}>
+          Arc
+        </label>
+        ${arcCollOptions(arcChoice, arcSelEnabled)}
       </div>`;
   }).join('');
 
-  // Wire radios
+  // Wire radios — also disable opposite-tier select on scope switch
   list.querySelectorAll('input[type="radio"]').forEach(input => {
-    input.addEventListener('change', (e) => {
+    input.addEventListener('change', () => {
       const row = input.closest('.wrap-row');
       if (!row) return;
       const id = row.dataset.rowId;
       wrapModalChoices[id] = input.value;
       row.querySelectorAll('label').forEach(l => l.classList.remove('checked'));
       input.closest('label').classList.add('checked');
-      // Toggle the collection select availability based on chosen scope.
-      const sel = row.querySelector('select.wrap-row-coll');
-      if (sel) sel.disabled = input.value !== 'campaign';
+      const campSel = row.querySelector('select.wrap-row-camp-coll');
+      const arcSel  = row.querySelector('select.wrap-row-arc-coll');
+      if (campSel) campSel.disabled = input.value !== 'campaign';
+      if (arcSel)  arcSel.disabled  = input.value !== 'arc' || !arcAvailable;
     });
   });
 
-  // Wire collection dropdowns. When the user picks "+ New collection…",
-  // prompt for a name, create the collection, and re-render the list so
-  // the new option appears in every row.
-  list.querySelectorAll('select.wrap-row-coll').forEach(sel => {
-    sel.addEventListener('change', (e) => {
+  // Campaign-collection dropdown handlers
+  list.querySelectorAll('select.wrap-row-camp-coll').forEach(sel => {
+    sel.addEventListener('change', () => {
       const row = sel.closest('.wrap-row');
       if (!row) return;
       const id = row.dataset.rowId;
       if (sel.value === '__new__') {
-        const title = prompt('New collection name:');
+        const title = prompt('New campaign collection name:');
         if (!title || !title.trim()) {
-          // User cancelled — revert to whatever they had before
           sel.value = wrapModalCollections[id] || '';
           return;
         }
@@ -3549,6 +3916,32 @@ function renderWrapModalList() {
         return;
       }
       wrapModalCollections[id] = sel.value;
+    });
+  });
+
+  // Arc-collection dropdown handlers
+  list.querySelectorAll('select.wrap-row-arc-coll').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const row = sel.closest('.wrap-row');
+      if (!row) return;
+      const id = row.dataset.rowId;
+      if (sel.value === '__new__') {
+        const title = prompt('New arc collection name:');
+        if (!title || !title.trim()) {
+          sel.value = wrapModalArcCollections[id] || '';
+          return;
+        }
+        const newId = 'arccol_' + Math.random().toString(36).slice(2, 10);
+        sessionState.arcBlocks.collections = sessionState.arcBlocks.collections || [];
+        sessionState.arcBlocks.collections.push({
+          id: newId, title: title.trim(), member_node_ids: [], collapsed: false,
+        });
+        wrapModalArcCollections[id] = newId;
+        markArcDirty();
+        renderWrapModalList();
+        return;
+      }
+      wrapModalArcCollections[id] = sel.value;
     });
   });
 }
@@ -3566,100 +3959,179 @@ function applyWrapSessionPromotions() {
   const cid = sessionState.currentSessionId;
   if (!cid) return;
 
-  let promoted = 0, demoted = 0;
-  Object.entries(wrapModalChoices).forEach(([nodeId, newScope]) => {
-    const canvasNode = state.nodes.get(nodeId);
-    const inCamp = (sessionState.campaignBlocks.nodes || []).find(n => n.id === nodeId);
+  // For each entry in wrapModalChoices we need to figure out the current
+  // tier (where the node is now) and the desired tier (newScope), then
+  // perform the transition. There are 3×3 = 9 transition combinations,
+  // but most reduce to "remove from old tier" + "add to new tier".
+  const promotedNow = (id) => {
+    // Determine current tier of a node from its presence in state/blocks.
+    if (state.nodes.has(id)) {
+      const n = state.nodes.get(id);
+      return n.scope === 'campaign' ? 'campaign' :
+             n.scope === 'arc'      ? 'arc'      : 'session';
+    }
+    if ((sessionState.campaignBlocks.nodes || []).find(n => n.id === id)) return 'campaign';
+    if ((sessionState.arcBlocks.nodes      || []).find(n => n.id === id)) return 'arc';
+    return null;
+  };
 
-    if (newScope === 'campaign' && !inCamp) {
-      // Promote: take canvas node data, push into campaignBlocks, mark
-      // its `scope` so the canvas saver no longer writes it to sessions.blocks.
-      if (!canvasNode) return;
-      const promotedRecord = {
-        id:      canvasNode.id,
-        type:    canvasNode.type,
-        x:       canvasNode.x,
-        y:       canvasNode.y,
-        title:   canvasNode.title,
-        summary: canvasNode.summary || '',
-        fields:  canvasNode.fields || {},
-        scope:   'campaign',
-        home_session_id: cid,
-        promoted_at: new Date().toISOString(),
-      };
-      sessionState.campaignBlocks.nodes.push(promotedRecord);
-      // Mutate the canvas node so its later serialize knows it's campaign
-      canvasNode.scope = 'campaign';
-      canvasNode.home_session_id = cid;
-      canvasNode.promoted_at = promotedRecord.promoted_at;
-      if (canvasNode.el) canvasNode.el.dataset.scope = 'campaign';
-      promoted++;
-    } else if (newScope === 'session' && inCamp) {
-      // Demote: remove from campaignBlocks. If it WAS home-native to this
-      // session, the canvas already has it as a campaign-scope node — flip
-      // its scope back to session. If it wasn't home-native (lived only
-      // in the frame), remove from frame and the next time we open its
-      // home session it'll appear there as a session-scope node.
-      sessionState.campaignBlocks.nodes = sessionState.campaignBlocks.nodes
+  let changes = 0;
+
+  // Helper: pull a node's data record from wherever it currently is, returning
+  // a clean record that can be re-stored into another tier.
+  const snapshot = (id) => {
+    const cn = state.nodes.get(id);
+    if (cn) return {
+      id: cn.id, type: cn.type, x: cn.x, y: cn.y,
+      title: cn.title, summary: cn.summary || '',
+      fields: cn.fields || {},
+    };
+    const fc = (sessionState.campaignBlocks.nodes || []).find(n => n.id === id);
+    if (fc) return {
+      id: fc.id, type: fc.type, x: fc.x, y: fc.y,
+      title: fc.title, summary: fc.summary || '',
+      fields: fc.fields || {},
+    };
+    const fa = (sessionState.arcBlocks.nodes || []).find(n => n.id === id);
+    if (fa) return {
+      id: fa.id, type: fa.type, x: fa.x, y: fa.y,
+      title: fa.title, summary: fa.summary || '',
+      fields: fa.fields || {},
+    };
+    return null;
+  };
+
+  // Helper: home_session_id for a node currently in a frame tier (so we
+  // can demote-back-to-home properly).
+  const homeOf = (id) => {
+    const fc = (sessionState.campaignBlocks.nodes || []).find(n => n.id === id);
+    if (fc) return fc.home_session_id;
+    const fa = (sessionState.arcBlocks.nodes || []).find(n => n.id === id);
+    if (fa) return fa.home_session_id;
+    return null;
+  };
+
+  // Helper: PATCH another session's blocks to push a demoted record back
+  // into its home (only fires for non-home demotes).
+  const pushBackToHomeSession = (homeId, record) => {
+    if (!homeId || homeId === cid) return;     // home is current — handled by canvas update
+    const homeRow = sessionState.sessions.find(s => String(s.id) === String(homeId));
+    if (!homeRow) return;
+    const blocks = (homeRow.blocks && typeof homeRow.blocks === 'object') ? homeRow.blocks : { nodes: [], edges: [] };
+    blocks.nodes = Array.isArray(blocks.nodes) ? blocks.nodes : [];
+    blocks.nodes.push(record);
+    homeRow.blocks = blocks;
+    sbFetch('sessions?id=eq.' + homeId, {
+      method: 'PATCH', prefer: 'return=minimal',
+      body: JSON.stringify({ blocks }),
+    }).catch(e => console.warn('Failed to demote into home session:', e.message));
+  };
+
+  Object.entries(wrapModalChoices).forEach(([nodeId, newScope]) => {
+    const oldScope = promotedNow(nodeId);
+    if (!oldScope) return;
+    if (oldScope === newScope) return;     // no-op
+    changes++;
+    const snap = snapshot(nodeId);
+    if (!snap) return;
+    const canvasNode = state.nodes.get(nodeId);
+
+    // Remove from current tier
+    if (oldScope === 'campaign') {
+      sessionState.campaignBlocks.nodes = (sessionState.campaignBlocks.nodes || [])
         .filter(n => n.id !== nodeId);
+      removeNodeFromAllCollections(nodeId);
+      // If canvas had it as scope=campaign (i.e. home session), demote canvas-side
       if (canvasNode && canvasNode.scope === 'campaign') {
-        canvasNode.scope = 'session';
+        // We'll re-add to the new tier below; for now, peel off the campaign markers
         delete canvasNode.home_session_id;
         delete canvasNode.promoted_at;
+        canvasNode.scope = 'session';
         if (canvasNode.el) canvasNode.el.dataset.scope = 'session';
-      } else if (inCamp.home_session_id !== cid) {
-        // Not home — push the demoted record into the home session's
-        // sessions.blocks. We can't easily PATCH another session's blocks
-        // from here without re-fetching it, so we just rely on the home
-        // session's next open: it'll see no campaignBlocks entry for this
-        // node, and... actually we have a problem: if we drop it from
-        // campaignBlocks WITHOUT pushing to sessions.blocks, the node is
-        // gone entirely. Let me handle this properly:
-        const homeRow = sessionState.sessions.find(s => String(s.id) === String(inCamp.home_session_id));
-        if (homeRow) {
-          const blocks = homeRow.blocks && homeRow.blocks.nodes ? homeRow.blocks : { nodes: [], edges: [] };
-          blocks.nodes = blocks.nodes || [];
-          blocks.nodes.push({
-            id: inCamp.id, type: inCamp.type, x: inCamp.x, y: inCamp.y,
-            title: inCamp.title, summary: inCamp.summary || '',
-            fields: inCamp.fields || {},
-          });
-          homeRow.blocks = blocks;
-          // PATCH the home session row so the demote sticks
-          sbFetch('sessions?id=eq.' + inCamp.home_session_id, {
-            method: 'PATCH',
-            prefer: 'return=minimal',
-            body: JSON.stringify({ blocks }),
-          }).catch(e => console.warn('Failed to demote into home session:', e.message));
-        }
       }
-      demoted++;
+    } else if (oldScope === 'arc') {
+      sessionState.arcBlocks.nodes = (sessionState.arcBlocks.nodes || [])
+        .filter(n => n.id !== nodeId);
+      removeArcNodeFromAllCollections(nodeId);
+      if (canvasNode && canvasNode.scope === 'arc') {
+        delete canvasNode.home_session_id;
+        delete canvasNode.promoted_at;
+        canvasNode.scope = 'session';
+        if (canvasNode.el) canvasNode.el.dataset.scope = 'session';
+      }
+    }
+
+    // Add to destination tier
+    const nowIso = new Date().toISOString();
+    if (newScope === 'campaign') {
+      const record = {
+        ...snap, scope: 'campaign',
+        home_session_id: oldScope === 'session' ? cid : (homeOf(nodeId) || cid),
+        promoted_at: nowIso,
+      };
+      sessionState.campaignBlocks.nodes.push(record);
+      if (canvasNode) {
+        canvasNode.scope = 'campaign';
+        canvasNode.home_session_id = record.home_session_id;
+        canvasNode.promoted_at = record.promoted_at;
+        if (canvasNode.el) canvasNode.el.dataset.scope = 'campaign';
+      }
+    } else if (newScope === 'arc') {
+      if (!sessionState.currentArcId) {
+        // Disallowed (the radio is disabled when no arc) — defensive
+        return;
+      }
+      const record = {
+        ...snap, scope: 'arc',
+        home_session_id: oldScope === 'session' ? cid : (homeOf(nodeId) || cid),
+        promoted_at: nowIso,
+      };
+      sessionState.arcBlocks.nodes.push(record);
+      if (canvasNode) {
+        canvasNode.scope = 'arc';
+        canvasNode.home_session_id = record.home_session_id;
+        canvasNode.promoted_at = record.promoted_at;
+        if (canvasNode.el) canvasNode.el.dataset.scope = 'arc';
+      }
+    } else if (newScope === 'session') {
+      // Demoted all the way back to session-only.
+      if (canvasNode) {
+        // Already on canvas — scope is now 'session' from the peel-off above
+        // (or unchanged if it was session already, but oldScope !== newScope so not).
+      } else {
+        // Was a non-home frame entry. Push back to its home session.
+        pushBackToHomeSession(homeOf(nodeId), snap);
+      }
     }
   });
 
-  // Apply collection memberships. For every node the user marked as
-  // campaign-scoped, set its collection per the wrapModalCollections map.
-  // Demoted nodes are removed from any collection they were in.
+  // Apply collection memberships per tier (only meaningful for promoted-to-tier nodes).
   Object.entries(wrapModalChoices).forEach(([nodeId, newScope]) => {
     if (newScope === 'campaign') {
       const collId = wrapModalCollections[nodeId] || '';
-      // collId === '__new__' shouldn't reach here because the new-collection
-      // path replaced it with the real id during the dropdown change handler.
-      // Defensive: drop bad values.
       const valid = collId && (sessionState.campaignBlocks.collections || []).some(c => c.id === collId);
       setNodeCollection(nodeId, valid ? collId : null);
-    } else {
-      // Demoted to session — remove from any collection
+      // Be sure no arc-collection membership lingers
+      removeArcNodeFromAllCollections(nodeId);
+    } else if (newScope === 'arc') {
+      const collId = wrapModalArcCollections[nodeId] || '';
+      const valid = collId && (sessionState.arcBlocks.collections || []).some(c => c.id === collId);
+      setArcNodeCollection(nodeId, valid ? collId : null);
       removeNodeFromAllCollections(nodeId);
+    } else {
+      // session — clean out from both tier collection lists
+      removeNodeFromAllCollections(nodeId);
+      removeArcNodeFromAllCollections(nodeId);
     }
   });
 
-  if (promoted || demoted || true /* collection assignment may have changed */) {
-    markDirty();
-    markCampaignDirty();
-    renderCampaignFrame();
-    redrawEdges();
-  }
+  // Always assume changes affected something (collections may shift even if scopes don't)
+  markDirty();
+  markCampaignDirty();
+  markArcDirty();
+  renderCampaignFrame();
+  renderArcFrame();
+  redrawEdges();
   closeWrapSessionModal();
 }
 
@@ -3812,13 +4284,14 @@ async function createNewSession(campaignId, arcId) {
 // ── SERIALIZE / DESERIALIZE THE CANVAS ──
 function serializeCanvas() {
   // Partition canvas nodes by scope. Session-scope nodes go into the
-  // session's blocks; campaign-scope nodes (which appear here because
-  // this IS their home session) get sync'd back into the cached
-  // campaignBlocks (and then autosaved to campaigns.blocks).
+  // session's blocks; campaign- or arc-scope nodes (which appear here
+  // because this IS their home session) get sync'd back into the cached
+  // campaignBlocks / arcBlocks (and then autosaved to their respective
+  // tables).
   const sessionNodes = [];
   const campaignNodesUpdate = [];
+  const arcNodesUpdate = [];
   state.nodes.forEach(n => {
-    // Strip transient fields shared by both scopes.
     const fields = n.fields ? { ...n.fields } : {};
     if (Array.isArray(fields.monsters)) {
       fields.monsters = fields.monsters.map(m => {
@@ -3850,15 +4323,18 @@ function serializeCanvas() {
         home_session_id: n.home_session_id || sessionState.currentSessionId,
         promoted_at: n.promoted_at || new Date().toISOString(),
       });
+    } else if (n.scope === 'arc') {
+      arcNodesUpdate.push({
+        ...base,
+        scope: 'arc',
+        home_session_id: n.home_session_id || sessionState.currentSessionId,
+        promoted_at: n.promoted_at || new Date().toISOString(),
+      });
     } else {
       sessionNodes.push(base);
     }
   });
 
-  // Edges: keep all in session.blocks. The renderer resolves cross-scope
-  // targets at load time. Edges where either endpoint is campaign-scope
-  // (i.e., crosses into the frame on a non-home session) ride along here
-  // because they were authored in this session.
   const edges = state.edges.map(e => ({
     id: e.id,
     from_node: e.from.nodeId,
@@ -3866,20 +4342,27 @@ function serializeCanvas() {
     dir:       e.dir,
   }));
 
-  // Reconcile campaign-scope nodes: the canvas may have new positions or
-  // edited fields for nodes that live in campaignBlocks. Sync them.
+  // Reconcile campaign-scope nodes
   if (campaignNodesUpdate.length && sessionState.campaignBlocks.nodes) {
     let mutated = false;
     campaignNodesUpdate.forEach(updated => {
       const idx = sessionState.campaignBlocks.nodes.findIndex(n => n.id === updated.id);
-      if (idx >= 0) {
-        sessionState.campaignBlocks.nodes[idx] = updated;
-      } else {
-        sessionState.campaignBlocks.nodes.push(updated);
-      }
+      if (idx >= 0) sessionState.campaignBlocks.nodes[idx] = updated;
+      else sessionState.campaignBlocks.nodes.push(updated);
       mutated = true;
     });
     if (mutated) markCampaignDirty();
+  }
+  // Reconcile arc-scope nodes
+  if (arcNodesUpdate.length && sessionState.arcBlocks.nodes) {
+    let mutated = false;
+    arcNodesUpdate.forEach(updated => {
+      const idx = sessionState.arcBlocks.nodes.findIndex(n => n.id === updated.id);
+      if (idx >= 0) sessionState.arcBlocks.nodes[idx] = updated;
+      else sessionState.arcBlocks.nodes.push(updated);
+      mutated = true;
+    });
+    if (mutated) markArcDirty();
   }
 
   return {
@@ -3888,12 +4371,11 @@ function serializeCanvas() {
     nodes: sessionNodes,
     edges,
     view: { x: VIEW.x, y: VIEW.y, zoom: VIEW.zoom },
-    // View-state for the campaign frame — per-session "what's loud / quiet
-    // for THIS session's narrative". Doesn't change campaign data; just
-    // controls how the frame renders for this canvas.
     frame_view: {
-      diminished_node_ids:       Array.from(sessionState.diminishedNodeIds       || []),
-      diminished_collection_ids: Array.from(sessionState.diminishedCollectionIds || []),
+      diminished_node_ids:           Array.from(sessionState.diminishedNodeIds           || []),
+      diminished_collection_ids:     Array.from(sessionState.diminishedCollectionIds     || []),
+      diminished_arc_node_ids:       Array.from(sessionState.diminishedArcNodeIds        || []),
+      diminished_arc_collection_ids: Array.from(sessionState.diminishedArcCollectionIds  || []),
     },
   };
 }
@@ -3957,6 +4439,10 @@ function deserializeCanvas(data) {
   (sessionState.campaignBlocks.nodes || []).forEach(nd => {
     if (nd.home_session_id === cid) buildAndAttach(nd, 'campaign');
   });
+  // Merge home-native arc-scope nodes into the canvas.
+  (sessionState.arcBlocks.nodes || []).forEach(nd => {
+    if (nd.home_session_id === cid) buildAndAttach(nd, 'arc');
+  });
 
   if (maxIdSeq >= nodeIdSeq) nodeIdSeq = maxIdSeq + 1;
 
@@ -4010,16 +4496,20 @@ async function loadSessionData(sessionRow) {
   loadingSession = true;
   sessionState.currentSessionId = sessionRow.id;
   sessionState.currentCampaignId = sessionRow.campaign_id || null;
+  sessionState.currentArcId = sessionRow.arc_id || null;
   document.getElementById('topbarSession').textContent = sessionRow.title || 'Untitled Session';
 
-  // Campaign blocks need to be loaded BEFORE deserializeCanvas runs,
-  // because deserialize merges home-native campaign nodes into the canvas.
+  // Campaign + arc blocks need to be loaded BEFORE deserializeCanvas runs,
+  // because deserialize merges home-native frame nodes into the canvas.
   loadCampaignBlocksForCurrentSession();
+  loadArcBlocksForCurrentSession();
 
-  // Pull per-session view state for the frame (diminished IDs).
+  // Pull per-session view state for both frames (diminished IDs).
   const fv = (sessionRow.blocks && sessionRow.blocks.frame_view) || {};
-  sessionState.diminishedNodeIds       = new Set(Array.isArray(fv.diminished_node_ids)       ? fv.diminished_node_ids       : []);
-  sessionState.diminishedCollectionIds = new Set(Array.isArray(fv.diminished_collection_ids) ? fv.diminished_collection_ids : []);
+  sessionState.diminishedNodeIds          = new Set(Array.isArray(fv.diminished_node_ids)            ? fv.diminished_node_ids            : []);
+  sessionState.diminishedCollectionIds    = new Set(Array.isArray(fv.diminished_collection_ids)      ? fv.diminished_collection_ids      : []);
+  sessionState.diminishedArcNodeIds       = new Set(Array.isArray(fv.diminished_arc_node_ids)        ? fv.diminished_arc_node_ids        : []);
+  sessionState.diminishedArcCollectionIds = new Set(Array.isArray(fv.diminished_arc_collection_ids)  ? fv.diminished_arc_collection_ids  : []);
 
   const fmt = detectSessionFormat(sessionRow);
   if (fmt === 'canvas') {
@@ -4028,15 +4518,16 @@ async function loadSessionData(sessionRow) {
     deserializeCanvas({ nodes: [], edges: [], view: { x: 0, y: 0, zoom: 1 } });
   }
   renderCampaignFrame();
+  renderArcFrame();
   loadingSession = false;
   saveGen = lastSavedGen = 0;
   sessionState.campaignSaveGen = sessionState.campaignLastSavedGen = 0;
+  sessionState.arcSaveGen      = sessionState.arcLastSavedGen      = 0;
   setCanvasSavedState('saved');
   updateEmptyHint();
 }
 
 // Load campaign blocks for the current campaign into sessionState.
-// Pulls from the cached campaigns list (same fetch as the picker).
 function loadCampaignBlocksForCurrentSession() {
   const cid = sessionState.currentCampaignId;
   if (!cid) {
@@ -4050,6 +4541,63 @@ function loadCampaignBlocksForCurrentSession() {
     collections: Array.isArray(blocks.collections) ? blocks.collections : [],
     edges:       Array.isArray(blocks.edges)       ? blocks.edges       : [],
   };
+}
+
+// Same as campaign-blocks loader, scoped to the session's arc.
+function loadArcBlocksForCurrentSession() {
+  const aid = sessionState.currentArcId;
+  if (!aid) {
+    sessionState.arcBlocks = { nodes: [], collections: [], edges: [] };
+    return;
+  }
+  const arc = sessionState.arcs.find(a => String(a.id) === String(aid));
+  const blocks = (arc && arc.blocks) || { nodes: [], collections: [], edges: [] };
+  sessionState.arcBlocks = {
+    nodes:       Array.isArray(blocks.nodes)       ? blocks.nodes       : [],
+    collections: Array.isArray(blocks.collections) ? blocks.collections : [],
+    edges:       Array.isArray(blocks.edges)       ? blocks.edges       : [],
+  };
+}
+
+// Mark arc blocks dirty so they get autosaved (independent of campaign).
+function markArcDirty() {
+  if (loadingSession) return;
+  if (!sessionState.currentArcId) return;
+  sessionState.arcSaveGen++;
+  setCanvasSavedState('dirty');
+  if (sessionState.arcSaveTimer) clearTimeout(sessionState.arcSaveTimer);
+  sessionState.arcSaveTimer = setTimeout(attemptArcAutosave, AUTOSAVE_DEBOUNCE_MS);
+}
+
+async function attemptArcAutosave() {
+  sessionState.arcSaveTimer = null;
+  const aid = sessionState.currentArcId;
+  if (!aid) return;
+  if (sessionState.arcSaveGen === sessionState.arcLastSavedGen) return;
+  if (sessionState.arcSaveInFlight) return;
+  sessionState.arcSaveInFlight = true;
+  setCanvasSavedState('saving');
+  try {
+    const payload = {
+      nodes:       sessionState.arcBlocks.nodes       || [],
+      collections: sessionState.arcBlocks.collections || [],
+      edges:       sessionState.arcBlocks.edges       || [],
+    };
+    await sbFetch('arcs?id=eq.' + aid, {
+      method: 'PATCH',
+      prefer: 'return=minimal',
+      body: JSON.stringify({ blocks: payload }),
+    });
+    const arc = sessionState.arcs.find(a => String(a.id) === String(aid));
+    if (arc) arc.blocks = payload;
+    sessionState.arcLastSavedGen = sessionState.arcSaveGen;
+    setCanvasSavedState('saved');
+  } catch (e) {
+    console.warn('Arc autosave failed:', e.message);
+    setCanvasSavedState('error');
+  } finally {
+    sessionState.arcSaveInFlight = false;
+  }
 }
 
 // Mark campaign blocks dirty so they get autosaved.
@@ -4346,6 +4894,268 @@ function setNodeCollection(nodeId, collectionId) {
   if (!c.member_node_ids.includes(nodeId)) c.member_node_ids.push(nodeId);
 }
 
+// ── ARC FRAME RENDER ──────────────────────────────────────
+// Mirrors renderCampaignFrame but lays the strip out horizontally and reads
+// from sessionState.arcBlocks. Card / collection markup uses `arc-` class
+// prefixes for tier-specific styling; data attributes use `data-arc-*` so
+// click handlers don't collide with the campaign tier.
+function renderArcFrame() {
+  const list = document.getElementById('arc-frame-list');
+  if (!list) return;
+
+  if (!sessionState.currentArcId) {
+    list.innerHTML = '<div id="arc-frame-empty">This session is not assigned to an arc — promote nodes here only after the session has an arc.</div>';
+    return;
+  }
+
+  const cid  = sessionState.currentSessionId;
+  const all  = sessionState.arcBlocks.nodes || [];
+  const cols = sessionState.arcBlocks.collections || [];
+  const frameNodes = all.filter(n => n.home_session_id !== cid);
+
+  if (!frameNodes.length && !cols.length) {
+    list.innerHTML = '<div id="arc-frame-empty">No arc-promoted nodes yet. Use Wrap Session to promote arc-recurring NPCs / scenes / items here.</div>';
+    return;
+  }
+
+  const inCollectionByNode = {};
+  cols.forEach(c => {
+    (c.member_node_ids || []).forEach(id => { inCollectionByNode[id] = c.id; });
+  });
+
+  const uncollected = frameNodes.filter(n => !inCollectionByNode[n.id]);
+  let html = uncollected.map(renderArcCardHtml).join('');
+
+  cols.forEach(c => {
+    const collapsed = !!c.collapsed;
+    const dimmed = sessionState.diminishedArcCollectionIds.has(c.id);
+    const members = (c.member_node_ids || [])
+      .map(mid => frameNodes.find(n => n.id === mid))
+      .filter(Boolean);
+    const count = members.length;
+    html += `
+      <div class="arc-collection ${collapsed ? 'collapsed' : ''} ${dimmed ? 'diminished' : ''}" data-arc-collection-id="${c.id}">
+        <div class="arc-collection-header" data-arc-collection-id="${c.id}">
+          <span class="arc-collection-tri">▶</span>
+          <button class="arc-collection-diminish" data-arc-collection-diminish="${c.id}"
+                  title="${dimmed ? 'Make collection prominent again' : 'Diminish (mark not relevant to this session)'}"
+                  >${dimmed ? '◐' : '◉'}</button>
+          <span class="arc-collection-title" data-arc-collection-title="${c.id}">${escHtml(c.title || 'Untitled')}</span>
+          <span class="arc-collection-meta">${count} item${count === 1 ? '' : 's'}</span>
+          <div class="anchor" data-anchor="bc" data-arc-collection-id="${c.id}" data-scope="arc-collection"></div>
+        </div>
+        <div class="arc-collection-members">
+          ${members.map(renderArcCardHtml).join('')}
+        </div>
+      </div>`;
+  });
+
+  list.innerHTML = html;
+
+  // Wire card body clicks → open in side panel
+  list.querySelectorAll('.arc-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.anchor')) return;
+      if (e.target.closest('.arc-card-diminish')) return;
+      const id = card.dataset.arcNodeId;
+      openArcFrameNodeInSidePanel(id);
+    });
+  });
+
+  // Card diminish toggle
+  list.querySelectorAll('.arc-card-diminish').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.arcCardDiminish;
+      toggleArcNodeDiminished(id);
+    });
+  });
+
+  // Collection header click → toggle collapse (unless on a child control)
+  list.querySelectorAll('.arc-collection-header').forEach(header => {
+    const cid = header.dataset.arcCollectionId;
+    header.addEventListener('click', (e) => {
+      if (e.target.closest('.anchor')) return;
+      if (e.target.closest('.arc-collection-diminish')) return;
+      if (e.target.classList.contains('arc-collection-title') && e.target.isContentEditable) return;
+      toggleArcCollectionCollapsed(cid);
+    });
+  });
+  list.querySelectorAll('.arc-collection-diminish').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.arcCollectionDiminish;
+      toggleArcCollectionDiminished(id);
+    });
+  });
+  // Inline rename on dblclick
+  list.querySelectorAll('.arc-collection-title').forEach(el => {
+    el.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      const id = el.dataset.arcCollectionTitle;
+      el.contentEditable = 'true';
+      el.focus();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      const finish = () => {
+        el.contentEditable = 'false';
+        const c = sessionState.arcBlocks.collections.find(c => c.id === id);
+        if (c) {
+          c.title = el.textContent.trim() || 'Untitled';
+          markArcDirty();
+          renderArcFrame();
+        }
+        el.removeEventListener('blur', finish);
+        el.removeEventListener('keydown', onKey);
+      };
+      const onKey = (ev) => {
+        if (ev.key === 'Enter') { ev.preventDefault(); el.blur(); }
+        if (ev.key === 'Escape') {
+          el.textContent = (sessionState.arcBlocks.collections.find(c => c.id === id) || {}).title || '';
+          el.blur();
+        }
+      };
+      el.addEventListener('blur', finish);
+      el.addEventListener('keydown', onKey);
+    });
+  });
+
+  // Anchor clicks (cards + collection headers)
+  list.querySelectorAll('.anchor').forEach(a => {
+    a.addEventListener('mousedown', (e) => {
+      if (e.button === 0) e.stopPropagation();
+    });
+    a.addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleArcFrameAnchorClick(a);
+    });
+  });
+}
+
+function renderArcCardHtml(n) {
+  const def = BLOCK_TYPES[n.type] || BLOCK_TYPES.scene;
+  const dimmed = sessionState.diminishedArcNodeIds.has(n.id);
+  return `
+    <div class="arc-card ${dimmed ? 'diminished' : ''}" data-arc-node-id="${n.id}" title="${escAttr(def.label + ': ' + (n.title || ''))}">
+      <button class="arc-card-diminish" data-arc-card-diminish="${n.id}"
+              title="${dimmed ? 'Make prominent again' : 'Diminish (not relevant to this session)'}"
+              >${dimmed ? '◐' : '◉'}</button>
+      <span class="arc-card-icon">${def.icon}</span>
+      <span class="arc-card-title">${escHtml(n.title || def.defaultTitle || 'Node')}</span>
+      <span class="arc-card-type">${escHtml(def.label)}</span>
+      <div class="anchor" data-anchor="bc" data-arc-node-id="${n.id}" data-scope="arc"></div>
+    </div>`;
+}
+
+function toggleArcNodeDiminished(nodeId) {
+  if (sessionState.diminishedArcNodeIds.has(nodeId)) sessionState.diminishedArcNodeIds.delete(nodeId);
+  else sessionState.diminishedArcNodeIds.add(nodeId);
+  renderArcFrame();
+  redrawEdges();
+  markDirty();
+}
+function toggleArcCollectionDiminished(collectionId) {
+  if (sessionState.diminishedArcCollectionIds.has(collectionId)) sessionState.diminishedArcCollectionIds.delete(collectionId);
+  else sessionState.diminishedArcCollectionIds.add(collectionId);
+  renderArcFrame();
+  redrawEdges();
+  markDirty();
+}
+function toggleArcCollectionCollapsed(collectionId) {
+  const c = sessionState.arcBlocks.collections.find(c => c.id === collectionId);
+  if (!c) return;
+  c.collapsed = !c.collapsed;
+  renderArcFrame();
+  redrawEdges();
+  markArcDirty();
+}
+
+function addEmptyArcCollection() {
+  if (!sessionState.currentArcId) {
+    alert('This session is not assigned to an arc, so arc-scoped collections can\'t be created here.');
+    return;
+  }
+  const id = 'arccol_' + Math.random().toString(36).slice(2, 10);
+  sessionState.arcBlocks.collections = sessionState.arcBlocks.collections || [];
+  sessionState.arcBlocks.collections.push({
+    id, title: 'Untitled', member_node_ids: [], collapsed: false,
+  });
+  markArcDirty();
+  renderArcFrame();
+  setTimeout(() => {
+    const el = document.querySelector(`.arc-collection-title[data-arc-collection-title="${id}"]`);
+    if (el) el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  }, 30);
+}
+
+function removeArcNodeFromAllCollections(nodeId) {
+  (sessionState.arcBlocks.collections || []).forEach(c => {
+    const idx = (c.member_node_ids || []).indexOf(nodeId);
+    if (idx >= 0) c.member_node_ids.splice(idx, 1);
+  });
+}
+function setArcNodeCollection(nodeId, collectionId) {
+  removeArcNodeFromAllCollections(nodeId);
+  if (!collectionId) return;
+  const c = (sessionState.arcBlocks.collections || []).find(c => c.id === collectionId);
+  if (!c) return;
+  c.member_node_ids = c.member_node_ids || [];
+  if (!c.member_node_ids.includes(nodeId)) c.member_node_ids.push(nodeId);
+}
+
+// Open an arc-frame node in the side panel for editing.
+function openArcFrameNodeInSidePanel(nodeId) {
+  const an = (sessionState.arcBlocks.nodes || []).find(n => n.id === nodeId);
+  if (!an) return;
+  const def = BLOCK_TYPES[an.type] || BLOCK_TYPES.scene;
+  spOpenFrameNode = an;          // shared editing buffer with campaign frame
+  spOpenFrameNodeTier = 'arc';   // route commits to arcBlocks
+  openNodeId = '__frame__' + an.id;
+  spTitle.value = an.title || def.defaultTitle || 'Untitled';
+  renderSidePanelBody({ ...an, type: an.type, fields: an.fields || {} }, def);
+  sidePanel.classList.add('open');
+  document.querySelectorAll('.arc-card.selected, .frame-card.selected').forEach(el => el.classList.remove('selected'));
+  const card = document.querySelector('.arc-card[data-arc-node-id="' + nodeId + '"]');
+  if (card) card.classList.add('selected');
+}
+
+// Anchor click handler for arc tier. Mirrors handleFrameAnchorClick but
+// the ID prefix for collection endpoints is `arccol:` (so cross-scope
+// edge resolution can disambiguate arc collections from campaign
+// collections — `col:` continues to mean campaign collection).
+function handleArcFrameAnchorClick(anchorEl) {
+  const isCol = !!anchorEl.dataset.arcCollectionId;
+  const id = isCol
+    ? ('arccol:' + anchorEl.dataset.arcCollectionId)
+    : anchorEl.dataset.arcNodeId;
+  const anchorKey = anchorEl.dataset.anchor;
+  if (!state.pendingAnchor) {
+    anchorEl.classList.add('active');
+    state.pendingAnchor = {
+      nodeId: id,
+      anchor: anchorKey,
+      anchorEl,
+      scope: isCol ? 'arc-collection' : 'arc',
+    };
+    document.body.classList.add('connecting');
+    showPendingFrom(anchorEl);
+    return;
+  }
+  const p = state.pendingAnchor;
+  if (p.nodeId === id && p.anchor === anchorKey) { clearPending(); return; }
+  if (p.nodeId === id) { clearPending(); return; }
+  createEdge(
+    { nodeId: p.nodeId, anchor: p.anchor },
+    { nodeId: id,        anchor: anchorKey },
+    'forward'
+  );
+  clearPending();
+  redrawEdges();
+}
+
 function handleFrameAnchorClick(anchorEl) {
   // Anchors live on either a frame card (data-node-id) or a collection
   // header (data-collection-id). Both are valid edge endpoints. We use a
@@ -4384,23 +5194,19 @@ function handleFrameAnchorClick(anchorEl) {
 function openFrameNodeInSidePanel(nodeId) {
   const cn = (sessionState.campaignBlocks.nodes || []).find(n => n.id === nodeId);
   if (!cn) return;
-  // We need a node-shaped object for renderSidePanelBody. The campaign
-  // node has the same fields/title/etc. as canvas nodes, just lacks the
-  // DOM `.el`. We mark openNodeId here to a special string scheme so the
-  // commit path knows to write back to campaign blocks instead of canvas.
   const def = BLOCK_TYPES[cn.type] || BLOCK_TYPES.scene;
-  // Stash a stand-in object on a per-side-panel-session key
   spOpenFrameNode = cn;
+  spOpenFrameNodeTier = 'campaign';
   openNodeId = '__frame__' + cn.id;
   spTitle.value = cn.title || def.defaultTitle || 'Untitled';
   renderSidePanelBody({ ...cn, type: cn.type, fields: cn.fields || {} }, def);
   sidePanel.classList.add('open');
-  // Mark the matching frame card as selected
-  document.querySelectorAll('.frame-card.selected').forEach(el => el.classList.remove('selected'));
+  document.querySelectorAll('.frame-card.selected, .arc-card.selected').forEach(el => el.classList.remove('selected'));
   const card = document.querySelector('.frame-card[data-frame-node-id="' + nodeId + '"]');
   if (card) card.classList.add('selected');
 }
 let spOpenFrameNode = null;
+let spOpenFrameNodeTier = null;   // 'campaign' | 'arc' — routes side-panel commits
 
 // ── SAVE NOW (toolbar button + Save & Close) ──
 async function saveCurrentSession() {
@@ -4666,7 +5472,8 @@ function applyTransform() {
     const aRes = resolveEdgeEndpoint(e.from.nodeId);
     const bRes = resolveEdgeEndpoint(e.to.nodeId);
     if (!aRes || !bRes) return;
-    if (aRes.where === 'frame' || bRes.where === 'frame') redrawEdge(e);
+    if (aRes.where === 'frame' || aRes.where === 'arc-frame' ||
+        bRes.where === 'frame' || bRes.where === 'arc-frame') redrawEdge(e);
   });
 }
 
@@ -5257,7 +6064,8 @@ function redrawEdge(edge) {
   const bRes = resolveEdgeEndpoint(edge.to.nodeId);
   if (!aRes || !bRes) return;
 
-  const isCrossScope = (aRes.where === 'frame') || (bRes.where === 'frame');
+  const isFrameLike = (w) => w === 'frame' || w === 'arc-frame';
+  const isCrossScope = isFrameLike(aRes.where) || isFrameLike(bRes.where);
   if (isCrossScope) {
     const csSvg = document.getElementById('cross-scope-svg');
     if (csSvg && edge.groupEl.parentNode !== csSvg) {
@@ -5265,19 +6073,27 @@ function redrawEdge(edge) {
     }
     edge.pathEl.classList.add('edge', 'cross-scope');
     edge.hitEl.classList.add('edge-hitbox');
-    // Diminish: an edge is "diminished" if either endpoint is in a
-    // diminished node, a diminished collection, or a member of a
-    // diminished collection.
+    // An edge is "diminished" if either endpoint is in a diminished node /
+    // collection (in either tier).
     const isEndpointDimmed = (res) => {
       if (!res) return false;
-      if (res.kind === 'collection' && sessionState.diminishedCollectionIds.has(res.collection.id)) return true;
+      if (res.kind === 'collection') {
+        if (res.tier === 'arc'      && sessionState.diminishedArcCollectionIds.has(res.collection.id)) return true;
+        if (res.tier === 'campaign' && sessionState.diminishedCollectionIds.has(res.collection.id))    return true;
+      }
       if (res.where === 'frame' && res.node && res.node.id) {
         if (sessionState.diminishedNodeIds.has(res.node.id)) return true;
-        // Membership-of-diminished-collection
         const owningCol = (sessionState.campaignBlocks.collections || []).find(c =>
           (c.member_node_ids || []).includes(res.node.id)
         );
         if (owningCol && sessionState.diminishedCollectionIds.has(owningCol.id)) return true;
+      }
+      if (res.where === 'arc-frame' && res.node && res.node.id) {
+        if (sessionState.diminishedArcNodeIds.has(res.node.id)) return true;
+        const owningCol = (sessionState.arcBlocks.collections || []).find(c =>
+          (c.member_node_ids || []).includes(res.node.id)
+        );
+        if (owningCol && sessionState.diminishedArcCollectionIds.has(owningCol.id)) return true;
       }
       return false;
     };
@@ -5290,8 +6106,17 @@ function redrawEdge(edge) {
     const rect = csSvg.getBoundingClientRect();
     const q1 = { x: p1.x - rect.left, y: p1.y - rect.top };
     const q2 = { x: p2.x - rect.left, y: p2.y - rect.top };
-    const n1 = aRes.where === 'frame' ? ANCHOR_NORMAL.mr : ANCHOR_NORMAL.ml;
-    const n2 = bRes.where === 'frame' ? ANCHOR_NORMAL.mr : ANCHOR_NORMAL.ml;
+    // Pick a normal vector consistent with which side the anchor's on.
+    // Campaign frame cards exit rightward; arc cards exit downward; canvas
+    // nodes use whichever side is facing the relevant frame.
+    const normalFor = (res) => {
+      if (res.where === 'frame')     return ANCHOR_NORMAL.mr;
+      if (res.where === 'arc-frame') return ANCHOR_NORMAL.bc;
+      // Canvas — face the partner's general direction
+      return ANCHOR_NORMAL.ml;
+    };
+    const n1 = normalFor(aRes);
+    const n2 = normalFor(bRes);
     const d  = pathDFor(q1, q2, n1, n2);
     edge.pathEl.setAttribute('d', d);
     edge.hitEl.setAttribute('d', d);
@@ -5338,13 +6163,23 @@ function redrawEdge(edge) {
 
 // Resolve an edge endpoint id → { where: 'canvas'|'frame', node, el }.
 function resolveEdgeEndpoint(nodeId) {
-  // Collection synthetic IDs: `col:<collectionId>`
+  // Synthetic collection IDs:
+  //   `col:<id>`     → campaign collection (from `data-collection-id`)
+  //   `arccol:<id>`  → arc collection      (from `data-arc-collection-id`)
   if (typeof nodeId === 'string' && nodeId.startsWith('col:')) {
     const cid = nodeId.slice(4);
     const c = (sessionState.campaignBlocks.collections || []).find(c => c.id === cid);
     if (!c) return null;
     const el = document.querySelector('.frame-collection-header[data-collection-id="' + cid + '"]');
-    if (el) return { where: 'frame', node: { id: nodeId, title: c.title }, el, kind: 'collection', collection: c };
+    if (el) return { where: 'frame', tier: 'campaign', node: { id: nodeId, title: c.title }, el, kind: 'collection', collection: c };
+    return null;
+  }
+  if (typeof nodeId === 'string' && nodeId.startsWith('arccol:')) {
+    const cid = nodeId.slice(7);
+    const c = (sessionState.arcBlocks.collections || []).find(c => c.id === cid);
+    if (!c) return null;
+    const el = document.querySelector('.arc-collection-header[data-arc-collection-id="' + cid + '"]');
+    if (el) return { where: 'arc-frame', tier: 'arc', node: { id: nodeId, title: c.title }, el, kind: 'collection', collection: c };
     return null;
   }
 
@@ -5352,9 +6187,7 @@ function resolveEdgeEndpoint(nodeId) {
   const sn = state.nodes.get(nodeId);
   if (sn) return { where: 'canvas', node: sn, el: sn.el };
 
-  // Frame node — but if its owning collection is collapsed, retarget the
-  // visual endpoint to the collection header instead. The data still
-  // references the member node ID (so expansion restores the direct link).
+  // Campaign frame node (vertical strip on the left)
   const cn = (sessionState.campaignBlocks.nodes || []).find(n => n.id === nodeId);
   if (cn) {
     const owningCol = (sessionState.campaignBlocks.collections || []).find(c =>
@@ -5362,24 +6195,44 @@ function resolveEdgeEndpoint(nodeId) {
     );
     if (owningCol && owningCol.collapsed) {
       const el = document.querySelector('.frame-collection-header[data-collection-id="' + owningCol.id + '"]');
-      if (el) return { where: 'frame', node: cn, el, kind: 'collapsed-into-collection', collection: owningCol };
+      if (el) return { where: 'frame', tier: 'campaign', node: cn, el, kind: 'collapsed-into-collection', collection: owningCol };
     }
     const el = document.querySelector('.frame-card[data-frame-node-id="' + nodeId + '"]');
-    if (el) return { where: 'frame', node: cn, el };
+    if (el) return { where: 'frame', tier: 'campaign', node: cn, el };
+  }
+
+  // Arc frame node (horizontal strip on top)
+  const an = (sessionState.arcBlocks.nodes || []).find(n => n.id === nodeId);
+  if (an) {
+    const owningCol = (sessionState.arcBlocks.collections || []).find(c =>
+      (c.member_node_ids || []).includes(nodeId)
+    );
+    if (owningCol && owningCol.collapsed) {
+      const el = document.querySelector('.arc-collection-header[data-arc-collection-id="' + owningCol.id + '"]');
+      if (el) return { where: 'arc-frame', tier: 'arc', node: an, el, kind: 'collapsed-into-collection', collection: owningCol };
+    }
+    const el = document.querySelector('.arc-card[data-arc-node-id="' + nodeId + '"]');
+    if (el) return { where: 'arc-frame', tier: 'arc', node: an, el };
   }
   return null;
 }
 
-// Get anchor position in screen space for any endpoint kind.
-// Used by cross-scope edge drawing.
+// Anchor screen position depends on which side the anchor lives on:
+//   • Campaign frame cards → right edge (mr anchor)
+//   • Arc frame cards     → bottom edge (bc anchor)
+//   • Canvas nodes        → side closest to the connecting source
 function getAnchorScreenPos(res) {
   if (!res || !res.el) return null;
   const r = res.el.getBoundingClientRect();
   if (res.where === 'frame') {
-    // Use the right-middle anchor on frame cards
+    // Right-middle anchor on campaign frame
     return { x: r.right, y: r.top + r.height / 2 };
   }
-  // Canvas node — pick the side closest to the frame (ml) for simplicity
+  if (res.where === 'arc-frame') {
+    // Bottom-center anchor on arc frame
+    return { x: r.left + r.width / 2, y: r.bottom };
+  }
+  // Canvas node — for now use left-middle (matches behavior with campaign tier)
   return { x: r.left, y: r.top + r.height / 2 };
 }
 function redrawEdges() { state.edges.forEach(redrawEdge); }
@@ -7673,7 +8526,8 @@ function dispatchMonsterRoll(imported, action, advantage) {
 function commitOpenNodeFromForm() {
   if (!openNodeId) return;
   // Frame-node editing path: openNodeId is prefixed `__frame__` and the
-  // active node lives in sessionState.campaignBlocks (no DOM .el).
+  // active node lives in either campaignBlocks or arcBlocks per the tier
+  // recorded at open time.
   if (typeof openNodeId === 'string' && openNodeId.startsWith('__frame__')) {
     const cn = spOpenFrameNode;
     if (!cn) return;
@@ -7685,9 +8539,13 @@ function commitOpenNodeFromForm() {
     const def = BLOCK_TYPES[cn.type] || BLOCK_TYPES.scene;
     const sumField = (def.fields || []).find(f => f.summary);
     if (sumField) cn.summary = cn.fields[sumField.key] || '';
-    // Update the cached campaignBlocks entry (cn IS that entry by reference).
-    renderCampaignFrame();
-    markCampaignDirty();
+    if (spOpenFrameNodeTier === 'arc') {
+      renderArcFrame();
+      markArcDirty();
+    } else {
+      renderCampaignFrame();
+      markCampaignDirty();
+    }
     return;
   }
   const node = state.nodes.get(openNodeId);
@@ -7705,13 +8563,11 @@ function commitOpenNodeFromForm() {
   if (sumField) {
     node.summary = node.fields[sumField.key] || '';
   }
-  // Repaint face — but preserve anchors (don't blow them away during a connection)
   refreshNodeFace(node);
   redrawEdges();
-  // Routing: campaign-scope nodes write back to campaign.blocks; session
-  // nodes follow the regular session autosave path.
+  // Routing: campaign- or arc-scope nodes write back to their respective
+  // tier's blocks; session nodes follow the regular session autosave.
   if (node.scope === 'campaign') {
-    // Sync this node's data into the cached campaignBlocks entry
     const idx = sessionState.campaignBlocks.nodes.findIndex(n => n.id === node.id);
     if (idx >= 0) {
       sessionState.campaignBlocks.nodes[idx] = {
@@ -7721,6 +8577,16 @@ function commitOpenNodeFromForm() {
       };
     }
     markCampaignDirty();
+  } else if (node.scope === 'arc') {
+    const idx = sessionState.arcBlocks.nodes.findIndex(n => n.id === node.id);
+    if (idx >= 0) {
+      sessionState.arcBlocks.nodes[idx] = {
+        ...sessionState.arcBlocks.nodes[idx],
+        title: node.title, x: node.x, y: node.y,
+        summary: node.summary, fields: node.fields,
+      };
+    }
+    markArcDirty();
   } else {
     markDirty();
   }
