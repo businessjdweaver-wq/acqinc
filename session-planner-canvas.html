@@ -2476,12 +2476,6 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 }
 .node-mon-peek-toggle:hover { color: var(--gold-pale); border-color: var(--gold); }
 .node-mon-peek-toggle.open  { color: var(--gold-pale); border-color: var(--gold); background: rgba(184,134,11,0.12); }
-.node-mon-peek-toggle:disabled,
-.node-mon-deact-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-  pointer-events: none;       /* belt and braces — no hover, no click */
-}
 
 .node-mon-peek {
   display: none;
@@ -3053,7 +3047,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 9 / disable peek during override</span>
+  <span class="topbar-version">stage 8.1 / peek listener fix</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -3172,7 +3166,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 9 · pause/peek disabled during override edit</div>
+  <div id="stage-label">Stage 8.1 · peek listener stack fix</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -8360,6 +8354,12 @@ function _renderHazardRollsHtml(node, prefix, tag) {
 function _wireHazardRollClicks(nodeEl, node, prefix, tag, sourceLabel) {
   const f = () => node.fields || {};
   const get = (k) => f()[prefix + k];
+  // Idempotent wireup — strip stale listeners by clone-replacing each
+  // button. Same rationale as wireMonsterRollClicks.
+  nodeEl.querySelectorAll(`button[data-${tag}-roll]`).forEach(btn => {
+    const fresh = btn.cloneNode(true);
+    btn.parentNode.replaceChild(fresh, btn);
+  });
   nodeEl.querySelectorAll(`button[data-${tag}-roll]`).forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();    // don't open side panel
@@ -8463,15 +8463,12 @@ function renderOneMonsterCard(m, idx, isSingleton) {
   const peekOpen = !!m._peekOpen;
   const isDead = (typeof m.hp_current === 'number') && m.hp_current <= 0;
   const isDeactivated = !!m._deactivated;
-  // Overriding an action mutes the peek/pause buttons until the user
-  // commits or cancels — clicking those mid-edit could blow up the form.
-  const isEditingOverride = !!m._editingAction;
   const showFlav = !isSingleton;
   const nameSlot = isSingleton
     ? `<span class="node-mon-name">${escHtml(sn.name || 'Unknown monster')}</span>`
     : `<span class="node-mon-name" style="font-style:italic;color:var(--steel-pale);font-size:0.78rem;">instance</span>`;
   return `
-    <div class="node-mon ${isDead ? 'dead' : ''} ${isDeactivated ? 'deactivated' : ''} ${isSingleton ? 'singleton' : ''} ${isEditingOverride ? 'editing-override' : ''}" data-mon-idx="${idx}">
+    <div class="node-mon ${isDead ? 'dead' : ''} ${isDeactivated ? 'deactivated' : ''} ${isSingleton ? 'singleton' : ''}" data-mon-idx="${idx}">
       <div class="node-mon-header">
         <span class="node-mon-flav">${showFlav ? escHtml(m.flav || m.letter || '?') : ''}</span>
         ${showFlav && m.flavorDesc ? `
@@ -8483,13 +8480,11 @@ function renderOneMonsterCard(m, idx, isSingleton) {
         ${isSingleton ? `<span class="node-mon-stats">${escHtml(stats)}</span>` : ''}
         <button class="node-mon-deact-btn ${isDeactivated ? 'is-deactivated' : ''}"
                 data-peek-deact="${idx}" type="button"
-                ${isEditingOverride ? 'disabled' : ''}
-                title="${isEditingOverride ? 'Finish editing the override first (Apply or Cancel)' : (isDeactivated ? 'Reactivate this monster' : 'Sideline this monster (kept in encounter, just out of the fight)')}"
+                title="${isDeactivated ? 'Reactivate this monster' : 'Sideline this monster (kept in encounter, just out of the fight)'}"
                 >${isDeactivated ? '▶' : '⏸'}</button>
         <button class="node-mon-peek-toggle ${peekOpen ? 'open' : ''}"
                 data-peek-toggle="${idx}" type="button"
-                ${isEditingOverride ? 'disabled' : ''}
-                title="${isEditingOverride ? 'Finish editing the override first (Apply or Cancel)' : 'Show / hide statblock peek'}">${peekOpen ? '▼ peek' : '▶ peek'}</button>
+                title="Show / hide statblock peek">${peekOpen ? '▼ peek' : '▶ peek'}</button>
       </div>
       ${actions.length ? `
         <div class="node-mon-actions">
@@ -8804,6 +8799,35 @@ function wireMonsterRollClicks(nodeEl, node) {
   // and per-monster HP/mult edits also reside on the imported entry. None
   // of these are persisted in the canvas serialization (they're considered
   // play-state, not authoring data) — they only survive within the page session.
+
+  // Make wiring idempotent: if this function ran on the same DOM before,
+  // each interactive button accumulated a click listener pointing at a
+  // STALE closure (older `monsters` array, older state). Two handlers on
+  // a peek/deact button each flip the same boolean, cancelling out — so
+  // the button appears dead. Replace each button with a fresh clone (no
+  // listeners) before binding new handlers.
+  //
+  // The selector list covers every button this function attaches to.
+  const stripSelectors = [
+    'button[data-mon-roll]',
+    'button[data-mon-trigger]',
+    'button[data-mon-edit]',
+    'button[data-peek-toggle]',
+    'button[data-peek-deact]',
+    'button[data-flavor-fill-group]',
+    'button[data-flavor-reroll]',
+    'button[data-mon-hp-adjust]',
+    'button[data-mon-instance-add]',
+    'button[data-mon-instance-remove]',
+    'button[data-mon-roll-horde]',
+    'button[data-ov-action]',
+  ];
+  stripSelectors.forEach(sel => {
+    nodeEl.querySelectorAll(sel).forEach(btn => {
+      const fresh = btn.cloneNode(true);
+      btn.parentNode.replaceChild(fresh, btn);
+    });
+  });
 
   const monsters = (node.fields && node.fields.monsters) || [];
 
@@ -9338,6 +9362,25 @@ function wireNpcPeekClicks(nodeEl, node) {
   if (!skin || !skin.snapshot) return;
   const sn = skin.snapshot;
   const npcName = node.title || 'NPC';
+
+  // Idempotent wireup — strip stale listeners by clone-replacing each
+  // button. Same rationale as wireMonsterRollClicks.
+  const stripSelectors = [
+    'button[data-npc-roll]',
+    'button[data-npc-trigger]',
+    'button[data-npc-edit]',
+    'button[data-npc-peek-toggle]',
+    'button[data-npc-peek-deact]',
+    'button[data-npc-peek-mult-delta]',
+    'button[data-npc-peek-hp]',
+    'button[data-ov-action]',
+  ];
+  stripSelectors.forEach(sel => {
+    nodeEl.querySelectorAll(sel).forEach(btn => {
+      const fresh = btn.cloneNode(true);
+      btn.parentNode.replaceChild(fresh, btn);
+    });
+  });
 
   // Action attack / save-or-damage rolls
   nodeEl.querySelectorAll('button[data-npc-roll]').forEach(btn => {
