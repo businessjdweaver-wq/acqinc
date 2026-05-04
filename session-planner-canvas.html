@@ -4833,9 +4833,33 @@ function deserializeCanvas(data) {
 
 // Helper: confirm a node ID exists in any scope (used during edge restore)
 function resolveAnchorEndpoint(nodeId) {
+  // 1) Canvas node — check first (most common case)
   if (state.nodes.has(nodeId)) return { nodeId, scope: 'session' };
+  // 2) Synthetic collection-header IDs. These exist as DOM elements in the
+  //    relevant frame strip but never as entries in any nodes array. The
+  //    edge is valid as long as the matching collection record exists in
+  //    its tier's blocks.
+  if (typeof nodeId === 'string') {
+    if (nodeId.startsWith('col:')) {
+      const cid = nodeId.slice(4);
+      const c = (sessionState.campaignBlocks.collections || []).find(c => c.id === cid);
+      if (c) return { nodeId, scope: 'campaign-collection' };
+      return null;
+    }
+    if (nodeId.startsWith('arccol:')) {
+      const cid = nodeId.slice(7);
+      const c = (sessionState.arcBlocks.collections || []).find(c => c.id === cid);
+      if (c) return { nodeId, scope: 'arc-collection' };
+      return null;
+    }
+  }
+  // 3) Campaign-frame node
   const cn = (sessionState.campaignBlocks.nodes || []).find(n => n.id === nodeId);
   if (cn) return { nodeId, scope: 'campaign' };
+  // 4) Arc-frame node — was missing before this fix; without it, edges
+  //    pointing at arc-frame nodes were silently dropped on reload.
+  const an = (sessionState.arcBlocks.nodes || []).find(n => n.id === nodeId);
+  if (an) return { nodeId, scope: 'arc' };
   return null;
 }
 
