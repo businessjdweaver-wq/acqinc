@@ -1528,6 +1528,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   line-height: 1.5;
   z-index: 50;
   max-width: 260px;
+  transition: padding 0.15s, max-width 0.15s;
 }
 #help-hud b { color: var(--bone); font-weight: normal; }
 #help-hud kbd {
@@ -1540,6 +1541,28 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   font-family: inherit;
   font-size: 0.95em;
 }
+#help-hud-toggle {
+  background: transparent;
+  border: 0;
+  color: var(--steel-pale);
+  font-family: inherit;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  padding: 0 4px 0 0;
+  text-transform: uppercase;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+#help-hud-toggle:hover { opacity: 1; color: var(--gold-pale); }
+#help-hud.collapsed {
+  padding: 5px 9px;
+  max-width: none;     /* shrink to fit the button only */
+}
+#help-hud.collapsed #help-hud-body { display: none; }
+#help-hud.collapsed #help-hud-toggle::before { content: 'shortcuts ▴'; }
+#help-hud:not(.collapsed) #help-hud-toggle::before { content: 'hide ▾'; }
+#help-hud-toggle-text { display: none; }   /* content driven by ::before */
 
 /* Stage label — temporary, removed in later stages */
 #stage-label {
@@ -2453,6 +2476,12 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 }
 .node-mon-peek-toggle:hover { color: var(--gold-pale); border-color: var(--gold); }
 .node-mon-peek-toggle.open  { color: var(--gold-pale); border-color: var(--gold); background: rgba(184,134,11,0.12); }
+.node-mon-peek-toggle:disabled,
+.node-mon-deact-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  pointer-events: none;       /* belt and braces — no hover, no click */
+}
 
 .node-mon-peek {
   display: none;
@@ -3024,7 +3053,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 7 / flavor descriptors</span>
+  <span class="topbar-version">stage 9 / disable peek during override</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -3143,7 +3172,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 7 · monster flavor descriptors</div>
+  <div id="stage-label">Stage 9 · pause/peek disabled during override edit</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -3153,10 +3182,13 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     </div>
   </div>
   <div id="zoom-hud">100%</div>
-  <div id="help-hud">
+  <div id="help-hud" class="collapsed">
+    <button id="help-hud-toggle" type="button" onclick="toggleHelpHud()" title="Show or hide keyboard shortcuts"><span id="help-hud-toggle-text"></span></button>
+    <div id="help-hud-body">
     <b>Pan</b>: right-click drag &nbsp;·&nbsp; <kbd>Space</kbd>+drag<br>
     <b>Zoom</b>: scroll wheel<br>
     <b>Frame view</b>: <kbd>F</kbd> (selection or all)<br>
+    <b>Focus mode</b>: <kbd>Z</kbd> on a selection (or 🔍 button on a node)<br>
     <b>New node</b>: topbar palette &nbsp;·&nbsp; middle-click for type chooser<br>
     <b>Edit node</b>: click the node body<br>
     <b>Move node</b>: drag the header<br>
@@ -3166,6 +3198,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <b>Delete</b>: <kbd>Del</kbd> on selected node(s) or connector<br>
     <b>Saving</b>: autosaved 600ms after each change<br>
     <b>Roll adv/dis</b>: <kbd>Shift</kbd>=advantage, <kbd>Alt</kbd>=disadvantage
+    </div>
   </div>
 </div>
 
@@ -7311,6 +7344,31 @@ function saveAndCloseOpenNode() {
   closeSidePanel();
 }
 
+// ── HELP HUD COLLAPSE TOGGLE ──────────────────────────────
+// The keyboard-shortcuts panel bottom-left can be collapsed to a small
+// button to free up canvas real estate. State persists via localStorage
+// keyed under the user's email so it travels with the SSO session.
+const HELP_HUD_COLLAPSED_KEY = 'rq_help_hud_collapsed';
+function toggleHelpHud() {
+  const hud = document.getElementById('help-hud');
+  if (!hud) return;
+  const collapsed = !hud.classList.contains('collapsed');
+  hud.classList.toggle('collapsed', collapsed);
+  try { localStorage.setItem(HELP_HUD_COLLAPSED_KEY, collapsed ? '1' : '0'); }
+  catch (e) { /* storage may be blocked; non-fatal */ }
+}
+// Restore persisted state on initial load. Default is collapsed, set in
+// the HTML class. If the user previously chose expanded, honor that.
+(function restoreHelpHudState() {
+  try {
+    const saved = localStorage.getItem(HELP_HUD_COLLAPSED_KEY);
+    if (saved === '0') {
+      const hud = document.getElementById('help-hud');
+      if (hud) hud.classList.remove('collapsed');
+    }
+  } catch (e) {}
+})();
+
 function setSavedState(state /* 'saved' | 'dirty' */) {
   if (!spSaved) return;
   spSaved.classList.remove('saved', 'dirty');
@@ -8405,12 +8463,15 @@ function renderOneMonsterCard(m, idx, isSingleton) {
   const peekOpen = !!m._peekOpen;
   const isDead = (typeof m.hp_current === 'number') && m.hp_current <= 0;
   const isDeactivated = !!m._deactivated;
+  // Overriding an action mutes the peek/pause buttons until the user
+  // commits or cancels — clicking those mid-edit could blow up the form.
+  const isEditingOverride = !!m._editingAction;
   const showFlav = !isSingleton;
   const nameSlot = isSingleton
     ? `<span class="node-mon-name">${escHtml(sn.name || 'Unknown monster')}</span>`
     : `<span class="node-mon-name" style="font-style:italic;color:var(--steel-pale);font-size:0.78rem;">instance</span>`;
   return `
-    <div class="node-mon ${isDead ? 'dead' : ''} ${isDeactivated ? 'deactivated' : ''} ${isSingleton ? 'singleton' : ''}" data-mon-idx="${idx}">
+    <div class="node-mon ${isDead ? 'dead' : ''} ${isDeactivated ? 'deactivated' : ''} ${isSingleton ? 'singleton' : ''} ${isEditingOverride ? 'editing-override' : ''}" data-mon-idx="${idx}">
       <div class="node-mon-header">
         <span class="node-mon-flav">${showFlav ? escHtml(m.flav || m.letter || '?') : ''}</span>
         ${showFlav && m.flavorDesc ? `
@@ -8422,11 +8483,13 @@ function renderOneMonsterCard(m, idx, isSingleton) {
         ${isSingleton ? `<span class="node-mon-stats">${escHtml(stats)}</span>` : ''}
         <button class="node-mon-deact-btn ${isDeactivated ? 'is-deactivated' : ''}"
                 data-peek-deact="${idx}" type="button"
-                title="${isDeactivated ? 'Reactivate this monster' : 'Sideline this monster (kept in encounter, just out of the fight)'}"
+                ${isEditingOverride ? 'disabled' : ''}
+                title="${isEditingOverride ? 'Finish editing the override first (Apply or Cancel)' : (isDeactivated ? 'Reactivate this monster' : 'Sideline this monster (kept in encounter, just out of the fight)')}"
                 >${isDeactivated ? '▶' : '⏸'}</button>
         <button class="node-mon-peek-toggle ${peekOpen ? 'open' : ''}"
                 data-peek-toggle="${idx}" type="button"
-                title="Show / hide statblock peek">${peekOpen ? '▼ peek' : '▶ peek'}</button>
+                ${isEditingOverride ? 'disabled' : ''}
+                title="${isEditingOverride ? 'Finish editing the override first (Apply or Cancel)' : 'Show / hide statblock peek'}">${peekOpen ? '▼ peek' : '▶ peek'}</button>
       </div>
       ${actions.length ? `
         <div class="node-mon-actions">
