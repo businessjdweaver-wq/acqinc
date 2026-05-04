@@ -1524,6 +1524,100 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   transform: scale(1.15);
 }
 
+/* Edge labels — small free-text caption that floats above the dir-pill on
+   the same edge midpoint. Click to edit. Empty = hidden. */
+.edge-label {
+  display: inline-flex;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid rgba(184,134,11,0.5);
+  color: var(--gold-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 9px;
+  cursor: text;
+  white-space: nowrap;
+  user-select: none;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  text-transform: uppercase;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.edge-label:hover {
+  background: rgba(184,134,11,0.18);
+  border-color: var(--gold);
+}
+.edge-label.empty {
+  /* Hidden by default — but visible briefly during edit. */
+  display: none;
+}
+.edge-label.editing {
+  background: rgba(0,0,0,0.6);
+  padding: 0;
+  display: inline-flex;
+}
+.edge-label-input {
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--gold-pale);
+  font-family: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  width: 140px;
+}
+.edge-label-input::placeholder {
+  color: rgba(200,180,140,0.4);
+  font-style: italic;
+  text-transform: none;
+}
+/* When a label is being added on a label-less edge (group has the
+   .editing class set), force the label visible even if empty. */
+.edge-group.label-editing .edge-label.empty,
+.edge-group.label-editing .edge-label {
+  display: inline-flex;
+}
+
+/* Autocomplete dropdown for edge labels */
+.edge-label-autocomplete {
+  position: fixed;
+  background: linear-gradient(180deg, #1a1610, #14110b);
+  border: 1px solid var(--gold);
+  border-radius: 3px;
+  padding: 3px;
+  z-index: 1500;
+  min-width: 160px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.65);
+  display: none;
+}
+.edge-label-autocomplete.open { display: block; }
+.edge-label-autocomplete-opt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--bone);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  padding: 4px 9px;
+  border-radius: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+.edge-label-autocomplete-opt:hover,
+.edge-label-autocomplete-opt.active {
+  background: rgba(184,134,11,0.22);
+  color: var(--gold-pale);
+}
+
+
 /* ── HUD ────────────────────────────────────────────────── */
 #zoom-hud {
   position: absolute;
@@ -3071,7 +3165,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 10 / focus inc. frame nodes</span>
+  <span class="topbar-version">stage 11 / edge labels</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -3190,7 +3284,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 10 · frame cards in focus selection</div>
+  <div id="stage-label">Stage 11 · edge labels</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -3212,6 +3306,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <b>Move node</b>: drag the header<br>
     <b>Connect</b>: click an anchor, then click another<br>
     <b>Direction</b>: click the arrow pill or middle-click the line<br>
+    <b>Label edge</b>: double-click the line<br>
     <b>Select multiple</b>: drag on empty canvas; hold <kbd>Shift</kbd> on release to add to selection<br>
     <b>Delete</b>: <kbd>Del</kbd> on selected node(s) or connector<br>
     <b>Saving</b>: autosaved 600ms after each change<br>
@@ -3224,6 +3319,10 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 
 <!-- Middle-click type chooser — populated and positioned at click time -->
 <div id="type-chooser" role="menu"></div>
+
+<!-- Edge label autocomplete — a single floating dropdown that's positioned
+     and populated per-edit. -->
+<div id="edge-label-autocomplete" class="edge-label-autocomplete"></div>
 
 <!-- ── SIDE PANEL EDITOR ── -->
 <div id="side-panel" role="dialog" aria-label="Edit node">
@@ -4928,6 +5027,7 @@ function serializeCanvas() {
     from_node: e.from.nodeId,
     to_node:   e.to.nodeId,
     dir:       e.dir,
+    label:     e.label || '',
   }));
 
   // Reconcile campaign-scope nodes
@@ -5050,14 +5150,16 @@ function deserializeCanvas(data) {
       createEdge(
         { nodeId: ed.from_node, anchor: ed.from_anchor || 'mr' },
         { nodeId: ed.to_node,   anchor: ed.to_anchor   || 'ml' },
-        ed.dir || 'forward'
+        ed.dir || 'forward',
+        ed.label || ''
       );
       return;
     }
     createEdge(
       { nodeId: ed.from_node },
       { nodeId: ed.to_node },
-      ed.dir || 'forward'
+      ed.dir || 'forward',
+      ed.label || ''
     );
   });
 
@@ -6856,6 +6958,7 @@ function redrawEdge(edge) {
     }
     edge.pillFOEl.setAttribute('x', mx - 13);
     edge.pillFOEl.setAttribute('y', my - 13);
+    positionEdgeLabel(edge, mx, my);
     return;
   }
 
@@ -6885,6 +6988,18 @@ function redrawEdge(edge) {
   }
   edge.pillFOEl.setAttribute('x', mx - 13);
   edge.pillFOEl.setAttribute('y', my - 13);
+  positionEdgeLabel(edge, mx, my);
+}
+
+// Position the label foreignObject so its caption sits above the pill,
+// horizontally centered on the line midpoint. Width is approximate (label
+// uses CSS auto width + max-width); we center on the foreignObject's box.
+function positionEdgeLabel(edge, mx, my) {
+  if (!edge.labelFOEl) return;
+  // Half-width of the FO is 110 (width=220 in createEdge). Position the
+  // FO so its center sits at mx; vertical placement is just above the pill.
+  edge.labelFOEl.setAttribute('x', mx - 110);
+  edge.labelFOEl.setAttribute('y', my - 36);
 }
 
 // Resolve an edge endpoint id → { where: 'canvas'|'frame', node, el }.
@@ -6964,7 +7079,7 @@ function getAnchorScreenPos(res) {
 function redrawEdges() { state.edges.forEach(redrawEdge); }
 
 let edgeIdSeq = 1;
-function createEdge(from, to, dir = 'forward') {
+function createEdge(from, to, dir = 'forward', label = '') {
   // <g> grouping so hitbox + path + pill move together
   const g    = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   g.setAttribute('class', 'edge-group');
@@ -6983,15 +7098,36 @@ function createEdge(from, to, dir = 'forward') {
   pill.textContent = DIR_GLYPH[dir];
   fo.appendChild(pill);
 
+  // Edge label — smaller foreignObject above the pill, reads as a small
+  // capsule. Hidden when empty unless the edge is in label-editing mode.
+  // The FO is wide (220) for centering math; the inner div centers the
+  // capsule horizontally with text-align.
+  const labelFO = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+  labelFO.setAttribute('width',  '220');
+  labelFO.setAttribute('height', '24');
+  labelFO.setAttribute('overflow', 'visible');
+  const labelWrap = document.createElement('div');
+  labelWrap.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+  labelWrap.style.cssText = 'width:220px;text-align:center;';
+  const labelEl = document.createElement('div');
+  labelEl.className = 'edge-label' + (label ? '' : ' empty');
+  labelEl.textContent = label || '';
+  labelWrap.appendChild(labelEl);
+  labelFO.appendChild(labelWrap);
+
   g.appendChild(hit);
   g.appendChild(path);
+  g.appendChild(labelFO);
   g.appendChild(fo);
   svg.appendChild(g);
 
   const edge = {
     id: 'e' + (edgeIdSeq++),
     from, to, dir,
-    groupEl: g, hitEl: hit, pathEl: path, pillEl: pill, pillFOEl: fo,
+    label: label || '',
+    groupEl: g, hitEl: hit, pathEl: path,
+    pillEl: pill, pillFOEl: fo,
+    labelEl, labelFOEl: labelFO,
     currentFromAnchor: from.anchor, currentToAnchor: to.anchor,
   };
   state.edges.push(edge);
@@ -7003,6 +7139,13 @@ function createEdge(from, to, dir = 'forward') {
   hit.addEventListener('click', (e) => {
     e.stopPropagation();
     selectEdge(edge);
+  });
+  // Double-click hitbox → start label edit. Works whether the edge has a
+  // label or not (empty label is normally hidden, but the editor reveals it).
+  hit.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    startEdgeLabelEdit(edge);
   });
   pill.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -7020,6 +7163,13 @@ function createEdge(from, to, dir = 'forward') {
     cycleEdgeDirection(edge);
   });
   // Right-click on the hitbox is reserved for canvas pan.
+
+  // Label click — start inline edit. Empty labels reveal-on-click via the
+  // .label-editing class on the group.
+  labelEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    startEdgeLabelEdit(edge);
+  });
 
   markDirty();
   return edge;
@@ -7178,6 +7328,163 @@ function cycleEdgeDirection(edge) {
   applyEdgeMarkers(edge);
   markDirty();
 }
+
+// ── EDGE LABEL EDIT ───────────────────────────────────────
+// Free-text label with autocomplete suggestions. Starts editing on double-
+// click of the edge hitbox or click of an existing label. Saves on Enter or
+// blur, cancels on Esc.
+
+// Common edge labels — populated as autocomplete suggestions. Free-form
+// is allowed; this list is merely a convenience.
+const EDGE_LABEL_SUGGESTIONS = [
+  'family', 'ally', 'enemy', 'rival', 'mentor', 'student',
+  'employer', 'employee', 'patron', 'agent', 'member-of',
+  'owns', 'located-in', 'precedes', 'follows', 'contains',
+  'created-by', 'knows', 'hires', 'opposes', 'protects',
+];
+
+let activeLabelEditEdge = null;
+let activeLabelEditInput = null;
+let activeLabelEditAcIdx = -1;
+
+function startEdgeLabelEdit(edge) {
+  if (activeLabelEditEdge) {
+    finishEdgeLabelEdit(true);   // commit any in-progress edit first
+  }
+  activeLabelEditEdge = edge;
+  activeLabelEditAcIdx = -1;
+  // Reveal-on-edit: ensure label is visible even if currently empty.
+  edge.groupEl.classList.add('label-editing');
+  edge.labelEl.classList.add('editing');
+  // Replace label text with an input
+  const initial = edge.label || '';
+  edge.labelEl.innerHTML = '';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'edge-label-input';
+  input.value = initial;
+  input.placeholder = 'family / employer / etc.';
+  input.maxLength = 60;
+  edge.labelEl.appendChild(input);
+  activeLabelEditInput = input;
+
+  // Position the autocomplete dropdown beneath the input. Use viewport
+  // coords (input.getBoundingClientRect) and fixed positioning.
+  const ac = document.getElementById('edge-label-autocomplete');
+  function repositionAndRender() {
+    const rect = input.getBoundingClientRect();
+    ac.style.left = rect.left + 'px';
+    ac.style.top  = (rect.bottom + 2) + 'px';
+    renderEdgeLabelAutocomplete(input.value);
+  }
+  repositionAndRender();
+
+  input.focus();
+  input.select();
+
+  input.addEventListener('input', () => {
+    activeLabelEditAcIdx = -1;
+    repositionAndRender();
+  });
+  input.addEventListener('keydown', (e) => {
+    const ac = document.getElementById('edge-label-autocomplete');
+    const opts = ac.querySelectorAll('.edge-label-autocomplete-opt');
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (activeLabelEditAcIdx >= 0 && opts[activeLabelEditAcIdx]) {
+        input.value = opts[activeLabelEditAcIdx].textContent;
+      }
+      finishEdgeLabelEdit(true);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      finishEdgeLabelEdit(false);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!opts.length) return;
+      activeLabelEditAcIdx = Math.min(activeLabelEditAcIdx + 1, opts.length - 1);
+      updateAcHighlight();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      activeLabelEditAcIdx = Math.max(activeLabelEditAcIdx - 1, -1);
+      updateAcHighlight();
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      if (activeLabelEditAcIdx >= 0 && opts[activeLabelEditAcIdx]) {
+        input.value = opts[activeLabelEditAcIdx].textContent;
+        activeLabelEditAcIdx = -1;
+        repositionAndRender();
+      }
+    }
+  });
+  // Blur commits, but we have to be careful: clicking an autocomplete
+  // option triggers blur before its click. Delay so the click can run.
+  input.addEventListener('blur', () => {
+    setTimeout(() => {
+      if (activeLabelEditEdge === edge) finishEdgeLabelEdit(true);
+    }, 150);
+  });
+
+  function updateAcHighlight() {
+    const opts = ac.querySelectorAll('.edge-label-autocomplete-opt');
+    opts.forEach((o, i) => o.classList.toggle('active', i === activeLabelEditAcIdx));
+    if (activeLabelEditAcIdx >= 0 && opts[activeLabelEditAcIdx]) {
+      opts[activeLabelEditAcIdx].scrollIntoView({ block: 'nearest' });
+    }
+  }
+}
+
+function renderEdgeLabelAutocomplete(query) {
+  const ac = document.getElementById('edge-label-autocomplete');
+  if (!ac) return;
+  const q = (query || '').trim().toLowerCase();
+  // Filter suggestions to those that start with or include the query.
+  // Show all if query empty.
+  const matches = q
+    ? EDGE_LABEL_SUGGESTIONS.filter(s => s.toLowerCase().includes(q)).slice(0, 8)
+    : EDGE_LABEL_SUGGESTIONS.slice(0, 8);
+  if (!matches.length) {
+    ac.classList.remove('open');
+    ac.innerHTML = '';
+    return;
+  }
+  ac.innerHTML = matches.map(s =>
+    `<button type="button" class="edge-label-autocomplete-opt">${escHtml(s)}</button>`
+  ).join('');
+  ac.classList.add('open');
+  // Wire option clicks
+  ac.querySelectorAll('.edge-label-autocomplete-opt').forEach(btn => {
+    // mousedown fires before the input's blur — set the value in mousedown
+    // so it survives the blur-induced commit.
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      if (activeLabelEditInput) {
+        activeLabelEditInput.value = btn.textContent;
+        finishEdgeLabelEdit(true);
+      }
+    });
+  });
+}
+
+function finishEdgeLabelEdit(commit) {
+  const edge = activeLabelEditEdge;
+  if (!edge) return;
+  const input = activeLabelEditInput;
+  const newLabel = commit && input ? (input.value || '').trim() : edge.label;
+  // Tear down DOM bits regardless
+  edge.groupEl.classList.remove('label-editing');
+  edge.labelEl.classList.remove('editing');
+  document.getElementById('edge-label-autocomplete').classList.remove('open');
+  activeLabelEditEdge = null;
+  activeLabelEditInput = null;
+  activeLabelEditAcIdx = -1;
+  // Apply new label
+  edge.label = newLabel || '';
+  edge.labelEl.textContent = edge.label;
+  edge.labelEl.classList.toggle('empty', !edge.label);
+  if (commit) markDirty();
+  redrawEdge(edge);   // recompute label position now that text length changed
+}
+
 
 // ── PENDING CONNECTION (transient dashed line) ───────────
 let pendingPath = null;
