@@ -3326,22 +3326,73 @@ function b20RollMonsterAttack(monsterName, cr, ac, hp, atk, advantage) {
   });
 }
 
-// Send a free-form chat message — used to push an action's prose
-// description into the VTT chat alongside (just before) a roll. Beyond20
-// renders this as its own card in Foundry / Roll20 chat. Empty/null
-// messages are no-ops.
-function b20SendFlavor(monsterName, cr, ac, hp, abilityName, message) {
-  if (!message || !String(message).trim()) return;
-  b20Send({
-    action: 'roll',
-    type: 'chat-message',
-    character: b20MakeMonsterChar(monsterName, cr, ac, hp),
-    roll: 0,
-    advantage: 0,
-    whisper: 0,
-    name: abilityName || 'Ability',
-    message: String(message).trim(),
+// Send one or more flavor messages — used to push an action's prose
+// description into the VTT chat alongside (right after) a roll. Beyond20
+// renders each as its own card. Long messages get split into chunks that
+// fit a single chat bubble (~250 chars) at sentence boundaries when
+// possible, so chat doesn't visually clip.
+//
+// Returns the number of chunks queued so callers can compute timing.
+function b20SendFlavor(monsterName, cr, ac, hp, abilityName, message, baseDelayMs) {
+  if (!message || !String(message).trim()) return 0;
+  const chunks = chunkFlavorMessage(String(message).trim(), 250);
+  const delay  = (typeof baseDelayMs === 'number') ? baseDelayMs : 0;
+  chunks.forEach((chunk, i) => {
+    setTimeout(() => {
+      b20Send({
+        action: 'roll',
+        type: 'chat-message',
+        character: b20MakeMonsterChar(monsterName, cr, ac, hp),
+        roll: 0,
+        advantage: 0,
+        whisper: 0,
+        name: abilityName || 'Ability',
+        message: chunk,
+      });
+    }, delay + i * 300);
   });
+  return chunks.length;
+}
+
+// Split a long flavor message into chunks no longer than `softMax` chars.
+// Splits on sentence boundaries first; falls back to word boundaries when a
+// sentence is itself longer than the soft cap. Each chunk is trimmed.
+function chunkFlavorMessage(text, softMax) {
+  if (!text) return [];
+  if (text.length <= softMax) return [text];
+  // Split into sentence-ish units. Keep terminators with the sentence.
+  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+  const chunks = [];
+  let buf = '';
+  sentences.forEach(s => {
+    s = s.trim();
+    if (!s) return;
+    if (s.length > softMax) {
+      // The sentence itself is too long; flush whatever we have, then
+      // word-split this sentence.
+      if (buf) { chunks.push(buf.trim()); buf = ''; }
+      const words = s.split(/\s+/);
+      let part = '';
+      words.forEach(w => {
+        if ((part + ' ' + w).trim().length > softMax) {
+          if (part) chunks.push(part.trim());
+          part = w;
+        } else {
+          part = (part ? part + ' ' : '') + w;
+        }
+      });
+      if (part) buf = part;     // carry the tail into the next iteration
+      return;
+    }
+    if ((buf + ' ' + s).trim().length > softMax) {
+      chunks.push(buf.trim());
+      buf = s;
+    } else {
+      buf = (buf ? buf + ' ' : '') + s;
+    }
+  });
+  if (buf) chunks.push(buf.trim());
+  return chunks;
 }
 
 // Monster save-or-damage ability (breath weapon, AoE blast, etc.) Two-step:
@@ -8768,40 +8819,34 @@ function dispatchNpcRoll(node, skin, action, advantage) {
 
   const resolved = resolveAbilityMechanics(action);
 
-  // Push the action's prose description into chat as flavor before the roll.
-  if (resolved.desc && String(resolved.desc).trim()) {
-    b20SendFlavor(displayName, cr, ac, hp, resolved.name, resolved.desc);
-  }
-
-  const fireRoll = () => {
-    if (resolved.toHit || resolved.toHit === 0) {
-      const damages = action.damages
-        ? action.damages
-        : (resolved.damage ? [resolved.damage] : ['1d6']);
-      const damageTypes = action.damageTypes
-        ? action.damageTypes
-        : (resolved.damageType ? [resolved.damageType] : ['damage']);
-      b20RollMonsterAttack(displayName, cr, ac, hp, {
-        name: resolved.name,
-        toHit: resolved.toHit,
-        damages, damageTypes,
-        attackType: resolved.attackType || 'Melee',
-        reach: resolved.reach || '',
-        range: resolved.range || '',
-        description: resolved.desc || ''
-      }, advantage);
-      return;
+  if (resolved.toHit || resolved.toHit === 0) {
+    const damages = action.damages
+      ? action.damages
+      : (resolved.damage ? [resolved.damage] : ['1d6']);
+    const damageTypes = action.damageTypes
+      ? action.damageTypes
+      : (resolved.damageType ? [resolved.damageType] : ['damage']);
+    b20RollMonsterAttack(displayName, cr, ac, hp, {
+      name: resolved.name,
+      toHit: resolved.toHit,
+      damages, damageTypes,
+      attackType: resolved.attackType || 'Melee',
+      reach: resolved.reach || '',
+      range: resolved.range || '',
+      description: resolved.desc || ''
+    }, advantage);
+    if (resolved.desc && String(resolved.desc).trim()) {
+      b20SendFlavor(displayName, cr, ac, hp, resolved.name, resolved.desc, 300);
     }
-    const saveDC      = resolved.saveDC      || 12;
-    const saveAbility = resolved.saveAbility || 'DEX';
-    const dmgFormula  = resolved.damage      || '2d6';
-    const dmgType     = resolved.damageType  || 'damage';
-    b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
-  };
+    return;
+  }
+  const saveDC      = resolved.saveDC      || 12;
+  const saveAbility = resolved.saveAbility || 'DEX';
+  const dmgFormula  = resolved.damage      || '2d6';
+  const dmgType     = resolved.damageType  || 'damage';
+  b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
   if (resolved.desc && String(resolved.desc).trim()) {
-    setTimeout(fireRoll, 300);
-  } else {
-    fireRoll();
+    b20SendFlavor(displayName, cr, ac, hp, resolved.name, resolved.desc, 600);
   }
 }
 
@@ -8814,45 +8859,42 @@ function dispatchMonsterRoll(imported, action, advantage) {
 
   const resolved = resolveAbilityMechanics(action);
 
-  // Push the action's prose description into chat as flavor BEFORE the
-  // roll fires. This is what gives players the narrative context
-  // ("the stirge attaches to the target…") alongside the dice card.
-  // No-op when there's no description.
-  if (resolved.desc && String(resolved.desc).trim()) {
-    b20SendFlavor(displayName, cr, ac, hp, resolved.name, resolved.desc);
-  }
-
-  // Stagger the roll slightly so the flavor message renders first.
-  // Using the same 300ms delay pattern as save-or-damage two-steppers.
-  const fireRoll = () => {
-    if (resolved.toHit || resolved.toHit === 0) {
-      const damages = action.damages
-        ? action.damages
-        : (resolved.damage ? [resolved.damage] : ['1d6']);
-      const damageTypes = action.damageTypes
-        ? action.damageTypes
-        : (resolved.damageType ? [resolved.damageType] : ['damage']);
-      b20RollMonsterAttack(displayName, cr, ac, hp, {
-        name: resolved.name,
-        toHit: resolved.toHit,
-        damages, damageTypes,
-        attackType: resolved.attackType || 'Melee',
-        reach: resolved.reach || '',
-        range: resolved.range || '',
-        description: resolved.desc || ''
-      }, advantage);
-      return;
+  // Order: dice card first (the mechanically important part), then the
+  // prose description as one or more flavor cards (chunked so long
+  // descriptions don't get visually clipped in the VTT chat bubble).
+  if (resolved.toHit || resolved.toHit === 0) {
+    const damages = action.damages
+      ? action.damages
+      : (resolved.damage ? [resolved.damage] : ['1d6']);
+    const damageTypes = action.damageTypes
+      ? action.damageTypes
+      : (resolved.damageType ? [resolved.damageType] : ['damage']);
+    b20RollMonsterAttack(displayName, cr, ac, hp, {
+      name: resolved.name,
+      toHit: resolved.toHit,
+      damages, damageTypes,
+      attackType: resolved.attackType || 'Melee',
+      reach: resolved.reach || '',
+      range: resolved.range || '',
+      description: resolved.desc || ''
+    }, advantage);
+    if (resolved.desc && String(resolved.desc).trim()) {
+      // Flavor lands after the attack card, chunked if long.
+      b20SendFlavor(displayName, cr, ac, hp, resolved.name, resolved.desc, 300);
     }
-    const saveDC      = resolved.saveDC      || 12;
-    const saveAbility = resolved.saveAbility || 'DEX';
-    const dmgFormula  = resolved.damage      || '2d6';
-    const dmgType     = resolved.damageType  || 'damage';
-    b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
-  };
+    return;
+  }
+  // Save-or-damage path. b20RollMonsterSave already does its own two-step
+  // (announce DC, then roll damage). Description goes after both.
+  const saveDC      = resolved.saveDC      || 12;
+  const saveAbility = resolved.saveAbility || 'DEX';
+  const dmgFormula  = resolved.damage      || '2d6';
+  const dmgType     = resolved.damageType  || 'damage';
+  b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
   if (resolved.desc && String(resolved.desc).trim()) {
-    setTimeout(fireRoll, 300);
-  } else {
-    fireRoll();
+    // The save+damage two-step has its own ~300ms internal stagger, so
+    // delay an extra 600ms so the flavor lands after both cards.
+    b20SendFlavor(displayName, cr, ac, hp, resolved.name, resolved.desc, 600);
   }
 }
 
