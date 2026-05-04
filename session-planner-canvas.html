@@ -1154,6 +1154,35 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
   margin-bottom: 4px;
   opacity: 0.85;
 }
+/* Group divider — emitted between fields when their `group` attribute
+   changes. Heavier, longer letter-spacing, with a subtle rule above. */
+.focus-group-label {
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold-pale);
+  opacity: 0.9;
+  margin: 16px 0 6px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(184,134,11,0.18);
+}
+.focus-group-label:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+/* Inline pill for numeric fields (DCs, ranges, etc.) */
+.focus-numpill {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  color: var(--gold-pale);
+  background: rgba(184,134,11,0.12);
+  border: 1px solid rgba(184,134,11,0.3);
+  padding: 2px 10px;
+  border-radius: 12px;
+}
 .focus-stat-row {
   display: flex; gap: 16px; flex-wrap: wrap;
   font-family: 'JetBrains Mono', monospace;
@@ -1168,6 +1197,42 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
   font-size: 0.95rem;
   line-height: 1.55;
   color: var(--bone);
+}
+
+/* Editable Director Notes — visually distinct from read-only sections so
+   the user knows this is the live note-taking surface. */
+.focus-notes-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 2px solid rgba(184,134,11,0.4);
+}
+.focus-notes-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.55rem;
+  color: var(--steel-pale);
+  text-transform: none;
+  letter-spacing: 0.04em;
+  margin-left: 6px;
+  opacity: 0.75;
+}
+.focus-notes-editor {
+  width: 100%;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(184,134,11,0.4);
+  color: var(--bone);
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  padding: 10px 12px;
+  border-radius: 3px;
+  resize: vertical;
+  min-height: 100px;
+  outline: none;
+  box-sizing: border-box;
+}
+.focus-notes-editor:focus {
+  border-color: var(--gold);
+  background: rgba(0,0,0,0.55);
 }
 
 /* Roll buttons inside focus tiles — bigger than canvas-face buttons,
@@ -8922,6 +8987,8 @@ function enterFocusModeForNodes(nodes) {
     if (typeof wireSceneHazardClicks    === 'function') wireSceneHazardClicks(fakeHost, node);
     if (typeof wireNpcPeekClicks        === 'function') wireNpcPeekClicks(fakeHost, node);
   });
+  // Bind every editable Director Notes textarea to its node's autosave path
+  wireFocusNotesEditors();
 
   overlay.classList.add('open');
 }
@@ -8935,193 +9002,196 @@ function exitFocusMode() {
   if (grid) grid.innerHTML = '';
 }
 
-// Per-type body renderer for the focus tile.
+// Per-type body renderer for the focus tile. The strategy is generic:
+// walk the type definition's fields in order, render every populated one,
+// then append the type-specific interactive surfaces (monster cards,
+// hazard rolls, etc.). The `notes` field is the editable carve-out — we
+// hold it back from the read-only walk and emit it at the end as a
+// textarea bound to the live node.fields.notes.
+//
+// The "consumed" sets below list field keys that are already covered by
+// dedicated roll-button renderers; we skip them in the generic walk so
+// they don't duplicate as prose.
+const FOCUS_FIELD_KEYS_CONSUMED = {
+  trap:  new Set(['perc_dc','inv_dc','disarm_dc','save_stat','save_dc','damage','dmg_type']),
+  scene: new Set(['haz_kind','haz_trigger','haz_perc_dc','haz_inv_dc','haz_disarm_dc',
+                  'haz_save_stat','haz_save_dc','haz_damage','haz_dmg_type','haz_condition']),
+  encounter: new Set(),     // monsters live in fields.monsters, not in def.fields
+  npc:   new Set(),         // skin lives in fields.skin
+  item:  new Set(),
+  lore:  new Set(),
+  note:  new Set(),
+};
+
 function renderFocusTileBody(node, def) {
-  const t = node.type;
-  if (t === 'encounter') return renderFocusEncounter(node);
-  if (t === 'npc')       return renderFocusNpc(node);
-  if (t === 'scene')     return renderFocusScene(node);
-  if (t === 'trap')      return renderFocusTrap(node);
-  if (t === 'item')      return renderFocusItem(node, def);
-  if (t === 'lore')      return renderFocusGenericProse(node, def);
-  if (t === 'note')      return renderFocusGenericProse(node, def);
-  return renderFocusGenericProse(node, def);
+  const f = node.fields || {};
+  const consumed = FOCUS_FIELD_KEYS_CONSUMED[node.type] || new Set();
+  const fields = def.fields || [];
+
+  // 1. Walk every populated field except `notes` (editable below) and
+  //    consumed-by-roll-renderer keys. Group by the field's `group`
+  //    attribute so the layout mirrors the side panel structure.
+  let html = '';
+  let currentGroup = null;
+  fields.forEach(fieldDef => {
+    if (fieldDef.key === 'notes')   return;
+    if (consumed.has(fieldDef.key)) return;
+    const v = f[fieldDef.key];
+    if (v === undefined || v === null || v === '') return;
+    // Group separator. Only emit a group label when the group actually
+    // changes between fields (avoids redundant headers for solo fields).
+    if (fieldDef.group && fieldDef.group !== currentGroup) {
+      currentGroup = fieldDef.group;
+      html += `<div class="focus-group-label">${escHtml(fieldDef.group)}</div>`;
+    }
+    html += renderFocusFieldBlock(fieldDef, v);
+  });
+
+  // 2. Type-specific interactive surfaces — added AFTER the read-only
+  //    fields so the user can scan the prose first and reach for buttons
+  //    when ready.
+  if (node.type === 'encounter') {
+    html += renderFocusEncounterMonsters(node);
+  } else if (node.type === 'npc') {
+    html += renderFocusNpcSkin(node);
+  } else if (node.type === 'trap') {
+    html += renderFocusTrapRolls(node);
+  } else if (node.type === 'scene') {
+    html += renderFocusSceneHazard(node);
+  }
+
+  // 3. Editable Director Notes — the live note-taking surface during play.
+  //    Held back from the generic walk so we can render an actual
+  //    <textarea> here. Bound to autosave below in wireFocusNotesEditor.
+  const notesField = fields.find(fd => fd.key === 'notes');
+  if (notesField) {
+    const initial = (f.notes || '');
+    html += `<div class="focus-section focus-notes-section">
+      <div class="focus-section-label">${escHtml(notesField.label || 'Director Notes')} <span class="focus-notes-hint">(editable · auto-saves)</span></div>
+      <textarea class="focus-notes-editor" data-focus-notes-for="${node.id}"
+        placeholder="${escAttr(notesField.placeholder || 'Type notes during play…')}"
+        rows="6">${escHtml(initial)}</textarea>
+    </div>`;
+  }
+
+  return html || `<div class="focus-prose" style="opacity:0.6;font-style:italic;">No content yet.</div>`;
 }
 
-// Encounter: full monster cards via the canvas-face renderer.
-// renderMonsterCardsHtml already emits roll buttons that
-// wireMonsterRollClicks knows how to find — so re-using it gives us
-// the full play surface for free.
-function renderFocusEncounter(node) {
+// Render a single field as a labeled prose block. For text/textarea/select
+// we emit the value as prose; numbers get a small inline pill so they
+// don't look like body text.
+function renderFocusFieldBlock(fieldDef, value) {
+  const label = fieldDef.label || fieldDef.key;
+  if (fieldDef.type === 'number') {
+    return `<div class="focus-section">
+      <div class="focus-section-label">${escHtml(label)}</div>
+      <div class="focus-numpill">${escHtml(String(value))}</div>
+    </div>`;
+  }
+  // textarea / text / select: render as prose, preserving newlines.
+  return `<div class="focus-section">
+    <div class="focus-section-label">${escHtml(label)}</div>
+    <div class="focus-prose">${escHtml(String(value))}</div>
+  </div>`;
+}
+
+// Encounter type-specific section: full monster cards via the canvas-face
+// renderer. The roll-button wireup happens later in enterFocusModeForNodes.
+function renderFocusEncounterMonsters(node) {
   const fields = node.fields || {};
   const monsters = Array.isArray(fields.monsters) ? fields.monsters : [];
-  if (!monsters.length) {
-    return `<div class="focus-section"><div class="focus-prose" style="opacity:0.6;font-style:italic;">No monsters added to this encounter yet.</div></div>`;
-  }
-  // Description block at the top, then the monster cards.
-  let html = '';
-  if (fields.description) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Description</div>
-      <div class="focus-prose">${escHtml(fields.description)}</div>
-    </div>`;
-  }
-  if (typeof renderMonsterCardsHtml === 'function') {
-    html += renderMonsterCardsHtml(node);
-  }
-  return html;
+  if (!monsters.length) return '';
+  if (typeof renderMonsterCardsHtml !== 'function') return '';
+  return `<div class="focus-section">
+    <div class="focus-section-label">Monsters</div>
+    ${renderMonsterCardsHtml(node)}
+  </div>`;
 }
 
-// NPC: name, role, relationships, motivations + skin stat block if any
-function renderFocusNpc(node) {
-  const f = node.fields || {};
-  const skinHtml = renderNpcSkinFaceHtml ? renderNpcSkinFaceHtml(node) : '';
-  let html = '';
-  if (f.role) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Role / Function</div>
-      <div class="focus-prose">${escHtml(f.role)}</div>
-    </div>`;
-  }
-  if (f.appearance) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Appearance</div>
-      <div class="focus-prose">${escHtml(f.appearance)}</div>
-    </div>`;
-  }
-  if (f.motivation) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Motivation</div>
-      <div class="focus-prose">${escHtml(f.motivation)}</div>
-    </div>`;
-  }
-  if (f.notes) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Notes</div>
-      <div class="focus-prose">${escHtml(f.notes)}</div>
-    </div>`;
-  }
-  if (node.summary && !html) {
-    html += `<div class="focus-section"><div class="focus-prose">${escHtml(node.summary)}</div></div>`;
-  }
-  if (skinHtml) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Stat Block</div>
-      ${skinHtml}
-    </div>`;
-  }
-  return html || `<div class="focus-prose" style="opacity:0.6;font-style:italic;">No details captured for this NPC yet.</div>`;
+// NPC type-specific section: stat-block skin if attached.
+function renderFocusNpcSkin(node) {
+  if (typeof renderNpcSkinFaceHtml !== 'function') return '';
+  const skinHtml = renderNpcSkinFaceHtml(node);
+  if (!skinHtml) return '';
+  return `<div class="focus-section">
+    <div class="focus-section-label">Stat Block</div>
+    ${skinHtml}
+  </div>`;
 }
 
-// Scene: full prose description + hazard rolls
-function renderFocusScene(node) {
-  const f = node.fields || {};
-  let html = '';
-  if (f.description) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Description</div>
-      <div class="focus-prose">${escHtml(f.description)}</div>
-    </div>`;
-  }
-  if (f.atmosphere) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Atmosphere</div>
-      <div class="focus-prose">${escHtml(f.atmosphere)}</div>
-    </div>`;
-  }
-  if (f.read_aloud) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Read Aloud</div>
-      <div class="focus-prose" style="font-style:italic;border-left:2px solid var(--gold-faint);padding-left:10px;">${escHtml(f.read_aloud)}</div>
-    </div>`;
-  }
-  // Hazard rolls — use the existing renderer
-  const hazardHtml = renderSceneHazardRollsHtml ? renderSceneHazardRollsHtml(node) : '';
-  if (hazardHtml) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Hazard</div>
-      ${hazardHtml}
-    </div>`;
-  }
-  if (node.summary && !html) {
-    html += `<div class="focus-section"><div class="focus-prose">${escHtml(node.summary)}</div></div>`;
-  }
-  return html || `<div class="focus-prose" style="opacity:0.6;font-style:italic;">No description recorded for this scene.</div>`;
+// Trap type-specific section: all the detection/disarm/save/damage roll
+// buttons in one place.
+function renderFocusTrapRolls(node) {
+  if (typeof renderTrapRollsHtml !== 'function') return '';
+  const rollsHtml = renderTrapRollsHtml(node);
+  if (!rollsHtml || !rollsHtml.trim()) return '';
+  return `<div class="focus-section">
+    <div class="focus-section-label">Rolls</div>
+    ${rollsHtml}
+  </div>`;
 }
 
-// Trap: detection / disarm / save / damage prominent
-function renderFocusTrap(node) {
-  const f = node.fields || {};
-  let html = '';
-  if (f.description) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Description</div>
-      <div class="focus-prose">${escHtml(f.description)}</div>
-    </div>`;
-  }
-  // Reuse canvas trap-roll renderer
-  const trapHtml = renderTrapRollsHtml ? renderTrapRollsHtml(node) : '';
-  if (trapHtml) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Rolls</div>
-      ${trapHtml}
-    </div>`;
-  }
-  if (f.effect) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Effect on Failure</div>
-      <div class="focus-prose">${escHtml(f.effect)}</div>
-    </div>`;
-  }
-  return html || `<div class="focus-prose" style="opacity:0.6;font-style:italic;">No trap details recorded.</div>`;
+// Scene type-specific section: hazard rolls if any.
+function renderFocusSceneHazard(node) {
+  if (typeof renderSceneHazardRollsHtml !== 'function') return '';
+  const rollsHtml = renderSceneHazardRollsHtml(node);
+  if (!rollsHtml || !rollsHtml.trim()) return '';
+  return `<div class="focus-section">
+    <div class="focus-section-label">Hazard</div>
+    ${rollsHtml}
+  </div>`;
 }
 
-function renderFocusItem(node, def) {
-  const f = node.fields || {};
-  let html = '';
-  if (f.description) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Description</div>
-      <div class="focus-prose">${escHtml(f.description)}</div>
-    </div>`;
-  }
-  if (f.properties) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Properties</div>
-      <div class="focus-prose">${escHtml(f.properties)}</div>
-    </div>`;
-  }
-  if (f.lore) {
-    html += `<div class="focus-section">
-      <div class="focus-section-label">Lore</div>
-      <div class="focus-prose">${escHtml(f.lore)}</div>
-    </div>`;
-  }
-  if (node.summary && !html) {
-    html += `<div class="focus-section"><div class="focus-prose">${escHtml(node.summary)}</div></div>`;
-  }
-  return html || `<div class="focus-prose" style="opacity:0.6;font-style:italic;">No details for this item.</div>`;
-}
-
-// Generic prose renderer — used for lore, notes, and any unknown type.
-// Walks the type's field definitions in order and emits each non-empty
-// field as a labeled section, falling back to the summary if no fields
-// have content.
-function renderFocusGenericProse(node, def) {
-  const f = node.fields || {};
-  let html = '';
-  (def.fields || []).forEach(fieldDef => {
-    const v = f[fieldDef.key];
-    if (!v) return;
-    html += `<div class="focus-section">
-      <div class="focus-section-label">${escHtml(fieldDef.label || fieldDef.key)}</div>
-      <div class="focus-prose">${escHtml(v)}</div>
-    </div>`;
+// Wire the editable Director Notes textareas in the focus overlay. Called
+// once per enterFocusModeForNodes so each tile's textarea writes back to
+// its node.fields.notes and triggers autosave.
+function wireFocusNotesEditors() {
+  const grid = document.getElementById('focus-overlay-grid');
+  if (!grid) return;
+  grid.querySelectorAll('textarea.focus-notes-editor').forEach(ta => {
+    const nodeId = ta.dataset.focusNotesFor;
+    const node = state.nodes.get(nodeId);
+    if (!node) return;
+    // Debounced write: avoid hammering markDirty on every keystroke.
+    let timer = null;
+    ta.addEventListener('input', () => {
+      // Update the in-memory model immediately so the side panel sees the
+      // current value if it opens later.
+      node.fields = node.fields || {};
+      node.fields.notes = ta.value;
+      // Update node.summary if `notes` happens to be the summary field
+      // for this type (rare; most types use a different summary field).
+      const def = BLOCK_TYPES[node.type] || BLOCK_TYPES.scene;
+      const sumField = (def.fields || []).find(fd => fd.summary);
+      if (sumField && sumField.key === 'notes') node.summary = ta.value;
+      // Refresh the canvas face so the underlying node reflects edits when
+      // the user exits focus mode.
+      if (typeof refreshNodeFace === 'function') refreshNodeFace(node);
+      // Debounced autosave trigger via the dirty-mark path.
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        // Route by scope — campaign- and arc-scope notes-edits write to
+        // their respective tier blocks, mirroring the side-panel commit logic.
+        if (node.scope === 'campaign') {
+          const idx = sessionState.campaignBlocks.nodes.findIndex(n => n.id === node.id);
+          if (idx >= 0) sessionState.campaignBlocks.nodes[idx] = {
+            ...sessionState.campaignBlocks.nodes[idx],
+            fields: { ...sessionState.campaignBlocks.nodes[idx].fields, notes: ta.value },
+          };
+          if (typeof markCampaignDirty === 'function') markCampaignDirty();
+        } else if (node.scope === 'arc') {
+          const idx = sessionState.arcBlocks.nodes.findIndex(n => n.id === node.id);
+          if (idx >= 0) sessionState.arcBlocks.nodes[idx] = {
+            ...sessionState.arcBlocks.nodes[idx],
+            fields: { ...sessionState.arcBlocks.nodes[idx].fields, notes: ta.value },
+          };
+          if (typeof markArcDirty === 'function') markArcDirty();
+        } else {
+          if (typeof markDirty === 'function') markDirty();
+        }
+      }, 400);
+    });
   });
-  if (!html && node.summary) {
-    html += `<div class="focus-section"><div class="focus-prose">${escHtml(node.summary)}</div></div>`;
-  }
-  return html || `<div class="focus-prose" style="opacity:0.6;font-style:italic;">No content yet.</div>`;
 }
 
 
