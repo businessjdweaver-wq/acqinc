@@ -3147,6 +3147,29 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 .node-mon-peek-toggle:hover { color: var(--gold-pale); border-color: var(--gold); }
 .node-mon-peek-toggle.open  { color: var(--gold-pale); border-color: var(--gold); background: rgba(184,134,11,0.12); }
 
+/* Per-monster CR dropdown — change to scale this instance's stats */
+.node-mon-cr-select {
+  background: rgba(20,17,11,0.85);
+  border: 1px solid rgba(184,134,11,0.3);
+  color: var(--steel-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  padding: 2px 4px;
+  border-radius: 2px;
+  cursor: pointer;
+  margin-left: 6px;
+}
+.node-mon-cr-select:hover { color: var(--gold-pale); border-color: var(--gold); }
+.node-mon-cr-select.scaled {
+  /* When this instance has been scaled away from its source CR, show
+     a clear visual cue so the user knows this monster's stats no
+     longer match its DB record. */
+  border-color: rgba(120,140,220,0.6);
+  color: #c8d4ff;
+  background: rgba(60,80,184,0.12);
+}
+
 .node-mon-peek {
   display: none;
   margin-top: 8px;
@@ -3717,7 +3740,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 17 / undo + drag fix</span>
+  <span class="topbar-version">stage 18 / per-monster CR scaling</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -3852,7 +3875,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 17 · undo delete + table-drag fix</div>
+  <div id="stage-label">Stage 18 · per-monster CR scaling on encounter cards</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -7349,8 +7372,7 @@ function renderNodeFace(data) {
 //   • die is the inferred die size (4/6/8/10/12/20/100, or rounded up)
 //   • ranges[i] is the lo/hi inclusive range matching body row i (null
 //     for non-matching rows)
-function detectRollTable(table) {
-  if (!table || !Array.isArray(table.rows) || !table.rows.length) {
+function detectRollTable(table) {  if (!table || !Array.isArray(table.rows) || !table.rows.length) {
     return { isRoll: false, die: null, ranges: [] };
   }
   const ranges = [];
@@ -9892,6 +9914,20 @@ function renderOneMonsterCard(m, idx, isSingleton) {
   const isDead = (typeof m.hp_current === 'number') && m.hp_current <= 0;
   const isDeactivated = !!m._deactivated;
   const showFlav = !isSingleton;
+  // Current CR shown in the dropdown is taken from the snapshot. The
+  // baseline (for proportional rescale) lives in m._scaledFromCr if the
+  // user has previously scaled this instance — otherwise we use the
+  // current snapshot CR as the baseline.
+  const currentCR = String(sn.cr || '').trim();
+  const isScaled = !!m._scaledFromCr;
+  const crOptions = ['','0','1/8','1/4','1/2','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24'];
+  const crDropdown = `
+    <select class="node-mon-cr-select ${isScaled ? 'scaled' : ''}"
+            data-mon-cr-select="${idx}"
+            title="${isScaled ? 'Originally CR ' + escAttr(m._scaledFromCr) + ' — change to re-scale (HP, AC, damage, DCs)' : 'Scale this monster to a new CR (HP, AC, damage, DCs all adjust)'}"
+            >
+      ${crOptions.map(c => `<option value="${escAttr(c)}" ${c === currentCR ? 'selected' : ''}>CR ${escAttr(c) || '?'}</option>`).join('')}
+    </select>`;
   const nameSlot = isSingleton
     ? `<span class="node-mon-name">${escHtml(sn.name || 'Unknown monster')}</span>`
     : `<span class="node-mon-name" style="font-style:italic;color:var(--steel-pale);font-size:0.78rem;">instance</span>`;
@@ -9906,6 +9942,7 @@ function renderOneMonsterCard(m, idx, isSingleton) {
         ` : ''}
         ${nameSlot}
         ${isSingleton ? `<span class="node-mon-stats">${escHtml(stats)}</span>` : ''}
+        ${crDropdown}
         <button class="node-mon-deact-btn ${isDeactivated ? 'is-deactivated' : ''}"
                 data-peek-deact="${idx}" type="button"
                 title="${isDeactivated ? 'Reactivate this monster' : 'Sideline this monster (kept in encounter, just out of the fight)'}"
@@ -10021,6 +10058,193 @@ function _modOf(score) { return Math.floor((score - 10) / 2); }
 //   "C Cracked-tooth — Goblin"  (letter + descriptor + monster name)
 //   "C — Goblin"                (letter only, no descriptor on this instance)
 //   "Goblin"                    (singleton or no flavor at all)
+// ── CR SCALING (canvas-side) ─────────────────────────────
+// Adapted from the Workshop's applyCRScaling but pure: takes a snapshot
+// and a target CR, returns a new snapshot. Mutates nothing in the DB —
+// only the encounter monster's local `m.snapshot` gets replaced.
+//
+// Why duplicate from the Workshop? Two HTML files, no shared module
+// system. Keeping the math here means the canvas can scale SRD monsters
+// (which the Workshop refuses since it would write to the form). The
+// CR_TABLE values must stay in sync between the two files; if we update
+// one and the user's source had outdated DPR baselines, the wrong ratio
+// will be used.
+const CANVAS_CR_TABLE = {
+  '0':   { prof:2, ac:13, hpLo:1,   hpHi:6,   atk:'+3', dprLo:0,  dprHi:1,  dc:13 },
+  '1/8': { prof:2, ac:13, hpLo:7,   hpHi:35,  atk:'+3', dprLo:2,  dprHi:3,  dc:13 },
+  '1/4': { prof:2, ac:13, hpLo:36,  hpHi:49,  atk:'+3', dprLo:4,  dprHi:5,  dc:13 },
+  '1/2': { prof:2, ac:13, hpLo:50,  hpHi:70,  atk:'+3', dprLo:6,  dprHi:8,  dc:13 },
+  '1':   { prof:2, ac:13, hpLo:71,  hpHi:85,  atk:'+3', dprLo:9,  dprHi:14, dc:13 },
+  '2':   { prof:2, ac:13, hpLo:86,  hpHi:100, atk:'+3', dprLo:15, dprHi:20, dc:13 },
+  '3':   { prof:2, ac:13, hpLo:101, hpHi:115, atk:'+4', dprLo:21, dprHi:26, dc:13 },
+  '4':   { prof:2, ac:14, hpLo:116, hpHi:130, atk:'+5', dprLo:27, dprHi:32, dc:14 },
+  '5':   { prof:3, ac:15, hpLo:131, hpHi:145, atk:'+6', dprLo:33, dprHi:38, dc:15 },
+  '6':   { prof:3, ac:15, hpLo:146, hpHi:160, atk:'+6', dprLo:39, dprHi:44, dc:15 },
+  '7':   { prof:3, ac:15, hpLo:161, hpHi:175, atk:'+6', dprLo:45, dprHi:50, dc:15 },
+  '8':   { prof:3, ac:16, hpLo:176, hpHi:190, atk:'+7', dprLo:51, dprHi:56, dc:16 },
+  '9':   { prof:4, ac:16, hpLo:191, hpHi:205, atk:'+7', dprLo:57, dprHi:62, dc:16 },
+  '10':  { prof:4, ac:17, hpLo:206, hpHi:220, atk:'+7', dprLo:63, dprHi:68, dc:16 },
+  '11':  { prof:4, ac:17, hpLo:221, hpHi:235, atk:'+8', dprLo:69, dprHi:74, dc:17 },
+  '12':  { prof:4, ac:17, hpLo:236, hpHi:250, atk:'+8', dprLo:75, dprHi:80, dc:17 },
+  '13':  { prof:5, ac:18, hpLo:251, hpHi:265, atk:'+8', dprLo:81, dprHi:86, dc:18 },
+  '14':  { prof:5, ac:18, hpLo:266, hpHi:280, atk:'+8', dprLo:87, dprHi:92, dc:18 },
+  '15':  { prof:5, ac:18, hpLo:281, hpHi:295, atk:'+8', dprLo:93, dprHi:98, dc:18 },
+  '16':  { prof:5, ac:18, hpLo:296, hpHi:310, atk:'+9', dprLo:99, dprHi:104,dc:18 },
+  '17':  { prof:6, ac:19, hpLo:311, hpHi:325, atk:'+10',dprLo:105,dprHi:110,dc:19 },
+  '18':  { prof:6, ac:19, hpLo:326, hpHi:340, atk:'+10',dprLo:111,dprHi:116,dc:19 },
+  '19':  { prof:6, ac:19, hpLo:341, hpHi:355, atk:'+10',dprLo:117,dprHi:122,dc:19 },
+  '20':  { prof:6, ac:19, hpLo:356, hpHi:400, atk:'+10',dprLo:123,dprHi:140,dc:19 },
+  '21':  { prof:7, ac:19, hpLo:401, hpHi:445, atk:'+11',dprLo:141,dprHi:158,dc:20 },
+  '22':  { prof:7, ac:19, hpLo:446, hpHi:490, atk:'+11',dprLo:159,dprHi:176,dc:20 },
+  '23':  { prof:7, ac:19, hpLo:491, hpHi:535, atk:'+11',dprLo:177,dprHi:194,dc:20 },
+  '24':  { prof:7, ac:19, hpLo:536, hpHi:580, atk:'+12',dprLo:195,dprHi:212,dc:21 },
+};
+const CANVAS_CR_KEYS = ['0','1/8','1/4','1/2','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24'];
+
+// Scale a "NdM" / "NdM+K" / "NdM-K" damage formula by a ratio. Used for
+// both structured damage fields and embedded prose dice.
+function _canvasScaleDamageFormula(formula, ratio) {
+  if (!formula || ratio === 1) return formula;
+  const m = String(formula).match(/^(\d+)d(\d+)([+-]\d+)?$/i);
+  if (m) {
+    const n  = Math.max(1, Math.round(parseInt(m[1]) * ratio));
+    const dz = parseInt(m[2]);
+    const b  = m[3] ? Math.round(parseInt(m[3]) * ratio) : 0;
+    return n + 'd' + dz + (b !== 0 ? (b > 0 ? '+' : '') + b : '');
+  }
+  // Flat number — scale and round
+  const flat = parseInt(formula);
+  if (!isNaN(flat)) return String(Math.max(1, Math.round(flat * ratio)));
+  return formula;
+}
+
+// Pure scaling: take a snapshot and a target CR, return a new snapshot.
+// `oldCR` may be passed in (preferred — preserves original CR across
+// multiple rescales) or left null to be detected from current HP.
+function scaleMonsterSnapshot(snapshot, newCR, oldCR) {
+  const newT = CANVAS_CR_TABLE[newCR];
+  if (!newT) return snapshot;
+  const sn = JSON.parse(JSON.stringify(snapshot));   // deep clone
+
+  // Detect old CR if not provided. Workshop uses HP-midpoint distance —
+  // we do the same. Note: this is imperfect for monsters whose HP is
+  // off-baseline, but it's the same imperfection the Workshop has.
+  if (!oldCR) {
+    let bestDiff = Infinity;
+    const currentHp = parseInt(sn.hp) || 0;
+    Object.entries(CANVAS_CR_TABLE).forEach(([cr, t]) => {
+      const mid = Math.round((t.hpLo + t.hpHi) / 2);
+      const diff = Math.abs(currentHp - mid);
+      if (diff < bestDiff) { bestDiff = diff; oldCR = cr; }
+    });
+  }
+  const oldT = CANVAS_CR_TABLE[oldCR] || newT;
+
+  // ── HP: midpoint of new CR range ──
+  const newHp = Math.round((newT.hpLo + newT.hpHi) / 2);
+  sn.hp = newHp;
+
+  // ── AC: preserve custom delta, capped at ±2 ──
+  const acDelta = (parseInt(sn.ac) || 10) - oldT.ac;
+  sn.ac = newT.ac + Math.max(-2, Math.min(2, acDelta));
+
+  // ── DPR ratio for damage scaling ──
+  const oldDprMid = Math.round((oldT.dprLo + oldT.dprHi) / 2) || 1;
+  const newDprMid = Math.round((newT.dprLo + newT.dprHi) / 2) || 1;
+  const dprRatio  = newDprMid / oldDprMid;
+
+  // ── To-hit ──
+  const newToHit = parseInt(newT.atk) || 3;
+
+  // Old proficiency / mods for ability scaling
+  const oldProf = oldT.prof;
+  const newProf = newT.prof;
+  const profDelta = newProf - oldProf;
+  const oldAtkMod = parseInt(oldT.atk) || 3;
+  const oldStrModBase = oldAtkMod - oldProf;
+  const newAtkMod = newToHit;
+  const newStrModBase = newAtkMod - newProf;
+
+  // ── Ability scores ──
+  const abs = sn.abilities || {};
+  const _scoreOf = (p) => Array.isArray(p) ? (parseInt(p[0]) || 10) : (parseInt(p) || 10);
+  const _modOf   = (s) => Math.floor((s - 10) / 2);
+  const _setAb   = (key, score) => {
+    const m = _modOf(score);
+    abs[key] = [score, (m >= 0 ? '+' : '') + m];
+  };
+  const oldStrScore = _scoreOf(abs.str);
+  const oldDexScore = _scoreOf(abs.dex);
+  const oldConScore = _scoreOf(abs.con);
+  const oldIntScore = _scoreOf(abs.int);
+  const oldWisScore = _scoreOf(abs.wis);
+  const oldChaScore = _scoreOf(abs.cha);
+
+  // STR — preserve deviation from the old baseline
+  const oldStrMod = _modOf(oldStrScore);
+  const strDelta  = oldStrMod - oldStrModBase;
+  const newStrMod = newStrModBase + strDelta;
+  const newStrScore = Math.min(30, Math.max(1, 10 + newStrMod * 2));
+
+  // DEX — scale with prof
+  const newDexMod = _modOf(oldDexScore) + profDelta;
+  const newDexScore = Math.min(30, Math.max(1, 10 + newDexMod * 2));
+
+  // CON — derive from new HP (rough log scaling)
+  const conModTarget = Math.min(7, Math.max(-2, Math.round(Math.log2(Math.max(2, newHp) / 20))));
+  const oldConModObs = Math.min(7, Math.max(-2, Math.round(Math.log2(Math.max(2, parseInt(snapshot.hp) || newHp) / 20))));
+  const conDelta = _modOf(oldConScore) - oldConModObs;
+  const newConMod = conModTarget + conDelta;
+  const newConScore = Math.min(30, Math.max(1, 10 + newConMod * 2));
+
+  // INT/WIS/CHA — scale with prof step (each +1 prof ≈ +2 score)
+  const mentalScale = profDelta * 2;
+  const newIntScore = Math.min(30, Math.max(1, oldIntScore + mentalScale));
+  const newWisScore = Math.min(30, Math.max(1, oldWisScore + mentalScale));
+  const newChaScore = Math.min(30, Math.max(1, oldChaScore + mentalScale));
+
+  _setAb('str', newStrScore);
+  _setAb('dex', newDexScore);
+  _setAb('con', newConScore);
+  _setAb('int', newIntScore);
+  _setAb('wis', newWisScore);
+  _setAb('cha', newChaScore);
+  sn.abilities = abs;
+
+  // Save DC (highest mental mod + prof + 8)
+  const highestMentalMod = Math.max(_modOf(newIntScore), _modOf(newWisScore), _modOf(newChaScore));
+  const newDC = 8 + newProf + highestMentalMod;
+
+  // ── Scale all action damage and to-hit ──
+  const scaleAction = (a) => {
+    if (!a) return a;
+    if (a.toHit && a.toHit !== '') {
+      a.toHit = (newToHit >= 0 ? '+' : '') + newToHit;
+    }
+    if (a.damage) a.damage = _canvasScaleDamageFormula(a.damage, dprRatio);
+    if (a.extra)  a.extra  = _canvasScaleDamageFormula(a.extra,  dprRatio);
+    if (a.desc) {
+      // Same prose-scan as the Workshop v0.4.0 build does:
+      // 1) Dice formulas in description text — scale by dprRatio
+      a.desc = a.desc.replace(/(\d+)d(\d+)(\s*[+\-]\s*\d+)?/g, (whole, n, m, mod) => {
+        const normalized = `${n}d${m}${mod ? mod.replace(/\s+/g, '') : ''}`;
+        return _canvasScaleDamageFormula(normalized, dprRatio);
+      });
+      // 2) Save DCs in description text — replace with newDC
+      a.desc = a.desc.replace(/\bDC\s+(\d+)\b/g, () => 'DC ' + newDC);
+    }
+    return a;
+  };
+  if (Array.isArray(sn.actions))           sn.actions = sn.actions.map(scaleAction);
+  if (Array.isArray(sn.special))           sn.special = sn.special.map(scaleAction);
+  if (Array.isArray(sn.special_abilities)) sn.special_abilities = sn.special_abilities.map(scaleAction);
+  if (Array.isArray(sn.legendary_actions)) sn.legendary_actions = sn.legendary_actions.map(scaleAction);
+  if (Array.isArray(sn.lair_actions))      sn.lair_actions      = sn.lair_actions.map(scaleAction);
+
+  sn.cr = newCR;
+  return sn;
+}
+
 function _monsterDisplayName(m) {
   const sn = (m && m.snapshot) || {};
   let prefix = '';
@@ -10549,6 +10773,8 @@ function wireMonsterRollClicks(nodeEl, node) {
     '[data-peek-abil]',
     'button[data-peek-save]',
     'button[data-peek-horde-roll]',
+    // Per-monster CR scaler dropdown — change-listener accumulator
+    'select[data-mon-cr-select]',
   ];
   stripSelectors.forEach(sel => {
     nodeEl.querySelectorAll(sel).forEach(btn => {
@@ -10713,6 +10939,52 @@ function wireMonsterRollClicks(nodeEl, node) {
       btn.title = m._deactivated
         ? 'Reactivate this monster'
         : 'Sideline this monster (kept in encounter, just out of the fight)';
+    });
+  });
+
+  // Per-monster CR dropdown — scale this instance's snapshot to a new CR.
+  // Mutates m.snapshot in place; tracks the original CR in m._scaledFromCr
+  // so subsequent rescales work proportionally from the original baseline
+  // (avoids compounding rounding errors on chained scales).
+  nodeEl.querySelectorAll('select[data-mon-cr-select]').forEach(sel => {
+    sel.addEventListener('mousedown', e => e.stopPropagation());
+    sel.addEventListener('click',     e => e.stopPropagation());
+    sel.addEventListener('change', (e) => {
+      e.stopPropagation();
+      const i = parseInt(sel.dataset.monCrSelect);
+      const m = monsters[i];
+      if (!m || !m.snapshot) return;
+      const newCR = sel.value;
+      if (!newCR || !CANVAS_CR_TABLE[newCR]) return;
+      // Determine baseline: if already scaled, use the original; else use
+      // current snapshot CR.
+      const baselineCR = m._scaledFromCr || (m.snapshot.cr ? String(m.snapshot.cr) : null);
+      // If we're scaling for the first time, remember the original
+      if (!m._scaledFromCr) m._scaledFromCr = baselineCR;
+      // If user is "scaling back" to the original, clear the marker
+      if (newCR === m._scaledFromCr) {
+        // Restoring to baseline — just rerun the scale at baseline values
+        // (which preserves the original snapshot's structure but might
+        // round HP slightly). Better than carrying around a "scaled"
+        // marker forever for what is now an unscaled instance.
+        delete m._scaledFromCr;
+      }
+      const scaled = scaleMonsterSnapshot(m.snapshot, newCR, baselineCR);
+      m.snapshot = scaled;
+      // Reset HP_current to the new max (scaled HP from middle of CR range)
+      if (typeof m.hp_current === 'number') {
+        m.hp_current = parseInt(scaled.hp) || m.hp_current;
+      }
+      markDirty();
+      // Refresh the card so all the visible values (HP, AC, action damage,
+      // peek body, etc.) reflect the new snapshot. Also re-renders the
+      // dropdown's selected option and the .scaled border state.
+      refreshNodeFace(node);
+      if (typeof showToast === 'function') {
+        showToast('⚖ Scaled ' + (m.snapshot.name || 'monster') +
+                  (m._scaledFromCr ? ' from CR ' + m._scaledFromCr : '') +
+                  ' to CR ' + newCR);
+      }
     });
   });
 
