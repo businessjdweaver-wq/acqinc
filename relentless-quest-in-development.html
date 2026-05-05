@@ -8704,7 +8704,21 @@ function load(){
   });
   if(!S.taskGroups)S.taskGroups=[];
   if((S.settings&&S.settings.testQuestMins||0)===1){S.gold=150;console.log('[Gold] testQuestMins===1 in normalizeSettings area');}
-  // Restore CONTENT_LIB from localStorage (Supabase will overwrite this on login)
+  // Restore CONTENT_LIB from localStorage (Supabase will overwrite this on login).
+  // v1.7177 — Walk every bucket key in the cached blob rather than a hardcoded
+  // whitelist. The previous implementation listed seven bucket names
+  // (questSets, quests, grind, gear, vehicles, buildings, pets) which
+  // silently dropped specialties, classTraits, speciesTraits, monsters,
+  // traits, terrain, conditions, gameRules, outcomeTemplates,
+  // territoryWeights, and dashCards on restore. Any code path that
+  // resolved a DB-defined value (e.g. getSpecialty for a capstone reward)
+  // before loadContentLibrary's async fetch resolved would miss the
+  // cached row and silently fall through to a default — in the specialty
+  // case, the random capstone-reward pool. Seen in the wild on the
+  // Mirror Mirror capstone where the Crimson-Promise grant got
+  // substituted with a random NPC contact at boot-time autocollect.
+  // Walking keys dynamically keeps the cache restore in lockstep with
+  // CONTENT_LIB's evolving schema without per-type maintenance.
   try{
     var _clKey='rq_content:'+(uid()||'guest');
     var _clRaw=localStorage.getItem(_clKey);
@@ -8713,7 +8727,11 @@ function load(){
       if(_cl&&_cl.private){
         ['official','shared','private'].forEach(function(sc){
           if(!_cl[sc])return;
-          ['questSets','quests','grind','gear','vehicles','buildings','pets'].forEach(function(k){
+          Object.keys(_cl[sc]).forEach(function(k){
+            // Only restore array buckets that exist on the live skeleton —
+            // CONTENT_LIB was just initialized with the canonical bucket
+            // shape, so unknown keys in stale caches don't leak in.
+            if(!Array.isArray(CONTENT_LIB[sc][k]))return;
             if(_cl[sc][k]&&_cl[sc][k].length)CONTENT_LIB[sc][k]=_cl[sc][k];
           });
         });
@@ -42576,7 +42594,18 @@ function initSession(pullFromCloud){
   renderArchive();
   renderSettings();
   renderLog();
-  autoCollectExpired();
+  // v1.7177 — Removed autoCollectExpired() here. Quests with doneAt <= now
+  // at boot time used to be silently drained into collectQuest, bypassing
+  // the resolution modal (no d20 ceremony, no user input, no inbox
+  // surface). Worse, on cloud-user boots this fired BEFORE
+  // loadContentLibrary resolved, which meant getSpecialty() returned null
+  // for any DB-defined specialty — capstones with type:'specialty' would
+  // silently fall through to the random reward pool. The inbox already
+  // surfaces ready pendings via _collectInboxItems (added in v1.7056);
+  // the user routes through the resolve button → modal → accept path
+  // exactly like grinds and downtime. renderInboxBadge() below makes
+  // sure the red dot is up-to-date with whatever was already pending.
+  if(typeof renderInboxBadge==='function')renderInboxBadge();
   maybeShowWelcome(starterApplied);
   updateHeaderCompactState();
 
@@ -42681,7 +42710,13 @@ function initSession(pullFromCloud){
       // resurrecting the local pending/grind they just chose to discard.
       if(_hasLocalWork && S.questState && !_skipResurrection){
         if((!S.questState.pending||!S.questState.pending.length)&&localPending.length){
-          // Filter out any quests already collected during the first autoCollectExpired pass
+          // Filter out any quests that landed in done[] between the
+          // local snapshot and the post-pull state. v1.7177 removed the
+          // boot-time autoCollectExpired calls, so this is now defensive
+          // against the more conventional case: another device collected
+          // these quests via the resolution modal in the interim, the
+          // server reflects that in qs.done, and we should respect it
+          // rather than resurrect the local pending entry.
           var _done=S.questState.done||[];
           var _filtered=localPending.filter(function(pq){return _done.indexOf(pq.idx)===-1;});
           if(_filtered.length)S.questState.pending=_filtered;
@@ -42722,7 +42757,11 @@ function initSession(pullFromCloud){
         });
       });
       checkQuestCycleReset();
-      autoCollectExpired();
+      // v1.7177 — Removed autoCollectExpired() here too. See the
+      // matching removal earlier in initSession for full rationale.
+      // Quests reaching doneAt during a session belong in the inbox,
+      // where the user collects them through the resolution modal —
+      // matching the behavior already in place for grinds and downtime.
       renderTasks(); // tasks first — most important
       setGold();
       renderParty();
