@@ -3428,6 +3428,15 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   border-radius: 2px;
 }
 .node-mon-override-grid input::placeholder { color: rgba(200,180,140,0.4); font-style: italic; }
+.node-mon-override-grid label .ov-hint {
+  color: rgba(200,180,140,0.5);
+  font-size: 0.85em;
+  font-style: italic;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  margin-left: 4px;
+}
 .node-mon-override-actions {
   display: flex; gap: 6px; justify-content: flex-end;
 }
@@ -4056,7 +4065,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 20 / party balancing</span>
+  <span class="topbar-version">stage 22 / cr-scale compounding fix</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -4239,7 +4248,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 20 · party-balancing + topbar reorg</div>
+  <div id="stage-label">Stage 22 · CR-scale compounding bug fix</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -10413,6 +10422,12 @@ function renderOverrideEditor(m, monIdx) {
         <label>Damage Type
           <input type="text" data-ov-key="damageType"  value="${escAttr(ov.damageType || '')}"  ${ph(r.damageType)}>
         </label>
+        <label>Extra Damage <span class="ov-hint">(rider — e.g. "1d6")</span>
+          <input type="text" data-ov-key="extra"       value="${escAttr(ov.extra || '')}"       ${ph(r.extra)}>
+        </label>
+        <label>Extra Type <span class="ov-hint">(e.g. lightning)</span>
+          <input type="text" data-ov-key="extraType"   value="${escAttr(ov.extraType || '')}"   ${ph(r.extraType)}>
+        </label>
       </div>
       <div class="node-mon-override-actions">
         <button class="clear" data-ov-action="clear" type="button">Clear All</button>
@@ -11136,6 +11151,17 @@ function parseAbilityProse(desc) {
       out.damage     = diceM[1].replace(/\s+/g, '');
       out.damageType = dmgTypeM[1].toLowerCase();
     }
+    // Look for an EXTRA (rider) damage, common in 5e attacks like
+    // "plus 5 (1d10) lightning damage". Search the rest of the string
+    // after the primary damage type. The "plus" keyword anchors us.
+    const tail = desc.slice(idx + dmgTypeM[0].length);
+    // Match "plus" + dice + (optional "fire") + "damage", or just the
+    // dice + type + "damage" idiom.
+    const extraM = tail.match(/plus[^.]*?(\d+d\d+(?:\s*[+\-]\s*\d+)?)[^.]*?\b(piercing|bludgeoning|slashing|fire|cold|lightning|acid|poison|necrotic|radiant|thunder|psychic|force)\b/i);
+    if (extraM) {
+      out.extra     = extraM[1].replace(/\s+/g, '');
+      out.extraType = extraM[2].toLowerCase();
+    }
   }
   const rangeM = desc.match(_RANGE_RE);
   if (rangeM) out.range = rangeM[1].replace(/\s+/g, ' ') + ' ' + rangeM[2].toLowerCase();
@@ -11171,6 +11197,12 @@ function resolveAbilityMechanics(a) {
     saveAbility: pick(ov.saveAbility, (a.saveAbility || a.save_ability || a.save), parsed.saveAbility),
     damage:      pick(ov.damage, (a.damage || (a.damages && a.damages[0])), parsed.damage),
     damageType:  pick(ov.damageType, (a.dmgType || a.damageType || (a.damageTypes && a.damageTypes[0])), parsed.damageType),
+    // Extra (rider) damage — second damage instance applied alongside the
+    // primary. Common in monsters with elemental riders (Young Blue
+    // Dragon's claw + lightning, Hellhound's bite + fire, etc.).
+    // Resolution order is the same as primary damage.
+    extra:       pick(ov.extra,     (a.extra     || (a.damages     && a.damages[1])),     parsed.extra),
+    extraType:   pick(ov.extraType, (a.extraType || a.extra_type || (a.damageTypes && a.damageTypes[1])), parsed.extraType),
   };
 }
 
@@ -11719,6 +11751,12 @@ function wireMonsterRollClicks(nodeEl, node) {
   // Mutates m.snapshot in place; tracks the original CR in m._scaledFromCr
   // so subsequent rescales work proportionally from the original baseline
   // (avoids compounding rounding errors on chained scales).
+  //
+  // FIX (Stage 22): we ALSO have to scale from the ORIGINAL snapshot, not
+  // the previously-scaled one. Otherwise the action damage formulas (and
+  // any dice in their desc text) get re-scaled on each click — turning
+  // 1d6 → 7d6 → 49d6 → eventually trillions. Stash a clone of the
+  // original on first scale; clear it when scaling back to baseline.
   nodeEl.querySelectorAll('select[data-mon-cr-select]').forEach(sel => {
     sel.addEventListener('mousedown', e => e.stopPropagation());
     sel.addEventListener('click',     e => e.stopPropagation());
@@ -11729,20 +11767,65 @@ function wireMonsterRollClicks(nodeEl, node) {
       if (!m || !m.snapshot) return;
       const newCR = sel.value;
       if (!newCR || !CANVAS_CR_TABLE[newCR]) return;
-      // Determine baseline: if already scaled, use the original; else use
-      // current snapshot CR.
+      // Determine baseline. If we've previously scaled this instance,
+      // _scaledFromCr holds the original CR and _originalSnapshot holds
+      // the original (unscaled) snapshot. Otherwise this is the first
+      // scale and the current snapshot IS the original.
       const baselineCR = m._scaledFromCr || (m.snapshot.cr ? String(m.snapshot.cr) : null);
-      // If we're scaling for the first time, remember the original
-      if (!m._scaledFromCr) m._scaledFromCr = baselineCR;
-      // If user is "scaling back" to the original, clear the marker
-      if (newCR === m._scaledFromCr) {
-        // Restoring to baseline — just rerun the scale at baseline values
-        // (which preserves the original snapshot's structure but might
-        // round HP slightly). Better than carrying around a "scaled"
-        // marker forever for what is now an unscaled instance.
-        delete m._scaledFromCr;
+      // Migration: existing instances that were scaled BEFORE Stage 22
+      // don't have _originalSnapshot stashed. If their damage numbers
+      // look reasonable we can keep going (treat the current snapshot as
+      // both source AND output baseline, accepting modest cumulative
+      // rounding error). If they look corrupt — e.g. a dice count over
+      // 200, which no real monster has — refuse to scale further and
+      // tell the user to re-import the monster.
+      if (m._scaledFromCr && !m._originalSnapshot) {
+        // Detect corruption from the prior compounding bug
+        const looksCorrupt = ((m.snapshot.actions || []).some(a => {
+          const dm = (a && a.damage) ? String(a.damage).match(/^(\d+)d/) : null;
+          return dm && parseInt(dm[1]) > 200;
+        }));
+        if (looksCorrupt) {
+          alert('This monster\'s scaled stats look corrupt (a fix in Stage 22 prevents this going forward, but earlier scales can\'t be recovered).\n\nRemove this instance from the encounter and re-add it from search.');
+          // Re-render so the dropdown's selection reverts to the
+          // (corrupt-but-displayed) value rather than the user's pick
+          refreshNodeFace(node);
+          return;
+        }
+        // Best-effort: stash the current snapshot as the "original" going
+        // forward. Future scales will be correct; this current scale
+        // proceeds from the current (already-scaled) snapshot, which
+        // mirrors pre-Stage-22 behavior and may drift slightly.
+        m._originalSnapshot = JSON.parse(JSON.stringify(m.snapshot));
       }
-      const scaled = scaleMonsterSnapshot(m.snapshot, newCR, baselineCR);
+      // First scale: stash the original snapshot before mutating
+      if (!m._scaledFromCr) {
+        m._scaledFromCr     = baselineCR;
+        m._originalSnapshot = JSON.parse(JSON.stringify(m.snapshot));
+      }
+      // Always scale from the ORIGINAL snapshot — not from the
+      // previously-scaled one. This is what prevents compounding scale
+      // factors across multiple dropdown clicks.
+      const sourceSnapshot = m._originalSnapshot || m.snapshot;
+      // If user is "scaling back" to the original, restore the stashed
+      // original and clear the markers — instance returns to pristine state.
+      if (newCR === baselineCR) {
+        if (m._originalSnapshot) {
+          m.snapshot = JSON.parse(JSON.stringify(m._originalSnapshot));
+        }
+        delete m._scaledFromCr;
+        delete m._originalSnapshot;
+        if (typeof m.hp_current === 'number') {
+          m.hp_current = parseInt(m.snapshot.hp) || m.hp_current;
+        }
+        markDirty();
+        refreshNodeFace(node);
+        if (typeof showToast === 'function') {
+          showToast('⚖ Restored ' + (m.snapshot.name || 'monster') + ' to CR ' + newCR + ' (original)');
+        }
+        return;
+      }
+      const scaled = scaleMonsterSnapshot(sourceSnapshot, newCR, baselineCR);
       m.snapshot = scaled;
       // Reset HP_current to the new max (scaled HP from middle of CR range)
       if (typeof m.hp_current === 'number') {
@@ -11755,8 +11838,7 @@ function wireMonsterRollClicks(nodeEl, node) {
       refreshNodeFace(node);
       if (typeof showToast === 'function') {
         showToast('⚖ Scaled ' + (m.snapshot.name || 'monster') +
-                  (m._scaledFromCr ? ' from CR ' + m._scaledFromCr : '') +
-                  ' to CR ' + newCR);
+                  ' from CR ' + baselineCR + ' to CR ' + newCR);
       }
     });
   });
@@ -12109,6 +12191,12 @@ function renderNpcOverrideEditor(skin) {
         </label>
         <label>Damage Type
           <input type="text" data-ov-key="damageType"  value="${escAttr(ov.damageType || '')}"  ${ph(r.damageType)}>
+        </label>
+        <label>Extra Damage <span class="ov-hint">(rider — e.g. "1d6")</span>
+          <input type="text" data-ov-key="extra"       value="${escAttr(ov.extra || '')}"       ${ph(r.extra)}>
+        </label>
+        <label>Extra Type <span class="ov-hint">(e.g. lightning)</span>
+          <input type="text" data-ov-key="extraType"   value="${escAttr(ov.extraType || '')}"   ${ph(r.extraType)}>
         </label>
       </div>
       <div class="node-mon-override-actions">
@@ -12485,12 +12573,28 @@ function dispatchMonsterRoll(imported, action, advantage) {
   // prose description as one or more flavor cards (chunked so long
   // descriptions don't get visually clipped in the VTT chat bubble).
   if (resolved.toHit || resolved.toHit === 0) {
-    const damages = action.damages
-      ? action.damages
-      : (resolved.damage ? [resolved.damage] : ['1d6']);
-    const damageTypes = action.damageTypes
-      ? action.damageTypes
-      : (resolved.damageType ? [resolved.damageType] : ['damage']);
+    // Build damages/damageTypes arrays — primary first, then extra (rider)
+    // if present. Beyond20's attack card supports multi-damage natively
+    // and renders each as its own dice block on the same chat card.
+    let damages, damageTypes;
+    if (action.damages && action.damages.length) {
+      // Action carried explicit arrays — respect them, but layer the
+      // resolved extra on top if the resolver/override produced one and
+      // it wasn't already there.
+      damages     = [...action.damages];
+      damageTypes = [...(action.damageTypes || [])];
+      if (resolved.extra && damages.length === 1) {
+        damages.push(resolved.extra);
+        damageTypes.push(resolved.extraType || 'damage');
+      }
+    } else {
+      damages     = resolved.damage ? [resolved.damage] : ['1d6'];
+      damageTypes = [resolved.damageType || 'damage'];
+      if (resolved.extra) {
+        damages.push(resolved.extra);
+        damageTypes.push(resolved.extraType || 'damage');
+      }
+    }
     b20RollMonsterAttack(displayName, cr, ac, hp, {
       name: resolved.name,
       toHit: resolved.toHit,
