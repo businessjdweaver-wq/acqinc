@@ -1056,6 +1056,20 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
 }
 #btnFocus:hover { background: rgba(60,80,184,0.28); border-color: #a8b8e8; }
 #btnFocus:disabled { opacity: 0.35; cursor: not-allowed; }
+#btnUndo {
+  background: rgba(120,140,220,0.15);
+  border: 1px solid rgba(120,140,220,0.4);
+  color: #c8d4ff;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  padding: 5px 11px;
+  border-radius: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+#btnUndo:hover { background: rgba(120,140,220,0.28); border-color: #a8b8e8; }
+#btnUndo:disabled { opacity: 0.35; cursor: not-allowed; }
 
 /* Topbar search input + inline results dropdown */
 #search-host {
@@ -3703,7 +3717,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 16 / roll tables + cell dice</span>
+  <span class="topbar-version">stage 17 / undo + drag fix</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -3713,6 +3727,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <button class="btn btn-ghost" onclick="frameSelection()" title="Frame selection or all nodes (F)">⌗ Frame</button>
     <button class="btn btn-ghost" onclick="resetView()">⌖ Reset View</button>
     <button id="btnFocus" onclick="enterFocusMode()" disabled title="Focus mode — tile selected nodes for play (Z)">🔍 Focus</button>
+    <button id="btnUndo" onclick="restoreLastDeleted()" disabled title="Restore last deleted node (Cmd/Ctrl+Z)">↺ Undo Delete</button>
     <button id="btnWrapSession" onclick="openWrapSessionModal()" title="Wrap session — choose which nodes to promote to campaign / arc scope">📜 Wrap Session</button>
     <div id="search-host" title="Search nodes (Cmd+K / Ctrl+K)">
       <input type="text" id="searchInput" placeholder="Search nodes…" autocomplete="off" spellcheck="false">
@@ -3837,7 +3852,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 16 · roll tables + cell dice + node-collapse fix</div>
+  <div id="stage-label">Stage 17 · undo delete + table-drag fix</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -3864,7 +3879,8 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <b>Delete</b>: <kbd>Del</kbd> on selected node(s) or connector<br>
     <b>Saving</b>: autosaved 600ms after each change<br>
     <b>Search</b>: topbar input or <kbd>Cmd</kbd>/<kbd>Ctrl</kbd>+<kbd>K</kbd><br>
-    <b>Roll adv/dis</b>: <kbd>Shift</kbd>=advantage, <kbd>Alt</kbd>=disadvantage
+    <b>Roll adv/dis</b>: <kbd>Shift</kbd>=advantage, <kbd>Alt</kbd>=disadvantage<br>
+    <b>Undo delete</b>: <kbd>Cmd</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd> — restores the most recently deleted node
     </div>
   </div>
 </div>
@@ -6876,6 +6892,11 @@ const state = {
   // Backspace, framed via F, etc.
   selectedFrameNodes:    new Set(),  // campaign-frame node ids
   selectedArcFrameNodes: new Set(),  // arc-frame node ids
+  // Trash — undo stack for deleted nodes. Each entry holds the full node
+  // record (including table data, fields, scope) plus any edges that
+  // touched it. Bounded to UNDO_TRASH_MAX entries; oldest fall off when
+  // exceeded. Pop from the END (LIFO) on undo.
+  trash: [],
   // input modes
   isPanning: false,
   isSpaceDown: false,
@@ -7059,6 +7080,15 @@ window.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
     e.preventDefault();
     openSearchModal();
+    return;
+  }
+  // Cmd+Z / Ctrl+Z — undo the last node delete. Skip if a text input has
+  // focus, since the browser's own undo for text content is more useful
+  // there.
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+    if (isTypingTarget(e.target)) return;     // let inputs handle their own undo
+    e.preventDefault();
+    restoreLastDeleted();
     return;
   }
   if (isTypingTarget(e.target)) return;
@@ -7439,6 +7469,11 @@ function renderTableNodeBodyHtml(data) {
 }
 
 function removeNode(node) {
+  // Capture a trash snapshot BEFORE we drop edges, so the saved entry
+  // contains every edge that touched this node. Restoring will replay
+  // both the node and its edges.
+  const trashEntry = makeTrashEntryForNode(node);
+
   // Drop any edges that touch this node
   const doomed = state.edges.filter(e => e.from.nodeId === node.id || e.to.nodeId === node.id);
   doomed.forEach(removeEdge);
@@ -7477,6 +7512,7 @@ function removeNode(node) {
       .filter(n => n.id !== node.id);
     if (node.el && node.el.parentNode) node.el.parentNode.removeChild(node.el);
     state.nodes.delete(node.id);
+    pushToTrash(trashEntry);
     markCampaignDirty();
     renderCampaignFrame();
     updateEmptyHint();
@@ -7486,6 +7522,7 @@ function removeNode(node) {
   // Session-scope: standard delete.
   if (node.el && node.el.parentNode) node.el.parentNode.removeChild(node.el);
   state.nodes.delete(node.id);
+  pushToTrash(trashEntry);
   updateEmptyHint();
   markDirty();
 }
@@ -7521,6 +7558,183 @@ function demoteFrameNode(nodeId) {
   }
   markCampaignDirty();
   renderCampaignFrame();
+}
+
+// ── UNDO / TRASH ──────────────────────────────────────────
+// When a node is deleted (Del/Backspace), we snapshot it into state.trash
+// instead of just dropping it. The user can hit Cmd/Ctrl+Z or click the
+// "↺ Undo Delete" button to restore the most recent one. Bounded by
+// UNDO_TRASH_MAX so the trash doesn't grow unbounded across long
+// sessions.
+const UNDO_TRASH_MAX = 20;
+
+function makeTrashEntryForNode(node) {
+  // Deep-clone the node's content so later mutations on the (now detached)
+  // node object can't corrupt the trash snapshot.
+  const clone = JSON.parse(JSON.stringify({
+    id: node.id,
+    x: node.x,
+    y: node.y,
+    type: node.type,
+    title: node.title,
+    summary: node.summary || '',
+    fields: node.fields || {},
+    scope: node.scope || 'session',
+    home_session_id: node.home_session_id || null,
+    table: node.table || null,
+    collapsed: !!node.collapsed,
+    icon: node.icon,
+  }));
+  // Capture every edge that touches this node, including its label.
+  const edges = state.edges
+    .filter(e => e.from.nodeId === node.id || e.to.nodeId === node.id)
+    .map(e => ({
+      from: e.from.nodeId,
+      to:   e.to.nodeId,
+      dir:  e.dir,
+      label: e.label || '',
+    }));
+  return { node: clone, edges, when: Date.now() };
+}
+
+function pushToTrash(entry) {
+  if (!entry) return;
+  state.trash.push(entry);
+  if (state.trash.length > UNDO_TRASH_MAX) {
+    state.trash.shift();   // drop oldest
+  }
+  updateUndoBtnState();
+}
+
+function restoreLastDeleted() {
+  const entry = state.trash.pop();
+  if (!entry) {
+    if (typeof showToast === 'function') showToast('Nothing to undo.');
+    updateUndoBtnState();
+    return;
+  }
+  const nd = entry.node;
+  // Avoid id collisions if the user has since re-used the id.
+  // If a node with that id already exists, mint a new id; edges
+  // referencing the old id get rewritten too.
+  let restoreId = nd.id;
+  if (state.nodes.has(restoreId)) {
+    const newId = 'n' + (nodeIdSeq++);
+    entry.edges.forEach(e => {
+      if (e.from === restoreId) e.from = newId;
+      if (e.to   === restoreId) e.to   = newId;
+    });
+    restoreId = newId;
+    nd.id = newId;
+  }
+  // Re-instantiate via the same path deserialize uses, so all wireup
+  // happens consistently. We synthesize a "row" object matching what
+  // buildAndAttach expects, then call its core logic inline.
+  const def = BLOCK_TYPES[nd.type] || BLOCK_TYPES.scene;
+  const node = {
+    id: nd.id,
+    x: nd.x,
+    y: nd.y,
+    type: nd.type,
+    title: nd.title || def.defaultTitle,
+    icon: def.icon,
+    summary: nd.summary || '',
+    fields: nd.fields || {},
+    scope: nd.scope || 'session',
+    home_session_id: nd.home_session_id || null,
+    collapsed: !!nd.collapsed,
+  };
+  if (def.isTable && nd.table) {
+    node.table = {
+      headers: Array.isArray(nd.table.headers) ? [...nd.table.headers] : [],
+      rows: Array.isArray(nd.table.rows) ? nd.table.rows.map(r => Array.isArray(r) ? [...r] : []) : [],
+    };
+  }
+  const el = document.createElement('div');
+  el.className = 'node';
+  el.dataset.nodeId = node.id;
+  el.dataset.type   = node.type;
+  el.dataset.size   = def.size;
+  el.dataset.scope  = node.scope;
+  el.style.left = node.x + 'px';
+  el.style.top  = node.y + 'px';
+  el.innerHTML = renderNodeFace(node);
+  if (node.collapsed) el.classList.add('collapsed');
+  content.appendChild(el);
+  node.el = el;
+  state.nodes.set(node.id, node);
+  attachNodeDrag(el, node);
+  attachAnchorClicks(el, node);
+  wireNodeBodyClickToOpenPanel(el, node);
+  wireMonsterRollClicks(el, node);
+  wireTrapRollClicks(el, node);
+  wireSceneHazardClicks(el, node);
+  wireNpcPeekClicks(el, node);
+  wireTableNode(el, node);
+  wireNodeCollapseToggle(el, node);
+  wireMagnifyBtn(el, node);
+
+  // Re-create edges where both endpoints exist now. Cross-scope endpoints
+  // (frame nodes) are kept too — createEdge handles the resolveAnchor path.
+  let edgesRestored = 0;
+  let edgesDropped  = 0;
+  (entry.edges || []).forEach(e => {
+    // Confirm both endpoints exist somewhere reachable (canvas or frame)
+    const fromOk = state.nodes.has(e.from)
+      || (sessionState.campaignBlocks.nodes || []).some(n => n.id === e.from)
+      || (sessionState.arcBlocks.nodes      || []).some(n => n.id === e.from);
+    const toOk = state.nodes.has(e.to)
+      || (sessionState.campaignBlocks.nodes || []).some(n => n.id === e.to)
+      || (sessionState.arcBlocks.nodes      || []).some(n => n.id === e.to);
+    if (!fromOk || !toOk) { edgesDropped++; return; }
+    createEdge(
+      { nodeId: e.from },
+      { nodeId: e.to },
+      e.dir || 'forward',
+      e.label || ''
+    );
+    edgesRestored++;
+  });
+
+  // Restore campaign-scope reflection if needed
+  if (node.scope === 'campaign') {
+    const cid = sessionState.currentSessionId;
+    if (node.home_session_id === cid) {
+      sessionState.campaignBlocks.nodes = sessionState.campaignBlocks.nodes || [];
+      // Avoid double-add — only push if not already present
+      if (!sessionState.campaignBlocks.nodes.some(n => n.id === node.id)) {
+        sessionState.campaignBlocks.nodes.push({
+          id: node.id, type: node.type, x: node.x, y: node.y,
+          title: node.title, summary: node.summary, fields: node.fields,
+          home_session_id: node.home_session_id,
+          promoted_at: new Date().toISOString(),
+        });
+      }
+      markCampaignDirty();
+      renderCampaignFrame();
+    }
+  }
+
+  markDirty();
+  updateEmptyHint();
+  updateUndoBtnState();
+
+  // Brief feedback so the user sees the restore happened
+  if (typeof showToast === 'function') {
+    let msg = '↺ Restored "' + (node.title || 'node') + '"';
+    if (edgesRestored)  msg += ' (' + edgesRestored + ' edge' + (edgesRestored === 1 ? '' : 's') + ')';
+    if (edgesDropped)   msg += ' (' + edgesDropped + ' edge' + (edgesDropped === 1 ? '' : 's') + ' lost)';
+    showToast(msg);
+  }
+}
+
+function updateUndoBtnState() {
+  const btn = document.getElementById('btnUndo');
+  if (!btn) return;
+  btn.disabled = state.trash.length === 0;
+  btn.title = state.trash.length === 0
+    ? 'Nothing to undo'
+    : 'Restore last deleted node (Cmd/Ctrl+Z) — ' + state.trash.length + ' in trash';
 }
 
 function escHtml(s) {
@@ -12246,13 +12460,19 @@ function refreshNodeFace(node) {
 // Only attaches on headers that have the .collapsible class (currently
 // only table-type nodes opt in). Edges automatically reroute via redraw
 // after the collapse changes the node's footprint.
+//
+// IMPORTANT: this used to do a cloneNode-replace to strip stale listeners,
+// but that ALSO stripped the drag mousedown handler attached by
+// attachNodeDrag — making the table node un-draggable. The fix: use a
+// marker attribute (data-collapse-wired) so we attach exactly once per
+// freshly-rendered header. A re-render of the face creates a new header
+// without the marker, so wireNodeCollapseToggle attaches once again.
 function wireNodeCollapseToggle(el, node) {
   const header = el.querySelector('.node-header.collapsible');
   if (!header) return;
-  // Strip stale listeners (idempotent rewire pattern)
-  const fresh = header.cloneNode(true);
-  header.parentNode.replaceChild(fresh, header);
-  fresh.addEventListener('dblclick', (e) => {
+  if (header.dataset.collapseWired === '1') return;     // already wired
+  header.dataset.collapseWired = '1';
+  header.addEventListener('dblclick', (e) => {
     // Don't toggle if the dblclick was on the magnify button or an anchor
     if (e.target.closest('.node-magnify-btn')) return;
     if (e.target.closest('.anchor')) return;
@@ -12261,7 +12481,6 @@ function wireNodeCollapseToggle(el, node) {
     node.collapsed = !node.collapsed;
     markDirty();
     refreshNodeFace(node);
-    // Edges that touch this node need to recompute since the bounding box just changed.
     if (typeof redrawEdges === 'function') redrawEdges();
   });
 }
