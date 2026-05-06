@@ -3724,6 +3724,88 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 .node-mon-peek.open { display: block; }
 
 /* HP / multiplier row */
+/* ── Always-visible HP bar (Stage 29) ────────────────────── */
+/* Sits between the monster's header and its action buttons.
+   The peek's mult/abilities/saves are unaffected — only HP moved. */
+.node-mon-hpbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--steel-pale);
+}
+.node-mon-hpbar .hpbar-label {
+  color: var(--bone);
+  font-weight: 600;
+}
+.node-mon-hpbar .hpbar-input {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(184,134,11,0.3);
+  color: var(--bone);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+  padding: 3px 6px;
+  width: 56px;
+  border-radius: 2px;
+  text-align: right;
+  outline: none;
+}
+.node-mon-hpbar .hpbar-input:focus {
+  border-color: var(--gold);
+  background: rgba(0,0,0,0.55);
+}
+.node-mon-hpbar .hpbar-ticks {
+  display: inline-flex;
+  flex-direction: column;
+  border: 1px solid rgba(184,134,11,0.3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.node-mon-hpbar .hpbar-tick {
+  background: transparent;
+  border: 0;
+  color: var(--steel-pale);
+  cursor: pointer;
+  width: 18px;
+  height: 12px;
+  font-size: 0.6rem;
+  padding: 0;
+  line-height: 1;
+}
+.node-mon-hpbar .hpbar-tick:hover {
+  background: rgba(184,134,11,0.18);
+  color: var(--gold-pale);
+}
+.node-mon-hpbar .hpbar-tick + .hpbar-tick {
+  border-top: 1px solid rgba(184,134,11,0.3);
+}
+.node-mon-hpbar .hpbar-max {
+  color: var(--steel-pale);
+  opacity: 0.85;
+}
+.node-mon-hpbar .hpbar-undo {
+  margin-left: auto;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(184,134,11,0.3);
+  color: var(--gold-pale);
+  font-size: 0.85rem;
+  padding: 2px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  line-height: 1;
+}
+.node-mon-hpbar .hpbar-undo:hover {
+  background: rgba(184,134,11,0.18);
+  border-color: var(--gold);
+}
+.node-mon-hpbar .hpbar-undo.hidden {
+  visibility: hidden;
+}
+/* Dead state: dim the HP bar a bit so it matches the rest of the card */
+.node-mon.dead .node-mon-hpbar { opacity: 0.7; }
+
 .node-mon-hpmult {
   display: flex; align-items: center; gap: 14px;
   margin-bottom: 8px;
@@ -4324,7 +4406,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 28 / VTT card de-duplication</span>
+  <span class="topbar-version">stage 29 / HP bar with delta input + undo</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -11324,6 +11406,7 @@ function renderOneMonsterCard(m, idx, isSingleton) {
                 data-peek-toggle="${idx}" type="button"
                 title="Show / hide statblock peek">${peekOpen ? '▼ peek' : '▶ peek'}</button>
       </div>
+      ${renderMonsterHpBar(m, idx)}
       ${actions.length ? `
         <div class="node-mon-actions">
           ${actions.map((a, ai) => renderActionButton(a, idx, ai)).join('')}
@@ -11403,16 +11486,52 @@ function renderOverrideEditor(m, monIdx) {
     </div>`;
 }
 
-// Body of the peek expansion: HP/multiplier, ability grid, save row, horde row.
-// (Deactivate button moved to the card header next to the peek toggle in v5c++.)
-function renderMonsterPeekBody(m, idx) {
+// Always-visible HP bar — sits between the monster's header (letter/
+// flavor/name/peek-toggle) and its action buttons. Pulled out of the
+// peek body in Stage 29 so HP is one click away during play.
+//
+// Input accepts:
+//   • plain number      → set absolute HP (e.g. "12" → hp_current = 12)
+//   • "+N" / "-N"       → apply delta from current  (e.g. "-6" → -6 from current)
+//   • clicking ▴ / ▾    → ±1 tick (replicates the native number-input arrows
+//                          which we lose by going `type="text"` for delta support)
+// On any commit (Enter or blur) we stash the prior value into m._hpPrev
+// so the inline ↶ undo button can revert. Undo TOGGLES — clicking it
+// swaps current ↔ previous, so repeated clicks bounce between the two.
+function renderMonsterHpBar(m, idx) {
   const sn = m.snapshot || {};
   const maxHp = parseInt(sn.hp) || 0;
   const curHp = (typeof m.hp_current === 'number') ? m.hp_current : maxHp;
-  const mult  = (typeof m.mult === 'number' && m.mult >= 1) ? m.mult : 1;
+  const hasPrev = (typeof m._hpPrev === 'number') && m._hpPrev !== curHp;
+  return `
+    <div class="node-mon-hpbar" data-hpbar="${idx}">
+      <span class="hpbar-label">HP</span>
+      <input type="text" inputmode="numeric"
+             class="hpbar-input"
+             data-peek-hp="${idx}"
+             value="${curHp}"
+             title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
+      <span class="hpbar-ticks">
+        <button class="hpbar-tick" data-hp-tick="${idx},1"  type="button" title="+1 HP">▴</button>
+        <button class="hpbar-tick" data-hp-tick="${idx},-1" type="button" title="−1 HP">▾</button>
+      </span>
+      <span class="hpbar-max">/ ${maxHp}</span>
+      <button class="hpbar-undo ${hasPrev ? '' : 'hidden'}"
+              data-hp-undo="${idx}" type="button"
+              title="${hasPrev ? 'Undo last HP change (back to ' + m._hpPrev + ')' : 'No previous HP value to revert to'}"
+              ${hasPrev ? '' : 'disabled'}>↶</button>
+    </div>
+  `;
+}
+
+// Body of the peek expansion: multiplier, ability grid, save row, horde row.
+// (HP moved out of the peek to its own always-visible bar in Stage 29 —
+// see renderMonsterHpBar. Multiplier stays here because it's a wave-count
+// concept tied to the statblock, not a per-instance fight value.)
+function renderMonsterPeekBody(m, idx) {
+  const mult = (typeof m.mult === 'number' && m.mult >= 1) ? m.mult : 1;
   return `
     <div class="node-mon-hpmult">
-      <span>HP <input type="number" data-peek-hp="${idx}" value="${curHp}" min="-99" max="999"> / ${maxHp}</span>
       <span style="margin-left:auto;">
         × <span class="mult-stepper ${mult > 1 ? 'active' : ''}" data-peek-mult-wrap="${idx}">
           <button class="mult-btn" data-peek-mult-delta="${idx},-1" type="button">−</button>
@@ -12546,6 +12665,11 @@ function wireMonsterRollClicks(nodeEl, node) {
     'span[data-mon-name-edit]',
     // Encounter difficulty bar's override-party button
     'button[data-encounter-party]',
+    // HP bar (Stage 29): ticks, undo, and the input itself — all need
+    // listener-stripping or rebound listeners stack on every re-render.
+    'button[data-hp-tick]',
+    'button[data-hp-undo]',
+    'input[data-peek-hp]',
   ];
   stripSelectors.forEach(sel => {
     nodeEl.querySelectorAll(sel).forEach(btn => {
@@ -12984,18 +13108,121 @@ function wireMonsterRollClicks(nodeEl, node) {
     });
   });
 
-  // Editable HP — keep play-state and update dead styling
+  // ── HP bar (Stage 29) ─────────────────────────────────────
+  // The input accepts:
+  //   • plain number      → set absolute HP
+  //   • "+N" / "-N"       → delta from current
+  //   • blank             → no-op (revert input to current)
+  // Commit on Enter or blur. We stash the prior value to m._hpPrev before
+  // every commit so the inline ↶ undo button can revert (and toggling it
+  // again redoes — undo just swaps current ↔ previous).
+  //
+  // The ▴ / ▾ tick buttons replicate native number-input arrows (lost
+  // when we switched to type="text" for delta support).
+  const _commitHp = (m, i, raw) => {
+    if (raw === null || raw === undefined) return;
+    const s = String(raw).trim();
+    if (!s) {
+      // blank → silently revert (refresh re-renders the existing value)
+      refreshNodeFace(node);
+      return;
+    }
+    const cur = (typeof m.hp_current === 'number') ? m.hp_current : (parseInt((m.snapshot || {}).hp) || 0);
+    let next;
+    // Match ±N (delta) — must start with explicit + or -
+    const deltaMatch = s.match(/^([+-])\s*(\d+)$/);
+    if (deltaMatch) {
+      const sign = deltaMatch[1] === '-' ? -1 : 1;
+      const n = parseInt(deltaMatch[2], 10);
+      next = cur + sign * n;
+    } else {
+      // Plain absolute number; reject non-numeric input by reverting
+      const abs = parseInt(s, 10);
+      if (Number.isNaN(abs)) {
+        refreshNodeFace(node);
+        return;
+      }
+      next = abs;
+    }
+    // No-op if value didn't actually change
+    if (next === cur) {
+      refreshNodeFace(node);
+      return;
+    }
+    m._hpPrev    = cur;
+    m.hp_current = next;
+    const cardEl = nodeEl.querySelector(`.node-mon[data-mon-idx="${i}"]`);
+    if (cardEl) cardEl.classList.toggle('dead', m.hp_current <= 0);
+    refreshNodeFace(node);
+    markDirty();
+  };
+
   nodeEl.querySelectorAll('input[data-peek-hp]').forEach(inp => {
-    inp.addEventListener('mousedown', (e) => e.stopPropagation());
-    inp.addEventListener('click', (e) => e.stopPropagation());
-    inp.addEventListener('change', (e) => {
-      e.stopPropagation();
+    inp.addEventListener('mousedown', e => e.stopPropagation());
+    inp.addEventListener('click',     e => e.stopPropagation());
+    // Commit on Enter — also blurs so the user gets visual confirmation.
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        const i = parseInt(inp.dataset.peekHp);
+        const m = monsters[i];
+        if (!m) return;
+        _commitHp(m, i, inp.value);
+        // refreshNodeFace re-renders the whole face; the new input element
+        // won't keep focus, but that's actually desired (visual confirmation
+        // the value committed).
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        // Revert to current shown value
+        refreshNodeFace(node);
+      }
+    });
+    // Commit on blur in case the user clicks away without pressing Enter.
+    inp.addEventListener('blur', () => {
       const i = parseInt(inp.dataset.peekHp);
       const m = monsters[i];
       if (!m) return;
-      m.hp_current = parseInt(inp.value) || 0;
+      // Skip if the value matches what's already shown — no need to spam
+      // refreshes when the user just tabs through the input.
+      const cur = (typeof m.hp_current === 'number') ? m.hp_current : (parseInt((m.snapshot || {}).hp) || 0);
+      if (String(inp.value).trim() === String(cur)) return;
+      _commitHp(m, i, inp.value);
+    });
+  });
+
+  // Tick arrows (▴ / ▾): always treated as ±1. Use _commitHp via a
+  // synthetic delta string so tick changes participate in the undo stack.
+  nodeEl.querySelectorAll('button[data-hp-tick]').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const [iStr, dStr] = btn.dataset.hpTick.split(',');
+      const i = parseInt(iStr);
+      const d = parseInt(dStr);
+      const m = monsters[i];
+      if (!m) return;
+      _commitHp(m, i, (d > 0 ? '+' : '') + d);
+    });
+  });
+
+  // Undo button (↶): swap current ↔ previous. Toggling repeatedly bounces
+  // between the two values, which is what most users expect from "undo
+  // last change" on a single-cell editor.
+  nodeEl.querySelectorAll('button[data-hp-undo]').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const i = parseInt(btn.dataset.hpUndo);
+      const m = monsters[i];
+      if (!m || typeof m._hpPrev !== 'number') return;
+      const tmp = m.hp_current;
+      m.hp_current = m._hpPrev;
+      m._hpPrev = tmp;
       const cardEl = nodeEl.querySelector(`.node-mon[data-mon-idx="${i}"]`);
       if (cardEl) cardEl.classList.toggle('dead', m.hp_current <= 0);
+      refreshNodeFace(node);
+      markDirty();
     });
   });
 
