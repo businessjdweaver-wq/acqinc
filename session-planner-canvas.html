@@ -4324,7 +4324,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 27 / node templates + flavor dropdown</span>
+  <span class="topbar-version">stage 28 / VTT card de-duplication</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -4914,8 +4914,47 @@ function b20RollMonsterAttack(monsterName, cr, ac, hp, atk, advantage) {
   });
 }
 
-// Send one or more flavor messages — used to push an action's prose
-// description into the VTT chat alongside (right after) a roll. Beyond20
+// Strip the standard 5e save-or-damage boilerplate sentence(s) from an
+// action's prose, leaving only the imagery/geometry. Beyond20's damage
+// card already shows `Save: DEX DC 11` and the rolled damage in its
+// native banner — when the prose also restates "Each creature must make
+// a DC 11 Dex saving throw, taking 10 (1d6) acid damage on a failed save…"
+// it's pure duplication.
+//
+// Heuristic: a sentence is "save mechanics" if it matches any of these:
+//   1. Contains both a DC reference AND a save mention
+//      (the canonical "Each creature must make a DC X save" sentence)
+//   2. Contains "on a failed save" or "on a successful save"
+//      (the followup "takes Xd6 on a failed save" sentence)
+//   3. Contains both a dice formula (NdN) AND any save mention
+//      (rare fallback for unusual phrasings)
+// Everything else (imagery, geometry, prerequisites) is kept.
+//
+// If stripping leaves <12 chars, returns the original (defensive: don't
+// drop everything for unusual prose where the WHOLE description was
+// mechanical, e.g. some bare-bones SRD entries — better to send the
+// duplication than nothing).
+function stripSaveBoilerplate(text) {
+  if (!text) return '';
+  const sentences = String(text).match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+  const isMechanicsSentence = (s) => {
+    const lower = s.toLowerCase();
+    const hasDC = /\bdc\s*\d+\b/i.test(s);
+    const hasSave = /(saving throw|\bsave\b)/i.test(lower);
+    const hasFailedSucceeded = /\bon a (failed|successful) save\b/i.test(lower);
+    const hasDice = /\b\d+d\d+\b/i.test(s);
+    return (hasDC && hasSave) || hasFailedSucceeded || (hasDice && hasSave);
+  };
+  const kept = sentences
+    .filter(s => !isMechanicsSentence(s))
+    .map(s => s.trim())
+    .filter(Boolean);
+  const stripped = kept.join(' ').trim();
+  if (stripped.length < 12) return String(text).trim();
+  return stripped;
+}
+
+
 // renders each as its own card. Long messages get split into chunks that
 // fit a single chat bubble (~250 chars) at sentence boundaries when
 // possible, so chat doesn't visually clip.
@@ -4983,43 +5022,37 @@ function chunkFlavorMessage(text, softMax) {
   return chunks;
 }
 
-// Monster save-or-damage ability (breath weapon, AoE blast, etc.) Two-step:
-// announce the DC, then roll damage. Beyond20 prints both as separate cards.
+// Monster save-or-damage ability (breath weapon, AoE blast, etc.).
+// Beyond20's `attack` card with `save-ability` + `save-dc` already renders
+// a native banner showing `Save: DEX DC 11` plus the rolled damage and a
+// collapsible expansion. We used to also emit a separate `chat-message`
+// card announcing "DC X DEX saving throw or take Yd6 …" before this — but
+// that card was purely redundant with the damage card's native save
+// banner, producing visual clutter in the VTT. Stage 27: removed. Now
+// just one card per save-or-damage ability.
 function b20RollMonsterSave(monsterName, cr, ac, hp, abilityName, saveAbility, saveDC, damageFormula, damageType) {
   b20Send({
     action: 'roll',
-    type: 'chat-message',
+    type: 'attack',
     character: b20MakeMonsterChar(monsterName, cr, ac, hp),
-    roll: 0,
+    roll: damageFormula,
     advantage: 0,
     whisper: 0,
-    name: abilityName,
-    message: abilityName + ' — DC ' + saveDC + ' ' + saveAbility + ' saving throw or take ' + damageFormula + ' ' + damageType + ' damage.'
+    name: abilityName + ' Damage',
+    description: 'DC ' + saveDC + ' ' + saveAbility + ' save for half',
+    'to-hit': '0',
+    damages: [damageFormula],
+    'damage-types': [damageType],
+    'critical-damages': [],
+    'critical-damage-types': [],
+    rollAttack: false,
+    rollDamage: true,
+    rollCritical: false,
+    'attack-source': 'action',
+    'attack-type': 'Melee',
+    'save-ability': saveAbility,
+    'save-dc': saveDC
   });
-  setTimeout(() => {
-    b20Send({
-      action: 'roll',
-      type: 'attack',
-      character: b20MakeMonsterChar(monsterName, cr, ac, hp),
-      roll: damageFormula,
-      advantage: 0,
-      whisper: 0,
-      name: abilityName + ' Damage',
-      description: 'DC ' + saveDC + ' ' + saveAbility + ' save for half',
-      'to-hit': '0',
-      damages: [damageFormula],
-      'damage-types': [damageType],
-      'critical-damages': [],
-      'critical-damage-types': [],
-      rollAttack: false,
-      rollDamage: true,
-      rollCritical: false,
-      'attack-source': 'action',
-      'attack-type': 'Melee',
-      'save-ability': saveAbility,
-      'save-dc': saveDC
-    });
-  }, 300);
 }
 
 // Trap damage roll — simpler shape, no character envelope needed.
@@ -13526,7 +13559,13 @@ function dispatchNpcRoll(node, skin, action, advantage) {
   const dmgType     = resolved.damageType  || 'damage';
   b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
   if (resolved.desc && String(resolved.desc).trim()) {
-    b20SendFlavor(displayName, cr, ac, hp, resolved.name, resolved.desc, 600);
+    // Strip standard 5e save-or-half boilerplate (see dispatchMonsterRoll
+    // for full rationale). Falls back to the original prose if stripping
+    // would leave too little.
+    const cleanDesc = stripSaveBoilerplate(resolved.desc);
+    if (cleanDesc) {
+      b20SendFlavor(displayName, cr, ac, hp, resolved.name, cleanDesc, 300);
+    }
   }
 }
 
@@ -13585,17 +13624,26 @@ function dispatchMonsterRoll(imported, action, advantage) {
     // action's prose has nowhere else to land.)
     return;
   }
-  // Save-or-damage path. b20RollMonsterSave already does its own two-step
-  // (announce DC, then roll damage). Description goes after both.
+  // Save-or-damage path. As of Stage 27, b20RollMonsterSave emits ONE
+  // damage-card with a native save banner (no separate announce card),
+  // and we strip the standard "Each creature… DC X… save" boilerplate
+  // from the prose so what flows through is just imagery (e.g.,
+  // "spits acid in a line 30 feet long"). Falls back to the unstripped
+  // prose if stripping would leave too little.
   const saveDC      = resolved.saveDC      || 12;
   const saveAbility = resolved.saveAbility || 'DEX';
   const dmgFormula  = resolved.damage      || '2d6';
   const dmgType     = resolved.damageType  || 'damage';
   b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
   if (resolved.desc && String(resolved.desc).trim()) {
-    // The save+damage two-step has its own ~300ms internal stagger, so
-    // delay an extra 600ms so the flavor lands after both cards.
-    b20SendFlavor(displayName, cr, ac, hp, resolved.name, resolved.desc, 600);
+    const cleanDesc = stripSaveBoilerplate(resolved.desc);
+    // Skip flavor entirely if stripping cleared everything (unusual prose
+    // that was 100% save-mechanics, e.g. some bare-bones SRD entries).
+    if (cleanDesc) {
+      // Single damage card + flavor, so delay only by ~300ms (was 600
+      // back when b20RollMonsterSave fired two staggered cards).
+      b20SendFlavor(displayName, cr, ac, hp, resolved.name, cleanDesc, 300);
+    }
   }
 }
 
