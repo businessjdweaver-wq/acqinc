@@ -3837,6 +3837,59 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   background: linear-gradient(180deg, rgba(184,134,11,0.32), rgba(139,90,43,0.28));
   box-shadow: inset 0 -2px 0 0 var(--gold);
 }
+/* Stage 36: hidden actions/triggers — when revealed via the show-hidden
+   pill, render greyed and slightly transparent so they're visually
+   distinct from active ones. Still clickable so the DM can click ✎ to
+   un-hide. */
+.node-mon-roll-wrap.is-hidden .node-mon-roll-btn,
+.node-mon-roll-wrap.is-hidden .node-mon-edit-btn {
+  opacity: 0.4;
+  background: rgba(0,0,0,0.55);
+  text-decoration: line-through;
+}
+.node-mon-roll-wrap.is-hidden .node-mon-edit-btn {
+  text-decoration: none; /* don't strike through the ✎ pencil itself */
+}
+.node-mon-roll-wrap.is-hidden:hover .node-mon-roll-btn,
+.node-mon-roll-wrap.is-hidden:hover .node-mon-edit-btn {
+  opacity: 0.8;
+}
+/* Source-name ghost shown next to a renamed action button */
+.node-mon-roll-source {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.55rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.04em;
+  text-decoration: line-through;
+  opacity: 0.65;
+  margin-left: 4px;
+  align-self: center;
+}
+/* Show-hidden toggle pill — sits at the end of the actions row when
+   any action on this monster has been hidden. */
+.node-mon-show-hidden {
+  background: transparent;
+  border: 1px dashed rgba(184,134,11,0.4);
+  color: var(--steel-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+  margin-left: 4px;
+}
+.node-mon-show-hidden:hover {
+  border-color: var(--gold);
+  color: var(--gold-pale);
+}
+.node-mon-show-hidden.on {
+  background: rgba(184,134,11,0.18);
+  border-style: solid;
+  border-color: var(--gold);
+  color: var(--gold-pale);
+}
 
 /* ── ACTION OVERRIDE EDITOR ──────────────────────────────
    Renders inline below the actions row when the user clicks ✎. Edits
@@ -3873,6 +3926,29 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   grid-template-columns: repeat(2, 1fr);
   gap: 6px 10px;
   margin-bottom: 8px;
+}
+/* Stage 36: name field spans both columns since the rename benefits from
+   the full width. The hidden-checkbox row also spans both columns and
+   uses an inline layout. */
+.node-mon-override-grid .ov-name-field,
+.node-mon-override-grid .ov-checkbox-field {
+  grid-column: 1 / -1;
+}
+.node-mon-override-grid .ov-checkbox-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.78rem;
+  color: var(--bone);
+  cursor: pointer;
+  padding: 4px 0;
+}
+.node-mon-override-grid .ov-checkbox-field input[type="checkbox"] {
+  width: auto;
+  accent-color: var(--gold);
+  cursor: pointer;
 }
 .node-mon-override-grid label {
   display: flex; flex-direction: column; gap: 2px;
@@ -5050,7 +5126,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 35 / table cell overflow popover</span>
+  <span class="topbar-version">stage 36 / action rename + hide</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -12513,11 +12589,31 @@ function renderOneMonsterCard(m, idx, isSingleton) {
                 title="Show / hide statblock peek">${peekOpen ? '▼ peek' : '▶ peek'}</button>
       </div>
       ${renderMonsterHpBar(m, idx)}
-      ${actions.length ? `
-        <div class="node-mon-actions">
-          ${actions.map((a, ai) => renderActionButton(a, idx, ai)).join('')}
-        </div>` : '<div class="node-mon-stats" style="opacity:0.6;">No rollable actions on this stat block.</div>'}
-      ${renderTriggerButtons(specials, idx)}
+      ${(() => {
+        // Stage 36: count hidden actions/triggers so we can offer a
+        // "+ N hidden" toggle pill. Pill click flips m._showHidden,
+        // which makes hidden buttons render greyed-out (still
+        // clickable to fire, but visibly distinguished). The user
+        // un-hides via the override editor's checkbox.
+        const showHidden = !!m._showHidden;
+        let hiddenCount = 0;
+        actions.forEach(a => { if (a && a._override && a._override.hidden) hiddenCount++; });
+        specials.forEach(s => { if (s && s._override && s._override.hidden) hiddenCount++; });
+        const pill = hiddenCount > 0
+          ? `<button class="node-mon-show-hidden ${showHidden ? 'on' : ''}"
+                     data-show-hidden="${idx}" type="button"
+                     title="${showHidden ? 'Hide the ' + hiddenCount + ' hidden action(s) again' : 'Show ' + hiddenCount + ' hidden action(s) so you can un-hide them'}">
+              ${showHidden ? '◉' : '◎'} ${hiddenCount} hidden
+            </button>`
+          : '';
+        const actionsHtml = actions.length
+          ? `<div class="node-mon-actions">
+              ${actions.map((a, ai) => renderActionButton(a, idx, ai, { showHidden })).join('')}
+              ${pill}
+            </div>`
+          : (pill ? `<div class="node-mon-actions">${pill}</div>` : '<div class="node-mon-stats" style="opacity:0.6;">No rollable actions on this stat block.</div>');
+        return actionsHtml + renderTriggerButtons(specials, idx, { showHidden });
+      })()}
       ${renderOverrideEditor(m, idx)}
       <div class="node-mon-peek ${peekOpen ? 'open' : ''}" data-peek-body="${idx}">
         ${renderMonsterPeekBody(m, idx)}
@@ -12556,6 +12652,9 @@ function renderOverrideEditor(m, monIdx) {
         Override <span class="ov-name">${escHtml(a.name || '?')}</span>
       </div>
       <div class="node-mon-override-grid">
+        <label class="ov-name-field">Display Name <span class="ov-hint">(rename for theme — e.g. "Acid Spray" → "Gelatinous Burst")</span>
+          <input type="text" data-ov-key="name"        value="${escAttr(ov.name || '')}"        ${ph(a.name)}>
+        </label>
         <label>To-Hit
           <input type="text" data-ov-key="toHit"       value="${escAttr(ov.toHit || '')}"       ${ph(r.toHit)}>
         </label>
@@ -12582,6 +12681,10 @@ function renderOverrideEditor(m, monIdx) {
         </label>
         <label>Extra Type <span class="ov-hint">(e.g. lightning)</span>
           <input type="text" data-ov-key="extraType"   value="${escAttr(ov.extraType || '')}"   ${ph(r.extraType)}>
+        </label>
+        <label class="ov-checkbox-field">
+          <input type="checkbox" data-ov-key="hidden" ${ov.hidden ? 'checked' : ''}>
+          Hide this ${editing.kind === 'trigger' ? 'trigger' : 'action'} <span class="ov-hint">(skinned creature can't use it — e.g., a non-biting Ankheg-skin)</span>
         </label>
       </div>
       <div class="node-mon-override-actions">
@@ -13397,7 +13500,12 @@ function resolveAbilityMechanics(a) {
     return parsedV;
   };
   return {
-    name:        a.name || 'Ability',
+    // Stage 36: overrideable display name (e.g. "Acid Spray" → "Gelatinous
+    // Burst"). Falls back to the source action's name. Hidden flag is
+    // exposed separately so renderers can suppress the button entirely.
+    name:        pick(ov.name, a.name, 'Ability'),
+    sourceName:  a.name || 'Ability',   // always the source — used by the override editor's title
+    hidden:      !!ov.hidden,
     desc:        a.desc || '',
     toHit:       pick(ov.toHit, a.toHit, undefined),
     attackType:  a.attackType,
@@ -13416,22 +13524,38 @@ function resolveAbilityMechanics(a) {
   };
 }
 
-function renderActionButton(a, monIdx, actIdx) {
+function renderActionButton(a, monIdx, actIdx, opts) {
   if (!a || !a.name) return '';
   const m = resolveAbilityMechanics(a);
+  // Stage 36: hidden actions (e.g. a re-skinned Ankheg that doesn't bite)
+  // disappear from the action row entirely. The instance's "+ N hidden"
+  // pill (when m._showHidden is set) re-reveals them in greyed form so
+  // the DM can un-hide via the override editor.
+  const showHidden = !!(opts && opts.showHidden);
+  if (m.hidden && !showHidden) return '';
   const isAttack = !!(m.toHit || m.toHit === 0);
   // Renderable as save-or-damage if we got either a saveDC or a damage roll.
   const isSave   = !!(m.saveDC || m.damage);
   if (!isAttack && !isSave) return '';   // truly passive — no roll button
   const cls = (isSave && !isAttack) ? 'node-mon-roll-btn save' : 'node-mon-roll-btn';
   // Append range if known and not already in the name (helps DM situate the AoE)
-  const rangeChip = (m.range && !a.name.includes('ft')) ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
-  const hasOverride = !!(a._override && Object.keys(a._override).some(k => a._override[k] !== '' && a._override[k] != null));
-  return `<span class="node-mon-roll-wrap${hasOverride ? ' has-override' : ''}">
+  const rangeChip = (m.range && !m.name.includes('ft')) ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
+  const hasOverride = !!(a._override && Object.keys(a._override).some(k => a._override[k] !== '' && a._override[k] != null && a._override[k] !== false));
+  const overrideClasses = [
+    hasOverride ? 'has-override' : '',
+    m.hidden    ? 'is-hidden'    : '',  // greyed when shown via show-hidden toggle
+  ].filter(Boolean).join(' ');
+  // Show source name as small struck-through ghost when the name has
+  // been overridden — same pattern as group-name skinning in Stage 32.
+  const nameGhost = (a._override && a._override.name && a._override.name !== a.name)
+    ? `<span class="node-mon-roll-source" title="Source action name">${escHtml(a.name)}</span>`
+    : '';
+  return `<span class="node-mon-roll-wrap${overrideClasses ? ' ' + overrideClasses : ''}">
     <button class="${cls}" data-mon-roll="${monIdx}-${actIdx}" type="button"
-            title="Roll ${escAttr(a.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}">
-            <span class="roll-icon">🎲</span>${escHtml(a.name)}${rangeChip}
+            title="Roll ${escAttr(m.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
+            <span class="roll-icon">🎲</span>${escHtml(m.name)}${rangeChip}
     </button>
+    ${nameGhost}
     <button class="node-mon-edit-btn" data-mon-edit="${monIdx}-${actIdx}-action" type="button"
             title="Override action values">✎</button>
   </span>`;
@@ -13442,21 +13566,31 @@ function renderActionButton(a, monIdx, actIdx) {
 // pure flavor traits like "False Appearance" or "Amphibious" are skipped.
 // Returned in their own `node-mon-triggers` row, visually distinct from
 // the on-turn actions.
-function renderTriggerButtons(specials, monIdx) {
+function renderTriggerButtons(specials, monIdx, opts) {
   if (!Array.isArray(specials) || !specials.length) return '';
+  const showHidden = !!(opts && opts.showHidden);
   const items = [];
   specials.forEach((s, sIdx) => {
     if (!s || !s.name) return;
     const m = resolveAbilityMechanics(s);
+    if (m.hidden && !showHidden) return;
     const isSave = !!(m.saveDC || m.damage);
     if (!isSave) return;
     const rangeChip = m.range ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
-    const hasOverride = !!(s._override && Object.keys(s._override).some(k => s._override[k] !== '' && s._override[k] != null));
-    items.push(`<span class="node-mon-roll-wrap${hasOverride ? ' has-override' : ''}">
+    const hasOverride = !!(s._override && Object.keys(s._override).some(k => s._override[k] !== '' && s._override[k] != null && s._override[k] !== false));
+    const overrideClasses = [
+      hasOverride ? 'has-override' : '',
+      m.hidden    ? 'is-hidden'    : '',
+    ].filter(Boolean).join(' ');
+    const nameGhost = (s._override && s._override.name && s._override.name !== s.name)
+      ? `<span class="node-mon-roll-source" title="Source trigger name">${escHtml(s.name)}</span>`
+      : '';
+    items.push(`<span class="node-mon-roll-wrap${overrideClasses ? ' ' + overrideClasses : ''}">
       <button class="node-mon-roll-btn save" data-mon-trigger="${monIdx}-${sIdx}" type="button"
-              title="Trigger ${escAttr(s.name)}${hasOverride ? ' — has override' : ''}">
-              <span class="roll-icon">⚡</span>${escHtml(s.name)}${rangeChip}
+              title="Trigger ${escAttr(m.name)}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
+              <span class="roll-icon">⚡</span>${escHtml(m.name)}${rangeChip}
       </button>
+      ${nameGhost}
       <button class="node-mon-edit-btn" data-mon-edit="${monIdx}-${sIdx}-trigger" type="button"
               title="Override trigger values">✎</button>
     </span>`);
@@ -13908,6 +14042,9 @@ function wireMonsterRollClicks(nodeEl, node) {
     // Group-name click-to-edit (Stage 32) — inline rename for all
     // instances of a stat block in this encounter.
     'span[data-group-name-edit]',
+    // Show-hidden toggle (Stage 36): pill that reveals greyed action
+    // buttons so the DM can un-hide them via the override editor.
+    'button[data-show-hidden]',
   ];
   stripSelectors.forEach(sel => {
     nodeEl.querySelectorAll(sel).forEach(btn => {
@@ -14010,6 +14147,12 @@ function wireMonsterRollClicks(nodeEl, node) {
           const next = {};
           panel.querySelectorAll('[data-ov-key]').forEach(input => {
             const k = input.dataset.ovKey;
+            // Stage 36: checkbox inputs (e.g. "hidden") need .checked,
+            // not .value. Treat unchecked as no-override (omit the key).
+            if (input.type === 'checkbox') {
+              if (input.checked) next[k] = true;
+              return;
+            }
             const v = (input.value || '').trim();
             if (v !== '') next[k] = v;
           });
@@ -14017,6 +14160,12 @@ function wireMonsterRollClicks(nodeEl, node) {
           if (next.saveDC) {
             const n = parseInt(next.saveDC);
             if (!isNaN(n)) next.saveDC = n;
+          }
+          // Stage 36: if name override matches the source name verbatim,
+          // it's not really an override — drop the key so the action
+          // displays cleanly without a "ghost" source-name reminder.
+          if (next.name && next.name === a.name) {
+            delete next.name;
           }
           if (Object.keys(next).length) {
             a._override = next;
@@ -14329,6 +14478,25 @@ function wireMonsterRollClicks(nodeEl, node) {
       const monsterId = idx >= 0 ? raw.slice(0, idx) : raw;
       const fallbackName = idx >= 0 ? raw.slice(idx + 1) : '';
       openStatblockReadout(monsterId, fallbackName);
+    });
+  });
+
+  // ── Show-hidden toggle (Stage 36) — flips m._showHidden so the DM
+  // can re-reveal greyed action buttons and un-hide them via the
+  // override editor.
+  nodeEl.querySelectorAll('button[data-show-hidden]').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const i = parseInt(btn.dataset.showHidden);
+      const m = monsters[i];
+      if (!m) return;
+      m._showHidden = !m._showHidden;
+      // No markDirty — _showHidden is per-session UI state, not
+      // persisted (it's a session-scope flag like peek-open or
+      // _editingAction).
+      refreshNodeFace(node);
+      wireMonsterRollClicks(node.el, node);
     });
   });
 
@@ -15407,6 +15575,19 @@ function makeIndexEntry(node, scope, source) {
           if (item.snapshot && item.snapshot.name) fieldStrs.push(item.snapshot.name);
           if (item.flavorDesc) fieldStrs.push(item.flavorDesc);
           if (item.nameOverride) fieldStrs.push(item.nameOverride);
+          // Stage 36: action-name overrides on this monster's snapshot
+          // (e.g. "Acid Spray" → "Gelatinous Burst") so a session search
+          // for the renamed ability finds the encounter.
+          if (item.snapshot) {
+            const collectOv = (arr) => {
+              if (!Array.isArray(arr)) return;
+              arr.forEach(a => {
+                if (a && a._override && a._override.name) fieldStrs.push(a._override.name);
+              });
+            };
+            collectOv(item.snapshot.actions);
+            collectOv(item.snapshot.special_abilities || item.snapshot.special);
+          }
         }
       });
     } else if (v && typeof v === 'object') {
