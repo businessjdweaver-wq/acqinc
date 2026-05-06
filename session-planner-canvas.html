@@ -1065,6 +1065,53 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
   align-items: center;
   justify-content: center;
 }
+
+/* ── TABLE CELL OVERFLOW POPOVER (Stage 35) ─────────────── */
+#table-cell-popover {
+  display: none;
+  position: fixed;
+  z-index: 150;
+  max-width: 360px;
+  min-width: 120px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: linear-gradient(180deg, #1f1a12 0%, #14110b 100%);
+  border: 1px solid var(--gold);
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.92rem;
+  line-height: 1.4;
+  color: var(--bone);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.7);
+  white-space: pre-wrap;
+  word-break: break-word;
+  pointer-events: none;
+}
+#table-cell-popover.open { display: block; }
+#table-cell-popover::before {
+  /* Small caret pointing down toward the cell when popover is positioned
+     above. Toggled to point up via the .below class when there's no
+     room above. */
+  content: '';
+  position: absolute;
+  left: 14px;
+  bottom: -6px;
+  width: 10px; height: 10px;
+  background: linear-gradient(135deg, transparent 50%, #14110b 50%);
+  border-right: 1px solid var(--gold);
+  border-bottom: 1px solid var(--gold);
+  transform: rotate(45deg);
+}
+#table-cell-popover.below::before {
+  bottom: auto;
+  top: -6px;
+  background: linear-gradient(135deg, #1f1a12 50%, transparent 50%);
+  border-right: 0;
+  border-bottom: 0;
+  border-top: 1px solid var(--gold);
+  border-left: 1px solid var(--gold);
+}
 #sb-modal.open { display: flex; }
 #sb-modal-card {
   background: linear-gradient(180deg, #1a1610 0%, #14110b 100%);
@@ -5003,7 +5050,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 33 / Cmd+B broadcast field to VTT</span>
+  <span class="topbar-version">stage 35 / table cell overflow popover</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -5179,6 +5226,13 @@ body.mobile-mode #sb-modal { display: none !important; }
     </div>
   </div>
 </div>
+
+<!-- ── TABLE CELL OVERFLOW POPOVER (Stage 35) ──
+     Floating bubble that shows the full content of a focused table cell
+     whenever the rendered text overflows the cell's visible width.
+     Positioned by JS just above (or below, if no room above) the focused
+     input. Read-only — actual editing still happens in the cell input. -->
+<div id="table-cell-popover" role="tooltip" aria-hidden="true"></div>
 
 <!-- ── PARTY SETUP MODAL ── -->
 <div id="party-modal">
@@ -5610,6 +5664,25 @@ function _broadcastFieldLabel(el) {
   if (!el) return 'Note';
   // Title inputs (desktop side-panel + mobile)
   if (el.id === 'spTitle' || el.classList.contains('mob-node-view-title')) return 'Title';
+  // Stage 34: table cells — the column header is the most useful label.
+  // data-table-cell encodes either "<nodeId>|h|<ci>" (header row) or
+  // "<nodeId>|r|<ri>|<ci>" (body row). For body rows we look up the
+  // matching column header from the table's data; if the header is
+  // empty we fall back to "Column N".
+  if (el.dataset && el.dataset.tableCell) {
+    const parts = String(el.dataset.tableCell).split('|');
+    if (parts[1] === 'h') return 'Column Header';
+    if (parts[1] === 'r' && parts.length >= 4) {
+      const ci = parseInt(parts[3], 10);
+      const nodeId = parts[0];
+      const node = state.nodes.get(nodeId);
+      const headers = (node && node.table && node.table.headers) || [];
+      const h = headers[ci];
+      if (h && String(h).trim()) return String(h).trim();
+      return 'Column ' + (Number.isFinite(ci) ? (ci + 1) : '?');
+    }
+    return 'Cell';
+  }
   // Form fields with paired <label>
   const wrap = el.closest('.sp-field');
   if (wrap) {
@@ -5646,6 +5719,9 @@ function _broadcastFlash(el) {
 function _broadcastEligible(el) {
   if (!el || el === document.body) return false;
   if (el.dataset && el.dataset.fieldKey) return true;
+  // Stage 34: table cells (body and header) broadcast their cell content
+  // with the column header as the broadcast label.
+  if (el.dataset && el.dataset.tableCell) return true;
   if (el.id === 'spTitle') return true;
   if (el.classList && el.classList.contains('mob-node-view-title')) return true;
   return false;
@@ -9510,7 +9586,7 @@ function renderTableNodeBodyHtml(data) {
   // is auto, no toggle — driven by content of column 0.
   const detected = detectRollTable(t);
   const headerCells = headers.map((h, ci) =>
-    `<th><input class="node-table-input header" data-table-cell="${data.id}|h|${ci}" type="text" value="${escAttr(h || '')}" placeholder="(header)"></th>`
+    `<th><input class="node-table-input header" data-table-cell="${data.id}|h|${ci}" type="text" value="${escAttr(h || '')}" title="${escAttr(h || '')}" placeholder="(header)"></th>`
   ).join('');
   const rowsHtml = rows.map((row, ri) => {
     const cells = headers.map((_, ci) => {
@@ -9523,7 +9599,7 @@ function renderTableNodeBodyHtml(data) {
         ? `<button class="node-table-cell-dice" data-table-cell-dice="${data.id}|${ri}|${ci}" data-formula="${escAttr(formula)}" title="Roll ${escAttr(formula)} (Shift = adv, Alt = dis)" type="button">🎲</button>`
         : '';
       return `<td class="node-table-cell ${formula ? 'has-dice' : ''}">
-        <input class="node-table-input" data-table-cell="${data.id}|r|${ri}|${ci}" type="text" value="${escAttr(v)}" placeholder="">
+        <input class="node-table-input" data-table-cell="${data.id}|r|${ri}|${ci}" type="text" value="${escAttr(v)}" title="${escAttr(v)}" placeholder="">
         ${diceBtn}
       </td>`;
     }).join('');
@@ -13402,6 +13478,106 @@ function renderTriggerButtons(specials, monIdx) {
 // element the table is currently mounted in (canvas card, focus tile,
 // or search detail). Paste handler accepts HTML <table> from Google
 // Docs / Excel and TSV from spreadsheets.
+// ── TABLE CELL OVERFLOW POPOVER (Stage 35) ───────────────
+// When a table cell input has focus AND its text overflows the visible
+// cell width, show a floating popover with the full content. Read-only
+// — editing still happens in the cell input itself, but the popover
+// updates live as the user types so they can see the full string.
+//
+// One global popover element (#table-cell-popover) is reused across all
+// cells; it gets repositioned and refilled on each focus.
+const _tablePopover = {
+  el: null,
+  inp: null,    // currently-tracked input
+  get el_() {
+    if (!this.el) this.el = document.getElementById('table-cell-popover');
+    return this.el;
+  },
+  // Detect overflow — input's scrollWidth exceeds clientWidth when text
+  // is wider than the visible area. Use a small fudge factor (2px) to
+  // avoid false positives from sub-pixel layout differences.
+  _isOverflowing(inp) {
+    if (!inp) return false;
+    return inp.scrollWidth > inp.clientWidth + 2;
+  },
+  show(inp) {
+    const popEl = this.el_;
+    if (!popEl || !inp) return;
+    if (!this._isOverflowing(inp)) { this.hide(); return; }
+    popEl.textContent = inp.value || '';
+    this.position(inp);
+    popEl.classList.add('open');
+    popEl.setAttribute('aria-hidden', 'false');
+    this.inp = inp;
+  },
+  // Reposition above the input when there's room, below when not.
+  position(inp) {
+    const popEl = this.el_;
+    if (!popEl || !inp) return;
+    // Make popover measurable while keeping it visually hidden until
+    // we've placed it. Easiest: set visibility:hidden + display:block
+    // momentarily.
+    const wasOpen = popEl.classList.contains('open');
+    popEl.style.visibility = 'hidden';
+    popEl.classList.add('open');
+    const inpRect = inp.getBoundingClientRect();
+    const popRect = popEl.getBoundingClientRect();
+    const margin = 8;
+    const spaceAbove = inpRect.top;
+    const spaceBelow = window.innerHeight - inpRect.bottom;
+    let top, isBelow;
+    if (spaceAbove >= popRect.height + margin || spaceAbove >= spaceBelow) {
+      // Place above
+      top = inpRect.top - popRect.height - 8;
+      isBelow = false;
+    } else {
+      // Not enough room above — place below
+      top = inpRect.bottom + 8;
+      isBelow = true;
+    }
+    // Horizontal: align left edge with cell left, but clamp to viewport
+    let left = inpRect.left;
+    const maxLeft = window.innerWidth - popRect.width - margin;
+    if (left > maxLeft) left = maxLeft;
+    if (left < margin) left = margin;
+    popEl.style.top  = top  + 'px';
+    popEl.style.left = left + 'px';
+    popEl.classList.toggle('below', isBelow);
+    popEl.style.visibility = '';
+    if (!wasOpen) popEl.classList.remove('open');
+  },
+  update(inp) {
+    if (!this.inp || this.inp !== inp) return;
+    const popEl = this.el_;
+    if (!popEl) return;
+    if (!this._isOverflowing(inp)) { this.hide(); return; }
+    popEl.textContent = inp.value || '';
+    // Re-position in case content height changed
+    this.position(inp);
+  },
+  hide() {
+    const popEl = this.el_;
+    if (!popEl) return;
+    popEl.classList.remove('open', 'below');
+    popEl.setAttribute('aria-hidden', 'true');
+    this.inp = null;
+  }
+};
+
+// Hide popover on scroll / resize / Esc — anything that could displace
+// the anchor cell.
+window.addEventListener('scroll', () => _tablePopover.hide(), true);
+window.addEventListener('resize', () => _tablePopover.hide());
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && _tablePopover.inp) {
+    _tablePopover.hide();
+    // Eat the Escape so other handlers (focus-mode exit, side-panel
+    // close, etc.) don't also fire — user can press Esc a second time
+    // for the next layer of dismissal.
+    e.stopPropagation();
+  }
+}, true);   // capture phase: run before other Escape handlers
+
 function wireTableNode(nodeEl, node) {
   const def = BLOCK_TYPES[node.type];
   if (!def || !def.isTable) return;
@@ -13466,11 +13642,18 @@ function wireTableNode(nodeEl, node) {
         if (!node.table.rows[ri]) node.table.rows[ri] = [];
         node.table.rows[ri][ci] = inp.value;
       }
+      // Stage 35: keep the native title tooltip in sync as content grows
+      inp.title = inp.value;
+      // Stage 35: keep the custom popover content current as user types
+      _tablePopover.update(inp);
       markDirty();
     });
     // Don't let the canvas eat clicks/mousedowns inside the input
     inp.addEventListener('mousedown', e => e.stopPropagation());
     inp.addEventListener('click',     e => e.stopPropagation());
+    // Stage 35: focus → show overflow popover (if content exceeds cell width)
+    inp.addEventListener('focus', () => _tablePopover.show(inp));
+    inp.addEventListener('blur',  () => _tablePopover.hide());
   });
 
   // + row
