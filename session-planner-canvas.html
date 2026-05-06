@@ -6305,7 +6305,14 @@ async function attemptArcAutosave() {
   sessionState.arcSaveInFlight = true;
   setCanvasSavedState('saving');
   try {
+    // Preserve any keys we don't actively manage in arc.blocks. Currently
+    // arc.blocks only holds nodes/collections/edges, but the spread
+    // future-proofs against silent data loss when new arc-level features
+    // get added (mirrors the campaign autosave fix).
+    const arc = sessionState.arcs.find(a => String(a.id) === String(aid));
+    const existingBlocks = (arc && arc.blocks) ? arc.blocks : {};
     const payload = {
+      ...existingBlocks,
       nodes:       sessionState.arcBlocks.nodes       || [],
       collections: sessionState.arcBlocks.collections || [],
       edges:       sessionState.arcBlocks.edges       || [],
@@ -6315,7 +6322,6 @@ async function attemptArcAutosave() {
       prefer: 'return=minimal',
       body: JSON.stringify({ blocks: payload }),
     });
-    const arc = sessionState.arcs.find(a => String(a.id) === String(aid));
     if (arc) arc.blocks = payload;
     sessionState.arcLastSavedGen = sessionState.arcSaveGen;
     setCanvasSavedState('saved');
@@ -6346,7 +6352,15 @@ async function attemptCampaignAutosave() {
   sessionState.campaignSaveInFlight = true;
   setCanvasSavedState('saving');
   try {
+    // Preserve any keys we don't actively manage (e.g. party setup at
+    // camp.blocks.party). Only overwrite nodes/collections/edges, which
+    // this autosave path owns. Without the spread, a CR change on an
+    // encounter (which can indirectly trigger campaign autosave via
+    // serializeCanvas reconciling campaign-scope nodes) would wipe party.
+    const camp = sessionState.campaigns.find(c => String(c.id) === String(cid));
+    const existingBlocks = (camp && camp.blocks) ? camp.blocks : {};
     const payload = {
+      ...existingBlocks,
       nodes:       sessionState.campaignBlocks.nodes       || [],
       collections: sessionState.campaignBlocks.collections || [],
       edges:       sessionState.campaignBlocks.edges       || [],
@@ -6356,8 +6370,6 @@ async function attemptCampaignAutosave() {
       prefer: 'return=minimal',
       body: JSON.stringify({ blocks: payload }),
     });
-    // Update cached campaigns list so subsequent reads are consistent
-    const camp = sessionState.campaigns.find(c => String(c.id) === String(cid));
     if (camp) camp.blocks = payload;
     sessionState.campaignLastSavedGen = sessionState.campaignSaveGen;
     setCanvasSavedState('saved');
