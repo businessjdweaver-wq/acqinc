@@ -3012,7 +3012,11 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   font-size: 0.9rem;
   padding: 4px 8px;
   border-radius: 3px;
-  resize: vertical;
+  /* Stage 37: textarea auto-grows with content via JS — no manual resize
+     handle, no scrollbar (overflow:hidden). The intrinsic height is set
+     each time content changes (see _autoGrowBrainstormTextarea). */
+  resize: none;
+  overflow: hidden;
   min-height: 28px;
   line-height: 1.35;
 }
@@ -5126,7 +5130,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 36 / action rename + hide</span>
+  <span class="topbar-version">stage 37 / brainstorm auto-grow</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -9549,8 +9553,28 @@ function wireBrainstormNode(nodeEl, node) {
     node.brainstorm = JSON.parse(JSON.stringify(def.defaultBrainstorm));
   }
 
+  // Stage 37: auto-grow helper. Resets the textarea height to 'auto'
+  // first so subsequent measurement of scrollHeight is accurate (otherwise
+  // the height would only ever grow, never shrink). Sets the inline style
+  // height to scrollHeight so every line of content is visible without a
+  // scrollbar or expand handle.
+  const _autoGrow = (ta) => {
+    if (!ta) return;
+    ta.style.height = 'auto';
+    // 4px fudge accounts for the 1px borders + sub-pixel layout that can
+    // otherwise cause an unnecessary 1-line scrollbar at edge cases.
+    ta.style.height = (ta.scrollHeight + 4) + 'px';
+  };
+
   // Per-item textarea: edit
   nodeEl.querySelectorAll('textarea[data-brainstorm-cell]').forEach(ta => {
+    // Initial sizing — runs synchronously for the common visible-on-mount
+    // case, plus once on the next animation frame to catch any path
+    // where the host container is hidden when wiring runs (modals, focus
+    // overlay, etc.). scrollHeight returns 0 without layout, so a single
+    // synchronous call would size to 4px in those cases.
+    _autoGrow(ta);
+    requestAnimationFrame(() => _autoGrow(ta));
     ta.addEventListener('mousedown', e => e.stopPropagation());
     ta.addEventListener('click',     e => e.stopPropagation());
     ta.addEventListener('input', (e) => {
@@ -9560,6 +9584,7 @@ function wireBrainstormNode(nodeEl, node) {
       if (Number.isNaN(idx)) return;
       if (!node.brainstorm || !Array.isArray(node.brainstorm.items)) return;
       node.brainstorm.items[idx] = ta.value;
+      _autoGrow(ta);
       updateBrainstormSummary(node);
       markDirty();
     });
