@@ -2301,6 +2301,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 .node[data-type="clue"]            { --accent: #4ec0c4; }
 .node[data-type="reward"]          { --accent: #d4a017; }
 .node[data-type="skillchallenge"]  { --accent: #9a6cb6; }
+.node[data-type="brainstorm"]      { --accent: #d4c376; }
 .node::before {
   content: '';
   position: absolute;
@@ -2614,6 +2615,90 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 .node-table-cell-dice:hover {
   background: rgba(184,134,11,0.32);
   border-color: var(--gold);
+}
+
+/* ── BRAINSTORM NODE ────────────────────────────────────── */
+.node-brainstorm-wrap {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.node-brainstorm-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.node-brainstorm-bullet {
+  flex: 0 0 14px;
+  margin-top: 6px;
+  color: var(--accent, var(--gold));
+  font-weight: 700;
+  user-select: none;
+  text-align: center;
+}
+.node-brainstorm-input {
+  flex: 1 1 auto;
+  background: rgba(0,0,0,0.18);
+  border: 1px solid rgba(184,134,11,0.25);
+  color: var(--parchment);
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.9rem;
+  padding: 4px 8px;
+  border-radius: 3px;
+  resize: vertical;
+  min-height: 28px;
+  line-height: 1.35;
+}
+.node-brainstorm-input:focus {
+  outline: none;
+  border-color: var(--accent, var(--gold));
+  background: rgba(0,0,0,0.28);
+}
+.node-brainstorm-input::placeholder {
+  color: var(--steel-pale);
+  font-style: italic;
+  opacity: 0.6;
+}
+.node-brainstorm-rowdel {
+  flex: 0 0 22px;
+  background: transparent;
+  border: 1px solid rgba(184,134,11,0.25);
+  color: var(--steel-pale);
+  font-size: 0.7rem;
+  width: 22px;
+  height: 24px;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+  margin-top: 2px;
+}
+.node-brainstorm-rowdel:hover {
+  border-color: rgba(220,90,90,0.8);
+  color: rgba(255,170,170,1);
+}
+.node-brainstorm-toolbar {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.node-brainstorm-toolbar button {
+  background: rgba(184,134,11,0.12);
+  border: 1px solid rgba(184,134,11,0.4);
+  color: var(--gold-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  padding: 4px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.node-brainstorm-toolbar button:hover {
+  background: rgba(184,134,11,0.28);
+  border-color: var(--gold);
+  color: var(--gold-pale);
 }
 
 /* ── EMPTY STATE HINT ───────────────────────────────────── */
@@ -4065,7 +4150,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 24 / no duplicate flavor on attacks</span>
+  <span class="topbar-version">stage 26 / brainstorm node + monster letter conflicts</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -4248,7 +4333,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
     <!-- Nodes live here, injected by JS -->
   </div>
 
-  <div id="stage-label">Stage 24 · no duplicate prose card on monster attacks</div>
+  <div id="stage-label">Stage 26 · brainstorm node + globally-unique monster letters</div>
   <div id="marquee"></div>
   <div id="empty-hint">
     <div class="empty-headline">Empty Canvas</div>
@@ -5997,6 +6082,12 @@ function serializeCanvas() {
         rows: Array.isArray(n.table.rows) ? n.table.rows.map(r => Array.isArray(r) ? [...r] : []) : [],
       };
     }
+    // Brainstorm nodes carry a `brainstorm` payload — same idea.
+    if (n.brainstorm) {
+      base.brainstorm = {
+        items: Array.isArray(n.brainstorm.items) ? n.brainstorm.items.map(s => String(s || '')) : [],
+      };
+    }
     if (n.scope === 'campaign') {
       campaignNodesUpdate.push({
         ...base,
@@ -6108,6 +6199,16 @@ function deserializeCanvas(data) {
         delete node.table.collapsed;     // legacy field — no longer used
       }
     }
+    // Restore brainstorm data if present (brainstorm-type nodes only).
+    if (def.isBrainstorm) {
+      if (nd.brainstorm && Array.isArray(nd.brainstorm.items)) {
+        node.brainstorm = { items: nd.brainstorm.items.map(s => String(s || '')) };
+      } else {
+        node.brainstorm = JSON.parse(JSON.stringify(def.defaultBrainstorm));
+      }
+      // Re-derive the summary on load so the face matches what's saved.
+      updateBrainstormSummary(node);
+    }
     const el = document.createElement('div');
     el.className = 'node';
     el.dataset.nodeId = nd.id;
@@ -6127,6 +6228,7 @@ function deserializeCanvas(data) {
     wireNodeBodyClickToOpenPanel(el, node);
     wireMonsterRollClicks(el, node); wireTrapRollClicks(el, node); wireSceneHazardClicks(el, node); wireNpcPeekClicks(el, node);
     wireTableNode(el, node);
+    wireBrainstormNode(el, node);
     wireNodeCollapseToggle(el, node);
     wireMagnifyBtn(el, node);
     const m = String(nd.id).match(/^n(\d+)$/);
@@ -7251,6 +7353,21 @@ const BLOCK_TYPES = {
   // Side-panel and canvas card both use a custom renderer rather than
   // the generic field walker (the data shape is incompatible with
   // BLOCK_TYPES.fields). Search indexing flattens cells into searchText.
+  brainstorm: {
+    label: 'Brainstorm', icon: '💡', size: 'double-tall', defaultTitle: 'New Brainstorm',
+    isBrainstorm: true,    // sentinel — renderers branch on this
+    fields: [
+      // Director-notes-only "field" so the focus-mode generic walker
+      // still has something to put in the editable notes section.
+      { key: 'notes', label: 'Director Notes', type: 'textarea', group: 'Director Notes',
+        placeholder: 'Context for these ideas, prompts that triggered them, etc…', rows: 2, fullWidth: true },
+    ],
+    // Default starter items when a new brainstorm block is created on the canvas.
+    defaultBrainstorm: {
+      items: [''],
+    },
+  },
+
   table: {
     label: 'Table', icon: '📊', size: 'double-square', defaultTitle: 'New Table',
     isTable: true,    // sentinel — renderers branch on this
@@ -7276,7 +7393,7 @@ const BLOCK_TYPES = {
   },
 };
 // Order for menus and palette
-const BLOCK_TYPE_ORDER = ['scene','encounter','trap','npc','clue','reward','skillchallenge','table'];
+const BLOCK_TYPE_ORDER = ['scene','encounter','trap','npc','clue','reward','skillchallenge','brainstorm','table'];
 
 // ── STATE ────────────────────────────────────────────────
 const state = {
@@ -7644,6 +7761,11 @@ function createNode({ x, y, type = 'scene', title = null, summary = '' } = {}) {
   if (def.isTable) {
     data.table = JSON.parse(JSON.stringify(def.defaultTable));
   }
+  // Brainstorm-type nodes carry their items in their own dedicated key for
+  // the same reason — keeps `fields` reserved for form-style data.
+  if (def.isBrainstorm) {
+    data.brainstorm = JSON.parse(JSON.stringify(def.defaultBrainstorm));
+  }
 
   const el = document.createElement('div');
   el.className = 'node';
@@ -7662,6 +7784,7 @@ function createNode({ x, y, type = 'scene', title = null, summary = '' } = {}) {
   wireNodeBodyClickToOpenPanel(el, data);
   wireMonsterRollClicks(el, data); wireTrapRollClicks(el, data); wireSceneHazardClicks(el, data); wireNpcPeekClicks(el, data);
   wireTableNode(el, data);
+  wireBrainstormNode(el, data);
   wireNodeCollapseToggle(el, data);
   wireMagnifyBtn(el, data);
   updateEmptyHint();
@@ -7680,6 +7803,7 @@ function updateEmptyHint() {
 function renderNodeFace(data) {
   const def = BLOCK_TYPES[data.type] || BLOCK_TYPES.scene;
   const isTable = !!def.isTable;
+  const isBrainstorm = !!def.isBrainstorm;
   const collapsed = !!data.collapsed;
   // Optional title decoration. For collapsible types (currently only
   // tables) the title bar shows a ▸/▾ chevron so the affordance is
@@ -7693,6 +7817,14 @@ function renderNodeFace(data) {
       const rows = (t.rows || []).length;
       const cols = (t.headers || []).length;
       dimsHint = ` <span class="node-title-dim">· ${rows}×${cols}</span>`;
+    }
+  } else if (isBrainstorm) {
+    chevron = collapsed ? '▸' : '▾';
+    if (collapsed) {
+      const items = (data.brainstorm && Array.isArray(data.brainstorm.items))
+        ? data.brainstorm.items.filter(s => (s || '').trim())
+        : [];
+      dimsHint = ` <span class="node-title-dim">· ${items.length} item${items.length === 1 ? '' : 's'}</span>`;
     }
   }
   // When collapsed, omit the body entirely. Anchors stay so connections
@@ -7714,16 +7846,20 @@ function renderNodeFace(data) {
   }
   const summaryHtml = data.summary
     ? `<div class="node-summary">${escHtml(data.summary)}</div>`
-    : `<div class="node-summary">Click to edit (side panel — Stage 3b).</div>`;
+    : (isBrainstorm
+        ? ''  // Brainstorm uses the items list as its visible content; no placeholder summary
+        : `<div class="node-summary">Click to edit (side panel — Stage 3b).</div>`);
   const difficultyHtml    = data.type === 'encounter' ? renderEncounterDifficultyBar(data) : '';
   const monstersHtml      = renderMonsterCardsHtml(data);
   const trapRollsHtml     = renderTrapRollsHtml(data);
   const sceneHazardsHtml  = renderSceneHazardRollsHtml(data);
   const npcSkinHtml       = renderNpcSkinFaceHtml(data);
   const tableHtml         = isTable ? renderTableNodeBodyHtml(data) : '';
-  // Header is "collapsible" only for table nodes (others can opt in later)
-  const headerExtraClass = isTable ? ' collapsible' : '';
-  const headerExtraAttrs = isTable ? ` data-node-collapse-target="${data.id}" title="Double-click to collapse"` : '';
+  const brainstormHtml    = isBrainstorm ? renderBrainstormNodeBodyHtml(data) : '';
+  // Header is "collapsible" for table OR brainstorm nodes (others can opt in later)
+  const headerCollapsible = isTable || isBrainstorm;
+  const headerExtraClass = headerCollapsible ? ' collapsible' : '';
+  const headerExtraAttrs = headerCollapsible ? ` data-node-collapse-target="${data.id}" title="Double-click to collapse"` : '';
   return `
     <div class="node-header${headerExtraClass}"${headerExtraAttrs}>
       <span class="node-icon">${data.icon}</span>
@@ -7740,6 +7876,7 @@ function renderNodeFace(data) {
       ${sceneHazardsHtml}
       ${npcSkinHtml}
       ${tableHtml}
+      ${brainstormHtml}
     </div>
     <div class="node-anchors">
       ${['tl','tc','tr','ml','mr','bl','bc','br'].map(p =>
@@ -7809,6 +7946,151 @@ function detectCellDiceFormula(cellValue) {
 }
 
 // ── TABLE NODE: canvas-card body renderer ─────────────────
+// ── BRAINSTORM NODE: canvas-card body renderer ─────────────
+// Bulleted list of free-text items. Items live at node.brainstorm.items
+// (array of strings) — kept separate from `fields` so the field-form
+// pipeline doesn't try to manage them.
+function renderBrainstormNodeBodyHtml(data) {
+  const items = (data.brainstorm && Array.isArray(data.brainstorm.items))
+    ? data.brainstorm.items
+    : [''];
+  const rowsHtml = items.map((text, idx) => `
+    <div class="node-brainstorm-row" data-brainstorm-idx="${idx}">
+      <span class="node-brainstorm-bullet">•</span>
+      <textarea class="node-brainstorm-input"
+                data-brainstorm-cell="${data.id}|${idx}"
+                rows="1"
+                placeholder="Idea, prompt, what-if…">${escHtml(text || '')}</textarea>
+      <button class="node-brainstorm-rowdel"
+              data-brainstorm-rowdel="${data.id}|${idx}"
+              title="Remove this item"
+              ${items.length <= 1 ? 'disabled' : ''}>✕</button>
+    </div>
+  `).join('');
+  return `
+    <div class="node-brainstorm-wrap">
+      ${rowsHtml}
+      <div class="node-brainstorm-toolbar">
+        <button data-brainstorm-add="${data.id}" title="Add an item below">+ item</button>
+      </div>
+    </div>
+  `;
+}
+
+// Brainstorm node wiring: input handlers for the items + the toolbar
+// buttons. Mirrors the wireTableNode pattern. Stops propagation on click
+// and mousedown so editing doesn't drag-select the node.
+function wireBrainstormNode(nodeEl, node) {
+  const def = BLOCK_TYPES[node.type];
+  if (!def || !def.isBrainstorm) return;
+
+  // Initialize brainstorm data if missing
+  if (!node.brainstorm || !Array.isArray(node.brainstorm.items)) {
+    node.brainstorm = JSON.parse(JSON.stringify(def.defaultBrainstorm));
+  }
+
+  // Per-item textarea: edit
+  nodeEl.querySelectorAll('textarea[data-brainstorm-cell]').forEach(ta => {
+    ta.addEventListener('mousedown', e => e.stopPropagation());
+    ta.addEventListener('click',     e => e.stopPropagation());
+    ta.addEventListener('input', (e) => {
+      e.stopPropagation();
+      const [, idxStr] = ta.dataset.brainstormCell.split('|');
+      const idx = parseInt(idxStr);
+      if (Number.isNaN(idx)) return;
+      if (!node.brainstorm || !Array.isArray(node.brainstorm.items)) return;
+      node.brainstorm.items[idx] = ta.value;
+      updateBrainstormSummary(node);
+      markDirty();
+    });
+    // Pressing Enter (without Shift) splits the current row into two,
+    // making rapid bullet entry pleasant.
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        const [, idxStr] = ta.dataset.brainstormCell.split('|');
+        const idx = parseInt(idxStr);
+        if (Number.isNaN(idx)) return;
+        // Split at the caret: text before stays, text after becomes a new row.
+        const fullText = ta.value;
+        const caret = ta.selectionStart;
+        const before = fullText.slice(0, caret);
+        const after  = fullText.slice(caret);
+        node.brainstorm.items[idx] = before;
+        node.brainstorm.items.splice(idx + 1, 0, after);
+        refreshNodeFace(node);
+        // Focus the newly created row
+        const newTa = node.el.querySelector(`textarea[data-brainstorm-cell="${node.id}|${idx + 1}"]`);
+        if (newTa) {
+          newTa.focus();
+          newTa.setSelectionRange(0, 0);
+        }
+        updateBrainstormSummary(node);
+        markDirty();
+      }
+    });
+  });
+
+  // Per-item delete
+  nodeEl.querySelectorAll('button[data-brainstorm-rowdel]').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const [, idxStr] = btn.dataset.brainstormRowdel.split('|');
+      const idx = parseInt(idxStr);
+      if (Number.isNaN(idx)) return;
+      if (!node.brainstorm || !Array.isArray(node.brainstorm.items)) return;
+      if (node.brainstorm.items.length <= 1) {
+        // Always keep at least one row
+        node.brainstorm.items[0] = '';
+      } else {
+        node.brainstorm.items.splice(idx, 1);
+      }
+      refreshNodeFace(node);
+      updateBrainstormSummary(node);
+      markDirty();
+    });
+  });
+
+  // Add-item button
+  nodeEl.querySelectorAll('button[data-brainstorm-add]').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!node.brainstorm || !Array.isArray(node.brainstorm.items)) {
+        node.brainstorm = { items: [] };
+      }
+      node.brainstorm.items.push('');
+      refreshNodeFace(node);
+      // Focus the freshly appended row
+      const newIdx = node.brainstorm.items.length - 1;
+      const newTa = node.el.querySelector(`textarea[data-brainstorm-cell="${node.id}|${newIdx}"]`);
+      if (newTa) newTa.focus();
+      updateBrainstormSummary(node);
+      markDirty();
+    });
+  });
+}
+
+// Recompute the summary line shown on the node face from the items array.
+// We use the first non-empty item, with a "(+N more)" suffix if there are
+// additional items. Empty brainstorms get a generic placeholder.
+function updateBrainstormSummary(node) {
+  if (!node || !node.brainstorm || !Array.isArray(node.brainstorm.items)) {
+    node.summary = '';
+    return;
+  }
+  const items = node.brainstorm.items.map(s => (s || '').trim()).filter(Boolean);
+  if (!items.length) {
+    node.summary = '';
+    return;
+  }
+  const first = items[0].length > 90 ? items[0].slice(0, 87) + '…' : items[0];
+  node.summary = items.length === 1 ? first : `${first}  (+${items.length - 1} more)`;
+}
+
+// ── ROLL-TABLE NODE: canvas-card body renderer ─────────────
 // Always-on header row (row 0), always-on cell inputs for body rows.
 // The whole NODE collapses (not the table region within the body) — see
 // renderNodeFace handling of node.collapsed.
@@ -7991,6 +8273,7 @@ function makeTrashEntryForNode(node) {
     scope: node.scope || 'session',
     home_session_id: node.home_session_id || null,
     table: node.table || null,
+    brainstorm: node.brainstorm || null,
     collapsed: !!node.collapsed,
     icon: node.icon,
   }));
@@ -8059,6 +8342,11 @@ function restoreLastDeleted() {
       rows: Array.isArray(nd.table.rows) ? nd.table.rows.map(r => Array.isArray(r) ? [...r] : []) : [],
     };
   }
+  if (def.isBrainstorm && nd.brainstorm) {
+    node.brainstorm = {
+      items: Array.isArray(nd.brainstorm.items) ? nd.brainstorm.items.map(s => String(s || '')) : [],
+    };
+  }
   const el = document.createElement('div');
   el.className = 'node';
   el.dataset.nodeId = node.id;
@@ -8080,6 +8368,7 @@ function restoreLastDeleted() {
   wireSceneHazardClicks(el, node);
   wireNpcPeekClicks(el, node);
   wireTableNode(el, node);
+  wireBrainstormNode(el, node);
   wireNodeCollapseToggle(el, node);
   wireMagnifyBtn(el, node);
 
@@ -9575,6 +9864,15 @@ function renderSidePanelBody(node, def) {
         Paste a Google Docs or Excel table directly to replace contents.
       </div>`;
   }
+  // For brainstorm nodes, point users to the canvas card for item editing.
+  if (def.isBrainstorm) {
+    html += `<div class="sp-section-title">Items</div>
+      <div class="sp-row full" style="font-family:'Crimson Pro',Georgia,serif;font-size:0.85rem;color:var(--steel-pale);font-style:italic;">
+        Edit items directly on the canvas card or in focus mode (🔍).
+        Press Enter to split a row in two; click ✕ to remove a row.
+        Double-click the header to collapse / expand the whole node.
+      </div>`;
+  }
   spBody.innerHTML = html;
 
   // Wire input handlers — autosave on input/change with 200ms debounce.
@@ -9810,13 +10108,16 @@ function addAnotherInstance(node, groupKey) {
   if (!node.fields || !Array.isArray(node.fields.monsters)) return;
   const existing = node.fields.monsters.find(m => m.monster_id === groupKey);
   if (!existing) return;
-  const letter = nextMonsterLetter(node, groupKey);
+  // Push without a pre-assigned letter — the recompute will allocate one
+  // (and may also promote the formerly-singleton existing instance from
+  // letterless to lettered now that the group has 2 members).
   node.fields.monsters.push({
     monster_id: existing.monster_id,
-    flav: letter,
-    letter: letter,
+    flav: '',
+    letter: '',
     snapshot: existing.snapshot,
   });
+  recomputeMonsterLetters(node);
   if (sidePanel.classList.contains('open') && openNodeId === node.id) {
     renderSidePanelBody(node, BLOCK_TYPES.encounter);
   }
@@ -10059,23 +10360,21 @@ async function doMonsterSearch(query, resultsEl, node) {
   }
 }
 
-// Pick the next available alphabetical letter for a new import.
-// Letters are unique WITHIN a stat-block group, not globally — so 3 goblins
-// get A, B, C and 2 bandits restart at A, B independently.
+// Pick the next available alphabetical letter for a new monster instance.
+// Letters are globally unique ACROSS the encounter — so 3 goblins get A, B, C
+// and 2 bandits joining them get D, E (not A, B again, which would visually
+// collide with the goblins).
 //
-// `groupKey` is typically the monster_id of the group the new instance is
-// joining. Falls back to all-monsters when no key is supplied (legacy callers).
-function nextMonsterLetter(node, groupKey) {
+// Singletons (groups of size 1) don't need letters at all and skip allocation
+// — see `recomputeMonsterLetters` for the cleanup pass.
+function nextMonsterLetter(node) {
   const all = (node.fields && node.fields.monsters) || [];
-  const sameGroup = groupKey
-    ? all.filter(m => m.monster_id === groupKey)
-    : all;
-  const used = new Set(sameGroup.map(m => m.letter));
+  const used = new Set(all.map(m => (m.letter || '').toUpperCase()).filter(Boolean));
   for (let i = 0; i < 26; i++) {
     const c = String.fromCharCode(65 + i);
     if (!used.has(c)) return c;
   }
-  // Fallback for >26 in one group: doubled letter
+  // Fallback for >26 in one encounter: doubled letter
   for (let i = 0; i < 26; i++) {
     const c = String.fromCharCode(65 + i);
     if (!used.has(c + c)) return c + c;
@@ -10083,17 +10382,120 @@ function nextMonsterLetter(node, groupKey) {
   return 'X';
 }
 
+// Recompute letters across all monsters in an encounter so that:
+//   - singleton groups (count == 1) carry NO letter (cleared)
+//   - multi groups (count >= 2) carry letters that are globally unique
+//
+// We preserve any existing valid letters when possible — only reassigning
+// when needed to break collisions or when a group transitions singleton↔multi.
+// Group order is determined by first-appearance in the monsters array
+// (not by the group's content), so adding a new group doesn't re-letter
+// existing groups.
+//
+// Call this after any add / remove / "+ another" / fill-group operation.
+function recomputeMonsterLetters(node) {
+  const arr = (node.fields && node.fields.monsters) || [];
+  if (!arr.length) return;
+
+  // Group by monster_id, preserving first-appearance order
+  const groupOrder = [];
+  const groupsByKey = new Map();
+  arr.forEach((m, idx) => {
+    const key = String(m.monster_id || ('__free_' + idx));
+    if (!groupsByKey.has(key)) {
+      groupOrder.push(key);
+      groupsByKey.set(key, []);
+    }
+    groupsByKey.get(key).push(m);
+  });
+
+  // Pass 1: singletons get cleared. Their letters become available for others.
+  groupOrder.forEach(key => {
+    const grp = groupsByKey.get(key);
+    if (grp.length === 1) {
+      grp[0].letter = '';
+      // If flav was just the auto-letter, clear it. If user typed flavor
+      // text after the letter (e.g. "A: scarred"), preserve the descriptor
+      // part so user-entered text isn't lost.
+      const f = (grp[0].flav || '').trim();
+      if (/^[A-Z]$/i.test(f)) {
+        grp[0].flav = '';
+      } else {
+        // Strip any "X: " or "X " prefix where X is a single letter
+        grp[0].flav = f.replace(/^[A-Z](?:\s*:\s*|\s+)/i, '');
+      }
+    }
+  });
+
+  // Pass 2: multi-groups. Find letters in use (only multi-group letters now,
+  // since singletons were cleared). Reuse existing letters where they're
+  // valid + non-colliding; otherwise pick the lowest free letter.
+  const usedLetters = new Set();
+  // First gather all currently-set letters from multi-groups, dropping dupes
+  groupOrder.forEach(key => {
+    const grp = groupsByKey.get(key);
+    if (grp.length < 2) return;
+    grp.forEach(m => {
+      const c = (m.letter || '').toUpperCase();
+      if (c && /^[A-Z]$/.test(c) && !usedLetters.has(c)) {
+        usedLetters.add(c);
+      }
+    });
+  });
+
+  // Now walk multi-groups in order, ensure each instance has a unique letter.
+  groupOrder.forEach(key => {
+    const grp = groupsByKey.get(key);
+    if (grp.length < 2) return;
+    const seenInGroup = new Set();
+    grp.forEach(m => {
+      const existing = (m.letter || '').toUpperCase();
+      let letter = '';
+      if (existing && /^[A-Z]$/.test(existing) && !seenInGroup.has(existing)) {
+        // Keep existing valid non-duplicate letter for this instance
+        letter = existing;
+      } else {
+        // Find lowest-unused letter globally
+        for (let i = 0; i < 26; i++) {
+          const c = String.fromCharCode(65 + i);
+          if (!usedLetters.has(c) && !seenInGroup.has(c)) {
+            letter = c;
+            break;
+          }
+        }
+        if (!letter) letter = 'X';   // overflow fallback; encounters with >26 letters are silly anyway
+      }
+      seenInGroup.add(letter);
+      usedLetters.add(letter);
+      m.letter = letter;
+      // Update flav to keep the letter in sync, preserving any descriptor text
+      const f = (m.flav || '').trim();
+      const descMatch = f.match(/^[A-Z](?:\s*:\s*|\s+)(.*)$/i);
+      if (descMatch) {
+        m.flav = descMatch[1] ? letter + ': ' + descMatch[1] : letter;
+      } else if (f && !/^[A-Z]$/i.test(f)) {
+        // flav was already pure descriptor (no letter prefix); prepend
+        m.flav = letter + ': ' + f;
+      } else {
+        m.flav = letter;
+      }
+    });
+  });
+}
+
 function addMonsterToEncounter(node, row) {
   node.fields = node.fields || {};
   if (!Array.isArray(node.fields.monsters)) node.fields.monsters = [];
-  // Letter is allocated within the group — A for first goblin, B for next, etc.
-  const letter = nextMonsterLetter(node, row.id);
+  // Push without a pre-assigned letter — recomputeMonsterLetters will
+  // figure out whether it needs one (and which one) based on whether this
+  // creates a new singleton or grows an existing group into multi.
   node.fields.monsters.push({
     monster_id: row.id,
-    flav: letter,
-    letter: letter,
+    flav: '',
+    letter: '',
     snapshot: row,
   });
+  recomputeMonsterLetters(node);
   // Repaint side panel + canvas face
   if (sidePanel.classList.contains('open') && openNodeId === node.id) {
     renderSidePanelBody(node, BLOCK_TYPES.encounter);
@@ -10111,6 +10513,9 @@ function addMonsterToEncounter(node, row) {
 function removeImportedMonster(node, idx) {
   if (!node.fields || !Array.isArray(node.fields.monsters)) return;
   node.fields.monsters.splice(idx, 1);
+  // Re-letter the remaining instances — a multi-group becoming a singleton
+  // should drop its letter; gaps in the global letter sequence are tolerable.
+  recomputeMonsterLetters(node);
   if (sidePanel.classList.contains('open') && openNodeId === node.id) {
     renderSidePanelBody(node, BLOCK_TYPES.encounter);
   }
@@ -11933,7 +12338,10 @@ function wireMonsterRollClicks(nodeEl, node) {
 
   // Group-level flavor fill: prompt for starting letter, walk through all
   // instances of the group, fill their flavorDesc with words starting from
-  // that letter (wrapping past Z back to A).
+  // that letter. Skips letters already in use by OTHER groups in this
+  // encounter (so the letter chips stay globally unique). Singletons are
+  // ignored — flavor letters aren't useful when there's nothing to
+  // disambiguate against.
   nodeEl.querySelectorAll('button[data-flavor-fill-group]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -11943,6 +12351,19 @@ function wireMonsterRollClicks(nodeEl, node) {
         .map((m, i) => ({ m, i }))
         .filter(({ m }) => String(m.monster_id || '') === String(groupId || ''));
       if (!instances.length) return;
+      // Skip singletons — letter chip is hidden for them anyway.
+      if (instances.length < 2) {
+        alert('This is a singleton — flavor letters are only used to distinguish between multiple monsters of the same kind.');
+        return;
+      }
+      // Letters held by OTHER groups (must be avoided)
+      const myInstanceSet = new Set(instances.map(({ m }) => m));
+      const otherUsed = new Set();
+      monsters.forEach(m => {
+        if (myInstanceSet.has(m)) return;
+        const c = (m.letter || '').toUpperCase();
+        if (c && /^[A-Z]$/.test(c)) otherUsed.add(c);
+      });
       // Suggest the current first instance's letter as default
       const firstLetter = (instances[0].m.flav || instances[0].m.letter || 'A')
         .toString().charAt(0).toUpperCase();
@@ -11956,9 +12377,25 @@ function wireMonsterRollClicks(nodeEl, node) {
         alert('Please enter a single letter A–Z.');
         return;
       }
-      // Assign letter + descriptor to each instance, walking the alphabet
+      // Walk the alphabet from startUpper, skipping any letter held by
+      // another group. We need `instances.length` distinct letters.
+      const assigned = [];
+      let cursor = startUpper.charCodeAt(0) - 65;
+      let safety = 26 * 2; // hard cap to avoid infinite loop in pathological cases
+      while (assigned.length < instances.length && safety-- > 0) {
+        const c = String.fromCharCode(65 + (cursor % 26));
+        if (!otherUsed.has(c) && !assigned.includes(c)) {
+          assigned.push(c);
+        }
+        cursor++;
+      }
+      if (assigned.length < instances.length) {
+        alert('Not enough free letters in the alphabet to fill this group without conflict. Remove or re-letter another group first.');
+        return;
+      }
+      // Apply
       instances.forEach((inst, n) => {
-        const letter = alphabetAtOffset(startUpper, n);
+        const letter = assigned[n];
         inst.m.flav = letter;       // existing letter chip
         inst.m.letter = letter;
         inst.m.flavorDesc = randomFlavorWord(letter, inst.m.flavorDesc);
@@ -13135,6 +13572,7 @@ function wireSearchDetail(detailEl, hit, container) {
   if (typeof wireSceneHazardClicks    === 'function') wireSceneHazardClicks(detailEl, hit.node);
   if (typeof wireNpcPeekClicks        === 'function') wireNpcPeekClicks(detailEl, hit.node);
   if (typeof wireTableNode             === 'function') wireTableNode(detailEl, hit.node);
+  if (typeof wireBrainstormNode        === 'function') wireBrainstormNode(detailEl, hit.node);
   // Connection rows — clicking expands that neighbor's detail in place
   // (recursive). We resolve the neighbor's index entry and mimic the
   // top-level expand path.
@@ -13443,6 +13881,7 @@ function enterFocusModeForNodes(nodes) {
     if (typeof wireSceneHazardClicks    === 'function') wireSceneHazardClicks(fakeHost, node);
     if (typeof wireNpcPeekClicks        === 'function') wireNpcPeekClicks(fakeHost, node);
     if (typeof wireTableNode             === 'function') wireTableNode(fakeHost, node);
+    if (typeof wireBrainstormNode        === 'function') wireBrainstormNode(fakeHost, node);
   });
   // Bind every editable Director Notes textarea to its node's autosave path
   wireFocusNotesEditors();
@@ -13522,6 +13961,13 @@ function renderFocusTileBody(node, def) {
     html += `<div class="focus-section">
       <div class="focus-section-label">Table</div>
       ${renderTableNodeBodyHtml(node)}
+    </div>`;
+  } else if (def.isBrainstorm) {
+    // Brainstorm nodes get their full editable item list in focus mode.
+    // The wireBrainstormNode call (added in wireFocusTile) handles input.
+    html += `<div class="focus-section">
+      <div class="focus-section-label">Items</div>
+      ${renderBrainstormNodeBodyHtml(node)}
     </div>`;
   }
 
@@ -13682,6 +14128,7 @@ function refreshNodeFace(node) {
   wireNodeBodyClickToOpenPanel(node.el, node);
   wireMonsterRollClicks(node.el, node); wireTrapRollClicks(node.el, node); wireSceneHazardClicks(node.el, node); wireNpcPeekClicks(node.el, node);
   wireTableNode(node.el, node);
+  wireBrainstormNode(node.el, node);
   wireNodeCollapseToggle(node.el, node);
   wireMagnifyBtn(node.el, node);
   // Restore selected styling if applicable
