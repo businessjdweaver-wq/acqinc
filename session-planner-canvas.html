@@ -3641,6 +3641,19 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   color: var(--bone);
   font-weight: 600;
 }
+.mon-imp-group-name.overridden {
+  color: var(--gold-pale);
+  font-style: italic;
+}
+.mon-imp-group-source {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.04em;
+  text-decoration: line-through;
+  opacity: 0.7;
+  margin-left: 4px;
+}
 .mon-imp-group-count {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.72rem;
@@ -4080,7 +4093,43 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   font-family: 'Crimson Pro', Georgia, serif;
   color: var(--bone);
   font-size: 1rem;
-  flex: 1;
+  flex: 0 1 auto;
+  cursor: pointer;
+  padding: 1px 4px;
+  margin: -1px -4px;
+  border-radius: 2px;
+  transition: background 0.12s;
+}
+.node-mon-group-name:hover {
+  background: rgba(184,134,11,0.15);
+}
+/* Group-name override visible state — gold tint to signal "this isn't the
+   source name, this is a skin". Source name appears as a small ghost. */
+.node-mon-group-name.overridden {
+  color: var(--gold-pale);
+  font-style: italic;
+}
+.node-mon-group-source {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.04em;
+  text-decoration: line-through;
+  opacity: 0.7;
+  margin-left: 2px;
+  flex: 0 0 auto;
+}
+.node-mon-group-name-input {
+  background: rgba(0,0,0,0.45);
+  border: 1px solid var(--gold);
+  color: var(--bone);
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 1rem;
+  padding: 2px 6px;
+  border-radius: 2px;
+  outline: none;
+  width: 200px;
+  max-width: 100%;
 }
 .node-mon-group-count {
   font-family: 'JetBrains Mono', monospace;
@@ -4954,7 +5003,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 31 / mobile mode + HP math fix</span>
+  <span class="topbar-version">stage 33 / Cmd+B broadcast field to VTT</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -5483,6 +5532,152 @@ function b20Send(request) {
     setTimeout(() => ind.classList.remove('flash'), 250);
   }
 }
+
+// ── BROADCAST FIELD CONTENT (Stage 33) ───────────────────
+// Cmd/Ctrl+B from inside a focused field broadcasts the selected text
+// (or the entire field content if nothing is selected) to the VTT as a
+// chat-message card. Useful for quickly sharing an NPC name, a clue
+// snippet, a quest hook line — anything the DM has typed and wants the
+// table to see right now without copy-paste-paste.
+//
+// Card shape:
+//   character: { name: <node title>, type: 'Note' }
+//   name:      <field label>           (e.g. "Full Name", "Backstory")
+//   message:   <selected text or full field value>
+//
+// Selecting text first lets you broadcast just one paragraph from a
+// long Backstory; with no selection, the whole field goes through.
+function b20BroadcastField(text, fieldLabel, sourceName) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return false;
+  b20Send({
+    action: 'roll',
+    type: 'chat-message',
+    character: {
+      name: sourceName || 'Director',
+      type: 'Note',
+      url: window.location.href,
+    },
+    roll: 0,
+    advantage: 0,
+    whisper: 0,
+    name: fieldLabel || 'Note',
+    message: trimmed,
+  });
+  return true;
+}
+
+// Determine the source-name (sender) for a broadcast originating from a
+// given field element. Walks up through the DOM and known scope hints.
+function _broadcastSourceName(el) {
+  // Mobile single-node view: the node id is in mobileState
+  if (typeof mobileState !== 'undefined'
+      && document.body.classList.contains('mobile-mode')
+      && mobileState.screen === 'node') {
+    const id = mobileState.nodeOrder[mobileState.nodeIndex];
+    const n = id && state.nodes.get(id);
+    if (n && n.title) return n.title;
+  }
+  // Side-panel context: openNodeId is set when panel is open
+  if (typeof openNodeId !== 'undefined' && openNodeId) {
+    // Frame nodes have a special prefixed openNodeId
+    if (typeof openNodeId === 'string' && openNodeId.startsWith('__frame__')) {
+      // Frame-tier node — use the captured frame node's title
+      if (typeof spOpenFrameNode !== 'undefined' && spOpenFrameNode && spOpenFrameNode.title) {
+        return spOpenFrameNode.title;
+      }
+    } else {
+      const n = state.nodes.get(openNodeId);
+      if (n && n.title) return n.title;
+    }
+  }
+  // Canvas card: walk up to find data-node-id
+  let cur = el;
+  while (cur && cur !== document.body) {
+    const nid = cur.dataset && cur.dataset.nodeId;
+    if (nid) {
+      const n = state.nodes.get(nid);
+      if (n && n.title) return n.title;
+      break;
+    }
+    cur = cur.parentElement;
+  }
+  return 'Director';
+}
+
+// Determine the field label for a broadcast originating from el.
+function _broadcastFieldLabel(el) {
+  if (!el) return 'Note';
+  // Title inputs (desktop side-panel + mobile)
+  if (el.id === 'spTitle' || el.classList.contains('mob-node-view-title')) return 'Title';
+  // Form fields with paired <label>
+  const wrap = el.closest('.sp-field');
+  if (wrap) {
+    const lbl = wrap.querySelector('label');
+    if (lbl && lbl.textContent) return lbl.textContent.trim();
+  }
+  // Fallback to the data-field-key (capitalized) if no label found
+  if (el.dataset && el.dataset.fieldKey) {
+    return el.dataset.fieldKey
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase());
+  }
+  return 'Note';
+}
+
+// Brief gold flash on the broadcast source element so the DM sees
+// confirmation that Cmd+B fired (paired with the existing Beyond20
+// badge pulse from b20Send).
+function _broadcastFlash(el) {
+  if (!el) return;
+  const prevBg = el.style.backgroundColor;
+  const prevTransition = el.style.transition;
+  el.style.transition = 'background-color 0.15s';
+  el.style.backgroundColor = 'rgba(184,134,11,0.35)';
+  setTimeout(() => {
+    el.style.backgroundColor = prevBg;
+    setTimeout(() => { el.style.transition = prevTransition; }, 200);
+  }, 200);
+}
+
+// Decide whether `el` is a broadcast-eligible target. We deliberately
+// scope this narrowly so unrelated inputs (search box, login form,
+// session-picker filters, etc.) don't accidentally broadcast on Cmd+B.
+function _broadcastEligible(el) {
+  if (!el || el === document.body) return false;
+  if (el.dataset && el.dataset.fieldKey) return true;
+  if (el.id === 'spTitle') return true;
+  if (el.classList && el.classList.contains('mob-node-view-title')) return true;
+  return false;
+}
+
+document.addEventListener('keydown', (e) => {
+  // Cmd+B (mac) or Ctrl+B (other) — but NOT when other modifiers like
+  // Alt/Shift are held (those combos belong to OS / browser shortcuts).
+  if (e.key !== 'b' && e.key !== 'B') return;
+  if (!(e.metaKey || e.ctrlKey)) return;
+  if (e.altKey) return;
+  const el = document.activeElement;
+  if (!_broadcastEligible(el)) return;
+  // Pull either the selected text (for inputs/textareas) or the whole value
+  let text = '';
+  if (typeof el.selectionStart === 'number'
+      && typeof el.selectionEnd === 'number'
+      && el.selectionStart !== el.selectionEnd) {
+    text = String(el.value || '').slice(el.selectionStart, el.selectionEnd);
+  } else {
+    text = String(el.value || '');
+  }
+  if (!text.trim()) return;   // empty field → no-op
+  e.preventDefault();
+  e.stopPropagation();
+  const sent = b20BroadcastField(
+    text,
+    _broadcastFieldLabel(el),
+    _broadcastSourceName(el)
+  );
+  if (sent) _broadcastFlash(el);
+});
 
 // Modifier-key helper: maps a click MouseEvent to the Beyond20 RollType value.
 // Beyond20's `RollType` enum (src/common/settings.js):
@@ -11215,7 +11410,7 @@ function renderMonsterSection(node) {
       </div>
       <div class="mon-results" id="monResults"></div>
       <div class="mon-imported-list" id="monImportedList">
-        ${groups.map(g => renderImportedMonsterGroup(g)).join('')}
+        ${groups.map(g => renderImportedMonsterGroup(g, node)).join('')}
       </div>
     </div>`;
 }
@@ -11224,7 +11419,12 @@ function renderMonsterSection(node) {
 // When count == 1 the flavor input still shows (so you can choose to add flavor
 // even on a singleton if you want), but the visual hint is that flavor isn't
 // required. When count > 1 the flavor letter is prominently shown per row.
-function renderImportedMonsterGroup(g) {
+//
+// Stage 32: when a per-encounter group-name override exists, the side-panel
+// header reflects it so the DM can see at a glance that this group has
+// been skinned. The override is read-only here — to change it, click the
+// canvas card's group name (where the rename UI lives).
+function renderImportedMonsterGroup(g, node) {
   const sn = g.snapshot || {};
   const meta = [
     sn.cr ? 'CR ' + sn.cr : '',
@@ -11232,10 +11432,19 @@ function renderImportedMonsterGroup(g) {
     sn.ac ? 'AC ' + sn.ac : '',
   ].filter(Boolean).join(' · ');
   const count = g.items.length;
+  const overrideMap = (node && node.fields && node.fields.groupNameOverrides) || {};
+  const overrideName = (g.monster_id && overrideMap[g.monster_id])
+    ? String(overrideMap[g.monster_id]).trim()
+    : '';
+  const displayName = overrideName || g.name;
+  const sourceGhost = overrideName
+    ? `<span class="mon-imp-group-source" title="Source stat block name">${escHtml(g.name)}</span>`
+    : '';
   return `
     <div class="mon-imp-group" data-group-id="${escAttr(g.monster_id || '')}">
       <div class="mon-imp-group-header">
-        <span class="mon-imp-group-name">${escHtml(g.name)}</span>
+        <span class="mon-imp-group-name ${overrideName ? 'overridden' : ''}">${escHtml(displayName)}</span>
+        ${sourceGhost}
         <span class="mon-imp-group-count">${count > 1 ? '×' + count : 'singleton'}</span>
         <span class="mon-imp-group-meta">${escHtml(meta)}</span>
         <button class="mon-imp-btn" data-imp-action="add-another"
@@ -12086,14 +12295,20 @@ function renderMonsterCardsHtml(node) {
   const groups = groupImportedMonsters(list);
   return `
     <div class="node-monsters">
-      ${groups.map(g => renderMonsterGroupHtml(g)).join('')}
+      ${groups.map(g => renderMonsterGroupHtml(g, node)).join('')}
     </div>`;
 }
 
 // One group of same-stat-block monsters → one card on the canvas.
 // Singletons: no group wrapper or count; just render the lone instance with
 // `.singleton` class so the flavor letter stays hidden.
-function renderMonsterGroupHtml(g) {
+//
+// Stage 32: when the encounter has a group-level name override stored at
+// node.fields.groupNameOverrides[monster_id], the header shows the
+// override name (with the source name struck through in a small note),
+// and the override applies to every instance in the group via
+// _monsterDisplayName. Click the name to inline-rename.
+function renderMonsterGroupHtml(g, node) {
   if (g.items.length === 1) {
     const { m, idx } = g.items[0];
     return renderOneMonsterCard(m, idx, true);
@@ -12103,13 +12318,27 @@ function renderMonsterGroupHtml(g) {
     sn.cr ? 'CR ' + sn.cr : '',
     sn.ac ? 'AC ' + sn.ac : '',
   ].filter(Boolean).join(' · ');
+  // Resolve the group-level name override (if any) for this monster_id.
+  const overrideMap = (node && node.fields && node.fields.groupNameOverrides) || {};
+  const overrideName = (g.monster_id && overrideMap[g.monster_id])
+    ? String(overrideMap[g.monster_id]).trim()
+    : '';
+  const displayName = overrideName || g.name;
+  // Small ghost of the source name when overridden, so the DM remembers
+  // what's underneath the skin.
+  const sourceGhost = overrideName
+    ? `<span class="node-mon-group-source" title="Source stat block name (click name to change override)">${escHtml(g.name)}</span>`
+    : '';
   return `
     <div class="node-mon-group" data-group-id="${escAttr(g.monster_id || '')}">
       <div class="node-mon-group-header">
         <button class="node-mon-group-readout-btn" data-mon-readout="${escAttr(g.monster_id || '')}|${escAttr(g.name || '')}"
                 type="button"
                 title="Open read-only stat block (immunities, resistances, full traits)">📖</button>
-        <span class="node-mon-group-name">${escHtml(g.name)}</span>
+        <span class="node-mon-group-name ${overrideName ? 'overridden' : ''}"
+              data-group-name-edit="${escAttr(g.monster_id || '')}"
+              title="Click to rename this whole group (e.g. Ankheg → Null Maw). Per-instance overrides still win on top.">${escHtml(displayName)}</span>
+        ${sourceGhost}
         <span class="node-mon-group-count">×${g.items.length}</span>
         <span class="node-mon-group-stats">${escHtml(stats)}</span>
         <button class="node-mon-group-flavor-btn" data-flavor-fill-group="${escAttr(g.monster_id || '')}"
@@ -12909,7 +13138,17 @@ function scaleMonsterSnapshot(snapshot, newCR, oldCR) {
   return sn;
 }
 
-function _monsterDisplayName(m) {
+// Resolve the display name for an imported monster, honoring three layers
+// of override (highest priority first):
+//   1. Per-instance:  m.nameOverride          (e.g. "Billy the Ankheg")
+//   2. Per-group:     node.fields.groupNameOverrides[monster_id]
+//                     (e.g. all Ankhegs in this encounter → "Null Maw")
+//   3. Source:        m.snapshot.name         (the Workshop entry)
+//
+// `node` is optional — if omitted (older callers, NPC stat-skin path),
+// we skip the group layer. The flavor letter + descriptor prefix
+// ("D Drum-bellied — ") is always applied on top.
+function _monsterDisplayName(m, node) {
   const sn = (m && m.snapshot) || {};
   let prefix = '';
   if (m && m.flav && m.flavorDesc) {
@@ -12917,13 +13156,22 @@ function _monsterDisplayName(m) {
   } else if (m && m.flav) {
     prefix = m.flav + ' — ';
   }
-  // Per-instance name override: if the user has skinned this instance
-  // (e.g., renamed Goblin → "Fire Goblin"), use that. Falls back to the
-  // snapshot's name from the source stat block.
-  const baseName = (m && m.nameOverride && m.nameOverride.trim())
-    ? m.nameOverride.trim()
-    : (sn.name || 'Monster');
-  return prefix + baseName;
+  // Layer 1 — per-instance override
+  if (m && m.nameOverride && m.nameOverride.trim()) {
+    return prefix + m.nameOverride.trim();
+  }
+  // Layer 2 — per-group override (node-scoped)
+  if (node && m && m.monster_id) {
+    const map = node.fields && node.fields.groupNameOverrides;
+    if (map && typeof map === 'object') {
+      const gv = map[m.monster_id];
+      if (gv && String(gv).trim()) {
+        return prefix + String(gv).trim();
+      }
+    }
+  }
+  // Layer 3 — source snapshot name
+  return prefix + (sn.name || 'Monster');
 }
 function _fmtMod(n) { return (n >= 0 ? '+' : '') + n; }
 
@@ -13474,6 +13722,9 @@ function wireMonsterRollClicks(nodeEl, node) {
     // Statblock readout button (Stage 30): one per group header + one per
     // singleton card.
     'button[data-mon-readout]',
+    // Group-name click-to-edit (Stage 32) — inline rename for all
+    // instances of a stat block in this encounter.
+    'span[data-group-name-edit]',
   ];
   stripSelectors.forEach(sel => {
     nodeEl.querySelectorAll(sel).forEach(btn => {
@@ -13493,7 +13744,7 @@ function wireMonsterRollClicks(nodeEl, node) {
       if (!m) return;
       const a = (m.snapshot.actions || [])[actIdx];
       if (!a) return;
-      dispatchMonsterRoll(m, a, _advFromEvent(e));
+      dispatchMonsterRoll(m, a, _advFromEvent(e), node);
     });
   });
 
@@ -13510,7 +13761,7 @@ function wireMonsterRollClicks(nodeEl, node) {
       const specials = sn.special_abilities || sn.special || [];
       const s = specials[sIdx];
       if (!s) return;
-      dispatchMonsterRoll(m, s, _advFromEvent(e));
+      dispatchMonsterRoll(m, s, _advFromEvent(e), node);
     });
   });
 
@@ -13797,6 +14048,71 @@ function wireMonsterRollClicks(nodeEl, node) {
           ev.preventDefault();
           finish(false);
         }
+      });
+      input.addEventListener('blur', () => finish(true));
+    });
+  });
+
+  // ── Group-level name override (Stage 32) ─────────────────
+  // Click the group's name to inline-rename the entire group (e.g. all
+  // Ankhegs in this encounter become Null Maw). Stored at
+  // node.fields.groupNameOverrides[monster_id]. Per-instance overrides
+  // still trump the group override (resolved in _monsterDisplayName).
+  nodeEl.querySelectorAll('span[data-group-name-edit]').forEach(span => {
+    span.addEventListener('mousedown', e => e.stopPropagation());
+    span.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const monsterId = span.dataset.groupNameEdit;
+      if (!monsterId) return;
+      // Already editing? do nothing
+      if (span.querySelector('input')) return;
+      // Find any instance in this group to read the source name from
+      const groupItems = monsters.filter(mm => String(mm.monster_id) === String(monsterId));
+      if (!groupItems.length) return;
+      const sourceName = (groupItems[0].snapshot && groupItems[0].snapshot.name) || 'Monster';
+      // Read current group override (if any)
+      node.fields = node.fields || {};
+      node.fields.groupNameOverrides = node.fields.groupNameOverrides || {};
+      const currentVal = (node.fields.groupNameOverrides[monsterId] || '').trim();
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'node-mon-group-name-input';
+      input.value = currentVal;
+      input.placeholder = sourceName;
+      input.maxLength = 80;
+      const originalDisplay = span.innerHTML;
+      span.innerHTML = '';
+      span.appendChild(input);
+      input.focus();
+      input.select();
+      const finish = (commit) => {
+        if (commit) {
+          const v = (input.value || '').trim();
+          if (!v || v === sourceName) {
+            // Empty or same as source → clear override entirely (don't
+            // leave an empty string sitting in the map; treat it as "no
+            // override" and prune the key for cleanliness).
+            delete node.fields.groupNameOverrides[monsterId];
+            // If the map is now empty, remove it altogether so it
+            // doesn't bloat the saved JSON.
+            if (Object.keys(node.fields.groupNameOverrides).length === 0) {
+              delete node.fields.groupNameOverrides;
+            }
+          } else {
+            node.fields.groupNameOverrides[monsterId] = v;
+          }
+          markDirty();
+          refreshNodeFace(node);
+          return;
+        }
+        // Cancel — restore previous display
+        span.innerHTML = originalDisplay;
+      };
+      input.addEventListener('keydown', (ev) => {
+        ev.stopPropagation();
+        if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }
+        else if (ev.key === 'Escape') { ev.preventDefault(); finish(false); }
       });
       input.addEventListener('blur', () => finish(true));
     });
@@ -14097,7 +14413,7 @@ function wireMonsterRollClicks(nodeEl, node) {
       const score = _scoreOf(abs[k] || abs[k.toUpperCase()] || 10);
       const mod = _modOf(score);
       const label = _ABIL_KEYS.find(a => a.k === k).label;
-      const displayName = _monsterDisplayName(m);
+      const displayName = _monsterDisplayName(m, node);
       b20RollMonsterAbility(displayName, sn.cr || '', sn.ac || '', sn.hp || '', label, mod, _advFromEvent(e));
     });
   });
@@ -14115,7 +14431,7 @@ function wireMonsterRollClicks(nodeEl, node) {
       if (!m) return;
       const sn = m.snapshot;
       const label = _ABIL_KEYS.find(a => a.k === k).label;
-      const displayName = _monsterDisplayName(m);
+      const displayName = _monsterDisplayName(m, node);
       b20RollMonsterSavingThrow(displayName, sn.cr || '', sn.ac || '', sn.hp || '', label, bonus, proficient, _advFromEvent(e));
     });
   });
@@ -14141,7 +14457,7 @@ function wireMonsterRollClicks(nodeEl, node) {
       const explicit= saves[k] != null ? saves[k] : saves[stat] != null ? saves[stat] : null;
       const prof    = explicit != null && explicit !== '';
       const bonus   = prof ? (parseInt(explicit) || baseMod) : baseMod;
-      const displayName = _monsterDisplayName(m);
+      const displayName = _monsterDisplayName(m, node);
       b20RollHordeSaves(displayName, sn.cr || '', sn.ac || '', sn.hp || '', stat, bonus, prof, n, dc, _advFromEvent(e));
     });
   });
@@ -14634,13 +14950,16 @@ function dispatchNpcRoll(node, skin, action, advantage) {
   }
 }
 
-function dispatchMonsterRoll(imported, action, advantage) {
+function dispatchMonsterRoll(imported, action, advantage, dispatchNode) {
   const sn = imported.snapshot || {};
   // Display name uses _monsterDisplayName so per-instance nameOverride
   // (Stage 19) flows through to the VTT — without that, "Billy the Ankheg"
   // would still show as "A — Ankheg" in chat. The helper handles the
   // letter + descriptor + override-vs-source-name precedence.
-  const displayName = _monsterDisplayName(imported);
+  // Stage 32: dispatchNode is the encounter node, used to look up the
+  // group-level name override (e.g., the whole group renamed Ankheg →
+  // Null Maw). Optional — older callers (NPC stat-skin path) can omit.
+  const displayName = _monsterDisplayName(imported, dispatchNode);
   const cr = sn.cr || '';
   const ac = sn.ac || '';
   const hp = sn.hp || '';
@@ -14908,6 +15227,15 @@ function makeIndexEntry(node, scope, source) {
         }
       });
     } else if (v && typeof v === 'object') {
+      // Stage 32: group-name overrides are a flat string-valued map under
+      // fields.groupNameOverrides. Index every override so searching for
+      // "Null Maw" finds encounters where the DM has skinned that name in.
+      if (k === 'groupNameOverrides') {
+        Object.values(v).forEach(s => {
+          if (typeof s === 'string' && s.trim()) fieldStrs.push(s);
+        });
+        return;
+      }
       // NPC skin etc.
       if (v.snapshot && v.snapshot.name) fieldStrs.push(v.snapshot.name);
     }
