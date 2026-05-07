@@ -5524,7 +5524,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 41b / select sanitization + NPC/Clue/Scene field readouts</span>
+  <span class="topbar-version">stage 41c / disable autocorrect + grammar rewrites on inputs</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -5862,7 +5862,15 @@ body.mobile-mode #sb-modal { display: none !important; }
     <span class="sp-icon"   id="spIcon">◆</span>
     <div style="display:flex; flex-direction:column; flex:1; gap:2px; min-width:0;">
       <span class="sp-typebadge" id="spTypeBadge">Type</span>
-      <input class="sp-title-input" id="spTitle" type="text" placeholder="Title…">
+      <input class="sp-title-input" id="spTitle" type="text" placeholder="Title…"
+             spellcheck="false"
+             autocorrect="off"
+             autocapitalize="off"
+             autocomplete="off"
+             data-gramm="false"
+             data-gramm_editor="false"
+             data-enable-grammarly="false"
+             data-lt-active="false">
       <div class="sp-scope-row">
         <button class="sp-scope-pill" id="spScopePill" onclick="openScopeMenu(event)" title="Change scope and collection">
           <span class="sp-scope-label" id="spScopeLabel">Session</span>
@@ -12257,6 +12265,12 @@ function renderField(node, f) {
   let v = (node.fields && f.key in node.fields) ? node.fields[f.key] : '';
   const lbl = `<label>${escHtml(f.label)}</label>`;
   const ph  = f.placeholder ? `placeholder="${escAttr(f.placeholder)}"` : '';
+  // Stage 41c: opt-out attributes for grammar-rewriting extensions
+  // (Grammarly, LanguageTool, etc.). Observed case: a DM-renamed monster
+  // group "Null Maws" was silently rewritten to "Null Mouse" by Grammarly.
+  // We let native browser spellcheck stay on for textareas (helpful for
+  // long prose) but block third-party grammar rewrites everywhere.
+  const grammOff = 'data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false" data-lt-active="false"';
   if (f.type === 'select') {
     // Stage 41b: defensive sanitization. If the stored value isn't in
     // the canonical options list, blank it out — otherwise broken
@@ -12285,16 +12299,19 @@ function renderField(node, f) {
   }
   if (f.type === 'textarea') {
     return `<div class="sp-field">${lbl}
-      <textarea class="sp-textarea" data-field-key="${f.key}" rows="${f.rows || 3}" ${ph}>${escHtml(v)}</textarea>
+      <textarea class="sp-textarea" data-field-key="${f.key}" rows="${f.rows || 3}" ${ph} ${grammOff}>${escHtml(v)}</textarea>
     </div>`;
   }
   if (f.type === 'number') {
     return `<div class="sp-field">${lbl}
-      <input class="sp-input" data-field-key="${f.key}" type="number" value="${escAttr(v)}" ${ph}></div>`;
+      <input class="sp-input" data-field-key="${f.key}" type="number" value="${escAttr(v)}" ${ph} autocomplete="off"></div>`;
   }
-  // default text
+  // default text — these often hold proper nouns (NPC names, clue titles,
+  // location names) so we additionally turn off browser spellcheck +
+  // autocorrect, which were observed silently changing "Maws" → "Mouse".
   return `<div class="sp-field">${lbl}
-    <input class="sp-input" data-field-key="${f.key}" type="text" value="${escAttr(v)}" ${ph}></div>`;
+    <input class="sp-input" data-field-key="${f.key}" type="text" value="${escAttr(v)}" ${ph}
+           spellcheck="false" autocorrect="off" autocapitalize="off" autocomplete="off" ${grammOff}></div>`;
 }
 
 // Read every input back into node.fields and re-render the canvas face.
@@ -15228,6 +15245,17 @@ function wireMonsterRollClicks(nodeEl, node) {
       input.value = currentVal;
       input.placeholder = sourceName;
       input.maxLength = 80;
+      // Stage 41c: keep proper-noun monster names safe from spellcheck +
+      // grammar-rewriting extensions (Grammarly silently rewrote "Null
+      // Maws" → "Null Mouse" in one observed case).
+      input.setAttribute('spellcheck', 'false');
+      input.setAttribute('autocorrect', 'off');
+      input.setAttribute('autocapitalize', 'off');
+      input.setAttribute('autocomplete', 'off');
+      input.setAttribute('data-gramm', 'false');
+      input.setAttribute('data-gramm_editor', 'false');
+      input.setAttribute('data-enable-grammarly', 'false');
+      input.setAttribute('data-lt-active', 'false');
       // Replace the span's contents with the input
       const originalDisplay = span.innerHTML;
       span.innerHTML = '';
@@ -15299,6 +15327,16 @@ function wireMonsterRollClicks(nodeEl, node) {
       input.value = currentVal;
       input.placeholder = sourceName;
       input.maxLength = 80;
+      // Stage 41c: spellcheck/grammar opt-outs — see node-mon-name-input
+      // for full rationale (Null Maws → Null Mouse).
+      input.setAttribute('spellcheck', 'false');
+      input.setAttribute('autocorrect', 'off');
+      input.setAttribute('autocapitalize', 'off');
+      input.setAttribute('autocomplete', 'off');
+      input.setAttribute('data-gramm', 'false');
+      input.setAttribute('data-gramm_editor', 'false');
+      input.setAttribute('data-enable-grammarly', 'false');
+      input.setAttribute('data-lt-active', 'false');
       const originalDisplay = span.innerHTML;
       span.innerHTML = '';
       span.appendChild(input);
@@ -17958,6 +17996,14 @@ function renderMobileNodeView(node) {
       <input class="mob-node-view-title" type="text"
              value="${escAttr(node.title || '')}"
              placeholder="Untitled"
+             spellcheck="false"
+             autocorrect="off"
+             autocapitalize="off"
+             autocomplete="off"
+             data-gramm="false"
+             data-gramm_editor="false"
+             data-enable-grammarly="false"
+             data-lt-active="false"
              data-mob-title>
       <div>
         <span class="mob-node-view-typebadge">${escHtml(def.icon)} ${escHtml(def.label)}</span>
