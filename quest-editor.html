@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Quest Editor v1.7169</title>
+<title>Quest Editor v1.7171</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -386,7 +386,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 <body>
 <div id="login-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--parch);border:2px solid var(--gold);border-radius:10px;padding:24px;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.5)">
-    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.7169</span></h2>
+    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.7171</span></h2>
     <div style="margin-bottom:12px">
       <label style="display:block;font-size:.8em;color:var(--ink2);margin-bottom:4px">Email</label>
       <input type="text" id="email" autocomplete="email" style="width:100%;padding:8px;border:1px solid var(--gold);border-radius:5px;background:var(--parch);font-size:.9em;box-sizing:border-box">
@@ -402,7 +402,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 
 <div id="app">
   <div id="hdr">
-    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.7169</span></h1>
+    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.7171</span></h1>
     <div id="login-area">
       <span id="user-email"></span>
       <button class="hbtn" id="btn-push" style="display:none" title="Push all local changes to Supabase">☁ Push</button>
@@ -1272,10 +1272,36 @@ function pullData() {
   if (!uid()) { setStatus('Not connected.'); return; }
   setStatus('Loading…');
 
+  // v1.7171 — Single source of truth for content_type lists.
+  //
+  // Before: two hardcoded comma-separated content_type lists embedded in
+  // the URL filters below. Each time a new content_type was added, BOTH
+  // lists had to be updated; missing one caused the new type to save
+  // successfully but never be pulled back, leaving the corresponding tab
+  // empty. The v1.7149 specialty bug noted in the comment below was
+  // exactly this drift pattern.
+  //
+  // After: types listed once each by intent. Adding a new type means
+  // adding one entry to the appropriate array. Comment notes which array
+  // a type belongs to and why.
+  //
+  //   OWN_TYPES — types where the author owns their own rows. Each row's
+  //     visibility is per-row; the owner sees their drafts and published
+  //     versions. Includes per-author quest authoring + monsters +
+  //     territory weights.
+  //
+  //   VOCAB_TYPES — types treated as shared vocabulary. Visibility filter
+  //     pulls official + shared rows from any owner so all authors share
+  //     a common dictionary.
+  var OWN_TYPES   = ['quest_set','quest','monster','territory_weights'];
+  var VOCAB_TYPES = ['trait','terrain','condition','game_rules',
+                     'outcome_template','monster','territory_weights',
+                     'specialty','class_traits','species_traits'];
+
   // Fetch 1: author's own quest/quest_set content (private authoring) + own monsters + own territory weights
   var ownFilter = 'select=*' +
     '&owner_user_id=eq.' + encodeURIComponent(uid()) +
-    '&content_type=in.(quest_set,quest,monster,territory_weights)' +
+    '&content_type=in.(' + OWN_TYPES.join(',') + ')' +
     '&order=sort_order.asc';
 
   // Fetch 2: shared vocabulary visible to all authors regardless of owner
@@ -1289,7 +1315,7 @@ function pullData() {
   // and the Specialties tab shows nothing but the hardcoded fallback.
   var vocabFilter = 'select=*' +
     '&visibility=in.(official,shared)' +
-    '&content_type=in.(trait,terrain,condition,game_rules,outcome_template,monster,territory_weights,specialty,class_traits,species_traits)' +
+    '&content_type=in.(' + VOCAB_TYPES.join(',') + ')' +
     '&order=sort_order.asc';
 
   return Promise.all([
@@ -7253,6 +7279,94 @@ function showQuestForm(setId, idx) {
       '</div>';
     }()) +
 
+    // v1.7171 — Resolution Hints section. Adds two engine-relevant fields
+    // that previously had no UI surface despite being read by
+    // _resQuestIsResolvable in the runtime: flavorHint (free-text scene
+    // dressing) and boostTraits (traits that grant a +N to the d20 roll
+    // when a party member carries them).
+    //
+    // Why both at the quest level rather than nested under encounter:
+    // _resQuestIsResolvable accepts BOTH paths (quest.boostTraits and
+    // quest.encounter.boostTraits; quest.flavorHint and quest.encounter
+    // .flavorHint). Keeping them at the quest level makes them author-
+    // able even for non-combat quests with no encounter — a social or
+    // wonder quest can still benefit from "Persuasion gives +2" and a
+    // mood-setting flavorHint.
+    //
+    // Why a single shared boost value instead of per-trait values:
+    // simpler UI, ships faster, matches the runtime's permissive
+    // accept-shape ([{key,value}] OR bare strings, value defaulting to
+    // +2 if absent). If per-trait values become useful in practice,
+    // upgrade this widget then.
+    '<div class="fsec">' +
+      '<div class="fsec-title">Resolution Hints</div>' +
+      '<div style="font-size:.78em;color:var(--ink2);margin-bottom:8px;line-height:1.4">'+
+        'These optional fields shape how the resolution engine handles this quest. '+
+        'Either one (or an Encounter below) is sufficient to enable <em>Collect with Roll</em> in-game.'+
+      '</div>' +
+
+      // ── Flavor Hint ─────────────────────────────────────────
+      frow('Flavor Hint <span class="select-hint">(scene-setting line shown to the player when resolving)</span>',
+        '<textarea id="qf-flavor-hint" rows="2" placeholder="e.g. Lantern-light from shuttered windows, voices that should not be inside at this hour.">'+
+        esc(q.flavorHint || '')+'</textarea>') +
+
+      // ── Boost Traits ────────────────────────────────────────
+      '<div style="margin-top:12px">' +
+      frow('Helpful Traits <span class="select-hint">(any party member carrying one of these adds the bonus to the roll)</span>',
+        (function(){
+          var savedBoosts = Array.isArray(q.boostTraits) ? q.boostTraits : [];
+          // Normalize: accept either ['key1','key2'] or [{key,value},...]
+          var savedKeys = savedBoosts.map(function(b){
+            return (b && typeof b === 'object') ? b.key : b;
+          }).filter(Boolean);
+          var traitOptList = (traits||[]).slice().sort(function(a,b){
+            return (a.label||a.content_key||'').localeCompare(b.label||b.content_key||'');
+          });
+          if (!traitOptList.length) {
+            return '<div style="font-size:.85em;color:var(--ink2);font-style:italic;padding:8px;background:rgba(201,146,42,.06);border-radius:4px">'+
+              'No traits authored yet. Create traits in the 🏷 Traits tab, then return here to tag this quest.'+
+              '</div>';
+          }
+          var existingKeys = traitOptList.map(function(t){return t.content_key;});
+          var orphans = savedKeys.filter(function(k){return existingKeys.indexOf(k)===-1;});
+          var html = '<select id="qf-boost-traits" multiple style="height:120px">' +
+            traitOptList.map(function(t){
+              var k = t.content_key;
+              return '<option value="' + esc(k) + '"' +
+                (savedKeys.indexOf(k)!==-1 ? ' selected' : '') + '>' +
+                esc((t.label || k) + (t.desc?' — '+t.desc.slice(0,60)+(t.desc.length>60?'…':''):'')) +
+                '</option>';
+            }).join('') +
+            orphans.map(function(k){
+              return '<option value="' + esc(k) + '" selected>' + esc(k) + '  \u26A0 not in DB</option>';
+            }).join('') +
+            '</select>';
+          if (orphans.length) {
+            html += '<div style="font-size:.78em;color:var(--ink2);margin-top:4px">'+
+              '\u26A0 '+orphans.length+' trait'+(orphans.length===1?'':'s')+' on this quest '+
+              (orphans.length===1?'is':'are')+' not in the DB. Either add '+
+              (orphans.length===1?'it':'them')+' to the Traits tab or remove from this list.'+
+              '</div>';
+          }
+          return html;
+        }())) +
+      '</div>' +
+
+      // ── Boost Value (shared across all selected traits) ─────
+      '<div class="fgrid c2" style="margin-top:8px">' +
+        frow('Bonus Value <span class="select-hint">(applied per matching trait carried)</span>',
+          (function(){
+            // Pull the value from the first object-shaped boost, defaulting
+            // to +2 (the typical built-in quest's value).
+            var savedBoosts = Array.isArray(q.boostTraits) ? q.boostTraits : [];
+            var firstObj = savedBoosts.filter(function(b){return b && typeof b === 'object';})[0];
+            var v = (firstObj && typeof firstObj.value === 'number') ? firstObj.value : 2;
+            return '<input type="number" id="qf-boost-value" value="'+v+'" min="1" max="10" step="1">';
+          }())) +
+        '<div></div>' +
+      '</div>' +
+    '</div>' +
+
     // v1.684 — Phase 2 Post-Quest Resolution: Encounter panel
     // Lets an author pick monsters from the Monsters tab vocabulary and
     // set counts. Stored on q.encounters as an array of {monsterKey, count,
@@ -7633,6 +7747,57 @@ function showQuestForm(setId, idx) {
         note: (e.note||'').trim()
       };
     });
+
+    // v1.7171 — Persist flavor hint and boost traits at the quest level.
+    // Both are read by _resQuestIsResolvable in the runtime.
+    var _flavorRaw = (document.getElementById('qf-flavor-hint') || {}).value || '';
+    var _flavor = _flavorRaw.trim();
+    if (_flavor) q.flavorHint = _flavor;
+    else delete q.flavorHint;
+
+    var _boostKeys = selValues('qf-boost-traits');
+    var _boostValRaw = parseInt((document.getElementById('qf-boost-value') || {}).value, 10);
+    var _boostVal = (isNaN(_boostValRaw) || _boostValRaw < 1) ? 2 : Math.min(_boostValRaw, 10);
+    if (_boostKeys.length) {
+      q.boostTraits = _boostKeys.map(function(k){
+        return { key: k, value: _boostVal };
+      });
+    } else {
+      delete q.boostTraits;
+    }
+
+    // v1.7171 — Synthesize q.encounter (singular) from q.encounters[0] +
+    // quest-level resolution hints. The runtime engine reads
+    // quest.encounter (singular object) at multiple sites — _resQuestEncMod,
+    // _resQuestEncLabel, the resolution plan builder. The QE has been
+    // writing only q.encounters (plural array) since v1.684, which the
+    // runtime ignores. Synthesizing the singular shape from authored data
+    // makes encounters actually do something in-game without requiring a
+    // runtime change. If the runtime later evolves to consume the plural
+    // array directly, this synthesis becomes redundant but harmless.
+    //
+    // The synthesized encounter mirrors the first encounter row's monster
+    // and (optionally) inherits the quest-level boostTraits/flavorHint, so
+    // the engine's encounter-scoped trait scoring path also works.
+    if (q.encounters && q.encounters.length) {
+      var first = q.encounters[0];
+      q.encounter = {
+        monsterKey: first.monsterKey,
+        count: first.count,
+        role: first.role,
+        note: first.note
+      };
+      if (q.flavorHint) q.encounter.flavorHint = q.flavorHint;
+      if (q.boostTraits) q.encounter.boostTraits = q.boostTraits;
+    } else if (q.flavorHint || q.boostTraits) {
+      // No encounter rows but author still set hints — give the runtime a
+      // minimal encounter shell so the encounter-scoped read paths see them.
+      q.encounter = {};
+      if (q.flavorHint) q.encounter.flavorHint = q.flavorHint;
+      if (q.boostTraits) q.encounter.boostTraits = q.boostTraits;
+    } else {
+      delete q.encounter;
+    }
     q.published   = document.getElementById('pub-chk').checked;
     var _relVals = selValues('qf-rel');
     var _gearItems = selValues('qf-items');
