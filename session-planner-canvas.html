@@ -1154,6 +1154,88 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
   padding: 12px 18px;
   border-top: 1px solid var(--gold-faint);
 }
+
+/* Stage 42: inline "create new session" row at the top of the modal.
+   Defaults collapsed to a compact button; clicking expands into a small
+   title-input form. The newly-created session is auto-selected as the
+   copy target. */
+#copy-modal-newrow {
+  padding: 8px 18px 4px;
+  border-bottom: 1px dashed rgba(184,134,11,0.18);
+}
+.copy-modal-newrow-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 1px dashed rgba(184,134,11,0.4);
+  color: var(--gold-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 9px 12px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.copy-modal-newrow-toggle:hover {
+  background: rgba(184,134,11,0.12);
+  border-color: var(--gold);
+  color: var(--gold-bright);
+}
+.copy-modal-newrow-toggle .csr-new-icon {
+  font-size: 1rem;
+  font-weight: bold;
+}
+.copy-modal-newrow-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0 0;
+}
+.copy-modal-newrow-input {
+  flex: 1;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid var(--gold);
+  color: var(--bone);
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.95rem;
+  padding: 8px 10px;
+  border-radius: 2px;
+  outline: none;
+}
+.copy-modal-newrow-input:focus {
+  border-color: var(--gold-bright);
+  background: rgba(0,0,0,0.55);
+}
+.copy-modal-newrow-cancel,
+.copy-modal-newrow-create {
+  flex: 0 0 auto;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(184,134,11,0.4);
+  color: var(--gold-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  padding: 7px 12px;
+  border-radius: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+.copy-modal-newrow-create {
+  background: rgba(184,134,11,0.18);
+  border-color: var(--gold);
+  color: var(--gold-bright);
+}
+.copy-modal-newrow-cancel:hover,
+.copy-modal-newrow-create:hover { filter: brightness(1.25); }
+.copy-modal-newrow-create:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .copy-modal-checkbox {
   display: flex;
   align-items: center;
@@ -5524,7 +5606,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 41c / disable autocorrect + grammar rewrites on inputs</span>
+  <span class="topbar-version">stage 42 / new session inline in copy modal</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -5706,6 +5788,29 @@ body.mobile-mode #sb-modal { display: none !important; }
       Duplicate every node (and the edges between them) from the current session into another session. Fresh IDs are generated, so editing or deleting the copies later won't touch the originals. Cross-scope edges (campaign / arc connections) are dropped.
     </div>
     <div id="copy-modal-source"></div>
+    <div id="copy-modal-newrow">
+      <button class="copy-modal-newrow-toggle" id="copyModalNewToggle" type="button">
+        <span class="csr-new-icon">＋</span>
+        <span>Create a new session…</span>
+      </button>
+      <div class="copy-modal-newrow-form" id="copyModalNewForm" hidden>
+        <input type="text"
+               id="copyModalNewTitle"
+               class="copy-modal-newrow-input"
+               placeholder="New session title"
+               maxlength="120"
+               spellcheck="false"
+               autocorrect="off"
+               autocapitalize="off"
+               autocomplete="off"
+               data-gramm="false"
+               data-gramm_editor="false"
+               data-enable-grammarly="false"
+               data-lt-active="false">
+        <button class="copy-modal-newrow-cancel" id="copyModalNewCancel" type="button">Cancel</button>
+        <button class="copy-modal-newrow-create" id="copyModalNewCreate" type="button">Create</button>
+      </div>
+    </div>
     <div id="copy-modal-list">
       <!-- Rows injected by renderCopyToSessionList() -->
     </div>
@@ -7983,8 +8088,135 @@ function openCopyToSessionModal() {
   }
   const cb = document.getElementById('copy-modal-replace');
   if (cb) cb.checked = false;
+  // Stage 42: collapse the inline new-session form (in case the user
+  // opened it last time, then closed the modal mid-typing). Wire its
+  // handlers once, idempotently.
+  _copyModalResetNewRow();
+  _copyModalWireNewRow();
   renderCopyToSessionList();
   m.classList.add('open');
+}
+
+// Stage 42: collapse the inline-create form back to the toggle button.
+// Called on modal open and after a successful create.
+function _copyModalResetNewRow() {
+  const toggle = document.getElementById('copyModalNewToggle');
+  const form   = document.getElementById('copyModalNewForm');
+  const input  = document.getElementById('copyModalNewTitle');
+  if (form)   form.hidden = true;
+  if (toggle) toggle.style.display = '';
+  if (input)  input.value = '';
+}
+
+// Stage 42: bind handlers for the new-session row. Idempotent — the
+// _wired flag prevents accumulating duplicate listeners on repeated
+// modal opens.
+let _copyModalNewRowWired = false;
+function _copyModalWireNewRow() {
+  if (_copyModalNewRowWired) return;
+  _copyModalNewRowWired = true;
+  const toggle = document.getElementById('copyModalNewToggle');
+  const form   = document.getElementById('copyModalNewForm');
+  const input  = document.getElementById('copyModalNewTitle');
+  const cancel = document.getElementById('copyModalNewCancel');
+  const create = document.getElementById('copyModalNewCreate');
+  if (!toggle || !form || !input || !cancel || !create) return;
+  // Click the toggle → expand form, focus input
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    form.hidden = false;
+    toggle.style.display = 'none';
+    setTimeout(() => input.focus(), 0);
+  });
+  // Cancel → collapse without creating
+  cancel.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _copyModalResetNewRow();
+  });
+  // Create → call the helper
+  create.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _copyModalCreateNewSession();
+  });
+  // Disable create while title is empty (matches the disabled-when-empty
+  // pattern of the main Copy button)
+  const refreshCreateBtn = () => {
+    create.disabled = !input.value.trim();
+  };
+  input.addEventListener('input', refreshCreateBtn);
+  // Enter inside title input → fire create. Escape → collapse the form
+  // (and don't bubble up to close the whole modal, which would be jarring
+  // if the user just wanted to back out of a typo).
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (input.value.trim()) _copyModalCreateNewSession();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      _copyModalResetNewRow();
+    }
+  });
+  refreshCreateBtn();
+}
+
+// Stage 42: POST a new session row and immediately auto-select it as
+// the copy target. Does NOT call loadSessionData (the user is staying
+// in the source session — the new one is just the destination of the
+// pending copy).
+async function _copyModalCreateNewSession() {
+  const input  = document.getElementById('copyModalNewTitle');
+  const create = document.getElementById('copyModalNewCreate');
+  if (!input || !create) return;
+  const title = (input.value || '').trim();
+  if (!title) return;
+  if (!sessionState.currentCampaignId) {
+    alert('No active campaign — cannot create a session.');
+    return;
+  }
+  create.disabled = true;
+  create.textContent = 'Creating…';
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const result = await sbFetch('sessions', {
+      method: 'POST',
+      prefer: 'return=representation',
+      body: JSON.stringify({
+        campaign_id: parseInt(sessionState.currentCampaignId),
+        arc_id: null,
+        title,
+        session_date: today,
+        status: 'Planning',
+        blocks: { format: 'canvas', version: 1, nodes: [], edges: [], view: { x: 0, y: 0, zoom: 1 } },
+        sort_order: 0,
+      })
+    });
+    const row = Array.isArray(result) ? result[0] : result;
+    if (!row || row.id == null) throw new Error('Server returned no row.');
+    sessionState.sessions.push(row);
+    // Auto-select the new session as the copy destination, then re-render
+    // the list so it appears AND is highlighted.
+    _copyModalSelectedSessionId = row.id;
+    _copyModalResetNewRow();
+    renderCopyToSessionList();
+    // Re-renders wipe the .selected class — re-mark the new row.
+    const listEl = document.getElementById('copy-modal-list');
+    if (listEl) {
+      const newRow = listEl.querySelector('.copy-session-row[data-csr-id="' + escAttr(row.id) + '"]');
+      if (newRow) {
+        listEl.querySelectorAll('.copy-session-row.selected').forEach(r => r.classList.remove('selected'));
+        newRow.classList.add('selected');
+        // Scroll the new row into view in case the list was long
+        newRow.scrollIntoView({ block: 'nearest' });
+      }
+    }
+    _refreshCopyConfirmBtn();
+  } catch (err) {
+    alert('Could not create session: ' + (err && err.message ? err.message : String(err)));
+    create.disabled = false;
+    create.textContent = 'Create';
+  }
 }
 
 function closeCopyToSessionModal() {
@@ -8001,7 +8233,7 @@ function renderCopyToSessionList() {
   const all = sessionState.sessions || [];
   const others = all.filter(s => String(s.id) !== String(sessionState.currentSessionId));
   if (!others.length) {
-    listEl.innerHTML = '<div id="copy-modal-empty">No other sessions exist yet. Create one in the session picker, then come back.</div>';
+    listEl.innerHTML = '<div id="copy-modal-empty">No other sessions exist yet. Create one above ↑ to use it as the destination.</div>';
     _refreshCopyConfirmBtn();
     return;
   }
