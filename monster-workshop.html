@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.4.0</span>
+  <span class="topbar-version">v0.5.0 · spells phase B</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -1740,6 +1740,8 @@ body {
     <button class="btn btn-ghost btn-sm" id="btnUnpublish" onclick="unpublishFromQuestSystem()" disabled title="Remove this monster's published copy from the Relentless Quest content system. The full monster data stays in your library.">🗑 Unpublish</button>
     <a href="session-planner.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">← Session Planner</a>
     <a href="monster-blender.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">🧪 Blender</a>
+    <a href="spell-workshop.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">📜 Spells</a>
+    <button class="btn btn-ghost btn-sm" onclick="openSchemaModal()" title="Show the SQL needed to add the spell-related columns to rq_monsters">🔧 Schema SQL</button>
     <span id="user-email-badge" style="font-size:.7em;color:var(--steel-light,#888);margin-left:12px;align-self:center"></span>
     <button class="btn btn-ghost btn-sm" id="btn-logout" onclick="doLogout()" style="display:none">Log Out</button>
   </div>
@@ -5181,5 +5183,1224 @@ if (currentUser && currentUser.access_token) {
   });
 });
 </script>
+
+<!-- ── PHASE B: SPELL ATTACHMENT FEATURE ────────────────────── -->
+
+<style>
+/* ── Schema modal (one-time SQL setup for spell columns) ──────── */
+#spellSchemaModal {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(8,6,3,0.85);
+  z-index: 200;
+  align-items: center; justify-content: center;
+}
+#spellSchemaModal.open { display: flex; }
+.ssm-card {
+  background: linear-gradient(180deg, #1a1610 0%, #14110b 100%);
+  border: 1px solid var(--gold);
+  border-radius: 4px;
+  width: min(800px, 92vw);
+  max-height: 88vh;
+  display: flex; flex-direction: column;
+}
+.ssm-head {
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(184,134,11,0.4);
+  display: flex; align-items: center; gap: 10px;
+}
+.ssm-head h3 {
+  margin: 0;
+  font-family: 'Cinzel', serif;
+  font-size: 1rem;
+  letter-spacing: 0.1em;
+  color: var(--gold-bright);
+  text-transform: uppercase;
+  flex: 1;
+}
+.ssm-head .ssm-close {
+  background: transparent;
+  border: 1px solid rgba(184,134,11,0.4);
+  color: var(--steel-pale);
+  width: 28px; height: 28px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+}
+.ssm-card pre {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  background: rgba(0,0,0,0.5);
+  color: var(--bone);
+  line-height: 1.5;
+  margin: 0;
+}
+.ssm-foot {
+  padding: 12px 18px;
+  border-top: 1px solid rgba(184,134,11,0.4);
+  display: flex; gap: 10px;
+  justify-content: space-between;
+}
+
+/* ── Spell section in editor ──────────────────────────────── */
+.spell-section-wrap {
+  margin: 16px 0;
+  padding: 16px;
+  background: rgba(20,17,11,0.4);
+  border: 1px solid rgba(93,127,184,0.25);
+  border-radius: 4px;
+}
+.spell-section-wrap .ssw-head {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(93,127,184,0.2);
+}
+.spell-section-wrap .ssw-head h3 {
+  margin: 0;
+  font-family: 'Cinzel', serif;
+  font-size: 0.95rem;
+  color: #a8c4ff;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  flex: 1;
+}
+.spell-section-wrap .ssw-stats {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: var(--steel-pale);
+}
+/* Spell save DC + spell attack bonus row */
+.spell-stats-row {
+  display: flex; gap: 14px;
+  margin-bottom: 14px;
+}
+.spell-stats-row .spell-stat-field {
+  flex: 1;
+}
+.spell-stats-row .spell-stat-field label {
+  display: block;
+  font-family: 'Cinzel', serif;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #a8c4ff;
+  margin-bottom: 3px;
+}
+.spell-stats-row .spell-stat-field input {
+  width: 100%;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(93,127,184,0.3);
+  color: var(--bone);
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 1rem;
+  padding: 6px 10px;
+  border-radius: 2px;
+  outline: none;
+}
+.spell-stats-row .spell-stat-field input:focus {
+  border-color: #a8c4ff;
+}
+
+/* Search & filter row */
+.spell-search-row {
+  display: flex; gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.spell-search-row input[type="text"] {
+  flex: 1;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(93,127,184,0.3);
+  color: var(--bone);
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.95rem;
+  padding: 7px 10px;
+  border-radius: 2px;
+  outline: none;
+}
+.spell-search-row input[type="text"]:focus { border-color: #a8c4ff; }
+.spell-level-filter {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(93,127,184,0.3);
+  color: var(--bone);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  padding: 6px 8px;
+  border-radius: 2px;
+  outline: none;
+  flex: 0 0 auto;
+}
+.spell-level-filter:focus { border-color: #a8c4ff; }
+
+.spell-search-results {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid rgba(93,127,184,0.2);
+  border-radius: 2px;
+  margin-bottom: 12px;
+  display: none;
+  background: rgba(0,0,0,0.25);
+}
+.spell-search-results.visible { display: block; }
+.spell-search-row-result {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(93,127,184,0.08);
+  cursor: pointer;
+  font-size: 0.92rem;
+}
+.spell-search-row-result:last-child { border-bottom: 0; }
+.spell-search-row-result:hover {
+  background: rgba(93,127,184,0.18);
+}
+.spell-search-row-result .ssrr-name {
+  color: var(--bone);
+  font-family: 'Cinzel', serif;
+}
+.spell-search-row-result .ssrr-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.04em;
+}
+.spell-search-row-result.attached {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.spell-search-row-result.attached .ssrr-name::after {
+  content: ' ✓ already attached';
+  color: var(--steel-pale);
+  font-size: 0.7rem;
+  font-family: 'JetBrains Mono', monospace;
+}
+.spell-search-empty {
+  padding: 14px 12px;
+  text-align: center;
+  color: var(--steel-pale);
+  font-style: italic;
+  font-size: 0.85rem;
+}
+.spell-search-tip {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--steel-pale);
+  margin-bottom: 10px;
+  letter-spacing: 0.04em;
+  font-style: italic;
+}
+
+/* Attached-spells list grouped by level */
+.attached-level-group {
+  margin-bottom: 10px;
+}
+.attached-level-header {
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #a8c4ff;
+  margin-bottom: 4px;
+  padding-bottom: 2px;
+  border-bottom: 1px dashed rgba(93,127,184,0.2);
+}
+.attached-spell-row {
+  display: grid;
+  grid-template-columns: 1fr auto 130px auto;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 8px;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(93,127,184,0.12);
+  border-radius: 2px;
+  margin-bottom: 3px;
+  font-size: 0.92rem;
+}
+.attached-spell-row .asr-name {
+  color: var(--bone);
+  font-family: 'Cinzel', serif;
+}
+.attached-spell-row .asr-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.04em;
+}
+.attached-spell-row .asr-usage {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(93,127,184,0.25);
+  color: var(--bone);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  padding: 3px 6px;
+  border-radius: 2px;
+  outline: none;
+}
+.attached-spell-row .asr-usage:focus { border-color: #a8c4ff; }
+.attached-spell-row .asr-remove {
+  background: transparent;
+  border: 1px solid rgba(220,90,90,0.3);
+  color: rgba(220,140,140,0.8);
+  width: 24px; height: 24px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+}
+.attached-spell-row .asr-remove:hover {
+  background: rgba(220,90,90,0.15);
+  color: rgba(220,140,140,1);
+}
+.attached-spell-row .asr-name.broken {
+  color: rgba(220,140,140,0.8);
+  font-style: italic;
+}
+.attached-spells-empty {
+  padding: 14px 12px;
+  text-align: center;
+  color: var(--steel-pale);
+  font-style: italic;
+  font-size: 0.85rem;
+  border: 1px dashed rgba(93,127,184,0.2);
+  border-radius: 3px;
+}
+
+.spell-section-toolbar {
+  display: flex; gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(93,127,184,0.15);
+  align-items: center;
+}
+.spell-section-toolbar .toolbar-tip {
+  flex: 1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.04em;
+}
+
+/* Resolve-from-prose modal */
+#resolveProseModal {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(8,6,3,0.85);
+  z-index: 200;
+  align-items: center; justify-content: center;
+}
+#resolveProseModal.open { display: flex; }
+.rpm-card {
+  background: linear-gradient(180deg, #1a1610 0%, #14110b 100%);
+  border: 1px solid #a8c4ff;
+  border-radius: 4px;
+  width: min(720px, 92vw);
+  max-height: 88vh;
+  display: flex; flex-direction: column;
+}
+.rpm-head {
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(93,127,184,0.4);
+  display: flex; align-items: center; gap: 10px;
+}
+.rpm-head h3 {
+  margin: 0;
+  font-family: 'Cinzel', serif;
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  color: #a8c4ff;
+  text-transform: uppercase;
+  flex: 1;
+}
+.rpm-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+.rpm-body p {
+  margin: 0 0 10px;
+  color: var(--steel-pale);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.rpm-source-block {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(93,127,184,0.18);
+  border-radius: 3px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-size: 0.85rem;
+  color: var(--bone);
+}
+.rpm-source-block b {
+  display: block;
+  color: #a8c4ff;
+  margin-bottom: 4px;
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.rpm-found-list {
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid rgba(93,127,184,0.2);
+  border-radius: 3px;
+  margin-bottom: 10px;
+}
+.rpm-found-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(93,127,184,0.08);
+  font-size: 0.9rem;
+}
+.rpm-found-row:last-child { border-bottom: 0; }
+.rpm-found-row input[type="checkbox"] { accent-color: #a8c4ff; }
+.rpm-found-row .rfr-name {
+  font-family: 'Cinzel', serif;
+  color: var(--bone);
+}
+.rpm-found-row .rfr-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--steel-pale);
+}
+.rpm-found-row.no-match {
+  background: rgba(220,90,90,0.06);
+}
+.rpm-found-row.no-match .rfr-name {
+  color: rgba(220,140,140,0.85);
+  font-style: italic;
+}
+.rpm-foot {
+  padding: 12px 18px;
+  border-top: 1px solid rgba(93,127,184,0.4);
+  display: flex; gap: 10px;
+  justify-content: space-between;
+}
+
+/* RSB preview spell block */
+.rsb-spell-row {
+  padding: 4px 10px;
+  border-bottom: 1px solid rgba(93,127,184,0.08);
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  font-size: 0.7rem;
+  align-items: center;
+}
+.rsb-spell-row:last-child { border-bottom: 0; }
+.rsb-spell-row .rsr-name {
+  font-weight: 600;
+  color: var(--parchment);
+}
+.rsb-spell-row .rsr-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.55rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.04em;
+}
+.rsb-spell-row .rsr-usage {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.55rem;
+  color: #a8c4ff;
+  letter-spacing: 0.04em;
+}
+.rsb-spell-level-header {
+  font-family: 'Cinzel', serif;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #a8c4ff;
+  padding: 4px 10px 2px;
+  border-bottom: 1px dashed rgba(93,127,184,0.2);
+  margin-top: 4px;
+}
+.rsb-spell-level-header:first-of-type { margin-top: 0; }
+.rsb-spell-stats {
+  padding: 4px 10px 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.05em;
+}
+.rsb-spell-stats b { color: #a8c4ff; }
+</style>
+
+<!-- ── SCHEMA SQL MODAL ─────────────────────────────────────── -->
+<div id="spellSchemaModal">
+  <div class="ssm-card">
+    <div class="ssm-head">
+      <h3>🔧 Database Schema (one-time setup)</h3>
+      <button class="ssm-close" onclick="closeSchemaModal()">✕</button>
+    </div>
+    <pre id="spellSchemaPre">-- Adds three columns to rq_monsters for spell attachment.
+-- Safe to run multiple times — uses IF NOT EXISTS.
+
+ALTER TABLE rq_monsters
+  ADD COLUMN IF NOT EXISTS spells              jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS spell_save_dc       int,
+  ADD COLUMN IF NOT EXISTS spell_attack_bonus  text DEFAULT '';
+
+-- Optional helpful index for monsters that have spells
+CREATE INDEX IF NOT EXISTS rq_monsters_with_spells_idx
+  ON rq_monsters ((jsonb_array_length(spells)))
+  WHERE jsonb_array_length(spells) > 0;</pre>
+    <div class="ssm-foot">
+      <button class="btn btn-ghost" onclick="closeSchemaModal()">Close</button>
+      <button class="btn btn-gold" onclick="copySchemaSQL()">📋 Copy SQL</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── RESOLVE-FROM-PROSE MODAL ─────────────────────────────── -->
+<div id="resolveProseModal">
+  <div class="rpm-card">
+    <div class="rpm-head">
+      <h3>🔍 Resolve Spells from Prose</h3>
+      <button class="ssm-close" onclick="closeResolveProseModal()">✕</button>
+    </div>
+    <div class="rpm-body" id="rpmBody">
+      <!-- populated by openResolveProseModal() -->
+    </div>
+    <div class="rpm-foot">
+      <button class="btn btn-ghost" onclick="closeResolveProseModal()">Cancel</button>
+      <button class="btn btn-gold" id="rpmCommitBtn" onclick="commitResolveProse()" disabled>Attach Selected</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═════════════════════════════════════════════════════════════
+//  PHASE B: SPELL ATTACHMENT — supporting JS
+// ═════════════════════════════════════════════════════════════
+
+// In-memory cache of the user's spell compendium. Loaded lazily on
+// first spell-section render and refreshed on demand.
+let _spellCache = null;
+let _spellCacheLoading = null;
+
+async function fetchAllSpellsCached(force) {
+  if (!force && _spellCache) return _spellCache;
+  if (_spellCacheLoading) return _spellCacheLoading;
+  _spellCacheLoading = (async () => {
+    try {
+      const r = await fetch(`${SB_URL}/rest/v1/rq_spells?select=id,name,level,school,casting_time,range,components,duration,concentration,ritual,damage,damage_type,save_ability,attack_type&order=level.asc,name.asc&limit=2000`, {
+        headers: sbHeaders()
+      });
+      if (!r.ok) {
+        if (r.status === 404) {
+          throw new Error('rq_spells table not found — open Spell Workshop and run the schema SQL.');
+        }
+        throw new Error(r.status + ': ' + await r.text());
+      }
+      _spellCache = await r.json();
+      return _spellCache;
+    } finally {
+      _spellCacheLoading = null;
+    }
+  })();
+  return _spellCacheLoading;
+}
+
+function _spellById(id) {
+  if (!_spellCache) return null;
+  return _spellCache.find(s => String(s.id) === String(id)) || null;
+}
+
+function _levelLabel(level) {
+  const n = parseInt(level);
+  if (isNaN(n) || n === 0) return 'Cantrips';
+  return n + (['st','nd','rd'][n - 1] || 'th') + ' Level';
+}
+
+function openSchemaModal() {
+  const el = document.getElementById('spellSchemaModal');
+  if (el) el.classList.add('open');
+}
+function closeSchemaModal() {
+  const el = document.getElementById('spellSchemaModal');
+  if (el) el.classList.remove('open');
+}
+function copySchemaSQL() {
+  const code = document.getElementById('spellSchemaPre').textContent;
+  navigator.clipboard.writeText(code).then(() => {
+    if (typeof showToast === 'function') showToast('SQL copied to clipboard');
+  });
+}
+
+// ═════════════════════════════════════════════════════════════
+//  Render the 🪄 Spells section into the editor.
+//  Called from renderEditor() (we hook in below) and from every
+//  modify-spells action.
+// ═════════════════════════════════════════════════════════════
+async function renderSpellSection() {
+  const wrap = document.getElementById('spellSectionWrap');
+  if (!wrap) return;
+  const m = currentMonster;
+  if (!m) return;
+
+  if (!Array.isArray(m.spells)) m.spells = [];
+
+  let compErr = null;
+  if (!_spellCache && !_spellCacheLoading) {
+    try { await fetchAllSpellsCached(); }
+    catch (e) { compErr = e.message; }
+  } else if (_spellCacheLoading) {
+    try { await _spellCacheLoading; }
+    catch (e) { compErr = e.message; }
+  }
+
+  const isCustom = m.source === 'custom';
+  const ro = !isCustom;
+
+  const attached = (m.spells || []).map(ref => {
+    const spell = _spellById(ref.spell_id);
+    return { ref, spell };
+  });
+  const byLevel = {};
+  attached.forEach(a => {
+    const lvl = a.spell ? (a.spell.level || 0) : 'broken';
+    (byLevel[lvl] = byLevel[lvl] || []).push(a);
+  });
+  const sortedLevels = Object.keys(byLevel)
+    .filter(k => k !== 'broken')
+    .map(k => parseInt(k))
+    .sort((a, b) => a - b);
+  if (byLevel.broken) sortedLevels.push('broken');
+
+  let attachedHtml = '';
+  if (!attached.length) {
+    attachedHtml = '<div class="attached-spells-empty">No spells attached. Search the compendium below to add one.</div>';
+  } else {
+    attachedHtml = sortedLevels.map(lvl => {
+      const group = byLevel[lvl];
+      group.sort((a, b) => {
+        const an = (a.spell?.name || a.ref.spell_id || '').toLowerCase();
+        const bn = (b.spell?.name || b.ref.spell_id || '').toLowerCase();
+        return an.localeCompare(bn);
+      });
+      const header = lvl === 'broken' ? 'Missing from compendium' : _levelLabel(lvl);
+      return `
+        <div class="attached-level-group">
+          <div class="attached-level-header">${header} <span style="color:var(--steel-pale);font-weight:400;">· ${group.length}</span></div>
+          ${group.map(a => {
+            const spell = a.spell;
+            const name = spell ? spell.name : (a.ref.spell_id || 'unknown');
+            const meta = spell ? [
+              spell.school || '',
+              spell.concentration ? 'CONC' : '',
+              spell.ritual ? 'RIT' : '',
+            ].filter(Boolean).join(' · ') : 'spell missing — re-import compendium?';
+            return `
+              <div class="attached-spell-row" data-attached-id="${escapeAttr(a.ref.spell_id)}">
+                <span class="asr-name${spell ? '' : ' broken'}">${escapeHtml(name)}</span>
+                <span class="asr-meta">${escapeHtml(meta)}</span>
+                <input class="asr-usage" type="text"
+                       data-spell-usage-for="${escapeAttr(a.ref.spell_id)}"
+                       value="${escapeAttr(a.ref.usage || '')}"
+                       placeholder="at will / 3-day / etc"
+                       ${ro ? 'readonly' : ''}>
+                ${ro ? '' : `<button class="asr-remove" onclick="detachSpell('${escapeAttr(a.ref.spell_id)}')" title="Remove this spell">✕</button>`}
+              </div>`;
+          }).join('')}
+        </div>`;
+    }).join('');
+  }
+
+  const attachedIds = new Set((m.spells || []).map(r => String(r.spell_id)));
+  const searchRow = isCustom && _spellCache ? `
+    <div class="spell-search-row">
+      <input type="text" id="spellSearchQuery" autocomplete="off"
+             spellcheck="false" autocorrect="off" autocapitalize="off"
+             data-gramm="false" data-gramm_editor="false"
+             placeholder="Search compendium by name…">
+      <select class="spell-level-filter" id="spellLevelFilterMin">
+        <option value="">Min lvl</option>
+        ${[0,1,2,3,4,5,6,7,8,9].map(n => `<option value="${n}">${n === 0 ? 'C' : n}</option>`).join('')}
+      </select>
+      <span style="color:var(--steel-pale);">→</span>
+      <select class="spell-level-filter" id="spellLevelFilterMax">
+        <option value="">Max lvl</option>
+        ${[0,1,2,3,4,5,6,7,8,9].map(n => `<option value="${n}">${n === 0 ? 'C' : n}</option>`).join('')}
+      </select>
+    </div>
+    <div class="spell-search-results" id="spellSearchResults"></div>
+    <div class="spell-search-tip">${_spellCache.length} spells in your compendium · type or set a level range to search</div>
+  ` : (compErr ? `<div class="spell-search-tip" style="color:rgba(220,140,140,0.85);">⚠ ${escapeHtml(compErr)}</div>` : '');
+
+  const stats = `
+    <div class="spell-stats-row">
+      <div class="spell-stat-field">
+        <label>Spell Save DC</label>
+        <input type="number" id="f_spell_save_dc" value="${escapeAttr(m.spell_save_dc != null ? m.spell_save_dc : '')}" placeholder="e.g. 14" ${ro ? 'readonly' : ''}>
+      </div>
+      <div class="spell-stat-field">
+        <label>Spell Attack Bonus</label>
+        <input type="text" id="f_spell_attack_bonus" value="${escapeAttr(m.spell_attack_bonus || '')}" placeholder="e.g. +6" ${ro ? 'readonly' : ''}>
+      </div>
+    </div>`;
+
+  const proseHasSpellHint = (m.special_abilities || []).some(s =>
+    /spellcasting/i.test(s.name || ''));
+  const toolbar = isCustom ? `
+    <div class="spell-section-toolbar">
+      <span class="toolbar-tip">Spells are stored as references — editing in Spell Workshop updates here automatically.</span>
+      ${proseHasSpellHint ? `
+        <button type="button" class="btn btn-ghost btn-sm" onclick="openResolveProseModal()" title="Scan special abilities for spell name lists">
+          🔍 Resolve from Prose
+        </button>` : ''}
+      <button type="button" class="btn btn-ghost btn-sm" onclick="reloadSpellCompendium()" title="Refresh from Spell Workshop">↻ Refresh</button>
+    </div>` : '';
+
+  wrap.innerHTML = `
+    <div class="ssw-head">
+      <h3>🪄 Spells</h3>
+      <span class="ssw-stats">
+        ${attached.length} attached
+      </span>
+    </div>
+    ${stats}
+    ${searchRow}
+    <div class="attached-spells-wrap">${attachedHtml}</div>
+    ${toolbar}
+  `;
+
+  // Persist usage edits as user types
+  wrap.querySelectorAll('input[data-spell-usage-for]').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const id = inp.dataset.spellUsageFor;
+      const ref = (m.spells || []).find(r => String(r.spell_id) === String(id));
+      if (ref) ref.usage = inp.value;
+    });
+  });
+
+  if (isCustom && _spellCache) {
+    const q = document.getElementById('spellSearchQuery');
+    const minSel = document.getElementById('spellLevelFilterMin');
+    const maxSel = document.getElementById('spellLevelFilterMax');
+    const trigger = () => renderSpellSearchResults(
+      q.value, minSel.value, maxSel.value, attachedIds);
+    q.addEventListener('input', trigger);
+    minSel.addEventListener('change', trigger);
+    maxSel.addEventListener('change', trigger);
+  }
+}
+
+function renderSpellSearchResults(query, minLvl, maxLvl, attachedIds) {
+  const results = document.getElementById('spellSearchResults');
+  if (!results) return;
+  const q = (query || '').trim().toLowerCase();
+  const min = minLvl === '' ? null : parseInt(minLvl);
+  const max = maxLvl === '' ? null : parseInt(maxLvl);
+  if (!q && min === null && max === null) {
+    results.classList.remove('visible');
+    results.innerHTML = '';
+    return;
+  }
+  let rows = _spellCache.slice();
+  if (q) rows = rows.filter(s => (s.name || '').toLowerCase().includes(q));
+  if (min !== null) rows = rows.filter(s => (s.level || 0) >= min);
+  if (max !== null) rows = rows.filter(s => (s.level || 0) <= max);
+  const capped = rows.slice(0, 50);
+  if (!capped.length) {
+    results.classList.add('visible');
+    results.innerHTML = '<div class="spell-search-empty">No spells match.</div>';
+    return;
+  }
+  results.classList.add('visible');
+  results.innerHTML = capped.map(s => {
+    const isAttached = attachedIds.has(String(s.id));
+    const lvlLabel = s.level === 0 ? 'C' : String(s.level);
+    const meta = [
+      'L' + lvlLabel,
+      s.school || '',
+      s.concentration ? 'CONC' : '',
+      s.ritual ? 'RIT' : '',
+    ].filter(Boolean).join(' · ');
+    return `
+      <div class="spell-search-row-result${isAttached ? ' attached' : ''}"
+           data-spell-id="${escapeAttr(s.id)}">
+        <span class="ssrr-name">${escapeHtml(s.name)}</span>
+        <span class="ssrr-meta">${escapeHtml(meta)}</span>
+      </div>`;
+  }).join('') + (rows.length > capped.length
+    ? `<div class="spell-search-empty">+ ${rows.length - capped.length} more — refine search</div>`
+    : '');
+  results.querySelectorAll('.spell-search-row-result').forEach(row => {
+    if (row.classList.contains('attached')) return;
+    row.addEventListener('click', () => {
+      attachSpell(row.dataset.spellId);
+    });
+  });
+}
+
+function attachSpell(spellId) {
+  const m = currentMonster;
+  if (!m || m.source !== 'custom') return;
+  if (!Array.isArray(m.spells)) m.spells = [];
+  if (m.spells.some(r => String(r.spell_id) === String(spellId))) return;
+  m.spells.push({ spell_id: spellId, usage: '' });
+  _stashUsageAndStatsEdits();
+  renderSpellSection();
+}
+
+function detachSpell(spellId) {
+  const m = currentMonster;
+  if (!m) return;
+  m.spells = (m.spells || []).filter(r => String(r.spell_id) !== String(spellId));
+  _stashUsageAndStatsEdits();
+  renderSpellSection();
+}
+
+// Read all in-progress edits (usage strings + DC + attack bonus) out of
+// the visible inputs and apply back to currentMonster before re-render.
+function _stashUsageAndStatsEdits() {
+  const m = currentMonster;
+  if (!m) return;
+  if (Array.isArray(m.spells)) {
+    document.querySelectorAll('[data-spell-usage-for]').forEach(inp => {
+      const id = inp.dataset.spellUsageFor;
+      const ref = m.spells.find(r => String(r.spell_id) === String(id));
+      if (ref) ref.usage = inp.value;
+    });
+  }
+  const dc = document.getElementById('f_spell_save_dc');
+  const ab = document.getElementById('f_spell_attack_bonus');
+  if (dc) m.spell_save_dc      = dc.value === '' ? null : (parseInt(dc.value) || null);
+  if (ab) m.spell_attack_bonus = ab.value;
+}
+
+async function reloadSpellCompendium() {
+  _spellCache = null;
+  _spellCacheLoading = null;
+  try {
+    await fetchAllSpellsCached(true);
+    if (typeof showToast === 'function') showToast(`Compendium refreshed — ${_spellCache.length} spells`);
+  } catch (e) {
+    if (typeof showToast === 'function') showToast('Refresh failed: ' + e.message, true);
+  }
+  _stashUsageAndStatsEdits();
+  renderSpellSection();
+}
+
+// ═════════════════════════════════════════════════════════════
+//  RESOLVE-FROM-PROSE BACKFILL
+// ═════════════════════════════════════════════════════════════
+let _resolveProseFindings = null;
+
+function openResolveProseModal() {
+  const m = currentMonster;
+  if (!m || !_spellCache) {
+    if (typeof showToast === 'function') showToast('Compendium not loaded yet — try again in a moment', true);
+    return;
+  }
+  const specials = m.special_abilities || [];
+  const findings = [];
+  specials.forEach(s => {
+    if (!/spellcasting/i.test(s.name || '')) return;
+    const desc = s.desc || '';
+    if (!desc) return;
+    // Split on '; ' which usually separates per-frequency clauses
+    // ("at will: …; 1/day each: …")
+    const clauses = desc.split(/;\s*/);
+    clauses.forEach(clause => {
+      let usage = '';
+      let listText = clause;
+      const colonM = clause.match(/^([^:]{1,80}):\s*(.+)$/);
+      if (colonM) {
+        usage = _normalizeUsage(colonM[1]);
+        listText = colonM[2];
+      }
+      const candidates = listText.split(/\s*,\s*/).map(c => c.trim()).filter(Boolean);
+      candidates.forEach(cand => {
+        const clean = cand.replace(/\([^)]*\)/g, '').trim();
+        if (!clean || clean.length > 60) return;
+        if (/[.!?]/.test(clean)) return;
+        const match = _spellCache.find(sp =>
+          (sp.name || '').toLowerCase() === clean.toLowerCase());
+        findings.push({
+          rawText: cand,
+          cleanName: clean,
+          usage,
+          spell: match || null,
+          selected: !!match,
+        });
+      });
+    });
+  });
+  if (!findings.length) {
+    if (typeof showToast === 'function') showToast('No spell-list prose detected', true);
+    return;
+  }
+  const seen = new Set();
+  _resolveProseFindings = findings.filter(f => {
+    const k = f.cleanName.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const attachedIds = new Set((m.spells || []).map(r => String(r.spell_id)));
+  _resolveProseFindings.forEach(f => {
+    if (f.spell && attachedIds.has(String(f.spell.id))) {
+      f.alreadyAttached = true;
+      f.selected = false;
+    }
+  });
+  renderResolveProseModalBody();
+  document.getElementById('resolveProseModal').classList.add('open');
+  document.getElementById('rpmCommitBtn').disabled = !_resolveProseFindings.some(f => f.selected);
+}
+
+function _normalizeUsage(prefix) {
+  if (!prefix) return '';
+  const p = prefix.trim();
+  if (/^at will\b/i.test(p)) return 'at will';
+  if (/cantrip/i.test(p))    return 'at will';
+  let m = p.match(/(\d+)\s*\/\s*(day|encounter|long rest|short rest)/i);
+  if (m) return `${m[1]}/${m[2].toLowerCase()}`;
+  m = p.match(/(\d+)\s*per\s*(day|encounter|long rest|short rest)/i);
+  if (m) return `${m[1]}/${m[2].toLowerCase()}`;
+  m = p.match(/(\d+)(st|nd|rd|th)\s+level/i);
+  if (m) return `${m[1]}${m[2]} level slot`;
+  return p.replace(/\(.*?\)/g, '').trim().toLowerCase().slice(0, 40);
+}
+
+function renderResolveProseModalBody() {
+  const body = document.getElementById('rpmBody');
+  if (!_resolveProseFindings) { body.innerHTML = ''; return; }
+  const matched   = _resolveProseFindings.filter(f => f.spell && !f.alreadyAttached);
+  const unmatched = _resolveProseFindings.filter(f => !f.spell);
+  const already   = _resolveProseFindings.filter(f => f.alreadyAttached);
+  body.innerHTML = `
+    <p>Scanned the monster's <b>Spellcasting</b> / <b>Innate Spellcasting</b> entries
+       and tried to match each spell name to your compendium.</p>
+    ${matched.length ? `
+      <div class="rpm-source-block"><b>Matches (${matched.length})</b>
+        Check the ones you want to attach. Usage strings are auto-detected from the prose.
+      </div>
+      <div class="rpm-found-list">
+        ${matched.map(f => {
+          const idx = _resolveProseFindings.indexOf(f);
+          return `
+            <div class="rpm-found-row">
+              <input type="checkbox" data-rpm-idx="${idx}" ${f.selected ? 'checked' : ''}>
+              <span class="rfr-name">${escapeHtml(f.spell.name)}</span>
+              <span class="rfr-meta">L${f.spell.level} ${escapeHtml(f.spell.school || '')}</span>
+              <input type="text" class="asr-usage" value="${escapeAttr(f.usage || '')}"
+                     placeholder="usage…" data-rpm-usage="${idx}" style="width:120px;">
+            </div>`;
+        }).join('')}
+      </div>` : ''}
+    ${unmatched.length ? `
+      <div class="rpm-source-block"><b>Unmatched (${unmatched.length})</b>
+        These names didn't match anything in your compendium. Either they're
+        custom spells, typos in the prose, or you need to import them via
+        Spell Workshop first.
+      </div>
+      <div class="rpm-found-list">
+        ${unmatched.map(f => `
+          <div class="rpm-found-row no-match">
+            <span></span>
+            <span class="rfr-name">${escapeHtml(f.cleanName)}</span>
+            <span class="rfr-meta">${escapeHtml(f.usage || '')}</span>
+            <span></span>
+          </div>`).join('')}
+      </div>` : ''}
+    ${already.length ? `
+      <div class="rpm-source-block" style="opacity:0.6"><b>Already attached (${already.length})</b>
+        ${already.map(f => escapeHtml(f.spell.name)).join(', ')}
+      </div>` : ''}
+  `;
+  body.querySelectorAll('input[type="checkbox"][data-rpm-idx]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const idx = parseInt(cb.dataset.rpmIdx);
+      _resolveProseFindings[idx].selected = cb.checked;
+      document.getElementById('rpmCommitBtn').disabled =
+        !_resolveProseFindings.some(f => f.selected);
+    });
+  });
+  body.querySelectorAll('input[type="text"][data-rpm-usage]').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const idx = parseInt(inp.dataset.rpmUsage);
+      _resolveProseFindings[idx].usage = inp.value;
+    });
+  });
+}
+
+function closeResolveProseModal() {
+  document.getElementById('resolveProseModal').classList.remove('open');
+  _resolveProseFindings = null;
+}
+
+function commitResolveProse() {
+  if (!_resolveProseFindings) return;
+  const m = currentMonster;
+  if (!m) return;
+  if (!Array.isArray(m.spells)) m.spells = [];
+  const attachedIds = new Set(m.spells.map(r => String(r.spell_id)));
+  let added = 0;
+  _resolveProseFindings.forEach(f => {
+    if (!f.selected || !f.spell) return;
+    if (attachedIds.has(String(f.spell.id))) return;
+    m.spells.push({ spell_id: f.spell.id, usage: f.usage || '' });
+    added++;
+  });
+  closeResolveProseModal();
+  _stashUsageAndStatsEdits();
+  renderSpellSection();
+  if (typeof showToast === 'function') showToast(`Attached ${added} spell${added === 1 ? '' : 's'} from prose`);
+}
+
+// ═════════════════════════════════════════════════════════════
+//  HOOK: extend renderEditor to render the spells section
+//  (using monkey-patch since the original is one big template).
+// ═════════════════════════════════════════════════════════════
+(function() {
+  const _origRenderEditor = window.renderEditor;
+  if (typeof _origRenderEditor !== 'function') {
+    console.warn('[Spell Workshop B] renderEditor not found at hook time — spells section will not render');
+    return;
+  }
+  window.renderEditor = function(m) {
+    _origRenderEditor.apply(this, arguments);
+    // After the original editor renders, inject the spell section
+    // immediately above the Actions section. If the section already
+    // exists from a prior render, we replace it.
+    const editorBody = document.getElementById('editorBody');
+    if (!editorBody) return;
+    let wrap = document.getElementById('spellSectionWrap');
+    if (wrap) wrap.remove();
+    wrap = document.createElement('div');
+    wrap.id = 'spellSectionWrap';
+    wrap.className = 'spell-section-wrap';
+    // Insert before Actions section
+    const actionsSection = editorBody.querySelector('#sec-actions');
+    if (actionsSection && actionsSection.parentNode) {
+      actionsSection.parentNode.insertBefore(wrap, actionsSection);
+    } else {
+      // Fallback: append at end of editor body
+      editorBody.appendChild(wrap);
+    }
+    renderSpellSection();
+  };
+})();
+
+// ═════════════════════════════════════════════════════════════
+//  HOOK: extend collectFormData to include spell fields
+// ═════════════════════════════════════════════════════════════
+(function() {
+  const _origCollect = window.collectFormData;
+  if (typeof _origCollect !== 'function') {
+    console.warn('[Spell Workshop B] collectFormData not found at hook time');
+    return;
+  }
+  window.collectFormData = function() {
+    _stashUsageAndStatsEdits();
+    const data = _origCollect.apply(this, arguments);
+    // Append spell fields. Fall back to currentMonster values if the
+    // form inputs aren't visible (e.g. initial load).
+    const m = currentMonster || {};
+    const dcEl = document.getElementById('f_spell_save_dc');
+    const abEl = document.getElementById('f_spell_attack_bonus');
+    data.spells              = Array.isArray(m.spells) ? m.spells : [];
+    data.spell_save_dc       = dcEl ? (dcEl.value === '' ? null : (parseInt(dcEl.value) || null)) : (m.spell_save_dc != null ? m.spell_save_dc : null);
+    data.spell_attack_bonus  = abEl ? abEl.value : (m.spell_attack_bonus || '');
+    return data;
+  };
+})();
+
+// ═════════════════════════════════════════════════════════════
+//  HOOK: extend buildRSBContent to show the 🪄 Spells block
+// ═════════════════════════════════════════════════════════════
+(function() {
+  const _origRSB = window.buildRSBContent;
+  if (typeof _origRSB !== 'function') {
+    console.warn('[Spell Workshop B] buildRSBContent not found at hook time');
+    return;
+  }
+  window.buildRSBContent = function(m) {
+    let html = _origRSB.apply(this, arguments);
+    if (!m || !Array.isArray(m.spells) || !m.spells.length || !_spellCache) return html;
+    const attached = m.spells.map(ref => ({
+      ref, spell: _spellById(ref.spell_id),
+    })).filter(a => a.spell);  // skip broken refs in preview
+    if (!attached.length) return html;
+    const byLevel = {};
+    attached.forEach(a => {
+      const lvl = a.spell.level || 0;
+      (byLevel[lvl] = byLevel[lvl] || []).push(a);
+    });
+    const sortedLevels = Object.keys(byLevel).map(k => parseInt(k)).sort((a, b) => a - b);
+    let spellsHtml = '<div class="rsb-section-title">🪄 Spells</div>';
+    if (m.spell_save_dc != null || m.spell_attack_bonus) {
+      const parts = [];
+      if (m.spell_save_dc != null) parts.push(`Spell Save <b>DC ${m.spell_save_dc}</b>`);
+      if (m.spell_attack_bonus)    parts.push(`Spell Attack <b>${m.spell_attack_bonus}</b>`);
+      spellsHtml += `<div class="rsb-spell-stats">${parts.join(' · ')}</div>`;
+    }
+    spellsHtml += sortedLevels.map(lvl => {
+      const group = byLevel[lvl];
+      group.sort((a, b) => (a.spell.name || '').localeCompare(b.spell.name || ''));
+      return `
+        <div class="rsb-spell-level-header">${_levelLabel(lvl)}</div>
+        ${group.map(a => `
+          <div class="rsb-spell-row">
+            <span class="rsr-name">${escapeHtml(a.spell.name)}</span>
+            <span class="rsr-meta">${escapeHtml(a.spell.school || '')}</span>
+            <span class="rsr-usage">${escapeHtml(a.ref.usage || '')}</span>
+          </div>`).join('')}`;
+    }).join('');
+    return html + spellsHtml;
+  };
+})();
+
+// ═════════════════════════════════════════════════════════════
+//  HOOK: extend convertFoundryActor to extract spell items
+//  Spells items in the actor JSON are looked up against the
+//  compendium by case-insensitive name and attached as references.
+//  Names that don't match are reported via console + a toast hint.
+// ═════════════════════════════════════════════════════════════
+(function() {
+  const _origConvert = window.convertFoundryActor;
+  if (typeof _origConvert !== 'function') {
+    console.warn('[Spell Workshop B] convertFoundryActor not found at hook time');
+    return;
+  }
+  window.convertFoundryActor = function(actor) {
+    const result = _origConvert.apply(this, arguments);
+    if (!result) return result;
+    const items = (actor && Array.isArray(actor.items)) ? actor.items : [];
+    const spellItems = items.filter(it => it && it.type === 'spell');
+    if (!spellItems.length) {
+      result.spells = [];
+      return result;
+    }
+    if (!_spellCache) {
+      result._unresolvedSpells = spellItems.map(s => s.name);
+      result.spells = [];
+      return result;
+    }
+    const matched = [];
+    const unmatched = [];
+    const compByName = new Map(_spellCache.map(s => [(s.name || '').toLowerCase(), s]));
+    spellItems.forEach(it => {
+      const nameLc = (it.name || '').toLowerCase();
+      const compRow = compByName.get(nameLc);
+      if (compRow) {
+        let usage = '';
+        const prep = (it.system && it.system.preparation) || {};
+        if (prep.mode === 'atwill')   usage = 'at will';
+        else if (prep.mode === 'innate') usage = '';
+        else if (it.system?.uses?.max) usage = `${it.system.uses.max}/${it.system.uses.per || 'day'}`;
+        matched.push({ spell_id: compRow.id, usage });
+      } else {
+        unmatched.push(it.name);
+      }
+    });
+    result.spells = matched;
+    if (unmatched.length) {
+      result._unresolvedSpells = unmatched;
+    }
+    const attrs = (actor && actor.system && actor.system.attributes) || {};
+    const spellcasting = attrs.spellcasting || {};
+    if (typeof spellcasting.dc === 'number')          result.spell_save_dc = spellcasting.dc;
+    else if (attrs.spelldc != null)                   result.spell_save_dc = parseInt(attrs.spelldc) || null;
+    return result;
+  };
+})();
+
+// ═════════════════════════════════════════════════════════════
+//  HOOK: decorate import list rows with spell info
+//  After importRenderPage runs, scan each import-item row and
+//  append spell badges so the user can see how many spells got
+//  attached and how many couldn't be matched.
+// ═════════════════════════════════════════════════════════════
+(function() {
+  const _orig = window.importRenderPage;
+  if (typeof _orig !== 'function') {
+    console.warn('[Spell Workshop B] importRenderPage not found at hook time');
+    return;
+  }
+  window.importRenderPage = function() {
+    _orig.apply(this, arguments);
+    if (typeof foundryParsed === 'undefined') return;
+    document.querySelectorAll('.import-item').forEach(row => {
+      const id = row.id || '';
+      const m  = id.match(/^importItem_(\d+)$/);
+      if (!m) return;
+      const idx = parseInt(m[1]);
+      const monster = foundryParsed[idx];
+      if (!monster) return;
+      const spellCount = (monster.spells || []).length;
+      const unresolved = (monster._unresolvedSpells || []).length;
+      if (!spellCount && !unresolved) return;
+      // Avoid double-decorating on re-render
+      if (row.querySelector('.import-spell-badge')) return;
+      const meta = row.querySelector('.import-item-meta') || row;
+      const badge = document.createElement('span');
+      badge.className = 'import-item-badge import-spell-badge';
+      if (unresolved && !spellCount) {
+        badge.style.borderColor = 'rgba(220,90,90,0.4)';
+        badge.style.color = 'rgba(220,140,140,0.9)';
+        badge.textContent = `🪄 ${unresolved} unresolved`;
+        badge.title = 'These spells aren\'t in your Spell Workshop yet:\n' + monster._unresolvedSpells.join(', ');
+      } else if (unresolved) {
+        badge.style.borderColor = 'rgba(184,134,11,0.4)';
+        badge.style.color = 'var(--gold-pale)';
+        badge.textContent = `🪄 ${spellCount} (+${unresolved} unresolved)`;
+        badge.title = 'Unresolved spells:\n' + monster._unresolvedSpells.join(', ');
+      } else {
+        badge.style.borderColor = 'rgba(93,127,184,0.4)';
+        badge.style.color = '#a8c4ff';
+        badge.textContent = `🪄 ${spellCount} spells`;
+      }
+      row.appendChild(badge);
+    });
+  };
+})();
+
+// Backdrop dismiss
+document.getElementById('spellSchemaModal').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeSchemaModal();
+});
+document.getElementById('resolveProseModal').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeResolveProseModal();
+});
+// Escape closes modals
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  document.getElementById('spellSchemaModal').classList.remove('open');
+  document.getElementById('resolveProseModal').classList.remove('open');
+});
+
+// Helpers (local — avoid clobbering existing escHtml/escAttr if present)
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+
+// Pre-warm the spell cache after auth so that the first editor render
+// has data ready. Does nothing if not signed in yet (sbHeaders falls
+// back to anon, which RLS rejects, so we just swallow).
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    if (typeof currentUser !== 'undefined' && currentUser && currentUser.access_token) {
+      fetchAllSpellsCached().catch(() => {});
+    }
+  }, 1500);
+});
+</script>
+
 </body>
 </html>
