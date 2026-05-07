@@ -4078,6 +4078,73 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   font-size: 0.95rem;
 }
 
+/* ── NPC skin CR-range filter (Stage 44) ─────────────────────
+   Compact row of two CR selects with an arrow between them, plus a
+   clear button. Sits between the search input and the result list.
+   Selects are deliberately small so the panel doesn't blow out. */
+.npc-skin-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: rgba(0,0,0,0.18);
+  border: 1px solid rgba(184,134,11,0.18);
+  border-radius: 3px;
+}
+.npc-skin-filter-label {
+  font-family: 'Cinzel', serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold-pale);
+  flex: 0 0 auto;
+}
+.npc-skin-cr-select {
+  flex: 1 1 auto;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(184,134,11,0.3);
+  color: var(--bone);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  padding: 5px 6px;
+  border-radius: 2px;
+  outline: none;
+  min-width: 0;
+}
+.npc-skin-cr-select:focus { border-color: var(--gold); }
+.npc-skin-filter-arrow {
+  flex: 0 0 auto;
+  color: var(--steel-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+}
+.npc-skin-filter-clear {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid rgba(184,134,11,0.25);
+  color: var(--steel-pale);
+  cursor: pointer;
+  padding: 3px 7px;
+  border-radius: 2px;
+  font-size: 0.75rem;
+  font-family: 'JetBrains Mono', monospace;
+}
+.npc-skin-filter-clear:hover {
+  border-color: var(--gold);
+  color: var(--gold-pale);
+}
+.mon-result-footer {
+  padding: 6px 12px;
+  text-align: center;
+  color: var(--steel-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  border-top: 1px dashed rgba(184,134,11,0.2);
+  background: rgba(0,0,0,0.15);
+}
+
 /* Imported monster management list — shown inside side panel under search */
 .mon-imported-list { display: flex; flex-direction: column; gap: 6px; }
 .mon-imported-row {
@@ -5614,7 +5681,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 43 / preserve summary line breaks on canvas</span>
+  <span class="topbar-version">stage 44 / NPC skin CR-range filter</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -12782,6 +12849,20 @@ function renderNpcSkinSection(node) {
     sn.hp ? 'HP ' + sn.hp : '',
     sn.ac ? 'AC ' + sn.ac : '',
   ].filter(Boolean).join(' · ') : '';
+  // Stage 44: CR-range filter inputs above the search results. Persists
+  // per-node so the filter sticks during the same panel session. Both
+  // empty = no CR filter (legacy behavior). Filtering is applied
+  // client-side after the name-ilike fetch (CRs are stored as strings
+  // due to fractions like "1/4", so server-side numeric comparison
+  // would need schema work).
+  const crFilterOpts = ['','0','1/8','1/4','1/2','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30'];
+  const minVal = (node._npcSkinFilterMin || '').toString();
+  const maxVal = (node._npcSkinFilterMax || '').toString();
+  const renderCrSelect = (id, value, placeholderLabel) => `
+    <select id="${id}" class="npc-skin-cr-select" autocomplete="off">
+      <option value=""${value === '' ? ' selected' : ''}>${escHtml(placeholderLabel)}</option>
+      ${crFilterOpts.slice(1).map(c => `<option value="${escAttr(c)}"${c === value ? ' selected' : ''}>CR ${escHtml(c)}</option>`).join('')}
+    </select>`;
   return `
     <div class="mon-section" id="npcSkinSection">
       <div class="mon-section-title">
@@ -12801,6 +12882,13 @@ function renderNpcSkinSection(node) {
         <input type="text" id="npcSkinSearchInput" autocomplete="off"
                placeholder="${sn ? 'Replace stat skin from Workshop…' : 'Search monsters from your Workshop…'}">
       </div>
+      <div class="npc-skin-filter">
+        <span class="npc-skin-filter-label">CR range</span>
+        ${renderCrSelect('npcSkinCrMin', minVal, 'min — any')}
+        <span class="npc-skin-filter-arrow">→</span>
+        ${renderCrSelect('npcSkinCrMax', maxVal, 'max — any')}
+        <button type="button" id="npcSkinCrClear" class="npc-skin-filter-clear" title="Clear CR range">✕</button>
+      </div>
       <div class="mon-results" id="npcSkinResults"></div>
     </div>`;
 }
@@ -12810,14 +12898,38 @@ function wireNpcSkinSection(node) {
   const input   = document.getElementById('npcSkinSearchInput');
   const results = document.getElementById('npcSkinResults');
   const section = document.getElementById('npcSkinSection');
+  const minSel  = document.getElementById('npcSkinCrMin');
+  const maxSel  = document.getElementById('npcSkinCrMax');
+  const clrBtn  = document.getElementById('npcSkinCrClear');
   if (!input || !results || !section) return;
 
-  // Search-as-you-type identical to encounter, but feeds attachNpcSkin instead.
-  input.addEventListener('input', () => {
+  // Stage 44: re-fire the search whenever query OR filter changes.
+  // The filter alone (with empty query) is a valid trigger now —
+  // "show me everything in the CR 4-7 range" is a reasonable browse
+  // pattern when the user doesn't know the name.
+  const triggerSearch = () => {
     const q = input.value.trim();
+    const minV = minSel ? minSel.value : '';
+    const maxV = maxSel ? maxSel.value : '';
+    // Stash filter on the node so it survives renders within this panel
+    // session. Not persisted to DB — operational state only.
+    node._npcSkinFilterMin = minV;
+    node._npcSkinFilterMax = maxV;
     if (npcSkinSearchTimer) clearTimeout(npcSkinSearchTimer);
-    if (!q) { results.classList.remove('visible'); results.innerHTML = ''; return; }
-    npcSkinSearchTimer = setTimeout(() => doNpcSkinSearch(q, results, node), 300);
+    if (!q && !minV && !maxV) {
+      results.classList.remove('visible');
+      results.innerHTML = '';
+      return;
+    }
+    npcSkinSearchTimer = setTimeout(() => doNpcSkinSearch(q, results, node, minV, maxV), 300);
+  };
+  input.addEventListener('input', triggerSearch);
+  if (minSel) minSel.addEventListener('change', triggerSearch);
+  if (maxSel) maxSel.addEventListener('change', triggerSearch);
+  if (clrBtn) clrBtn.addEventListener('click', () => {
+    if (minSel) minSel.value = '';
+    if (maxSel) maxSel.value = '';
+    triggerSearch();
   });
   input.addEventListener('blur', () => {
     setTimeout(() => results.classList.remove('visible'), 180);
@@ -12834,27 +12946,103 @@ function wireNpcSkinSection(node) {
   });
 }
 
-async function doNpcSkinSearch(query, resultsEl, node) {
+// Stage 44: convert a CR string ("1/4", "0", "12") to a comparable
+// number. Handles the fractional CRs (1/8, 1/4, 1/2) that 5e uses for
+// sub-CR-1 creatures, plain integers, and decimal CRs (rare but possible
+// for homebrew). Returns NaN for missing/garbage so callers can decide
+// how to treat unknowns.
+function _crToNumeric(crStr) {
+  if (crStr == null) return NaN;
+  const s = String(crStr).trim();
+  if (!s) return NaN;
+  // Common fraction shortcuts
+  if (s === '1/8') return 0.125;
+  if (s === '1/4') return 0.25;
+  if (s === '1/2') return 0.5;
+  // Generic n/m fraction
+  const frac = s.match(/^(\d+)\s*\/\s*(\d+)$/);
+  if (frac) {
+    const num = parseFloat(frac[1]);
+    const den = parseFloat(frac[2]);
+    if (den !== 0) return num / den;
+  }
+  const n = parseFloat(s);
+  return isNaN(n) ? NaN : n;
+}
+
+async function doNpcSkinSearch(query, resultsEl, node, minCrStr, maxCrStr) {
   resultsEl.classList.add('visible');
   resultsEl.innerHTML = '<div class="mon-empty">Searching…</div>';
+  // Resolve the CR range. NaN sentinel means "no bound on this side".
+  const minCr = _crToNumeric(minCrStr || '');
+  const maxCr = _crToNumeric(maxCrStr || '');
+  const hasFilter = !isNaN(minCr) || !isNaN(maxCr);
+  // Sanity check: explicit min > explicit max is impossible to satisfy.
+  if (!isNaN(minCr) && !isNaN(maxCr) && minCr > maxCr) {
+    resultsEl.innerHTML = '<div class="mon-empty">CR range is inverted (min > max).</div>';
+    return;
+  }
   try {
-    const enc = encodeURIComponent('%' + query + '%');
-    const rows = await sbFetch(
-      'rq_monsters?select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula' +
-      '&name=ilike.' + enc +
-      '&order=name.asc&limit=30'
-    );
+    // Stage 44: when a CR filter is active, fetch a wider window so the
+    // client-side filter has enough rows to find matches even if the
+    // first 30 alphabetical name matches all fall outside the range.
+    // Without a query, we still cap at 500 so we don't blow up the
+    // panel for users with huge Workshops.
+    const limit = hasFilter ? (query ? 100 : 500) : 30;
+    let url = 'rq_monsters?select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula';
+    if (query) {
+      url += '&name=ilike.' + encodeURIComponent('%' + query + '%');
+    }
+    url += '&order=name.asc&limit=' + limit;
+    let rows = await sbFetch(url);
     if (!rows || !rows.length) {
       resultsEl.innerHTML = '<div class="mon-empty">No monsters match.</div>';
       return;
     }
+    const fetchedCount = rows.length;
+    if (hasFilter) {
+      // Apply CR range client-side. Monsters with no/garbage CR are
+      // treated as not matching when ANY CR bound is set — the user
+      // explicitly opted into a range, so showing CR-less rows would
+      // be confusing.
+      rows = rows.filter(r => {
+        const c = _crToNumeric(r.cr);
+        if (isNaN(c)) return false;
+        if (!isNaN(minCr) && c < minCr) return false;
+        if (!isNaN(maxCr) && c > maxCr) return false;
+        return true;
+      });
+      // Sort by numeric CR ascending so the user sees the range in
+      // order. Tie-break on name for stable visual ordering.
+      rows.sort((a, b) => {
+        const ac = _crToNumeric(a.cr);
+        const bc = _crToNumeric(b.cr);
+        if (ac !== bc) return ac - bc;
+        return String(a.name || '').localeCompare(String(b.name || ''));
+      });
+    }
+    if (!rows.length) {
+      const minLbl = !isNaN(minCr) ? minCrStr : '?';
+      const maxLbl = !isNaN(maxCr) ? maxCrStr : '?';
+      resultsEl.innerHTML = '<div class="mon-empty">No monsters in CR range '
+        + escHtml(minLbl) + ' → ' + escHtml(maxLbl)
+        + (query ? ' matching “' + escHtml(query) + '”' : '')
+        + '.</div>';
+      return;
+    }
+    // Footer note when filtering trimmed a meaningful chunk — helps the
+    // user understand if they need to widen the range or refine the name.
+    const trimmed = fetchedCount - rows.length;
+    const footer = hasFilter && trimmed > 0
+      ? '<div class="mon-result-footer">Showing ' + rows.length + ' of ' + fetchedCount + ' fetched (filtered by CR range).</div>'
+      : '';
     resultsEl.innerHTML = rows.map(r => `
       <div class="mon-result-row" data-mon-id="${r.id}">
         <span class="mon-result-name">${escHtml(r.name)}</span>
         <span class="mon-result-meta">${escHtml(r.size||'')} ${escHtml(r.monster_type||'')}</span>
         <span class="mon-result-meta">CR ${escHtml(r.cr||'?')}</span>
         <span class="mon-result-meta">HP ${escHtml(String(r.hp||'?'))} AC ${escHtml(String(r.ac||'?'))}</span>
-      </div>`).join('');
+      </div>`).join('') + footer;
     resultsEl.querySelectorAll('.mon-result-row').forEach(row => {
       row.addEventListener('click', () => {
         const id = row.dataset.monId;
