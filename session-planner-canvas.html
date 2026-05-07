@@ -2796,8 +2796,16 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
 }
 .anchor {
   position: absolute;
-  width: 12px; height: 12px;
-  margin: -6px 0 0 -6px;            /* center on the coordinate */
+  /* Stage 45: anchor size scales inversely with zoom so the dots stay
+     readable / clickable at any zoom level. The CSS var --zoom is set
+     by applyTransform() in JS each time the user pans/zooms. The
+     max(1, ...) clamp keeps anchors at their normal 12px when zoomed
+     IN — only growth on zoom-out. */
+  --anchor-base-size: 12px;
+  --anchor-size: calc(var(--anchor-base-size) * max(1, 1 / var(--zoom, 1)));
+  width:  var(--anchor-size);
+  height: var(--anchor-size);
+  margin: calc(var(--anchor-size) / -2) 0 0 calc(var(--anchor-size) / -2);
   border-radius: 50%;
   background: var(--anchor);
   border: 1.5px solid var(--ash);
@@ -2812,6 +2820,37 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
 .anchor.active {
   background: var(--anchor-active);
   box-shadow: 0 0 8px var(--gold-bright);
+}
+/* Stage 45: in connecting mode (after the user clicks the first anchor)
+   every CANVAS anchor becomes a target. We grow them visibly AND extend
+   the hit area beyond the visible dot via a transparent ::before ring,
+   so clicking near the dot still registers on it. Crucial for zoomed-out
+   editing where the dots are small even with size scaling.
+   Scoped to .node-anchors children only — frame/arc-frame anchors have
+   their own positioning (bottom:-3px + transform:translateX(-50%)) that
+   would collide with a global scale transform here. */
+body.connecting .node-anchors .anchor {
+  transform: scale(1.25);
+  background: var(--anchor-hover);
+}
+body.connecting .node-anchors .anchor::before {
+  content: '';
+  position: absolute;
+  /* inset stretches the hit zone 10px in every direction beyond the
+     visible dot. Clicks land on this pseudo and bubble to the parent. */
+  inset: -10px;
+  border-radius: 50%;
+  /* Visible "halo" hint — very faint so it doesn't clutter; brighter
+     on hover to confirm the target. */
+  background: rgba(184, 134, 11, 0.06);
+}
+body.connecting .node-anchors .anchor:hover {
+  /* When the cursor is on the dot itself in connecting mode, push the
+     scale further so the active target is unmistakable. */
+  transform: scale(1.6);
+}
+body.connecting .node-anchors .anchor:hover::before {
+  background: rgba(184, 134, 11, 0.18);
 }
 
 /* The 8 anchor positions on the node bounding box */
@@ -2974,6 +3013,64 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 .edge-label-autocomplete-opt.active {
   background: rgba(184,134,11,0.22);
   color: var(--gold-pale);
+}
+
+/* Stage 45: custom-label rows have an inline ✕ delete affordance.
+   The button column stays clickable for selection; the ✕ is a sibling
+   so the click targets don't interfere. */
+.edge-label-autocomplete-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+.edge-label-autocomplete-row .edge-label-autocomplete-opt {
+  flex: 1 1 auto;
+}
+.edge-label-autocomplete-del {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 0;
+  color: var(--steel-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  padding: 0 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.edge-label-autocomplete-row:hover .edge-label-autocomplete-del { opacity: 1; }
+.edge-label-autocomplete-del:hover {
+  background: rgba(220,90,90,0.18);
+  color: rgba(220,140,140,0.95);
+}
+.edge-label-autocomplete-divider {
+  height: 1px;
+  background: rgba(184,134,11,0.18);
+  margin: 4px 6px;
+}
+.edge-label-autocomplete-add {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--gold-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  padding: 5px 9px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-style: italic;
+}
+.edge-label-autocomplete-add:hover {
+  background: rgba(184,134,11,0.22);
+  color: var(--gold-bright);
+}
+.edge-label-autocomplete-add b {
+  color: var(--gold-bright);
+  font-style: normal;
 }
 
 
@@ -5681,7 +5778,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 44 / NPC skin CR-range filter</span>
+  <span class="topbar-version">stage 45 / zoom-aware anchors + custom edge labels</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -10062,6 +10159,10 @@ const zoomHud = document.getElementById('zoom-hud');
 function applyTransform() {
   content.style.transform =
     `translate(${VIEW.x}px, ${VIEW.y}px) scale(${VIEW.zoom})`;
+  // Stage 45: expose the zoom level as a unitless CSS variable so
+  // anchors can scale their on-screen size inversely. Without this, the
+  // 12px anchor dots become unreadable / unclickable at low zoom.
+  document.documentElement.style.setProperty('--zoom', String(VIEW.zoom || 1));
   drawGrid();
   zoomHud.textContent = Math.round(VIEW.zoom * 100) + '%';
   // Cross-scope edges live in the screen-fixed layer but their canvas
@@ -11735,6 +11836,66 @@ const EDGE_LABEL_SUGGESTIONS = [
   'created-by', 'knows', 'hires', 'opposes', 'protects',
 ];
 
+// Stage 45: per-campaign custom edge labels. The user's relationship
+// vocabulary travels with their campaign (alongside node_templates).
+// Persisted via the campaign autosave path (Stage 25 preserves all
+// keys in campaign.blocks).
+function _getCampaignEdgeLabels() {
+  const cid = sessionState.currentCampaignId;
+  if (!cid) return [];
+  const camp = (sessionState.campaigns || []).find(c => String(c.id) === String(cid));
+  if (!camp || !camp.blocks) return [];
+  if (!Array.isArray(camp.blocks.edge_labels)) camp.blocks.edge_labels = [];
+  return camp.blocks.edge_labels;
+}
+
+// Add `label` to the campaign's vocabulary. Idempotent — duplicates
+// (case-insensitive) are silently ignored. Trims whitespace.
+function _addCampaignEdgeLabel(label) {
+  const cid = sessionState.currentCampaignId;
+  if (!cid) return false;
+  const trimmed = String(label || '').trim();
+  if (!trimmed) return false;
+  // Already a built-in or already custom? skip.
+  const lc = trimmed.toLowerCase();
+  if (EDGE_LABEL_SUGGESTIONS.some(s => s.toLowerCase() === lc)) return false;
+  const list = _getCampaignEdgeLabels();
+  if (list.some(s => String(s).toLowerCase() === lc)) return false;
+  list.push(trimmed);
+  list.sort((a, b) => String(a).localeCompare(String(b)));
+  const camp = (sessionState.campaigns || []).find(c => String(c.id) === String(cid));
+  if (camp && camp.blocks) {
+    camp.blocks.edge_labels = list;
+    markCampaignDirty();
+  }
+  return true;
+}
+
+// Remove a custom label. No-op for built-ins.
+function _removeCampaignEdgeLabel(label) {
+  const cid = sessionState.currentCampaignId;
+  if (!cid) return;
+  const lc = String(label || '').toLowerCase();
+  const list = _getCampaignEdgeLabels();
+  const idx = list.findIndex(s => String(s).toLowerCase() === lc);
+  if (idx < 0) return;
+  list.splice(idx, 1);
+  const camp = (sessionState.campaigns || []).find(c => String(c.id) === String(cid));
+  if (camp && camp.blocks) {
+    camp.blocks.edge_labels = list;
+    markCampaignDirty();
+  }
+}
+
+// Combined suggestion list — built-ins first, then custom (sorted),
+// returned as objects with a `custom` flag so the renderer can decorate
+// custom entries with a delete affordance.
+function _getCombinedEdgeLabelSuggestions() {
+  const builtins = EDGE_LABEL_SUGGESTIONS.map(s => ({ label: s, custom: false }));
+  const customs  = _getCampaignEdgeLabels().map(s => ({ label: s, custom: true }));
+  return builtins.concat(customs);
+}
+
 let activeLabelEditEdge = null;
 let activeLabelEditInput = null;
 let activeLabelEditAcIdx = -1;
@@ -11784,7 +11945,10 @@ function startEdgeLabelEdit(edge) {
     if (e.key === 'Enter') {
       e.preventDefault();
       if (activeLabelEditAcIdx >= 0 && opts[activeLabelEditAcIdx]) {
-        input.value = opts[activeLabelEditAcIdx].textContent;
+        // Stage 45: prefer the data attribute (set by renderer) over
+        // textContent so we don't pick up any stray decorations.
+        input.value = opts[activeLabelEditAcIdx].dataset.edgeLabelValue
+                      || opts[activeLabelEditAcIdx].textContent.trim();
       }
       finishEdgeLabelEdit(true);
     } else if (e.key === 'Escape') {
@@ -11802,7 +11966,8 @@ function startEdgeLabelEdit(edge) {
     } else if (e.key === 'Tab') {
       e.preventDefault();
       if (activeLabelEditAcIdx >= 0 && opts[activeLabelEditAcIdx]) {
-        input.value = opts[activeLabelEditAcIdx].textContent;
+        input.value = opts[activeLabelEditAcIdx].dataset.edgeLabelValue
+                      || opts[activeLabelEditAcIdx].textContent.trim();
         activeLabelEditAcIdx = -1;
         repositionAndRender();
       }
@@ -11829,28 +11994,79 @@ function renderEdgeLabelAutocomplete(query) {
   const ac = document.getElementById('edge-label-autocomplete');
   if (!ac) return;
   const q = (query || '').trim().toLowerCase();
-  // Filter suggestions to those that start with or include the query.
-  // Show all if query empty.
+  const all = _getCombinedEdgeLabelSuggestions();
+  // Filter to matching entries. Built-ins and customs both eligible.
   const matches = q
-    ? EDGE_LABEL_SUGGESTIONS.filter(s => s.toLowerCase().includes(q)).slice(0, 8)
-    : EDGE_LABEL_SUGGESTIONS.slice(0, 8);
-  if (!matches.length) {
+    ? all.filter(s => s.label.toLowerCase().includes(q)).slice(0, 12)
+    : all.slice(0, 12);
+  // Stage 45: show a "+ Add as custom" option when the user has typed
+  // something that doesn't match any existing label. Lets them grow
+  // their relationship vocabulary on the fly.
+  const trimmed = (query || '').trim();
+  const exists = trimmed && all.some(s => s.label.toLowerCase() === trimmed.toLowerCase());
+  const offerAdd = !!trimmed && !exists;
+  if (!matches.length && !offerAdd) {
     ac.classList.remove('open');
     ac.innerHTML = '';
     return;
   }
-  ac.innerHTML = matches.map(s =>
-    `<button type="button" class="edge-label-autocomplete-opt">${escHtml(s)}</button>`
+  let html = matches.map(s =>
+    s.custom
+      ? `<div class="edge-label-autocomplete-row">
+           <button type="button" class="edge-label-autocomplete-opt"
+                   data-edge-label-value="${escAttr(s.label)}">${escHtml(s.label)}</button>
+           <button type="button" class="edge-label-autocomplete-del"
+                   data-edge-label-del="${escAttr(s.label)}"
+                   tabindex="-1"
+                   title="Remove from your custom vocabulary">✕</button>
+         </div>`
+      : `<button type="button" class="edge-label-autocomplete-opt"
+                data-edge-label-value="${escAttr(s.label)}">${escHtml(s.label)}</button>`
   ).join('');
+  if (offerAdd) {
+    html += `<div class="edge-label-autocomplete-divider"></div>
+      <button type="button" class="edge-label-autocomplete-add"
+              data-edge-label-add="${escAttr(trimmed)}">
+        + Add "<b>${escHtml(trimmed)}</b>" to your vocabulary
+      </button>`;
+  }
+  ac.innerHTML = html;
   ac.classList.add('open');
-  // Wire option clicks
+  // Wire option clicks (commit the value to the input + finish edit)
   ac.querySelectorAll('.edge-label-autocomplete-opt').forEach(btn => {
     // mousedown fires before the input's blur — set the value in mousedown
     // so it survives the blur-induced commit.
     btn.addEventListener('mousedown', (e) => {
       e.preventDefault();
       if (activeLabelEditInput) {
-        activeLabelEditInput.value = btn.textContent;
+        activeLabelEditInput.value = btn.dataset.edgeLabelValue || btn.textContent.trim();
+        finishEdgeLabelEdit(true);
+      }
+    });
+  });
+  // Wire delete buttons for custom labels (don't close the autocomplete —
+  // user might want to keep deleting / typing).
+  ac.querySelectorAll('.edge-label-autocomplete-del').forEach(btn => {
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      _removeCampaignEdgeLabel(btn.dataset.edgeLabelDel || '');
+      // Re-render with the same query so the row disappears immediately
+      if (activeLabelEditInput) {
+        renderEdgeLabelAutocomplete(activeLabelEditInput.value);
+      }
+    });
+  });
+  // Wire the "+ Add" button — adds, then keeps the autocomplete open
+  // so the user can pick the now-listed item, OR auto-commits if that
+  // feels nicer. Auto-commit is what most users will expect since they
+  // typed the label IN the field they're editing.
+  ac.querySelectorAll('.edge-label-autocomplete-add').forEach(btn => {
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const newLabel = btn.dataset.edgeLabelAdd || '';
+      if (newLabel && _addCampaignEdgeLabel(newLabel) && activeLabelEditInput) {
+        activeLabelEditInput.value = newLabel;
         finishEdgeLabelEdit(true);
       }
     });
