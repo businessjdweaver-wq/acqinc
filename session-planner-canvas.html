@@ -5130,7 +5130,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 37 / brainstorm auto-grow</span>
+  <span class="topbar-version">stage 38 / VTT prose substitutes overridden monster name</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -5971,6 +5971,50 @@ function stripSaveBoilerplate(text) {
   return stripped;
 }
 
+// Substitute the source monster's name in action prose with the displayed
+// (overridden) name. Stage 38: when a DM has skinned an Ankheg group as
+// "Null Maw", the action's `desc` field still contains the literal source
+// text "The ankheg spits acid in a line that is 30 feet long…" — that
+// reads wrong on the VTT card alongside the renamed action button. This
+// helper rewrites whole-word matches (case-insensitive) so the prose
+// also reads "The Null Maw spits…".
+//
+// Behavior:
+//   • Whole-word match only (\b…\b) so "ankheg" doesn't match within
+//     other words. Catches plurals/possessives ("ankhegs", "ankheg's").
+//   • Override name substituted verbatim — keeps DM's chosen casing.
+//     A sentence-start "The ankheg…" becomes "The Null Maw…" which
+//     reads correctly because the leading cap is on "The".
+//   • If source/display names match (no override), returns the prose
+//     untouched. Same if either is missing.
+//   • Multi-word source names work via regex escaping ("Adult Red
+//     Dragon" → "Old Wyrm").
+function _substituteMonsterName(prose, sourceName, displayName) {
+  if (!prose) return '';
+  if (!sourceName || !displayName) return prose;
+  // Strip any flavor prefix from displayName ("D Drum-bellied — Null Maw"
+  // → "Null Maw") so prose reads cleanly without the per-instance
+  // descriptor baked into every sentence.
+  let cleanDisplay = String(displayName);
+  const emIdx = cleanDisplay.indexOf(' — ');
+  if (emIdx >= 0) cleanDisplay = cleanDisplay.slice(emIdx + 3);
+  cleanDisplay = cleanDisplay.trim();
+  if (!cleanDisplay) return prose;
+  if (cleanDisplay.toLowerCase() === String(sourceName).trim().toLowerCase()) return prose;
+  // Escape regex metacharacters in the source name (defensive — most
+  // monster names are plain words but "Demon Lord" or hypothetical
+  // names with parentheses could break a naive RegExp constructor).
+  const esc = String(sourceName).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Match the source name + optional plural / possessive suffix.
+  // \b at the start anchors to a word boundary (so "Ankheg" doesn't
+  // match within "Ankheglet"). The suffix group is optional.
+  const re = new RegExp('\\b' + esc + "(s|'s|s')?\\b", 'gi');
+  return String(prose).replace(re, (match, suffix) => {
+    // Re-attach plural/possessive suffix to the override name so
+    // grammar still flows ("ankhegs" → "Null Maws", "ankheg's" → "Null Maw's").
+    return cleanDisplay + (suffix || '');
+  });
+}
 
 // renders each as its own card. Long messages get split into chunks that
 // fit a single chat bubble (~250 chars) at sentence boundaries when
@@ -15304,7 +15348,9 @@ function dispatchNpcRoll(node, skin, action, advantage) {
       attackType: resolved.attackType || 'Melee',
       reach: resolved.reach || '',
       range: resolved.range || '',
-      description: resolved.desc || ''
+      // Stage 38: substitute the skin's source name with the NPC's title in
+      // the prose, so the description reads as the NPC, not the stat block.
+      description: _substituteMonsterName(resolved.desc || '', sn.name, displayName)
     }, advantage);
     // Description rides inside the attack card — see dispatchMonsterRoll
     // for the same rationale on the encounter side.
@@ -15318,8 +15364,9 @@ function dispatchNpcRoll(node, skin, action, advantage) {
   if (resolved.desc && String(resolved.desc).trim()) {
     // Strip standard 5e save-or-half boilerplate (see dispatchMonsterRoll
     // for full rationale). Falls back to the original prose if stripping
-    // would leave too little.
-    const cleanDesc = stripSaveBoilerplate(resolved.desc);
+    // would leave too little. Stage 38: also substitute the skin's source
+    // name with the NPC's title.
+    const cleanDesc = _substituteMonsterName(stripSaveBoilerplate(resolved.desc), sn.name, displayName);
     if (cleanDesc) {
       b20SendFlavor(displayName, cr, ac, hp, resolved.name, cleanDesc, 300);
     }
@@ -15375,7 +15422,9 @@ function dispatchMonsterRoll(imported, action, advantage, dispatchNode) {
       attackType: resolved.attackType || 'Melee',
       reach: resolved.reach || '',
       range: resolved.range || '',
-      description: resolved.desc || ''
+      // Stage 38: substitute source monster name in prose so a re-skinned
+      // group reads "The Null Maw spits…" instead of "The ankheg spits…".
+      description: _substituteMonsterName(resolved.desc || '', sn.name, displayName)
     }, advantage);
     // Beyond20 renders the description inside the attack card, so we
     // don't send a separate flavor card here — that produced visible
@@ -15396,7 +15445,9 @@ function dispatchMonsterRoll(imported, action, advantage, dispatchNode) {
   const dmgType     = resolved.damageType  || 'damage';
   b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
   if (resolved.desc && String(resolved.desc).trim()) {
-    const cleanDesc = stripSaveBoilerplate(resolved.desc);
+    // Stage 38: substitute source name → display name in the cleaned prose
+    // so flavor cards match the renamed group/instance.
+    const cleanDesc = _substituteMonsterName(stripSaveBoilerplate(resolved.desc), sn.name, displayName);
     // Skip flavor entirely if stripping cleared everything (unusual prose
     // that was 100% save-mechanics, e.g. some bare-bones SRD entries).
     if (cleanDesc) {
