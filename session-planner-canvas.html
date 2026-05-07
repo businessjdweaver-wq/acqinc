@@ -4432,6 +4432,25 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 .node-mon-roll-btn:hover { filter: brightness(1.3); border-color: var(--gold); }
 .node-mon-roll-btn .roll-icon { font-size: 0.95rem; }
 .node-mon-roll-btn.save { border-color: rgba(184,134,11,0.3); }     /* save-or-damage style */
+/* Stage 46: spell button — distinct blue palette so it reads as
+   distinct from action/trigger buttons. Has-mechanics spells get the
+   regular treatment; pure-utility spells (no damage / no save / no
+   attack) get a slightly faded variant to communicate "this is just
+   chat-card flavor, no roll". */
+.node-mon-roll-btn.spell {
+  background: linear-gradient(180deg, rgba(93,127,184,0.20), rgba(60,90,140,0.20));
+  border-color: rgba(168,196,255,0.4);
+  color: rgba(220,232,255,0.95);
+}
+.node-mon-roll-btn.spell:hover {
+  filter: brightness(1.3);
+  border-color: rgba(168,196,255,0.85);
+}
+.node-mon-roll-btn.spell.utility {
+  background: linear-gradient(180deg, rgba(93,127,184,0.10), rgba(60,90,140,0.10));
+  border-style: dashed;
+  color: rgba(220,232,255,0.75);
+}
 
 /* Roll button + edit-pencil pair. Both buttons hug each other; the
    wrap is what `node-mon-actions` flex-flows. */
@@ -5778,7 +5797,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 45 / zoom-aware anchors + custom edge labels</span>
+  <span class="topbar-version">stage 46 / spells castable from canvas</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -6255,6 +6274,69 @@ async function sbFetch(path, opts = {}) {
   }
   if (res.status === 204) return null;
   return res.json();
+}
+
+// ── SPELL COMPENDIUM CACHE (Stage 46) ─────────────────────
+// Lazy in-memory cache of the user's rq_spells library, used for
+// rendering spell buttons on monster cards and for resolving the
+// {spell_id, usage} references stored on monster snapshots.
+//
+// Loading is triggered by the first card render that has a non-empty
+// `spells` array. Single-flight via _spellCacheLoading so concurrent
+// renders share one fetch.
+let _spellCache = null;          // array of compendium rows when loaded
+let _spellCacheById = null;       // Map<id, row> for O(1) lookup
+let _spellCacheLoading = null;    // in-flight Promise
+
+function _spellCacheReindex() {
+  _spellCacheById = new Map((_spellCache || []).map(s => [String(s.id), s]));
+}
+
+async function fetchSpellCompendiumCached(force) {
+  if (!force && _spellCache) return _spellCache;
+  if (_spellCacheLoading) return _spellCacheLoading;
+  _spellCacheLoading = (async () => {
+    try {
+      const rows = await sbFetch(
+        'rq_spells?select=id,name,level,school,casting_time,range,components,duration,concentration,ritual,description,higher_levels,damage,damage_type,extra,extra_type,save_ability,attack_type,scaling' +
+        '&order=level.asc,name.asc&limit=2000'
+      );
+      _spellCache = Array.isArray(rows) ? rows : [];
+      _spellCacheReindex();
+      return _spellCache;
+    } catch (e) {
+      // Swallow 404 cleanly — user may not have run the spell schema yet.
+      // Surface other errors via console; UI shows a placeholder.
+      console.warn('[spell cache] fetch failed:', e.message);
+      _spellCache = [];
+      _spellCacheById = new Map();
+      return _spellCache;
+    } finally {
+      _spellCacheLoading = null;
+    }
+  })();
+  return _spellCacheLoading;
+}
+
+// Resolve a spell-ref (the `{spell_id, usage}` shape stored on
+// monster.spells) against the cache. Returns the spell row or null
+// if cache hasn't loaded or the id isn't found.
+function _spellByRef(ref) {
+  if (!ref || !_spellCacheById) return null;
+  return _spellCacheById.get(String(ref.spell_id)) || null;
+}
+
+// Convenience: kick off the cache load if a snapshot has spells but the
+// cache is cold. The render call site falls back to "loading…" placeholders
+// and re-renders the affected node when the cache resolves.
+function ensureSpellCacheForSnapshot(snapshot, onReady) {
+  if (!snapshot || !Array.isArray(snapshot.spells) || !snapshot.spells.length) return;
+  if (_spellCache) return;   // already loaded
+  if (_spellCacheLoading) {
+    _spellCacheLoading.then(() => onReady && onReady());
+    return;
+  }
+  fetchSpellCompendiumCached().then(() => onReady && onReady());
 }
 
 // ── LOGIN OVERLAY CONTROL ──
@@ -6832,6 +6914,154 @@ function b20RollMonsterSave(monsterName, cr, ac, hp, abilityName, saveAbility, s
     'save-ability': saveAbility,
     'save-dc': saveDC
   });
+}
+
+// Stage 46: Cast a spell from a monster card. The spell row carries
+// most of the data; the casting monster supplies name + DC + attack
+// modifier. We pick a B20 dispatch shape based on the spell's
+// mechanics:
+//   - attack-roll spell (msak / rsak / mwak / rwak) → b20RollMonsterAttack-style
+//   - save-or-damage spell (save_ability + damage)  → b20RollMonsterSave-style
+//   - damage-only spell  (damage but no save/attack) → custom damage roll
+//   - utility spell      (no damage, no save/attack)  → chat-message with prose
+// Always preceded by a chat-message header card showing the
+// spell metadata (level, school, range, components, duration), so the
+// user has full context regardless of which mechanical roll fires.
+function b20RollMonsterSpell(monsterName, cr, ac, hp, spell, attachRef, spellSaveDc, spellAttackBonus, advantage) {
+  if (!spell) return;
+  // 1. Build a spell metadata "header" card via chat-message — gives
+  //    the players the full spell info even if the mechanical roll
+  //    that follows is just dice.
+  const lvlLabel = spell.level === 0 ? 'Cantrip'
+                  : 'Level ' + spell.level + (spell.ritual ? ' · Ritual' : '');
+  const metaParts = [];
+  if (spell.school)        metaParts.push(spell.school[0].toUpperCase() + spell.school.slice(1));
+  if (spell.casting_time)  metaParts.push('CT: ' + spell.casting_time);
+  if (spell.range)         metaParts.push('Range: ' + spell.range);
+  if (spell.duration)      metaParts.push(spell.duration);
+  if (spell.components)    metaParts.push(spell.components);
+  // Render the spell description, substituting the casting monster's
+  // current display name for any old name in the prose (Stage 38 pattern,
+  // not really needed for spells but harmless).
+  const proseRaw = spell.description || '';
+  const headerLines = [
+    '*' + lvlLabel + (metaParts.length ? ' — ' + metaParts.join(' · ') : '') + '*',
+    '',
+    proseRaw,
+  ];
+  if (spell.higher_levels) {
+    headerLines.push('');
+    headerLines.push('**At Higher Levels:** ' + spell.higher_levels);
+  }
+  if (attachRef && attachRef.usage) {
+    headerLines.unshift('*Usage: ' + attachRef.usage + '*');
+  }
+  b20Send({
+    action: 'roll',
+    type: 'chat-message',
+    character: { name: monsterName, type: 'Monster', url: window.location.href },
+    roll: 0,
+    advantage: 0,
+    whisper: 0,
+    name: '🪄 ' + spell.name,
+    message: headerLines.join('\n'),
+  });
+  // 2. Mechanical follow-up. Decide based on actionType and presence of
+  //    damage / save_ability.
+  const actionType = (spell.attack_type || '').toLowerCase();
+  const hasAttack  = actionType === 'msak' || actionType === 'rsak'
+                  || actionType === 'mwak' || actionType === 'rwak';
+  const hasDamage  = !!spell.damage;
+  const hasSave    = !!spell.save_ability;
+  const isMelee    = actionType === 'msak' || actionType === 'mwak';
+  if (hasAttack) {
+    // Spell attack: use the monster's spell attack bonus.
+    const bonusStr = spellAttackBonus
+      ? (String(spellAttackBonus).startsWith('+') || String(spellAttackBonus).startsWith('-')
+          ? String(spellAttackBonus)
+          : '+' + spellAttackBonus)
+      : '+0';
+    const damages = hasDamage ? [spell.damage] : [];
+    const dmgTypes = hasDamage ? [spell.damage_type || 'damage'] : [];
+    if (spell.extra) { damages.push(spell.extra); dmgTypes.push(spell.extra_type || ''); }
+    b20Send({
+      action: 'roll',
+      type: 'attack',
+      character: b20MakeMonsterChar(monsterName, cr, ac, hp),
+      roll: '1d20' + bonusStr,
+      advantage: advantage || 0,
+      whisper: 0,
+      name: spell.name,
+      description: spell.range ? 'Range: ' + spell.range : '',
+      'to-hit': bonusStr,
+      damages: damages.length ? damages : ['0'],
+      'damage-types': dmgTypes.length ? dmgTypes : ['damage'],
+      'critical-damages': damages.length ? damages : ['0'],
+      'critical-damage-types': dmgTypes.length ? dmgTypes : ['damage'],
+      rollAttack: true,
+      rollDamage: hasDamage,
+      rollCritical: false,
+      'critical-limit': 20,
+      'attack-source': 'spell',
+      'attack-type': isMelee ? 'Melee' : 'Ranged',
+      reach: isMelee ? '5 ft.' : '',
+      range: !isMelee ? (spell.range || '') : '',
+    });
+  } else if (hasSave && hasDamage && spellSaveDc) {
+    // Save-or-damage spell: re-use the existing save shape.
+    b20RollMonsterSave(
+      monsterName, cr, ac, hp,
+      spell.name,
+      spell.save_ability,
+      spellSaveDc,
+      spell.damage,
+      spell.damage_type || 'damage'
+    );
+    // If extra damage exists (rare for spells but eg Acid Arrow), fire it as a
+    // separate damage roll so the same save banner doesn't show twice.
+    if (spell.extra) {
+      b20Send({
+        action: 'roll',
+        type: 'custom',
+        character: b20MakeMonsterChar(monsterName, cr, ac, hp),
+        roll: spell.extra,
+        advantage: 0,
+        whisper: 0,
+        name: spell.name + ' (extra)',
+        description: spell.extra_type || '',
+        modifier: spell.extra,
+      });
+    }
+  } else if (hasSave && !hasDamage && spellSaveDc) {
+    // Save only (eg Hold Person, Sleep). Send a chat-message with the
+    // save info, since there's no damage to roll. B20 will format it
+    // alongside the spell prose.
+    b20Send({
+      action: 'roll',
+      type: 'chat-message',
+      character: { name: monsterName, type: 'Monster', url: window.location.href },
+      roll: 0,
+      advantage: 0,
+      whisper: 0,
+      name: spell.name + ' Save',
+      message: 'DC ' + spellSaveDc + ' ' + spell.save_ability + ' saving throw.',
+    });
+  } else if (hasDamage) {
+    // Damage-only (eg Magic Missile, which has no attack roll at all).
+    b20Send({
+      action: 'roll',
+      type: 'custom',
+      character: b20MakeMonsterChar(monsterName, cr, ac, hp),
+      roll: spell.damage,
+      advantage: 0,
+      whisper: 0,
+      name: spell.name + ' Damage',
+      description: spell.damage_type || '',
+      modifier: spell.damage,
+    });
+  }
+  // Otherwise utility spell — no follow-up roll, only the header chat
+  // message we already sent.
 }
 
 // Trap damage roll — simpler shape, no character envelope needed.
@@ -13205,7 +13435,7 @@ async function doNpcSkinSearch(query, resultsEl, node, minCrStr, maxCrStr) {
     // Without a query, we still cap at 500 so we don't blow up the
     // panel for users with huge Workshops.
     const limit = hasFilter ? (query ? 100 : 500) : 30;
-    let url = 'rq_monsters?select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula';
+    let url = 'rq_monsters?select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula,spells,spell_save_dc,spell_attack_bonus';
     if (query) {
       url += '&name=ilike.' + encodeURIComponent('%' + query + '%');
     }
@@ -13310,7 +13540,7 @@ async function refreshNpcSkin(node) {
   if (!skin || !skin.monster_id) return;
   try {
     const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(skin.monster_id) +
-      '&select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula');
+      '&select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula,spells,spell_save_dc,spell_attack_bonus');
     if (!rows || !rows.length) {
       alert('Source monster not found in Workshop. It may have been deleted.');
       return;
@@ -13548,7 +13778,7 @@ async function doMonsterSearch(query, resultsEl, node) {
   try {
     const enc = encodeURIComponent('%' + query + '%');
     const rows = await sbFetch(
-      'rq_monsters?select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula' +
+      'rq_monsters?select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula,spells,spell_save_dc,spell_attack_bonus' +
       '&name=ilike.' + enc +
       '&order=name.asc&limit=30'
     );
@@ -13747,7 +13977,7 @@ async function refreshImportedMonster(node, idx) {
   if (!m || !m.monster_id) return;
   try {
     const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(m.monster_id) +
-      '&select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula');
+      '&select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula,spells,spell_save_dc,spell_attack_bonus');
     if (!rows || !rows.length) {
       alert('Source monster not found in Workshop. It may have been deleted.');
       return;
@@ -14159,7 +14389,7 @@ function renderOneMonsterCard(m, idx, isSingleton) {
               ${pill}
             </div>`
           : (pill ? `<div class="node-mon-actions">${pill}</div>` : '<div class="node-mon-stats" style="opacity:0.6;">No rollable actions on this stat block.</div>');
-        return actionsHtml + renderTriggerButtons(specials, idx, { showHidden });
+        return actionsHtml + renderTriggerButtons(specials, idx, { showHidden }) + renderSpellButtons(m.snapshot, idx);
       })()}
       ${renderOverrideEditor(m, idx)}
       <div class="node-mon-peek ${peekOpen ? 'open' : ''}" data-peek-body="${idx}">
@@ -15149,7 +15379,86 @@ function renderTriggerButtons(specials, monIdx, opts) {
   </div>`;
 }
 
-// Click-handler delegation for the canvas-card monster controls.
+// Stage 46: Render spell buttons for an encounter monster card. Reads
+// snapshot.spells (the [{spell_id, usage}] array attached in the
+// Workshop), resolves each ref against the in-memory compendium cache,
+// and emits a row of clickable buttons grouped by level. If the
+// compendium isn't loaded yet, kicks off a fetch and shows a tiny
+// "loading" placeholder which the next render will replace.
+function renderSpellButtons(snapshot, monIdx) {
+  if (!snapshot || !Array.isArray(snapshot.spells) || !snapshot.spells.length) return '';
+  if (!_spellCache) {
+    ensureSpellCacheForSnapshot(snapshot, refreshAllSpellBearingNodes);
+    return `<div class="node-mon-actions" style="margin-top:4px;border-top:1px dashed rgba(168,196,255,0.18);padding-top:5px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:rgba(168,196,255,0.6);">🪄 Loading ${snapshot.spells.length} spell${snapshot.spells.length === 1 ? '' : 's'}…</span>
+    </div>`;
+  }
+  const attached = snapshot.spells.map(ref => ({ ref, spell: _spellByRef(ref) }));
+  const visible = attached.filter(a => a.spell);
+  if (!visible.length) {
+    return `<div class="node-mon-actions" style="margin-top:4px;border-top:1px dashed rgba(220,90,90,0.3);padding-top:5px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:rgba(220,140,140,0.85);">🪄 ${snapshot.spells.length} spell ref${snapshot.spells.length === 1 ? '' : 's'} not in compendium</span>
+    </div>`;
+  }
+  const byLevel = {};
+  visible.forEach(a => {
+    const lvl = a.spell.level || 0;
+    (byLevel[lvl] = byLevel[lvl] || []).push(a);
+  });
+  const sortedLevels = Object.keys(byLevel).map(Number).sort((a, b) => a - b);
+  const items = sortedLevels.map(lvl => {
+    const group = byLevel[lvl].slice().sort((a, b) =>
+      String(a.spell.name).localeCompare(String(b.spell.name)));
+    const lvlLabel = lvl === 0 ? 'C' : lvl + (['st','nd','rd'][lvl-1] || 'th');
+    const buttons = group.map(a => {
+      const refIdx = snapshot.spells.findIndex(r =>
+        String(r.spell_id) === String(a.ref.spell_id));
+      const usageChip = a.ref.usage
+        ? ` <span style="opacity:0.7;font-size:0.75em;">(${escHtml(a.ref.usage)})</span>` : '';
+      const hasMechanics = !!(a.spell.damage || a.spell.save_ability || a.spell.attack_type === 'msak' || a.spell.attack_type === 'rsak');
+      const cls = 'node-mon-roll-btn spell' + (hasMechanics ? '' : ' utility');
+      const titleParts = [
+        'Cast ' + a.spell.name,
+        a.spell.range ? 'Range: ' + a.spell.range : '',
+        a.ref.usage ? 'Usage: ' + a.ref.usage : '',
+        hasMechanics ? '(Shift = advantage, Alt = disadvantage)' : '',
+      ].filter(Boolean).join(' · ');
+      return `<button class="${cls}" data-mon-spell="${monIdx}-${refIdx}" type="button"
+                      title="${escAttr(titleParts)}">
+        <span class="roll-icon">🪄</span>${escHtml(a.spell.name)}${usageChip}
+      </button>`;
+    }).join('');
+    return `<span class="node-mon-spell-level"
+                  style="display:inline-flex;align-items:center;gap:4px;margin-right:8px;flex-wrap:wrap;">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;letter-spacing:0.08em;color:rgba(168,196,255,0.75);text-transform:uppercase;">${lvlLabel}</span>
+              ${buttons}
+            </span>`;
+  }).join('');
+  return `<div class="node-mon-actions" data-spell-row="${monIdx}"
+               style="margin-top:4px;border-top:1px dashed rgba(168,196,255,0.18);padding-top:5px;">
+    <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:rgba(168,196,255,0.85);margin-right:6px;">🪄 Spells</span>
+    ${items}
+  </div>`;
+}
+
+// Once the spell cache loads, re-render every visible node that has
+// spell-bearing snapshots so the loading placeholders get replaced.
+// Used as the onReady callback by ensureSpellCacheForSnapshot.
+function refreshAllSpellBearingNodes() {
+  if (typeof state === 'undefined' || !state || !state.nodes) return;
+  state.nodes.forEach(n => {
+    if (!n.fields) return;
+    let needs = false;
+    if (n.type === 'encounter' && Array.isArray(n.fields.monsters)) {
+      needs = n.fields.monsters.some(m =>
+        m && m.snapshot && Array.isArray(m.snapshot.spells) && m.snapshot.spells.length);
+    } else if (n.type === 'npc') {
+      const sn = n.fields.skin && n.fields.skin.snapshot;
+      needs = !!(sn && Array.isArray(sn.spells) && sn.spells.length);
+    }
+    if (needs) refreshNodeFace(n);
+  });
+}
 // Wires: action-button rolls, peek toggle, HP edit, multiplier stepper,
 // ability/save click rolls, and the horde-save roll button.
 // ── TABLE NODE WIRING ─────────────────────────────────────
@@ -15592,6 +15901,8 @@ function wireMonsterRollClicks(nodeEl, node) {
     // Show-hidden toggle (Stage 36): pill that reveals greyed action
     // buttons so the DM can un-hide them via the override editor.
     'button[data-show-hidden]',
+    // Stage 46: spell buttons on encounter monster cards.
+    'button[data-mon-spell]',
   ];
   stripSelectors.forEach(sel => {
     nodeEl.querySelectorAll(sel).forEach(btn => {
@@ -15629,6 +15940,22 @@ function wireMonsterRollClicks(nodeEl, node) {
       const s = specials[sIdx];
       if (!s) return;
       dispatchMonsterRoll(m, s, _advFromEvent(e), node);
+    });
+  });
+
+  // Stage 46: spell buttons. data-mon-spell="<monIdx>-<refIdx>" where
+  // refIdx is the position in m.snapshot.spells (the [{spell_id, usage}]
+  // array attached in the Workshop). The dispatcher looks up the
+  // compendium row by id and fires the appropriate B20 card shape.
+  nodeEl.querySelectorAll('button[data-mon-spell]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const [monIdx, refIdx] = btn.dataset.monSpell.split('-').map(n => parseInt(n));
+      const m = monsters[monIdx];
+      if (!m || !m.snapshot || !Array.isArray(m.snapshot.spells)) return;
+      const ref = m.snapshot.spells[refIdx];
+      if (!ref) return;
+      dispatchMonsterSpell(m, ref, _advFromEvent(e), node);
     });
   });
 
@@ -16427,6 +16754,7 @@ function renderNpcSkinFaceHtml(node) {
             ${actions.map((a, ai) => renderNpcActionButton(a, ai)).join('')}
           </div>` : '<div class="node-mon-stats" style="opacity:0.6;">No rollable actions on this stat block.</div>'}
         ${renderNpcTriggerButtons(specials)}
+        ${renderNpcSpellButtons(skin, node)}
         ${renderNpcOverrideEditor(skin)}
         <div class="node-mon-peek ${peekOpen ? 'open' : ''}" data-npc-peek-body="1">
           ${renderNpcPeekBody(skin)}
@@ -16460,6 +16788,68 @@ function renderNpcTriggerButtons(specials) {
   return `<div class="node-mon-actions" style="margin-top:4px;border-top:1px dashed rgba(184,134,11,0.15);padding-top:5px;">
     <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:var(--steel-pale);margin-right:4px;">Triggers</span>
     ${items.join('')}
+  </div>`;
+}
+
+// Stage 46: Render spell buttons for an NPC stat-skin card. Same shape
+// as the encounter version but emits NPC-prefixed data attributes
+// (`data-npc-spell="<refIdx>"`) so click dispatch can route to the
+// NPC-specific handler.
+function renderNpcSpellButtons(skin, node) {
+  if (!skin || !skin.snapshot) return '';
+  const snapshot = skin.snapshot;
+  if (!Array.isArray(snapshot.spells) || !snapshot.spells.length) return '';
+  if (!_spellCache) {
+    ensureSpellCacheForSnapshot(snapshot, refreshAllSpellBearingNodes);
+    return `<div class="node-mon-actions" style="margin-top:4px;border-top:1px dashed rgba(168,196,255,0.18);padding-top:5px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:rgba(168,196,255,0.6);">🪄 Loading ${snapshot.spells.length} spell${snapshot.spells.length === 1 ? '' : 's'}…</span>
+    </div>`;
+  }
+  const attached = snapshot.spells.map(ref => ({ ref, spell: _spellByRef(ref) }));
+  const visible = attached.filter(a => a.spell);
+  if (!visible.length) {
+    return `<div class="node-mon-actions" style="margin-top:4px;border-top:1px dashed rgba(220,90,90,0.3);padding-top:5px;">
+      <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:rgba(220,140,140,0.85);">🪄 ${snapshot.spells.length} spell ref${snapshot.spells.length === 1 ? '' : 's'} not in compendium</span>
+    </div>`;
+  }
+  const byLevel = {};
+  visible.forEach(a => {
+    const lvl = a.spell.level || 0;
+    (byLevel[lvl] = byLevel[lvl] || []).push(a);
+  });
+  const sortedLevels = Object.keys(byLevel).map(Number).sort((a, b) => a - b);
+  const items = sortedLevels.map(lvl => {
+    const group = byLevel[lvl].slice().sort((a, b) =>
+      String(a.spell.name).localeCompare(String(b.spell.name)));
+    const lvlLabel = lvl === 0 ? 'C' : lvl + (['st','nd','rd'][lvl-1] || 'th');
+    const buttons = group.map(a => {
+      const refIdx = snapshot.spells.findIndex(r =>
+        String(r.spell_id) === String(a.ref.spell_id));
+      const usageChip = a.ref.usage
+        ? ` <span style="opacity:0.7;font-size:0.75em;">(${escHtml(a.ref.usage)})</span>` : '';
+      const hasMechanics = !!(a.spell.damage || a.spell.save_ability || a.spell.attack_type === 'msak' || a.spell.attack_type === 'rsak');
+      const cls = 'node-mon-roll-btn spell' + (hasMechanics ? '' : ' utility');
+      const titleParts = [
+        'Cast ' + a.spell.name,
+        a.spell.range ? 'Range: ' + a.spell.range : '',
+        a.ref.usage ? 'Usage: ' + a.ref.usage : '',
+        hasMechanics ? '(Shift = advantage, Alt = disadvantage)' : '',
+      ].filter(Boolean).join(' · ');
+      return `<button class="${cls}" data-npc-spell="${refIdx}" type="button"
+                      title="${escAttr(titleParts)}">
+        <span class="roll-icon">🪄</span>${escHtml(a.spell.name)}${usageChip}
+      </button>`;
+    }).join('');
+    return `<span class="node-mon-spell-level"
+                  style="display:inline-flex;align-items:center;gap:4px;margin-right:8px;flex-wrap:wrap;">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;letter-spacing:0.08em;color:rgba(168,196,255,0.75);text-transform:uppercase;">${lvlLabel}</span>
+              ${buttons}
+            </span>`;
+  }).join('');
+  return `<div class="node-mon-actions"
+               style="margin-top:4px;border-top:1px dashed rgba(168,196,255,0.18);padding-top:5px;">
+    <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;text-transform:uppercase;color:rgba(168,196,255,0.85);margin-right:6px;">🪄 Spells</span>
+    ${items}
   </div>`;
 }
 
@@ -16628,6 +17018,8 @@ function wireNpcPeekClicks(nodeEl, node) {
     // NPC peek-body rollables — same accumulation issue
     '[data-npc-peek-abil]',
     'button[data-npc-peek-save]',
+    // Stage 46: spell buttons on NPC stat-skin cards.
+    'button[data-npc-spell]',
   ];
   stripSelectors.forEach(sel => {
     nodeEl.querySelectorAll(sel).forEach(btn => {
@@ -16656,6 +17048,19 @@ function wireNpcPeekClicks(nodeEl, node) {
       const s = specials[sIdx];
       if (!s) return;
       dispatchNpcRoll(node, skin, s, _advFromEvent(e));
+    });
+  });
+
+  // Stage 46: NPC spell buttons. data-npc-spell="<refIdx>" indexes into
+  // sn.spells (the [{spell_id, usage}] array attached in the Workshop).
+  nodeEl.querySelectorAll('button[data-npc-spell]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const refIdx = parseInt(btn.dataset.npcSpell);
+      if (!Array.isArray(sn.spells)) return;
+      const ref = sn.spells[refIdx];
+      if (!ref) return;
+      dispatchNpcSpell(node, skin, ref, _advFromEvent(e));
     });
   });
 
@@ -16870,6 +17275,62 @@ function dispatchNpcRoll(node, skin, action, advantage) {
       b20SendFlavor(displayName, cr, ac, hp, resolved.name, cleanDesc, 300);
     }
   }
+}
+
+// Stage 46: NPC spell dispatch. Like dispatchMonsterSpell but uses
+// node.title as the display name (NPCs are singletons — no per-instance
+// override system) and pulls DC/attack bonus straight off the snapshot.
+function dispatchNpcSpell(node, skin, attachRef, advantage) {
+  if (!attachRef) return;
+  const spell = _spellByRef(attachRef);
+  if (!spell) {
+    if (typeof showToast === 'function') {
+      showToast('Spell not found in compendium', true);
+    }
+    return;
+  }
+  const sn = skin.snapshot || {};
+  const displayName = node.title || 'NPC';
+  const cr = sn.cr || '';
+  const ac = sn.ac || '';
+  const hp = sn.hp || '';
+  const dc = sn.spell_save_dc != null ? sn.spell_save_dc : null;
+  const ab = sn.spell_attack_bonus || '';
+  const subbed = Object.assign({}, spell, {
+    description:   _substituteMonsterName(spell.description   || '', sn.name, displayName),
+    higher_levels: _substituteMonsterName(spell.higher_levels || '', sn.name, displayName),
+  });
+  b20RollMonsterSpell(displayName, cr, ac, hp, subbed, attachRef, dc, ab, advantage);
+}
+
+// Stage 46: Spell dispatch from the encounter card. Reads the cached
+// spell row by id, then routes to b20RollMonsterSpell with the
+// casting monster's name + DC + attack bonus. Mirrors dispatchMonsterRoll
+// for action/trigger but goes through the spell card path instead.
+function dispatchMonsterSpell(imported, attachRef, advantage, dispatchNode) {
+  if (!attachRef) return;
+  const spell = _spellByRef(attachRef);
+  if (!spell) {
+    // Should be filtered out at render time, but defensive:
+    if (typeof showToast === 'function') {
+      showToast('Spell not found in compendium', true);
+    }
+    return;
+  }
+  const sn = imported.snapshot || {};
+  const displayName = _monsterDisplayName(imported, dispatchNode);
+  const cr = sn.cr || '';
+  const ac = sn.ac || '';
+  const hp = sn.hp || '';
+  const dc = sn.spell_save_dc != null ? sn.spell_save_dc : null;
+  const ab = sn.spell_attack_bonus || '';
+  // Substitute the source monster name in the prose so a re-skinned
+  // group's spells read with the override name (Stage 38 pattern).
+  const subbed = Object.assign({}, spell, {
+    description:   _substituteMonsterName(spell.description   || '', sn.name, displayName),
+    higher_levels: _substituteMonsterName(spell.higher_levels || '', sn.name, displayName),
+  });
+  b20RollMonsterSpell(displayName, cr, ac, hp, subbed, attachRef, dc, ab, advantage);
 }
 
 function dispatchMonsterRoll(imported, action, advantage, dispatchNode) {
