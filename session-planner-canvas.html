@@ -5797,7 +5797,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 46 / spells castable from canvas</span>
+  <span class="topbar-version">stage 46b / spell card cleanup (no preamble; prose folded in)</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -6916,22 +6916,24 @@ function b20RollMonsterSave(monsterName, cr, ac, hp, abilityName, saveAbility, s
   });
 }
 
-// Stage 46: Cast a spell from a monster card. The spell row carries
-// most of the data; the casting monster supplies name + DC + attack
-// modifier. We pick a B20 dispatch shape based on the spell's
-// mechanics:
-//   - attack-roll spell (msak / rsak / mwak / rwak) → b20RollMonsterAttack-style
-//   - save-or-damage spell (save_ability + damage)  → b20RollMonsterSave-style
-//   - damage-only spell  (damage but no save/attack) → custom damage roll
-//   - utility spell      (no damage, no save/attack)  → chat-message with prose
-// Always preceded by a chat-message header card showing the
-// spell metadata (level, school, range, components, duration), so the
-// user has full context regardless of which mechanical roll fires.
+// Stage 46: Cast a spell from a monster card. Picks a B20 card shape
+// based on the spell's mechanics:
+//   - attack-roll spell (msak / rsak)             → attack card with prose folded in
+//   - save-or-damage spell (save_ability + damage) → save-damage card + flavor card
+//   - damage-only spell    (damage, no attack/save) → damage card with prose folded in
+//   - save-only spell      (save, no damage)        → chat-message card (DC + prose)
+//   - utility spell        (no mechanics)           → chat-message card (prose)
+//
+// Stage 46 (revised): folds the spell metadata + prose INTO the
+// mechanical card's `description` instead of firing a separate preamble
+// chat-message. Mirrors the action-attack pattern and avoids the
+// "two cards per cast" visual chatter that the first cut produced.
 function b20RollMonsterSpell(monsterName, cr, ac, hp, spell, attachRef, spellSaveDc, spellAttackBonus, advantage) {
   if (!spell) return;
-  // 1. Build a spell metadata "header" card via chat-message — gives
-  //    the players the full spell info even if the mechanical roll
-  //    that follows is just dice.
+
+  // ── Build the prose body shared across card shapes ──────────────
+  // Header line: usage + level/school + casting-time/range/duration/components,
+  // followed by description and (if present) higher-levels rider.
   const lvlLabel = spell.level === 0 ? 'Cantrip'
                   : 'Level ' + spell.level + (spell.ritual ? ' · Ritual' : '');
   const metaParts = [];
@@ -6940,50 +6942,53 @@ function b20RollMonsterSpell(monsterName, cr, ac, hp, spell, attachRef, spellSav
   if (spell.range)         metaParts.push('Range: ' + spell.range);
   if (spell.duration)      metaParts.push(spell.duration);
   if (spell.components)    metaParts.push(spell.components);
-  // Render the spell description, substituting the casting monster's
-  // current display name for any old name in the prose (Stage 38 pattern,
-  // not really needed for spells but harmless).
-  const proseRaw = spell.description || '';
-  const headerLines = [
-    '*' + lvlLabel + (metaParts.length ? ' — ' + metaParts.join(' · ') : '') + '*',
-    '',
-    proseRaw,
-  ];
-  if (spell.higher_levels) {
-    headerLines.push('');
-    headerLines.push('**At Higher Levels:** ' + spell.higher_levels);
-  }
-  if (attachRef && attachRef.usage) {
-    headerLines.unshift('*Usage: ' + attachRef.usage + '*');
-  }
-  b20Send({
-    action: 'roll',
-    type: 'chat-message',
-    character: { name: monsterName, type: 'Monster', url: window.location.href },
-    roll: 0,
-    advantage: 0,
-    whisper: 0,
-    name: '🪄 ' + spell.name,
-    message: headerLines.join('\n'),
-  });
-  // 2. Mechanical follow-up. Decide based on actionType and presence of
-  //    damage / save_ability.
+  const headerLine = '*' + lvlLabel
+                   + (metaParts.length ? ' — ' + metaParts.join(' · ') : '')
+                   + '*';
+  const proseBody = (spell.description || '').trim();
+  const higher = spell.higher_levels
+    ? '\n\n**At Higher Levels:** ' + spell.higher_levels
+    : '';
+  const usage = (attachRef && attachRef.usage)
+    ? '*Usage: ' + attachRef.usage + '* · ' : '';
+  // The full prose used as the `description` field on attack/damage cards.
+  // For save-or-damage we use the cleaner "stripped" form (strip standard
+  // 5e save boilerplate sentences) so the save card body doesn't restate
+  // what the save banner is already showing.
+  const fullProse = usage + headerLine + (proseBody ? '\n\n' + proseBody : '') + higher;
+  const strippedProse = (() => {
+    const stripped = stripSaveBoilerplate(proseBody || '');
+    if (stripped.length < 12) return ''; // too little left to justify the card
+    return usage + headerLine + (stripped ? '\n\n' + stripped : '') + higher;
+  })();
+
+  // ── Branch on mechanics ────────────────────────────────────────
   const actionType = (spell.attack_type || '').toLowerCase();
   const hasAttack  = actionType === 'msak' || actionType === 'rsak'
                   || actionType === 'mwak' || actionType === 'rwak';
   const hasDamage  = !!spell.damage;
   const hasSave    = !!spell.save_ability;
   const isMelee    = actionType === 'msak' || actionType === 'mwak';
+
   if (hasAttack) {
-    // Spell attack: use the monster's spell attack bonus.
+    // Spell attack: ONE attack card with prose in the body. If there's no
+    // damage component, suppress the damage roll entirely (B20 will skip
+    // the damage row when damages is empty AND rollDamage is false).
     const bonusStr = spellAttackBonus
       ? (String(spellAttackBonus).startsWith('+') || String(spellAttackBonus).startsWith('-')
           ? String(spellAttackBonus)
           : '+' + spellAttackBonus)
       : '+0';
-    const damages = hasDamage ? [spell.damage] : [];
-    const dmgTypes = hasDamage ? [spell.damage_type || 'damage'] : [];
-    if (spell.extra) { damages.push(spell.extra); dmgTypes.push(spell.extra_type || ''); }
+    const damages = [];
+    const dmgTypes = [];
+    if (hasDamage) {
+      damages.push(spell.damage);
+      dmgTypes.push(spell.damage_type || 'damage');
+    }
+    if (spell.extra) {
+      damages.push(spell.extra);
+      dmgTypes.push(spell.extra_type || 'damage');
+    }
     b20Send({
       action: 'roll',
       type: 'attack',
@@ -6992,14 +6997,14 @@ function b20RollMonsterSpell(monsterName, cr, ac, hp, spell, attachRef, spellSav
       advantage: advantage || 0,
       whisper: 0,
       name: spell.name,
-      description: spell.range ? 'Range: ' + spell.range : '',
+      description: fullProse,
       'to-hit': bonusStr,
-      damages: damages.length ? damages : ['0'],
-      'damage-types': dmgTypes.length ? dmgTypes : ['damage'],
-      'critical-damages': damages.length ? damages : ['0'],
-      'critical-damage-types': dmgTypes.length ? dmgTypes : ['damage'],
+      damages: damages,
+      'damage-types': dmgTypes,
+      'critical-damages': damages,
+      'critical-damage-types': dmgTypes,
       rollAttack: true,
-      rollDamage: hasDamage,
+      rollDamage: damages.length > 0,
       rollCritical: false,
       'critical-limit': 20,
       'attack-source': 'spell',
@@ -7007,8 +7012,13 @@ function b20RollMonsterSpell(monsterName, cr, ac, hp, spell, attachRef, spellSav
       reach: isMelee ? '5 ft.' : '',
       range: !isMelee ? (spell.range || '') : '',
     });
-  } else if (hasSave && hasDamage && spellSaveDc) {
-    // Save-or-damage spell: re-use the existing save shape.
+    return;
+  }
+
+  if (hasSave && hasDamage && spellSaveDc) {
+    // Save-or-damage spell. Emits the save-damage card + a separate
+    // flavor card (matching the action save-or-damage pattern). The
+    // save card body is small, so the flavor card carries the prose.
     b20RollMonsterSave(
       monsterName, cr, ac, hp,
       spell.name,
@@ -7017,25 +7027,70 @@ function b20RollMonsterSpell(monsterName, cr, ac, hp, spell, attachRef, spellSav
       spell.damage,
       spell.damage_type || 'damage'
     );
-    // If extra damage exists (rare for spells but eg Acid Arrow), fire it as a
-    // separate damage roll so the same save banner doesn't show twice.
-    if (spell.extra) {
-      b20Send({
-        action: 'roll',
-        type: 'custom',
-        character: b20MakeMonsterChar(monsterName, cr, ac, hp),
-        roll: spell.extra,
-        advantage: 0,
-        whisper: 0,
-        name: spell.name + ' (extra)',
-        description: spell.extra_type || '',
-        modifier: spell.extra,
-      });
+    // Flavor card with prose. Skip if stripping cleared everything.
+    if (strippedProse) {
+      setTimeout(() => {
+        b20Send({
+          action: 'roll',
+          type: 'chat-message',
+          character: { name: monsterName, type: 'Monster', url: window.location.href },
+          roll: 0,
+          advantage: 0,
+          whisper: 0,
+          name: '🪄 ' + spell.name,
+          message: strippedProse,
+        });
+      }, 300);
     }
-  } else if (hasSave && !hasDamage && spellSaveDc) {
-    // Save only (eg Hold Person, Sleep). Send a chat-message with the
-    // save info, since there's no damage to roll. B20 will format it
-    // alongside the spell prose.
+    // Extra damage rider (rare — Acid Arrow's split damage etc.)
+    if (spell.extra) {
+      setTimeout(() => {
+        b20Send({
+          action: 'roll',
+          type: 'custom',
+          character: b20MakeMonsterChar(monsterName, cr, ac, hp),
+          roll: spell.extra,
+          advantage: 0,
+          whisper: 0,
+          name: spell.name + ' (extra)',
+          description: spell.extra_type || '',
+          modifier: spell.extra,
+        });
+      }, 600);
+    }
+    return;
+  }
+
+  if (hasDamage && !hasSave) {
+    // Damage-only spell (eg Magic Missile, which auto-hits). Single
+    // damage card with the prose in the description.
+    b20Send({
+      action: 'roll',
+      type: 'attack',
+      character: b20MakeMonsterChar(monsterName, cr, ac, hp),
+      roll: spell.damage,
+      advantage: 0,
+      whisper: 0,
+      name: spell.name,
+      description: fullProse,
+      'to-hit': '0',
+      damages: [spell.damage],
+      'damage-types': [spell.damage_type || 'damage'],
+      'critical-damages': [],
+      'critical-damage-types': [],
+      rollAttack: false,
+      rollDamage: true,
+      rollCritical: false,
+      'attack-source': 'spell',
+      'attack-type': isMelee ? 'Melee' : 'Ranged',
+    });
+    return;
+  }
+
+  if (hasSave && !hasDamage && spellSaveDc) {
+    // Save only (eg Hold Person, Sleep). Single chat-message card with
+    // the save call-out prepended to the prose.
+    const saveLine = '🎯 **DC ' + spellSaveDc + ' ' + spell.save_ability + ' saving throw**';
     b20Send({
       action: 'roll',
       type: 'chat-message',
@@ -7043,25 +7098,24 @@ function b20RollMonsterSpell(monsterName, cr, ac, hp, spell, attachRef, spellSav
       roll: 0,
       advantage: 0,
       whisper: 0,
-      name: spell.name + ' Save',
-      message: 'DC ' + spellSaveDc + ' ' + spell.save_ability + ' saving throw.',
+      name: '🪄 ' + spell.name,
+      message: saveLine + '\n\n' + fullProse,
     });
-  } else if (hasDamage) {
-    // Damage-only (eg Magic Missile, which has no attack roll at all).
-    b20Send({
-      action: 'roll',
-      type: 'custom',
-      character: b20MakeMonsterChar(monsterName, cr, ac, hp),
-      roll: spell.damage,
-      advantage: 0,
-      whisper: 0,
-      name: spell.name + ' Damage',
-      description: spell.damage_type || '',
-      modifier: spell.damage,
-    });
+    return;
   }
-  // Otherwise utility spell — no follow-up roll, only the header chat
-  // message we already sent.
+
+  // Utility spell with no mechanics (Detect Magic, Light, Mage Hand…) —
+  // single chat-message card with the prose.
+  b20Send({
+    action: 'roll',
+    type: 'chat-message',
+    character: { name: monsterName, type: 'Monster', url: window.location.href },
+    roll: 0,
+    advantage: 0,
+    whisper: 0,
+    name: '🪄 ' + spell.name,
+    message: fullProse,
+  });
 }
 
 // Trap damage roll — simpler shape, no character envelope needed.
