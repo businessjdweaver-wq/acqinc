@@ -1993,6 +1993,131 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
   color: var(--gold-pale);
   font-weight: 700;
 }
+
+/* ── Older-versions badge + panel (Stage 40) ─────────────── */
+.search-row-older {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(184,134,11,0.4);
+  color: var(--gold-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 2px;
+  cursor: pointer;
+  margin-left: 8px;
+  text-transform: uppercase;
+  vertical-align: middle;
+  line-height: 1.2;
+}
+.search-row-older:hover {
+  filter: brightness(1.25);
+  border-color: var(--gold);
+}
+.search-row-older.pertinent {
+  /* Bright variant — older versions contain words the current one no
+     longer has. Worth a closer look. */
+  background: rgba(184,134,11,0.18);
+  border-color: var(--gold);
+  color: var(--gold-bright);
+}
+.search-row-older.identical {
+  /* Muted variant — older versions exist but say the same things. Just
+     informational. */
+  opacity: 0.7;
+}
+.search-row.older-expanded .search-row-older {
+  background: rgba(184,134,11,0.28);
+  filter: brightness(1.2);
+}
+
+.search-older-panel {
+  background: rgba(0,0,0,0.45);
+  border-left: 2px solid rgba(184,134,11,0.5);
+  margin: 0 6px 8px 16px;
+  padding: 8px 12px 10px;
+  border-radius: 0 0 3px 3px;
+}
+.search-older-head {
+  font-family: 'Cinzel', serif;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  color: var(--gold-pale);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--gold-faint);
+}
+.search-older-row {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed rgba(184,134,11,0.18);
+}
+.search-older-row:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.search-older-meta {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 3px;
+}
+.search-older-session {
+  font-family: 'Cinzel', serif;
+  font-size: 0.78rem;
+  color: var(--bone);
+  letter-spacing: 0.04em;
+}
+.search-older-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  color: var(--steel-pale);
+  letter-spacing: 0.05em;
+}
+.search-older-snippet {
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.78rem;
+  color: var(--steel-pale);
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+.search-older-snippet b {
+  color: var(--gold-pale);
+  font-weight: 700;
+}
+.search-older-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+}
+.search-older-tokens-label {
+  color: var(--steel-pale);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-right: 2px;
+  font-size: 0.6rem;
+}
+.search-older-token {
+  background: rgba(184,134,11,0.14);
+  border: 1px solid rgba(184,134,11,0.35);
+  color: var(--gold-bright);
+  padding: 1px 6px;
+  border-radius: 2px;
+}
+.search-older-tokens-empty {
+  color: var(--steel-pale);
+  font-style: italic;
+  opacity: 0.6;
+}
+
 .search-empty {
   padding: 24px 16px;
   text-align: center;
@@ -5296,7 +5421,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 39 / copy nodes to another session</span>
+  <span class="topbar-version">stage 40 / search dedupes versions + diff flag</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -16190,7 +16315,105 @@ function runSearch(query) {
     hits.push({ ...e, score });
   });
   hits.sort((a, b) => b.score - a.score);
-  return hits.slice(0, 50);
+  // Stage 40: dedupe versions of the same node — when the user has
+  // copied a session via Stage 39, the same scene/NPC/etc. exists in
+  // multiple sessions with fresh ids but identical title+type. Group
+  // them by (type|scope|normalized-title) and keep the most-recently-
+  // sourced one as the headline; attach the rest as `olderVersions`
+  // so the renderer can show a "+N older" badge with diff hints.
+  return _dedupeVersions(hits, q).slice(0, 50);
+}
+
+// Group hits by (type, scope, normalized title) and pick the most
+// recently sourced one as the visible result. Tags it with .olderVersions
+// (everything else in the group) and .pertinentTokens (any words present
+// in older versions but missing in the newest, so the user knows when
+// a stale copy may have details that didn't survive a session-to-session
+// duplicate-and-edit cycle).
+//
+// Only session-scope hits are deduped — campaign and arc nodes are
+// already singletons by design (one row each, shared across sessions).
+function _dedupeVersions(hits, query) {
+  const groups = new Map();   // key -> [hit, hit, …] in their original score order
+  const out = [];
+  hits.forEach(h => {
+    if (h.scope !== 'session') {
+      out.push(h);    // pass through — frame-tier nodes don't have versions
+      return;
+    }
+    const t = (h.title || '').trim().toLowerCase();
+    if (!t) {
+      // Untitled nodes can't be grouped reliably; treat as its own row.
+      out.push(h);
+      return;
+    }
+    const key = (h.type || '') + '|' + t;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(h);
+  });
+  // Within each group, sort by source recency (descending) so the
+  // primary is the freshest. updatedAt is already a string we can parse;
+  // missing values fall back to 0 so they sort last.
+  const tsOf = h => {
+    const u = h.source && h.source.updatedAt;
+    if (!u) return 0;
+    const v = Date.parse(u);
+    return isNaN(v) ? 0 : v;
+  };
+  groups.forEach((arr) => {
+    arr.sort((a, b) => tsOf(b) - tsOf(a));
+    const primary = arr[0];
+    const olders = arr.slice(1);
+    if (olders.length) {
+      // For each older version, compute pertinent tokens — words present
+      // in this older that are absent in the primary. If empty, the
+      // older has nothing the primary doesn't already say (e.g. it's a
+      // pristine copy).
+      const newerTokens = _tokensFor(primary.searchText);
+      primary.olderVersions = olders.map(o => {
+        const olderTokens = _tokensFor(o.searchText);
+        const onlyOlder = [];
+        olderTokens.forEach(tok => { if (!newerTokens.has(tok)) onlyOlder.push(tok); });
+        // Sort by token length desc — longer tokens are usually more
+        // distinctive; cap to keep the badge compact.
+        onlyOlder.sort((a, b) => b.length - a.length);
+        return { ...o, _pertinentTokens: onlyOlder.slice(0, 8) };
+      });
+      primary.olderHasPertinent = primary.olderVersions.some(o => o._pertinentTokens.length > 0);
+    }
+    out.push(primary);
+  });
+  // Re-sort by score (groups don't change which hit has the highest
+  // score among themselves since we picked by recency — but groups vs
+  // standalone hits need to interleave by score).
+  out.sort((a, b) => b.score - a.score);
+  return out;
+}
+
+// Tokenize searchText into a Set of distinctive lowercase words, with
+// stopwords and short tokens dropped. Used by _dedupeVersions to compute
+// "pertinent" tokens — words present in an older version that the newer
+// one no longer contains.
+const _SEARCH_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'but', 'of', 'to', 'in', 'on', 'at', 'by',
+  'for', 'with', 'from', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'has', 'have', 'had', 'do', 'does', 'did', 'will', 'would', 'should',
+  'could', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those',
+  'it', 'its', 'as', 'if', 'so', 'not', 'no', 'yes', 'all', 'any', 'some',
+  'one', 'two', 'three', 'their', 'there', 'they', 'them', 'his', 'her',
+  'he', 'she', 'we', 'us', 'our', 'you', 'your', 'i', 'me', 'my', 'mine',
+  'who', 'what', 'when', 'where', 'why', 'how', 'than', 'then', 'into',
+]);
+function _tokensFor(text) {
+  const out = new Set();
+  if (!text) return out;
+  String(text).toLowerCase().split(/[^a-z0-9'’-]+/).forEach(tok => {
+    const t = tok.replace(/^[-']+|[-']+$/g, '');
+    if (t.length < 4) return;
+    if (_SEARCH_STOPWORDS.has(t)) return;
+    out.add(t);
+  });
+  return out;
 }
 
 // Highlight the first occurrence of `query` (case-insensitive) inside text
@@ -16243,11 +16466,27 @@ function renderSearchRow(hit, query, isActive) {
       snippet = escHtml(hit.snippetText.slice(0, 120) + (hit.snippetText.length > 120 ? '…' : ''));
     }
   }
+  // Stage 40: older-versions badge — appears when the search has
+  // collapsed multiple versions of this node (post-Stage-39 copies).
+  // Bright variant when older versions actually contain pertinent
+  // tokens the current version no longer has; muted variant when the
+  // copies are essentially identical (informational only).
+  const olderCount = (hit.olderVersions || []).length;
+  const olderBadge = olderCount > 0
+    ? `<button class="search-row-older ${hit.olderHasPertinent ? 'pertinent' : 'identical'}"
+               data-older-toggle="${hit._idx}"
+               type="button"
+               title="${hit.olderHasPertinent
+                 ? olderCount + ' older version' + (olderCount === 1 ? '' : 's') + ' contain words this version no longer has — click to compare'
+                 : olderCount + ' older version' + (olderCount === 1 ? '' : 's') + ' (no significant differences) — click to view'}">
+         ${hit.olderHasPertinent ? '⚠' : '◷'} ${olderCount} older
+       </button>`
+    : '';
   return `
     <div class="search-row ${isActive ? 'active' : ''}" data-search-row-idx="${hit._idx}">
       <span class="search-row-icon">${def.icon}</span>
       <div class="search-row-body">
-        <div class="search-row-title">${highlightMatch(hit.title, query)}</div>
+        <div class="search-row-title">${highlightMatch(hit.title, query)}${olderBadge}</div>
         <div class="search-row-meta">
           <span class="search-row-typebadge">${escHtml(def.label)}</span>
           <span class="search-row-scopebadge ${hit.scope}">${scopeLabel}</span>
@@ -16258,11 +16497,64 @@ function renderSearchRow(hit, query, isActive) {
     </div>`;
 }
 
+// Stage 40: render the inline older-versions panel that drops in below
+// a primary search row when the user clicks the "+N older" badge. Each
+// older version shows its source session, the recency, and (when present)
+// the list of "pertinent tokens" — words the older copy contains that
+// the newer one doesn't, useful for spotting details that didn't survive
+// a copy-then-edit cycle.
+function renderOlderVersionsPanel(hit, query) {
+  const olders = hit.olderVersions || [];
+  if (!olders.length) return '';
+  const rows = olders.map(o => {
+    const src = o.source || {};
+    const sessLabel = src.sessionTitle ? escHtml(src.sessionTitle) : 'unknown session';
+    const dateStr = src.updatedAt
+      ? escHtml(String(src.updatedAt).slice(0, 10))
+      : '(no date)';
+    let snippet = '';
+    if (o.snippetText) {
+      const lc = o.snippetText.toLowerCase();
+      const i = lc.indexOf((query || '').toLowerCase());
+      if (i >= 0) {
+        const start = Math.max(0, i - 30);
+        const end   = Math.min(o.snippetText.length, i + (query || '').length + 60);
+        const segment = (start > 0 ? '…' : '') + o.snippetText.slice(start, end) + (end < o.snippetText.length ? '…' : '');
+        snippet = highlightMatch(segment, query);
+      }
+    }
+    const tokens = (o._pertinentTokens || []).filter(t =>
+      t.toLowerCase() !== (query || '').toLowerCase()  // don't show the query word itself
+    );
+    const tokensHtml = tokens.length
+      ? `<div class="search-older-tokens">
+           <span class="search-older-tokens-label">older mentions:</span>
+           ${tokens.map(t => '<span class="search-older-token">' + escHtml(t) + '</span>').join('')}
+         </div>`
+      : '<div class="search-older-tokens search-older-tokens-empty">(no distinctive differences from current version)</div>';
+    return `
+      <div class="search-older-row" data-older-idx="${o._idx != null ? o._idx : ''}">
+        <div class="search-older-meta">
+          <span class="search-older-session">${sessLabel}</span>
+          <span class="search-older-date">${dateStr}</span>
+        </div>
+        ${snippet ? `<div class="search-older-snippet">${snippet}</div>` : ''}
+        ${tokensHtml}
+      </div>`;
+  }).join('');
+  return `
+    <div class="search-older-panel" data-older-for="${hit._idx}">
+      <div class="search-older-head">Earlier versions of "${escHtml(hit.title)}"</div>
+      ${rows}
+    </div>`;
+}
+
 // Run-and-render against a target container (topbar dropdown or modal results).
 function refreshSearchUI(query, container, surface) {
   const hits = runSearch(query);
-  // Tag with index so click handlers can map back
-  hits.forEach((h, i) => h._idx = i);
+  // Tag with index so click handlers can map back; also stash query for
+  // later use (older-versions panel highlights matches inside snippets).
+  hits.forEach((h, i) => { h._idx = i; h._lastQuery = query; });
   searchActiveIdx = hits.length ? 0 : -1;
   searchActiveSurface = surface;
   if (!query.trim()) {
@@ -16288,6 +16580,16 @@ function refreshSearchUI(query, container, surface) {
   // Wire row clicks
   container.querySelectorAll('.search-row').forEach((rowEl, i) => {
     rowEl.addEventListener('mousedown', (e) => {
+      // Stage 40: clicking the "+N older" badge expands the older-versions
+      // panel — don't trigger the row's normal detail toggle in that case.
+      const olderBtn = e.target.closest('button[data-older-toggle]');
+      if (olderBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const hit = container._searchHits[i];
+        if (hit) toggleOlderVersionsPanel(hit, container);
+        return;
+      }
       // mousedown not click — input blur fires on click and would close the
       // dropdown before the click handler runs.
       e.preventDefault();
@@ -16306,6 +16608,27 @@ function refreshSearchUI(query, container, surface) {
       });
     });
   });
+}
+
+// Stage 40: toggle the older-versions panel below a primary search row.
+// Independent from toggleSearchDetail (which opens the rich node-detail
+// card with field walks etc.) — the older-versions panel is a lighter
+// readout of "here's what other copies of this node say."
+function toggleOlderVersionsPanel(hit, container) {
+  const rowEl = container.querySelector(`.search-row[data-search-row-idx="${hit._idx}"]`);
+  if (!rowEl) return;
+  // If a panel is already attached, remove it
+  let panel = rowEl.nextElementSibling;
+  if (panel && panel.classList.contains('search-older-panel') && panel.dataset.olderFor === String(hit._idx)) {
+    panel.remove();
+    rowEl.classList.remove('older-expanded');
+    return;
+  }
+  // Otherwise inject one
+  const html = renderOlderVersionsPanel(hit, hit._lastQuery || '');
+  if (!html) return;
+  rowEl.insertAdjacentHTML('afterend', html);
+  rowEl.classList.add('older-expanded');
 }
 
 // Click on a result toggles its inline detail panel. Cross-session
