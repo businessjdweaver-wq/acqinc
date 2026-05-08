@@ -4146,7 +4146,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7176
+      Version 1.7178
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -5429,6 +5429,40 @@ body.dev-active #app{margin-top:36px;}
 </nav>
 
 <script>
+
+// === PATCH: Monster Name Resolver ===
+function resolveMonsterName(monsterId) {
+  if (!monsterId) return 'Unknown Creature';
+
+  const buckets = [
+    CONTENT_LIB?.private?.monsters,
+    CONTENT_LIB?.shared?.monsters,
+    CONTENT_LIB?.official?.monsters
+  ];
+
+  for (const bucket of buckets) {
+    if (!bucket) continue;
+
+    const m = Array.isArray(bucket)
+      ? bucket.find(x => x.content_key === monsterId || x.id === monsterId)
+      : bucket[monsterId];
+
+    if (m) {
+      const data = m.data || m;
+      return (
+        data.title ||
+        data.name ||
+        m.title ||
+        m.name ||
+        monsterId
+      );
+    }
+  }
+
+  return monsterId;
+}
+// === END PATCH ===
+
 (function(){
 'use strict';
 
@@ -28937,6 +28971,30 @@ function resolveQuest(quest, party, scoutTier, contentLib, rng) {
   scoutTier = scoutTier || 0;
   var gameRules = _resGameRules(contentLib);
 
+  // v1.7178 — Hydrate encounter.monster from encounter.monsterKey.
+  // The QE writes monsterKey (a content_key string like 'workshop_abc...'
+  // or 'bandit'), but the resolution modal expects encounter.monster.label.
+  // Without this lookup, the raw UUID displays in the modal instead of the
+  // monster's readable name. Look up across official/shared/private in
+  // priority order; attach the full monster object to encounter.monster so
+  // downstream code (line ~29002) can read .label.
+  if (quest && quest.encounter && quest.encounter.monsterKey && contentLib) {
+    var mKey = quest.encounter.monsterKey;
+    var foundMonster = null;
+    ['private','shared','official'].forEach(function(sc){
+      if (foundMonster) return;
+      var bucket = contentLib[sc] && contentLib[sc].monsters;
+      if (bucket) {
+        foundMonster = bucket.find(function(m){
+          return (m.content_key === mKey) || (m.key === mKey) || (m.id === mKey);
+        });
+      }
+    });
+    if (foundMonster) {
+      quest.encounter.monster = foundMonster;
+    }
+  }
+
   // Difficulty
   // v1.7167 — diffKey is the DC-ladder bucket (easy/moderate/hard/etc.).
   // Quests in this codebase don't author this directly today — it would
@@ -36907,7 +36965,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7176';
+var RQ_CLIENT_VERSION='v1.7178';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
