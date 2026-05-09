@@ -6891,23 +6891,19 @@ function chunkFlavorMessage(text, softMax) {
 // that card was purely redundant with the damage card's native save
 // banner, producing visual clutter in the VTT. Stage 27: removed. Now
 // just one card per save-or-damage ability.
-function b20RollMonsterSave(monsterName, cr, ac, hp, abilityName, saveAbility, saveDC, damages, damageTypes) {
-  // Support both array (new) and single value (backward compat)
-  const dmgArray = Array.isArray(damages) ? damages : [damages];
-  const typeArray = Array.isArray(damageTypes) ? damageTypes : [damageTypes];
-  
+function b20RollMonsterSave(monsterName, cr, ac, hp, abilityName, saveAbility, saveDC, damageFormula, damageType) {
   b20Send({
     action: 'roll',
     type: 'attack',
     character: b20MakeMonsterChar(monsterName, cr, ac, hp),
-    roll: dmgArray[0] || '2d6',
+    roll: damageFormula,
     advantage: 0,
     whisper: 0,
     name: abilityName + ' Damage',
     description: 'DC ' + saveDC + ' ' + saveAbility + ' save for half',
     'to-hit': '0',
-    damages: dmgArray,
-    'damage-types': typeArray,
+    damages: [damageFormula],
+    'damage-types': [damageType],
     'critical-damages': [],
     'critical-damage-types': [],
     rollAttack: false,
@@ -10335,7 +10331,7 @@ const BLOCK_TYPES = {
       { key: 'complexity', label: 'Complexity', type: 'select', group: 'Setup',
         options: ['1 (4 successes)','2 (6 successes)','3 (8 successes)','4 (10 successes)','5 (12 successes)'] },
       { key: 'failures',   label: 'Failures Allowed', type: 'number', group: 'Setup', placeholder: '3' },
-      { key: 'time_limit', label: 'Time Limit',  type: 'text',   group: 'Setup', placeholder: 'e.g. 5 rounds, 1 hour, none',summary: true },
+      { key: 'time_limit', label: 'Time Limit',  type: 'text',   group: 'Setup', placeholder: 'e.g. 5 rounds, 1 hour, none' },
       { key: 'primary_dc', label: 'Primary DC',  type: 'number', group: 'Setup', placeholder: '15' },
       { key: 'primary_skills', label: 'Primary Skills', type: 'text', group: 'Skills',
         placeholder: 'e.g. Athletics, Acrobatics, Survival', fullWidth: true },
@@ -10346,7 +10342,7 @@ const BLOCK_TYPES = {
       { key: 'failure',    label: 'On Failure', type: 'textarea', group: 'Outcomes',
         placeholder: 'Consequence of running out of attempts…', rows: 2 },
       { key: 'twist',      label: 'Mid-Challenge Twist',  type: 'textarea', group: 'Outcomes',
-        placeholder: 'Optional complication that changes the stakes…', rows: 2, fullWidth: true,summary: true },
+        placeholder: 'Optional complication that changes the stakes…', rows: 2, fullWidth: true },
       { key: 'notes',      label: 'Director Notes', type: 'textarea', group: 'Director Notes',
         placeholder: 'Pacing, narration cues…', rows: 2, fullWidth: true },
     ],
@@ -10864,7 +10860,6 @@ function renderNodeFace(data) {
   const npcFieldsHtml     = renderNpcFieldsHtml(data);
   const clueFieldsHtml    = renderClueFieldsHtml(data);
   const sceneFieldsHtml   = renderSceneFieldsHtml(data);
-  const skillChallengeHtml = renderSkillChallengeHtml(data);
   const sceneHazardsHtml  = renderSceneHazardRollsHtml(data);
   const npcSkinHtml       = renderNpcSkinFaceHtml(data);
   const tableHtml         = isTable ? renderTableNodeBodyHtml(data) : '';
@@ -10888,7 +10883,6 @@ function renderNodeFace(data) {
       ${trapFieldsHtml}
       ${trapRollsHtml}
       ${sceneFieldsHtml}
-      ${skillChallengeHtml}
       ${sceneHazardsHtml}
       ${clueFieldsHtml}
       ${npcFieldsHtml}
@@ -14243,15 +14237,6 @@ function renderClueFieldsHtml(node) {
   ]);
 }
 
-  // Stage 41b: Clue card readout — Clue Details + Discovery + Connections.
-// `reveals` is the summary so we skip it. Director Notes excluded.
-function renderSkillChallengeHtml(node) {
-  if (!node || node.type !== 'skillchallenge') return '';
-  return renderFieldReadoutHtml(node, [
-    'time_limit', 'twist'
-  ]);
-}
-
 // Stage 41b: Scene card readout — Location, Environment, and the
 // scene's "Encounters & Events" overview. `description` is the summary
 // so it's skipped. Embedded hazard mechanics (haz_*) are NOT listed
@@ -17426,26 +17411,24 @@ function dispatchMonsterRoll(imported, action, advantage, dispatchNode) {
     // if present. Beyond20's attack card supports multi-damage natively
     // and renders each as its own dice block on the same chat card.
     let damages, damageTypes;
-   if (action.damages && action.damages.length) {
-  // Action carried explicit arrays — respect them, but layer the
-  // resolved extra on top if the resolver/override produced one and
-  // it wasn't already there.
-  damages     = [...action.damages];
-  damageTypes = [...(action.damageTypes || [])];
-  // Check if extra damage is already in the array (avoid duplicates)
-  const hasExtra = resolved.extra && damages.includes(resolved.extra);
-  if (resolved.extra && !hasExtra) {
-    damages.push(resolved.extra);
-    damageTypes.push(resolved.extraType || 'damage');
-  }
-} else {
-  damages     = resolved.damage ? [resolved.damage] : ['1d6'];
-  damageTypes = [resolved.damageType || 'damage'];
-  if (resolved.extra) {
-    damages.push(resolved.extra);
-    damageTypes.push(resolved.extraType || 'damage');
-  }
-}
+    if (action.damages && action.damages.length) {
+      // Action carried explicit arrays — respect them, but layer the
+      // resolved extra on top if the resolver/override produced one and
+      // it wasn't already there.
+      damages     = [...action.damages];
+      damageTypes = [...(action.damageTypes || [])];
+      if (resolved.extra && damages.length === 1) {
+        damages.push(resolved.extra);
+        damageTypes.push(resolved.extraType || 'damage');
+      }
+    } else {
+      damages     = resolved.damage ? [resolved.damage] : ['1d6'];
+      damageTypes = [resolved.damageType || 'damage'];
+      if (resolved.extra) {
+        damages.push(resolved.extra);
+        damageTypes.push(resolved.extraType || 'damage');
+      }
+    }
     b20RollMonsterAttack(displayName, cr, ac, hp, {
       name: resolved.name,
       toHit: resolved.toHit,
@@ -17470,17 +17453,11 @@ function dispatchMonsterRoll(imported, action, advantage, dispatchNode) {
   // from the prose so what flows through is just imagery (e.g.,
   // "spits acid in a line 30 feet long"). Falls back to the unstripped
   // prose if stripping would leave too little.
- const saveDC      = resolved.saveDC      || 12;
-const saveAbility = resolved.saveAbility || 'DEX';
-// Build damages array to support extra damage in save-based abilities
-const saveDamages = resolved.damage ? [resolved.damage] : ['2d6'];
-const saveDamageTypes = [resolved.damageType || 'damage'];
-if (resolved.extra) {
-  saveDamages.push(resolved.extra);
-  saveDamageTypes.push(resolved.extraType || 'damage');
-}
-// Modify b20RollMonsterSave to accept arrays instead of single values
-b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, saveDamages, saveDamageTypes);
+  const saveDC      = resolved.saveDC      || 12;
+  const saveAbility = resolved.saveAbility || 'DEX';
+  const dmgFormula  = resolved.damage      || '2d6';
+  const dmgType     = resolved.damageType  || 'damage';
+  b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
   if (resolved.desc && String(resolved.desc).trim()) {
     // Stage 38: substitute source name → display name in the cleaned prose
     // so flavor cards match the renamed group/instance.
