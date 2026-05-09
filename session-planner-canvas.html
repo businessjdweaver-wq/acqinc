@@ -6413,7 +6413,7 @@ body.mobile-mode #sb-modal { display: none !important; }
           </div>
         </div>
         <div class="name-forge-source-note">
-          Wiktionary lookup uses the public MediaWiki API to harvest native translation forms and romanizations for the selected style, then recombines them locally. No Google Translate scraping.
+          Translation lookup first translates each seed into the selected language, then expands that target-language form through open dictionary/translation sources before forging names. No Google Translate scraping.
         </div>
         <div class="name-forge-actions">
           <button type="button" onclick="fetchNameForgeRoots()">Fetch Translations</button>
@@ -13367,6 +13367,8 @@ const NAME_FORGE_STYLE_LANGS = {
   'Japanese-inspired':['ja'], 'Hebrew-inspired':['he','hbo']
 };
 const NAME_FORGE_LANG_LABELS = { la:'Latin', grc:'Ancient Greek', el:'Greek', non:'Old Norse', is:'Icelandic', no:'Norwegian', cy:'Welsh', sa:'Sanskrit', ja:'Japanese', he:'Hebrew', hbo:'Biblical Hebrew' };
+const NAME_FORGE_TRANSLATE_CODES = { Latin:'la', Greek:'el', Norse:'no', Welsh:'cy', Sanskrit:'sa', 'Japanese-inspired':'ja', 'Hebrew-inspired':'he' };
+const NAME_FORGE_LANG_HEADINGS = { Latin:['Latin'], Greek:['Greek','Ancient Greek'], Norse:['Old Norse','Norwegian','Icelandic'], Welsh:['Welsh'], Sanskrit:['Sanskrit'], 'Japanese-inspired':['Japanese'], 'Hebrew-inspired':['Hebrew','Biblical Hebrew'] };
 const NAME_FORGE_NATIVE_STYLE_SUFFIXES = {
   Latin: { person:['ian','ius','ia','or','us'], place:['um','ium','a','or','is'] },
   Greek: { person:['ion','ios','ia','on','es'], place:['on','ion','polis','os'] },
@@ -13499,6 +13501,94 @@ function _nfExtractFragments(word) {
   }
   return Array.from(out).filter(x => x.length >= 3);
 }
+
+function _nfTargetLangCode(style) {
+  if (style === 'Mixed') return 'la';
+  return NAME_FORGE_TRANSLATE_CODES[style] || (_nfStyleLangs(style)[0] || 'la');
+}
+function _nfStripHtml(text) {
+  const div = document.createElement('div');
+  div.innerHTML = String(text || '');
+  return (div.textContent || div.innerText || '').trim();
+}
+async function _nfFetchMyMemory(seed, targetLang) {
+  const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(seed) + '&langpair=en|' + encodeURIComponent(targetLang);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('MyMemory HTTP ' + res.status);
+  const data = await res.json();
+  const out = [];
+  const add = (txt, source) => {
+    txt = _nfStripHtml(txt || '').trim();
+    if (!txt || /^query exception/i.test(txt)) return;
+    out.push({ text: txt, source });
+  };
+  if (data && data.responseData) add(data.responseData.translatedText, 'machine translation');
+  (data && data.matches || []).slice(0, 12).forEach(m => {
+    if (!m) return;
+    if (m.translation) add(m.translation, 'translation memory');
+    if (m.segment && String(m.segment).toLowerCase() !== String(seed).toLowerCase()) add(m.segment, 'translation memory source');
+  });
+  const seen = new Set();
+  return out.filter(x => { const key = x.text.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; });
+}
+function _nfRomanizeJapanese(text) {
+  let s = String(text || '').trim();
+  const overrides = { 'こんにちは':'konnichiwa', 'こんにちわ':'konnichiwa', '今日は':'konnichiwa', 'こんばんは':'konbanwa', 'ありがとう':'arigatou', 'さようなら':'sayounara' };
+  if (overrides[s]) return overrides[s];
+  s = s.replace(/[\u30a1-\u30f6]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+  const digraphs = { 'きゃ':'kya','きゅ':'kyu','きょ':'kyo','しゃ':'sha','しゅ':'shu','しょ':'sho','ちゃ':'cha','ちゅ':'chu','ちょ':'cho','にゃ':'nya','にゅ':'nyu','にょ':'nyo','ひゃ':'hya','ひゅ':'hyu','ひょ':'hyo','みゃ':'mya','みゅ':'myu','みょ':'myo','りゃ':'rya','りゅ':'ryu','りょ':'ryo','ぎゃ':'gya','ぎゅ':'gyu','ぎょ':'gyo','じゃ':'ja','じゅ':'ju','じょ':'jo','びゃ':'bya','びゅ':'byu','びょ':'byo','ぴゃ':'pya','ぴゅ':'pyu','ぴょ':'pyo' };
+  const kana = { 'あ':'a','い':'i','う':'u','え':'e','お':'o','か':'ka','き':'ki','く':'ku','け':'ke','こ':'ko','さ':'sa','し':'shi','す':'su','せ':'se','そ':'so','た':'ta','ち':'chi','つ':'tsu','て':'te','と':'to','な':'na','に':'ni','ぬ':'nu','ね':'ne','の':'no','は':'ha','ひ':'hi','ふ':'fu','へ':'he','ほ':'ho','ま':'ma','み':'mi','む':'mu','め':'me','も':'mo','や':'ya','ゆ':'yu','よ':'yo','ら':'ra','り':'ri','る':'ru','れ':'re','ろ':'ro','わ':'wa','を':'o','ん':'n','が':'ga','ぎ':'gi','ぐ':'gu','げ':'ge','ご':'go','ざ':'za','じ':'ji','ず':'zu','ぜ':'ze','ぞ':'zo','だ':'da','ぢ':'ji','づ':'zu','で':'de','ど':'do','ば':'ba','び':'bi','ぶ':'bu','べ':'be','ぼ':'bo','ぱ':'pa','ぴ':'pi','ぷ':'pu','ぺ':'pe','ぽ':'po','ー':'','っ':'' };
+  let out = '';
+  for (let i=0; i<s.length; i++) {
+    const two = s.slice(i, i+2);
+    if (digraphs[two]) { out += digraphs[two]; i++; continue; }
+    if (s[i] === 'っ' && i + 1 < s.length) { const next = digraphs[s.slice(i+1, i+3)] || kana[s[i+1]] || ''; if (next) out += next[0]; continue; }
+    out += kana[s[i]] || (/[a-z0-9]/i.test(s[i]) ? s[i] : ' ');
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+function _nfFormsFromTranslatedText(text, lang, source) {
+  const forms = [];
+  const add = (root, src, display) => { const clean = _nfCleanRoot(root); if (clean && clean.length >= 2) forms.push({ root: clean, lang, source: src || source || 'translation', display: display || root }); };
+  const raw = String(text || '').trim();
+  if (!raw) return forms;
+  if (lang === 'ja') { const roman = _nfRomanizeJapanese(raw); if (roman) add(roman, 'romanized translation', raw + ' / ' + roman); }
+  const splitter = new RegExp('[;,/()\\[\\]\\n]+|\\s+or\\s+|\\s+and\\s+', 'i');
+  raw.split(splitter).map(x => x.trim()).filter(Boolean).forEach(part => { add(part, source || 'translation', part); if (lang === 'ja') { const roman = _nfRomanizeJapanese(part); if (roman && roman !== part) add(roman, 'romanized translation', part + ' / ' + roman); } });
+  return forms;
+}
+function _nfLanguageSection(wikitext, style) {
+  const headings = NAME_FORGE_LANG_HEADINGS[style] || [];
+  if (!headings.length) return String(wikitext || '');
+  const text = String(wikitext || '');
+  for (const h of headings) {
+    const esc = h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('(^|\\n)==\\s*' + esc + '\\s*==\\n([\\s\\S]*?)(?=\\n==[^=]|$)', 'i');
+    const m = text.match(re);
+    if (m) return m[2];
+  }
+  return text;
+}
+function _nfParseTargetLanguageExpansion(wikitext, style, lang) {
+  const roots = [];
+  const seen = new Set();
+  const add = (root, source, display) => {
+    const clean = _nfCleanRoot(root);
+    if (!clean || clean.length < 3 || clean.length > 24) return;
+    const key = clean + '|' + source;
+    if (!seen.has(key)) { seen.add(key); roots.push({ root: clean, lang, source, display: display || root }); }
+    _nfExtractFragments(clean).forEach(frag => { if (frag === clean) return; const fkey = frag + '|fragment'; if (!seen.has(fkey)) { seen.add(fkey); roots.push({ root: frag, lang, source:'fragment', display:frag }); } });
+  };
+  const sec = _nfLanguageSection(wikitext, style);
+  const useful = sec.split(/\n===+/).filter(x => /Synonyms|Related terms|Derived terms|Descendants|Alternative forms|Etymology|Coordinate terms|Hypernyms|Hyponyms/i.test(x)).join('\n');
+  const link = /\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g;
+  let m;
+  while ((m = link.exec(useful))) add(m[2] || m[1], 'target-language related', m[2] || m[1]);
+  const tpl = /\{\{(?:l|m|link|alter|alt)\|([^|}]+)\|([^|}]+)(?:\|tr=([^|}]+))?[^}]*\}\}/g;
+  while ((m = tpl.exec(useful))) { const tLang = (m[1] || '').trim(); if (lang && tLang && tLang !== lang) continue; add(m[3] || m[2], m[3] ? 'romanized related' : 'target-language related', m[2]); }
+  return roots;
+}
+
 function _nfParseWiktionaryWikitext(wikitext, langCodes) {
   const roots = [];
   const seen = new Set();
@@ -13571,26 +13661,40 @@ async function fetchNameForgeRoots() {
   const style = styleEl ? styleEl.value : 'Mixed';
   const seeds = _nfWords((document.getElementById('nf-seeds') || {}).value || '').slice(0, 8);
   if (!seeds.length) { if (status) { status.className = 'error'; status.textContent = 'Add at least one seed word first.'; } return; }
-  const langCodes = _nfStyleLangs(style);
-  if (status) { status.className = ''; status.textContent = 'Fetching open Wiktionary translations…'; }
+  if (style === 'Mixed') { if (status) { status.className = 'error'; status.textContent = 'Choose a specific flavor/style before fetching translations.'; } return; }
+  const targetLang = _nfTargetLangCode(style);
+  if (status) { status.className = ''; status.textContent = `Translating seed words into ${style}, then expanding target-language forms…`; }
   nameForgeFetchedRoots = [];
   nameForgePinnedRoots = new Set();
   const found = [];
   let failures = 0;
   for (const seed of seeds) {
     try {
-      const wt = await _nfFetchWiktionaryPage(seed);
-      const parsed = _nfParseWiktionaryWikitext(wt, langCodes).map(r => ({ ...r, seed }));
-      found.push(...parsed);
-    } catch (err) { failures++; console.warn('Name Forge Wiktionary lookup failed:', seed, err); }
+      const translated = await _nfFetchMyMemory(seed, targetLang);
+      translated.forEach(t => found.push(..._nfFormsFromTranslatedText(t.text, targetLang, t.source).map(r => ({ ...r, seed }))));
+      const expansionBases = translated.map(t => t.text).slice(0, 6);
+      for (const base of expansionBases) {
+        const displayRoots = _nfFormsFromTranslatedText(base, targetLang, 'translation').slice(0, 3);
+        for (const dr of displayRoots) {
+          try {
+            const wt = await _nfFetchWiktionaryPage(dr.display || dr.root);
+            found.push(..._nfParseTargetLanguageExpansion(wt, style, targetLang).map(r => ({ ...r, seed })));
+          } catch (inner) {}
+        }
+      }
+      try {
+        const wtSeed = await _nfFetchWiktionaryPage(seed);
+        found.push(..._nfParseWiktionaryWikitext(wtSeed, _nfStyleLangs(style)).map(r => ({ ...r, seed, source: (r.source || 'wiktionary translation') })));
+      } catch (inner) {}
+    } catch (err) { failures++; console.warn('Name Forge translation expansion failed:', seed, err); }
   }
   const byKey = new Map();
   found.forEach(r => { if (r && r.root) byKey.set(`${r.root.toLowerCase()}|${r.lang || ''}|${r.source || ''}`, r); });
   nameForgeFetchedRoots = Array.from(byKey.values());
   renderNameForgeRootChips();
   if (status) {
-    status.className = found.length ? 'good' : 'error';
-    status.textContent = found.length ? `Fetched ${found.length} translation/root forms for ${style}. Click chips to pin/emphasize them.` : `No matching Wiktionary translations found for ${style}${failures ? ' (some lookups failed)' : ''}. Local root tables and fallback corpus still work.`;
+    status.className = nameForgeFetchedRoots.length ? 'good' : 'error';
+    status.textContent = nameForgeFetchedRoots.length ? `Fetched ${nameForgeFetchedRoots.length} translated/expanded forms for ${style}. Click chips to pin/emphasize them.` : `No translated/expanded forms found for ${style}${failures ? ' (some lookups failed)' : ''}. Local root tables and fallback corpus still work.`;
   }
   generateNameForgeResults();
 }
@@ -13633,11 +13737,14 @@ function generateNameForgeResults() {
   const styles = style === 'Mixed' ? Object.keys(NAME_FORGE_ROOTS) : [style];
   let parts = [];
   const wantedLangs = new Set(_nfStyleLangs(style));
-  seedWords.forEach(w => { parts.push(..._nfRootsForSeed(w, styles).map(root => ({ root, source:'local root' }))); });
+  const hasFetched = nameForgeFetchedRoots && nameForgeFetchedRoots.length;
+  if (!hasFetched) seedWords.forEach(w => { parts.push(..._nfRootsForSeed(w, styles).map(root => ({ root, source:'local root' }))); });
   nameForgeFetchedRoots.forEach(r => {
     if (!r || !r.root) return;
-    const weight = (r.lang && wantedLangs.has(r.lang) && /translation/.test(r.source || '')) ? 5
-      : (/translation/.test(r.source || '') ? 3 : 1);
+    const src = r.source || '';
+    const weight = (r.lang && wantedLangs.has(r.lang) && /romanized translation|machine translation|translation memory/.test(src)) ? 8
+      : (r.lang && wantedLangs.has(r.lang) && /related/.test(src) ? 5
+      : (/translation/.test(src) ? 4 : 2));
     for (let i = 0; i < weight; i++) parts.push(r);
   });
   pastedWords.slice(0, 60).forEach(w => parts.push(..._nfExtractFragments(w).map(root => ({ root, source:'manual corpus' }))));
