@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.0 · spells phase B</span>
+  <span class="topbar-version">v0.5.6 · unified library</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -1779,27 +1779,22 @@ body {
         </select>
         <select class="filter-select" id="filterCR" onchange="filterMonsters()">
           <option value="">Exact CR</option>
-          <option value="0">0</option><option value="1/8">1/8</option><option value="1/4">1/4</option>
-          <option value="1/2">1/2</option><option value="1">1</option><option value="2">2</option>
-          <option value="3">3</option><option value="4">4</option><option value="5">5</option>
-          <option value="6">6</option><option value="7">7</option><option value="8">8</option>
-          <option value="9">9</option><option value="10">10</option><option value="11">11</option>
-          <option value="12">12</option><option value="13">13</option><option value="14">14</option>
-          <option value="15">15</option><option value="16">16</option><option value="17">17</option>
-          <option value="18">18</option><option value="19">19</option><option value="20">20</option>
-          <option value="21">21</option><option value="22">22</option><option value="23">23</option>
-          <option value="24">24</option><option value="25">25</option><option value="26">26</option>
-          <option value="27">27</option><option value="28">28</option><option value="29">29</option>
-          <option value="30">30</option>
+          <option>0</option><option>1/8</option><option>1/4</option><option>1/2</option>
+          <option>1</option><option>2</option><option>3</option><option>4</option>
+          <option>5</option><option>6</option><option>7</option><option>8</option>
+          <option>9</option><option>10</option><option>11</option><option>12</option>
+          <option>13</option><option>14</option><option>15</option><option>16</option>
+          <option>17</option><option>18</option><option>19</option><option>20</option>
+          <option>21</option><option>22</option><option>23</option><option>24</option>
+          <option>25</option><option>26</option><option>27</option><option>28</option>
+          <option>29</option><option>30</option>
         </select>
-        <input class="filter-select" id="filterCRMin" type="number" min="0" max="30" step="0.125"
-               placeholder="CR Min" oninput="filterMonsters()">
-        <input class="filter-select" id="filterCRMax" type="number" min="0" max="30" step="0.125"
-               placeholder="CR Max" oninput="filterMonsters()">
+        <input class="filter-select" id="filterCRMin" type="number" min="0" max="30" step="0.125" placeholder="CR Min" oninput="filterMonsters()">
+        <input class="filter-select" id="filterCRMax" type="number" min="0" max="30" step="0.125" placeholder="CR Max" oninput="filterMonsters()">
       </div>
     </div>
     <div class="browser-list" id="browserList">
-      <div class="browser-loading">Loading SRD monsters…</div>
+      <div class="browser-loading">Loading monster library…</div>
     </div>
   </div>
 
@@ -2716,31 +2711,30 @@ let publishedSet = new Set();
 
 // ── INIT ──
 async function init() {
-  renderBrowserList(SRD_MONSTERS);
+  currentTab = 'custom';
   await loadCustomMonsters();
+  populateAdvancedFilters(customMonsters);
+  renderBrowserList(customMonsters);
 }
 
 // ── TAB ──
-
 function setTab(tab, btn) {
   currentTab = 'custom';
   document.querySelectorAll('.browser-tab').forEach(b => {
-    b.className = 'browser-tab';
+    b.classList.remove('active-srd','active-ds','active-custom');
   });
-  if (btn) btn.className = 'browser-tab active-custom';
+  if (btn) btn.classList.add('active-custom');
   loadCustomMonsters().then(() => filterMonsters());
 }
 
-
 // ── FILTER ──
-
 function normalizeCR(v) {
   if (v == null || v === '') return 0;
   if (typeof v === 'number') return v;
   const s = String(v).trim();
   if (s.includes('/')) {
-    const [a,b] = s.split('/').map(Number);
-    return b ? a / b : 0;
+    const parts = s.split('/').map(Number);
+    return parts[1] ? parts[0] / parts[1] : 0;
   }
   return Number(s) || 0;
 }
@@ -2761,8 +2755,8 @@ function populateAdvancedFilters(monsters) {
   const currentEnv = envSel.value;
   const currentSrc = srcSel.value;
 
-  const envs = [...new Set(monsters.map(monsterEnvironment).filter(Boolean))].sort();
-  const srcs = [...new Set(monsters.map(monsterSource).filter(Boolean))].sort();
+  const envs = [...new Set((monsters || []).map(monsterEnvironment).filter(Boolean))].sort();
+  const srcs = [...new Set((monsters || []).map(monsterSource).filter(Boolean))].sort();
 
   envSel.innerHTML = '<option value="">All Environments</option>' +
     envs.map(e => `<option value="${escapeHtml(e)}">${escapeHtml(e)}</option>`).join('');
@@ -2809,10 +2803,9 @@ function filterMonsters() {
   renderBrowserList(filtered);
 }
 
-
 // ── SELECT MONSTER (async for DS lazy-load) ──
 async function selectMonster(slug) {
-  const all = [...SRD_MONSTERS, ...DS_MONSTERS, ...customMonsters];
+  const all = [...customMonsters];
   currentMonster = all.find(m => m.slug === slug);
   if (!currentMonster) return;
 
@@ -2829,10 +2822,7 @@ async function selectMonster(slug) {
   syncUnpublishButton();
 
   // Refresh list to show selection highlight
-  const data = currentTab === 'srd' ? SRD_MONSTERS
-             : currentTab === 'ds'  ? DS_MONSTERS
-             : customMonsters;
-  renderBrowserList(data);
+  filterMonsters();
 }
 
 // ── RENDER EDITOR ──
@@ -4103,6 +4093,7 @@ async function loadCustomMonsters() {
       special: r.special_abilities || []
     }));
 
+    populateAdvancedFilters(customMonsters);
     if (currentTab === 'custom') renderBrowserList(customMonsters);
     return customMonsters.length;
   } catch (e) {
@@ -5355,19 +5346,6 @@ function rollDamageResult(formula, label, resultElId) {
   }
 }
 <\/script>
-
-<script>
-function mwUnifiedLibraryBoot() {
-  try {
-    currentTab = 'custom';
-    loadCustomMonsters().then(() => filterMonsters());
-  } catch(e) {
-    console.warn('Unified library boot failed', e);
-  }
-}
-window.addEventListener('load', () => setTimeout(mwUnifiedLibraryBoot, 250));
-</script>
-
 </body>
 </html>`);
   pw.document.close();
@@ -6625,19 +6603,6 @@ window.addEventListener('load', () => {
     }
   }, 1500);
 });
-</script>
-
-
-<script>
-function mwUnifiedLibraryBoot() {
-  try {
-    currentTab = 'custom';
-    loadCustomMonsters().then(() => filterMonsters());
-  } catch(e) {
-    console.warn('Unified library boot failed', e);
-  }
-}
-window.addEventListener('load', () => setTimeout(mwUnifiedLibraryBoot, 250));
 </script>
 
 </body>
