@@ -6892,18 +6892,35 @@ function chunkFlavorMessage(text, softMax) {
 // banner, producing visual clutter in the VTT. Stage 27: removed. Now
 // just one card per save-or-damage ability.
 function b20RollMonsterSave(monsterName, cr, ac, hp, abilityName, saveAbility, saveDC, damageFormula, damageType) {
+  // Accept both the original scalar form and the newer multi-damage array
+  // form used by NPC overrides. Beyond20 expects flat arrays for damages
+  // and damage-types; passing arrays into the old scalar wrapper produced
+  // nested arrays like damages:[['8d8']], which can make the mechanical
+  // card fail while the later flavor card still appears.
+  const damages = Array.isArray(damageFormula)
+    ? damageFormula.filter(Boolean)
+    : [damageFormula || '2d6'];
+
+  const damageTypes = Array.isArray(damageType)
+    ? damageType.filter(Boolean)
+    : [damageType || 'damage'];
+
+  while (damageTypes.length < damages.length) {
+    damageTypes.push('damage');
+  }
+
   b20Send({
     action: 'roll',
     type: 'attack',
     character: b20MakeMonsterChar(monsterName, cr, ac, hp),
-    roll: damageFormula,
+    roll: damages[0] || '2d6',
     advantage: 0,
     whisper: 0,
     name: abilityName + ' Damage',
     description: 'DC ' + saveDC + ' ' + saveAbility + ' save for half',
     'to-hit': '0',
-    damages: [damageFormula],
-    'damage-types': [damageType],
+    damages: damages,
+    'damage-types': damageTypes,
     'critical-damages': [],
     'critical-damage-types': [],
     rollAttack: false,
@@ -17337,6 +17354,33 @@ function wireNpcPeekClicks(nodeEl, node) {
 // Dispatch a roll from an NPC's stat-skin action. Display name is the
 // NPC's own title, not the source monster — the chat card reads
 // "Vrakar — Bite +5", not "Vrakar — Goblin: Bite +5".
+
+function _substituteNpcSkinName(text, sourceName, displayName) {
+  let out = _substituteMonsterName(text || '', sourceName || '', displayName || 'NPC');
+
+  // Workshop stat blocks may have a formal name like "Vecna the Archlich"
+  // while the prose uses only "Vecna". Also handle common comma titles.
+  const aliases = [];
+  const src = String(sourceName || '').trim();
+  if (src) {
+    aliases.push(src);
+    const commaBase = src.split(',')[0].trim();
+    if (commaBase && commaBase !== src) aliases.push(commaBase);
+    const theBase = src.split(/\s+the\s+/i)[0].trim();
+    if (theBase && theBase !== src) aliases.push(theBase);
+  }
+
+  aliases
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .forEach(alias => {
+      const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      out = out.replace(new RegExp('\\b' + escaped + '\\b', 'gi'), displayName || 'NPC');
+    });
+
+  return out;
+}
+
 function dispatchNpcRoll(node, skin, action, advantage) {
   const sn = skin.snapshot || {};
   const displayName = node.title || 'NPC';
@@ -17368,7 +17412,7 @@ if (resolved.extra) {
       range: resolved.range || '',
       // Stage 38: substitute the skin's source name with the NPC's title in
       // the prose, so the description reads as the NPC, not the stat block.
-      description: _substituteMonsterName(resolved.desc || '', sn.name, displayName)
+      description: _substituteNpcSkinName(resolved.desc || '', sn.name, displayName)
     }, advantage);
     // Description rides inside the attack card — see dispatchMonsterRoll
     // for the same rationale on the encounter side.
@@ -17392,7 +17436,7 @@ b20RollMonsterSave(displayName,  cr,  ac,  hp,  resolved.name,  saveAbility,  sa
     // for full rationale). Falls back to the original prose if stripping
     // would leave too little. Stage 38: also substitute the skin's source
     // name with the NPC's title.
-    const cleanDesc = _substituteMonsterName(stripSaveBoilerplate(resolved.desc), sn.name, displayName);
+    const cleanDesc = _substituteNpcSkinName(stripSaveBoilerplate(resolved.desc), sn.name, displayName);
     if (cleanDesc) {
       b20SendFlavor(displayName, cr, ac, hp, resolved.name, cleanDesc, 300);
     }
@@ -17419,8 +17463,8 @@ function dispatchNpcSpell(node, skin, attachRef, advantage) {
   const dc = sn.spell_save_dc != null ? sn.spell_save_dc : null;
   const ab = sn.spell_attack_bonus || '';
   const subbed = Object.assign({}, spell, {
-    description:   _substituteMonsterName(spell.description   || '', sn.name, displayName),
-    higher_levels: _substituteMonsterName(spell.higher_levels || '', sn.name, displayName),
+    description:   _substituteNpcSkinName(spell.description   || '', sn.name, displayName),
+    higher_levels: _substituteNpcSkinName(spell.higher_levels || '', sn.name, displayName),
   });
   b20RollMonsterSpell(displayName, cr, ac, hp, subbed, attachRef, dc, ab, advantage);
 }
@@ -17449,8 +17493,8 @@ function dispatchMonsterSpell(imported, attachRef, advantage, dispatchNode) {
   // Substitute the source monster name in the prose so a re-skinned
   // group's spells read with the override name (Stage 38 pattern).
   const subbed = Object.assign({}, spell, {
-    description:   _substituteMonsterName(spell.description   || '', sn.name, displayName),
-    higher_levels: _substituteMonsterName(spell.higher_levels || '', sn.name, displayName),
+    description:   _substituteNpcSkinName(spell.description   || '', sn.name, displayName),
+    higher_levels: _substituteNpcSkinName(spell.higher_levels || '', sn.name, displayName),
   });
   b20RollMonsterSpell(displayName, cr, ac, hp, subbed, attachRef, dc, ab, advantage);
 }
@@ -17507,7 +17551,7 @@ console.log("RESOLVED:", resolved);
       range: resolved.range || '',
       // Stage 38: substitute source monster name in prose so a re-skinned
       // group reads "The Null Maw spits…" instead of "The ankheg spits…".
-      description: _substituteMonsterName(resolved.desc || '', sn.name, displayName)
+      description: _substituteNpcSkinName(resolved.desc || '', sn.name, displayName)
     }, advantage);
     // Beyond20 renders the description inside the attack card, so we
     // don't send a separate flavor card here — that produced visible
@@ -17530,7 +17574,7 @@ console.log("RESOLVED:", resolved);
   if (resolved.desc && String(resolved.desc).trim()) {
     // Stage 38: substitute source name → display name in the cleaned prose
     // so flavor cards match the renamed group/instance.
-    const cleanDesc = _substituteMonsterName(stripSaveBoilerplate(resolved.desc), sn.name, displayName);
+    const cleanDesc = _substituteNpcSkinName(stripSaveBoilerplate(resolved.desc), sn.name, displayName);
     // Skip flavor entirely if stripping cleared everything (unusual prose
     // that was 100% save-mechanics, e.g. some bare-bones SRD entries).
     if (cleanDesc) {
