@@ -4008,46 +4008,45 @@ function updatePublishedPill() {
 }
 
 async function loadCustomMonsters() {
-  // v0.3.6 — fire the published-set fetch in parallel; it doesn't block
-  // the main rq_monsters load and it's fine if it lags slightly.
   loadPublishedSet();
+
   try {
-    const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?order=created_at.desc`, { headers: sbHeaders() });
-    if (res.ok) {
-      const PAGE = 1000;
-let allRows = [];
-let offset = 0;
+    const PAGE = 1000;
+    let allRows = [];
+    let offset = 0;
 
-while (true) {
-  const res = await fetch(
-    `${SB_URL}/rest/v1/rq_monsters?select=*&order=name.asc&limit=${PAGE}&offset=${offset}`,
-    { headers: { ...sbHeaders(), 'Prefer': 'count=none' } }
-  );
+    while (true) {
+      const res = await fetch(
+        `${SB_URL}/rest/v1/rq_monsters?select=*&order=name.asc&limit=${PAGE}&offset=${offset}`,
+        { headers: { ...sbHeaders(), 'Prefer': 'count=none' } }
+      );
 
-  const batch = await res.json();
-  allRows = allRows.concat(batch);
+      if (!res.ok) {
+        const err = await res.text();
+        console.warn('loadCustomMonsters HTTP', res.status, err);
+        return 0;
+      }
 
-  if (batch.length < PAGE) break;
-  offset += PAGE;
-}
-      customMonsters = rows.map(r => ({
-        ...r,
-        slug:    'custom-' + r.id,
-        type:    r.monster_type || r.tags?.[0] || 'custom',
-        source:  'custom',
-        actions: r.actions || [],
-        special_abilities: r.special_abilities || [],
-        special: r.special_abilities || []
-      }));
-      // Always re-render if we're already on the custom tab
-      if (currentTab === 'custom') renderBrowserList(customMonsters);
-      return customMonsters.length;
-    } else {
-      const err = await res.text();
-      console.warn('loadCustomMonsters HTTP', res.status, err);
-      return 0;
+      const batch = await res.json();
+      allRows = allRows.concat(batch);
+
+      if (batch.length < PAGE) break;
+      offset += PAGE;
     }
-  } catch(e) {
+
+    customMonsters = allRows.map(r => ({
+      ...r,
+      slug: 'custom-' + r.id,
+      type: r.monster_type || r.tags?.[0] || 'custom',
+      source: 'custom',
+      actions: r.actions || [],
+      special_abilities: r.special_abilities || [],
+      special: r.special_abilities || []
+    }));
+
+    if (currentTab === 'custom') renderBrowserList(customMonsters);
+    return customMonsters.length;
+  } catch (e) {
     console.warn('loadCustomMonsters error:', e);
     return 0;
   }
