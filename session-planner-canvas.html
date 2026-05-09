@@ -16813,6 +16813,9 @@ function renderNpcSkinFaceHtml(node) {
       <div class="node-mon ${isDead ? 'dead' : ''} ${isDeact ? 'deactivated' : ''} singleton" data-npc-card="1" style="margin-top:6px;">
         <div class="node-mon-header">
           <span class="node-mon-name" style="flex:1;">${escHtml(node.title || 'NPC')}</span>
+          <button class="node-mon-readout-btn" data-npc-readout="${escAttr(skin.monster_id || sn.id || '')}|${escAttr(sn.name || '')}"
+                  type="button"
+                  title="Open read-only stat block (immunities, resistances, full traits)">📖</button>
           <button class="node-mon-deact-btn ${isDeact ? 'is-deactivated' : ''}"
                   data-npc-peek-deact="1" type="button"
                   title="${isDeact ? 'Reactivate this NPC' : 'Sideline this NPC (kept on the canvas, just out of the fight)'}"
@@ -16821,11 +16824,26 @@ function renderNpcSkinFaceHtml(node) {
                   data-npc-peek-toggle="1" type="button"
                   title="Show / hide statblock peek">${peekOpen ? '▼ peek' : '▶ peek'}</button>
         </div>
-        ${actions.length ? `
-          <div class="node-mon-actions">
-            ${actions.map((a, ai) => renderNpcActionButton(a, ai)).join('')}
-          </div>` : '<div class="node-mon-stats" style="opacity:0.6;">No rollable actions on this stat block.</div>'}
-        ${renderNpcTriggerButtons(specials)}
+        ${(() => {
+          // Mirror encounter monster skins: hidden actions/triggers vanish
+          // unless the DM toggles the small hidden-count pill.
+          const showHidden = !!skin._showHidden;
+          let hiddenCount = 0;
+          actions.forEach(a => { if (a && a._override && a._override.hidden) hiddenCount++; });
+          specials.forEach(s => { if (s && s._override && s._override.hidden) hiddenCount++; });
+          const pill = hiddenCount > 0
+            ? `<button class="node-mon-show-hidden ${showHidden ? 'on' : ''}"
+                       data-npc-show-hidden="1" type="button"
+                       title="${showHidden ? 'Hide the ' + hiddenCount + ' hidden action(s) again' : 'Show ' + hiddenCount + ' hidden action(s) so you can un-hide them'}">
+                ${showHidden ? '◉' : '◎'} ${hiddenCount} hidden
+              </button>`
+            : '';
+          const actionItems = actions.map((a, ai) => renderNpcActionButton(a, ai, { showHidden })).join('');
+          const actionsHtml = actionItems
+            ? `<div class="node-mon-actions">${actionItems}${pill}</div>`
+            : (pill ? `<div class="node-mon-actions">${pill}</div>` : '<div class="node-mon-stats" style="opacity:0.6;">No rollable actions on this stat block.</div>');
+          return actionsHtml + renderNpcTriggerButtons(specials, { showHidden });
+        })()}
         ${renderNpcSpellButtons(skin, node)}
         ${renderNpcOverrideEditor(skin)}
         <div class="node-mon-peek ${peekOpen ? 'open' : ''}" data-npc-peek-body="1">
@@ -16837,8 +16855,9 @@ function renderNpcSkinFaceHtml(node) {
 
 // NPC trigger buttons — same shape as encounter triggers, NPC-prefixed
 // data attributes so click handlers don't collide.
-function renderNpcTriggerButtons(specials) {
+function renderNpcTriggerButtons(specials, opts) {
   if (!Array.isArray(specials) || !specials.length) return '';
+  const showHidden = !!(opts && opts.showHidden);
 
   const items = [];
 
@@ -16846,6 +16865,7 @@ function renderNpcTriggerButtons(specials) {
     if (!s || !s.name) return;
 
     const m = resolveAbilityMechanics(s);
+    if (m.hidden && !showHidden) return;
     const isRollable = !!(
       m.toHit ||
       m.toHit === 0 ||
@@ -16859,7 +16879,7 @@ function renderNpcTriggerButtons(specials) {
 
     const hasOverride = !!(
       s._override &&
-      Object.keys(s._override).some(k => s._override[k] !== '' && s._override[k] != null)
+      Object.keys(s._override).some(k => s._override[k] !== '' && s._override[k] != null && s._override[k] !== false)
     );
 
     const desc = escAttr(
@@ -16871,11 +16891,19 @@ function renderNpcTriggerButtons(specials) {
     );
 
     if (isRollable) {
-      items.push(`<span class="node-mon-roll-wrap${hasOverride ? ' has-override' : ''}">
+      const overrideClasses = [
+        hasOverride ? 'has-override' : '',
+        m.hidden    ? 'is-hidden'    : '',
+      ].filter(Boolean).join(' ');
+      const nameGhost = (s._override && s._override.name && s._override.name !== s.name)
+        ? `<span class="node-mon-roll-source" title="Source trigger name">${escHtml(s.name)}</span>`
+        : '';
+      items.push(`<span class="node-mon-roll-wrap${overrideClasses ? ' ' + overrideClasses : ''}">
         <button class="node-mon-roll-btn save" data-npc-trigger="${sIdx}" type="button"
-                title="Trigger ${escAttr(s.name)}${hasOverride ? ' — has override' : ''}">
-          <span class="roll-icon">⚡</span>${escHtml(s.name)}${rangeChip}
+                title="Trigger ${escAttr(m.name)}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
+          <span class="roll-icon">⚡</span>${escHtml(m.name)}${rangeChip}
         </button>
+        ${nameGhost}
         <button class="node-mon-edit-btn" data-npc-edit="${sIdx}-trigger" type="button"
                 title="Override trigger values">✎</button>
       </span>`);
@@ -16883,7 +16911,7 @@ function renderNpcTriggerButtons(specials) {
       items.push(`<span class="node-mon-roll-wrap passive">
         <button class="node-mon-roll-btn passive" type="button"
                 title="${desc || escAttr(s.name)}">
-          <span class="roll-icon">ⓘ</span>${escHtml(s.name)}
+          <span class="roll-icon">ⓘ</span>${escHtml(m.name)}
         </button>
       </span>`);
     }
@@ -16981,6 +17009,9 @@ function renderNpcOverrideEditor(skin) {
         Override <span class="ov-name">${escHtml(a.name || '?')}</span>
       </div>
       <div class="node-mon-override-grid">
+        <label class="ov-name-field">Display Name <span class="ov-hint">(rename for theme — e.g. "Acid Spray" → "Gelatinous Burst")</span>
+          <input type="text" data-ov-key="name"        value="${escAttr(ov.name || '')}"        ${ph(a.name)}>
+        </label>
         <label>To-Hit
           <input type="text" data-ov-key="toHit"       value="${escAttr(ov.toHit || '')}"       ${ph(r.toHit)}>
         </label>
@@ -17008,6 +17039,10 @@ function renderNpcOverrideEditor(skin) {
         <label>Extra Type <span class="ov-hint">(e.g. lightning)</span>
           <input type="text" data-ov-key="extraType"   value="${escAttr(ov.extraType || '')}"   ${ph(r.extraType)}>
         </label>
+        <label class="ov-checkbox-field">
+          <input type="checkbox" data-ov-key="hidden" ${ov.hidden ? 'checked' : ''}>
+          Hide this ${editing.kind === 'trigger' ? 'trigger' : 'action'} <span class="ov-hint">(skinned creature can't use it — e.g., a non-biting Ankheg-skin)</span>
+        </label>
       </div>
       <div class="node-mon-override-actions">
         <button class="clear" data-ov-action="clear" type="button">Clear All</button>
@@ -17018,39 +17053,55 @@ function renderNpcOverrideEditor(skin) {
 }
 
 // NPCs use the same action button look but with NPC-prefixed data attributes.
-function renderNpcActionButton(a, actIdx) {
+function renderNpcActionButton(a, actIdx, opts) {
   if (!a || !a.name) return '';
 
   const m = resolveAbilityMechanics(a);
+  const showHidden = !!(opts && opts.showHidden);
+  if (m.hidden && !showHidden) return '';
+
   const isAttack = !!(m.toHit || m.toHit === 0);
   const isSave   = !!(m.saveDC || m.damage);
   const isRollable = !!(isAttack || isSave);
 
-  const rangeChip = (m.range && !a.name.includes('ft'))
+  const rangeChip = (m.range && !m.name.includes('ft'))
     ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>`
     : '';
 
   const hasOverride = !!(
     a._override &&
-    Object.keys(a._override).some(k => a._override[k] !== '' && a._override[k] != null)
+    Object.keys(a._override).some(k => a._override[k] !== '' && a._override[k] != null && a._override[k] !== false)
   );
+
+  const overrideClasses = [
+    hasOverride ? 'has-override' : '',
+    m.hidden    ? 'is-hidden'    : '',
+  ].filter(Boolean).join(' ');
+
+  const nameGhost = (a._override && a._override.name && a._override.name !== a.name)
+    ? `<span class="node-mon-roll-source" title="Source action name">${escHtml(a.name)}</span>`
+    : '';
 
   if (!isRollable) {
     const desc = escAttr(m.desc || a.desc || a.description || a.text || '');
-    return `<span class="node-mon-roll-wrap passive">
+    return `<span class="node-mon-roll-wrap passive${overrideClasses ? ' ' + overrideClasses : ''}">
       <button class="node-mon-roll-btn passive" type="button"
-              title="${desc || escAttr(a.name)}">
-        <span class="roll-icon">ⓘ</span>${escHtml(a.name)}
+              title="${desc || escAttr(m.name)}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
+        <span class="roll-icon">ⓘ</span>${escHtml(m.name)}
       </button>
+      ${nameGhost}
+      <button class="node-mon-edit-btn" data-npc-edit="${actIdx}-action" type="button"
+              title="Override action values">✎</button>
     </span>`;
   }
 
   const cls = (isSave && !isAttack) ? 'node-mon-roll-btn save' : 'node-mon-roll-btn';
-  return `<span class="node-mon-roll-wrap${hasOverride ? ' has-override' : ''}">
+  return `<span class="node-mon-roll-wrap${overrideClasses ? ' ' + overrideClasses : ''}">
     <button class="${cls}" data-npc-roll="${actIdx}" type="button"
-            title="Roll ${escAttr(a.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}">
-            <span class="roll-icon">🎲</span>${escHtml(a.name)}${rangeChip}
+            title="Roll ${escAttr(m.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
+            <span class="roll-icon">🎲</span>${escHtml(m.name)}${rangeChip}
     </button>
+    ${nameGhost}
     <button class="node-mon-edit-btn" data-npc-edit="${actIdx}-action" type="button"
             title="Override action values">✎</button>
   </span>`;
@@ -17137,6 +17188,8 @@ function wireNpcPeekClicks(nodeEl, node) {
     'button[data-npc-edit]',
     'button[data-npc-peek-toggle]',
     'button[data-npc-peek-deact]',
+    'button[data-npc-readout]',
+    'button[data-npc-show-hidden]',
     'button[data-npc-peek-mult-delta]',
     'button[data-npc-peek-hp]',
     'button[data-ov-action]',
@@ -17186,6 +17239,31 @@ function wireNpcPeekClicks(nodeEl, node) {
       const ref = sn.spells[refIdx];
       if (!ref) return;
       dispatchNpcSpell(node, skin, ref, _advFromEvent(e));
+    });
+  });
+
+
+  // NPC statblock readout button (📖) — same modal used by encounter monsters.
+  nodeEl.querySelectorAll('button[data-npc-readout]').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const raw = btn.dataset.npcReadout || '';
+      const idx = raw.indexOf('|');
+      const monsterId = idx >= 0 ? raw.slice(0, idx) : raw;
+      const fallbackName = idx >= 0 ? raw.slice(idx + 1) : '';
+      openStatblockReadout(monsterId, fallbackName);
+    });
+  });
+
+  // Show hidden NPC actions/triggers so they can be restored via ✎.
+  nodeEl.querySelectorAll('button[data-npc-show-hidden]').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      skin._showHidden = !skin._showHidden;
+      refreshNodeFace(node);
+      wireNpcPeekClicks(node.el, node);
     });
   });
 
@@ -17240,12 +17318,19 @@ function wireNpcPeekClicks(nodeEl, node) {
           const next = {};
           panel.querySelectorAll('[data-ov-key]').forEach(input => {
             const k = input.dataset.ovKey;
+            if (input.type === 'checkbox') {
+              if (input.checked) next[k] = true;
+              return;
+            }
             const v = (input.value || '').trim();
             if (v !== '') next[k] = v;
           });
           if (next.saveDC) {
             const n = parseInt(next.saveDC);
             if (!isNaN(n)) next.saveDC = n;
+          }
+          if (next.name && next.name === a.name) {
+            delete next.name;
           }
           if (Object.keys(next).length) {
             a._override = next;
