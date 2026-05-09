@@ -3914,6 +3914,21 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   outline: none;
 }
 .sp-header .sp-title-input:focus { border-color: var(--gold); border-radius: 3px; }
+.sp-name-forge-title-btn {
+  align-self: flex-start;
+  margin-top: 2px;
+  background: rgba(184,134,11,0.14);
+  border: 1px solid rgba(184,134,11,0.45);
+  color: var(--gold-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
+  border-radius: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+.sp-name-forge-title-btn:hover { background: rgba(184,134,11,0.28); border-color: var(--gold); color: var(--gold-bright); }
 
 /* Scope row — the small pill below the title showing current scope/coll. */
 .sp-scope-row {
@@ -6444,6 +6459,7 @@ body.mobile-mode #sb-modal { display: none !important; }
              data-gramm_editor="false"
              data-enable-grammarly="false"
              data-lt-active="false">
+      <button class="sp-name-forge-title-btn" id="spNameForgeTitleBtn" type="button" style="display:none;">⚒ Name Forge</button>
       <div class="sp-scope-row">
         <button class="sp-scope-pill" id="spScopePill" onclick="openScopeMenu(event)" title="Change scope and collection">
           <span class="sp-scope-label" id="spScopeLabel">Session</span>
@@ -10271,6 +10287,7 @@ function openArcFrameNodeInSidePanel(nodeId) {
   spIcon.textContent      = def.icon;
   spTypeBadge.textContent = def.label;
   spTitle.value = an.title || def.defaultTitle || 'Untitled';
+  updateNameForgeTitleButton(an);
   renderSidePanelBody({ ...an, type: an.type, fields: an.fields || {} }, def);
   refreshScopePill();
   sidePanel.classList.add('open');
@@ -10358,6 +10375,7 @@ function openFrameNodeInSidePanel(nodeId) {
   spIcon.textContent      = def.icon;
   spTypeBadge.textContent = def.label;
   spTitle.value = cn.title || def.defaultTitle || 'Untitled';
+  updateNameForgeTitleButton(cn);
   renderSidePanelBody({ ...cn, type: cn.type, fields: cn.fields || {} }, def);
   refreshScopePill();
   sidePanel.classList.add('open');
@@ -12862,6 +12880,7 @@ const sidePanel = document.getElementById('side-panel');
 const spIcon      = document.getElementById('spIcon');
 const spTypeBadge = document.getElementById('spTypeBadge');
 const spTitle     = document.getElementById('spTitle');
+const spNameForgeTitleBtn = document.getElementById('spNameForgeTitleBtn');
 const spBody      = document.getElementById('spBody');
 const spSaved     = document.getElementById('spSaved');
 
@@ -12883,6 +12902,7 @@ function openSidePanel(node) {
   spIcon.textContent      = def.icon;
   spTypeBadge.textContent = def.label;
   spTitle.value           = node.title || '';
+  updateNameForgeTitleButton(node);
   renderSidePanelBody(node, def);
   refreshScopePill();
   sidePanel.classList.add('open');
@@ -12895,6 +12915,7 @@ function closeSidePanel() {
   // Flush any pending autosave
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; commitOpenNodeFromForm(); }
   sidePanel.classList.remove('open');
+  updateNameForgeTitleButton(null);
   openNodeId = null;
 }
 
@@ -13300,14 +13321,21 @@ const NAME_FORGE_STYLE_LANGS = {
 const NAME_FORGE_LANG_LABELS = { la:'Latin', grc:'Ancient Greek', el:'Greek', non:'Old Norse', is:'Icelandic', no:'Norwegian', cy:'Welsh', sa:'Sanskrit', ja:'Japanese', he:'Hebrew', hbo:'Biblical Hebrew' };
 
 function renderNameForgeLauncher(node) {
-  if (!node || (node.type !== 'npc' && node.type !== 'scene')) return '';
+  // Kept as a no-op compatibility hook. The launcher now lives directly
+  // beneath the side-panel title, wired by updateNameForgeTitleButton().
+  return '';
+}
+function updateNameForgeTitleButton(node) {
+  if (!spNameForgeTitleBtn) return;
+  if (!node || (node.type !== 'npc' && node.type !== 'scene')) {
+    spNameForgeTitleBtn.style.display = 'none';
+    spNameForgeTitleBtn.onclick = null;
+    return;
+  }
   const target = node.type === 'npc' ? 'name' : 'location';
-  const label = node.type === 'npc' ? 'NPC name' : 'location name';
-  return `<div class="sp-section-title">Name Forge</div>
-    <div class="sp-row full span2"><div class="sp-name-forge-row">
-      <span>Generate a ${label} from seed words, pasted roots, and local style presets.</span>
-      <button class="sp-name-forge-btn" type="button" data-name-forge-open="${escAttr(target)}">⚒ Open Name Forge</button>
-    </div></div>`;
+  spNameForgeTitleBtn.textContent = node.type === 'npc' ? '⚒ Forge NPC Name' : '⚒ Forge Scene Name';
+  spNameForgeTitleBtn.style.display = '';
+  spNameForgeTitleBtn.onclick = () => openNameForge(target);
 }
 function getOpenNodeForNameForge() {
   if (!openNodeId) return null;
@@ -13561,9 +13589,25 @@ function renderNameForgeResults() {
 function applyNameForgeName(name) {
   if (!nameForgeCtx) return;
   const targetKey = nameForgeCtx.targetKey || (nameForgeCtx.nodeType === 'scene' ? 'location' : 'name');
+
+  // Update the visible side-panel controls first, so the transfer feels instant.
   const field = spBody && spBody.querySelector(`[data-field-key="${targetKey}"]`);
   if (field) field.value = name;
   if (spTitle) spTitle.value = name;
+
+  // Then write directly to the currently edited node. This avoids relying only
+  // on input events, and ensures campaign/arc frame nodes also receive the
+  // forged name/title as soon as the user clicks Use.
+  const node = getOpenNodeForNameForge();
+  if (node) {
+    node.title = name;
+    node.fields = node.fields || {};
+    node.fields[targetKey] = name;
+    const def = BLOCK_TYPES[node.type] || BLOCK_TYPES.scene;
+    const sumField = (def.fields || []).find(f => f.summary);
+    if (sumField) node.summary = node.fields[sumField.key] || '';
+  }
+
   if (typeof commitOpenNodeFromForm === 'function') commitOpenNodeFromForm();
   setSavedState('saved');
   closeNameForge();
