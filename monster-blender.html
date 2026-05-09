@@ -1211,6 +1211,53 @@ function selectPickerMonster(slug) {
   document.getElementById('btnSwapRole').style.display = (baseMonster && donorMonster) ? 'inline-flex' : 'none';
 }
 
+
+// ── FEATURE NORMALIZATION HELPERS ──
+// Monster Workshop DB rows use special_abilities; older SRD/local rows use special.
+// Foundry imports can also place description-only features (Multiattack, Spellcasting,
+// breath weapons, etc.) in actions. Keep those visible and graftable instead of
+// filtering them out just because they do not have toHit/damage fields.
+function getMonsterActions(m) {
+  return Array.isArray(m?.actions) ? m.actions.filter(Boolean) : [];
+}
+
+function isAttackAction(a) {
+  return !!(a && (a.toHit || a.damage || a.dmgType || a.extra));
+}
+
+function isDescriptionOnlyAction(a) {
+  return !!(a && !isAttackAction(a) && (a.desc || a.description || a.effect || a.name));
+}
+
+function getMonsterSpecials(m) {
+  const arr = Array.isArray(m?.special_abilities) ? m.special_abilities
+            : Array.isArray(m?.special) ? m.special
+            : [];
+  return arr.filter(Boolean);
+}
+
+function getMonsterSpells(m) {
+  return Array.isArray(m?.spells) ? m.spells.filter(Boolean) : [];
+}
+
+function spellDisplayName(spell) {
+  return spell?.name || spell?.title || spell?.spell_name || spell?.spellName || spell?.slug || spell?.spell_id || 'Unnamed Spell';
+}
+
+function spellDisplayDesc(spell) {
+  const parts = [];
+  if (spell?.level != null) parts.push('Level ' + spell.level);
+  if (spell?.school) parts.push(spell.school);
+  if (spell?.usage || spell?.uses) parts.push(spell.usage || spell.uses);
+  if (spell?.desc || spell?.description || spell?.effect) parts.push(spell.desc || spell.description || spell.effect);
+  return parts.join(' · ');
+}
+
+function normalizeSpellFeature(spell) {
+  if (!spell || typeof spell !== 'object') return { name: String(spell || 'Unnamed Spell'), desc: '' };
+  return { ...spell, name: spellDisplayName(spell), desc: spellDisplayDesc(spell) };
+}
+
 // ── RENDER BASE PANEL ──
 function renderBasePanel(m) {
   const body = document.getElementById('baseBody');
@@ -1219,22 +1266,34 @@ function renderBasePanel(m) {
   // Stat block summary
   body.appendChild(makeStatSection(m, 'base'));
 
-  // Actions — shown but not graftable (they're already on the base)
-  if ((m.actions || []).length) {
+  // Actions — shown but not graftable (they're already on the base). Includes
+  // both attack actions and description-only actions such as Multiattack,
+  // Spellcasting, possession, summons, breath weapons, etc.
+  const actions = getMonsterActions(m);
+  if (actions.length) {
     const sec = makeComponentSection('⚔️ Actions', 'base');
-    (m.actions || []).forEach(a => {
-      if (a.type === 'special' || (!a.toHit && !a.damage)) return; // skip multiattack labels
+    actions.forEach(a => {
       sec.querySelector('.component-list').appendChild(makeComponent(a, m, 'action', false));
     });
-    if (sec.querySelector('.component-list').children.length) body.appendChild(sec);
+    body.appendChild(sec);
   }
 
-  // Special abilities
-  if ((m.special || m.special_abilities || []).length) {
-    const arr = m.special || m.special_abilities || [];
+  // Special abilities / traits
+  const specials = getMonsterSpecials(m);
+  if (specials.length) {
     const sec = makeComponentSection('⭐ Traits', 'base');
-    arr.forEach(a => {
+    specials.forEach(a => {
       sec.querySelector('.component-list').appendChild(makeComponent(a, m, 'trait', false));
+    });
+    body.appendChild(sec);
+  }
+
+  // Spells, if a future/alternate importer provides them on the monster row.
+  const spells = getMonsterSpells(m);
+  if (spells.length) {
+    const sec = makeComponentSection('🪄 Spells', 'base');
+    spells.map(normalizeSpellFeature).forEach(sp => {
+      sec.querySelector('.component-list').appendChild(makeComponent(sp, m, 'spell', false));
     });
     body.appendChild(sec);
   }
@@ -1247,8 +1306,10 @@ function renderDonorPanel(m) {
 
   body.appendChild(makeStatSection(m, 'donor'));
 
-  // Actions — graftable
-  const actions = (m.actions || []).filter(a => a.toHit || a.damage);
+  // Actions — graftable. Includes both attack actions and description-only
+  // actions. Do not drop Multiattack/Spellcasting/etc. just because they do not
+  // have toHit/damage fields.
+  const actions = getMonsterActions(m);
   if (actions.length) {
     const sec = makeComponentSection('⚔️ Actions (click to graft)', 'donor');
     actions.forEach(a => {
@@ -1258,11 +1319,22 @@ function renderDonorPanel(m) {
   }
 
   // Special / traits — graftable
-  const specials = m.special || m.special_abilities || [];
+  const specials = getMonsterSpecials(m);
   if (specials.length) {
     const sec = makeComponentSection('⭐ Traits (click to graft)', 'donor');
     specials.forEach(a => {
       sec.querySelector('.component-list').appendChild(makeComponent(a, m, 'trait', true));
+    });
+    body.appendChild(sec);
+  }
+
+  // Spells — graftable if present on the monster row. This preserves future
+  // spell imports without requiring the simplified quest/content projection.
+  const spells = getMonsterSpells(m);
+  if (spells.length) {
+    const sec = makeComponentSection('🪄 Spells (click to graft)', 'donor');
+    spells.map(normalizeSpellFeature).forEach(sp => {
+      sec.querySelector('.component-list').appendChild(makeComponent(sp, m, 'spell', true));
     });
     body.appendChild(sec);
   }
@@ -1372,8 +1444,9 @@ function makeComponent(feature, fromMonster, type, graftable) {
   const div = document.createElement('div');
   div.className = 'component' + (graftable ? ' graftable' : '');
 
-  const icons = { action: '⚔️', trait: '⭐', legendary: '👑', immunity: '🛡️', movement: '🏃' };
-  const typeLabels = { action: 'Action', trait: 'Trait', legendary: 'Legendary Action', immunity: 'Immunity', movement: 'Movement' };
+  const icons = { action: '⚔️', trait: '⭐', legendary: '👑', immunity: '🛡️', movement: '🏃', spell: '🪄' };
+  const actionLabel = isAttackAction(feature) ? 'Attack Action' : 'Special Action';
+  const typeLabels = { action: actionLabel, trait: 'Trait', legendary: 'Legendary Action', immunity: 'Immunity', movement: 'Movement', spell: 'Spell' };
 
   const id = feature.slug || feature.name + '_' + type + '_' + fromMonster.slug;
   const alreadyGrafted = graftedItems.some(g => g.id === id);
@@ -1632,7 +1705,7 @@ async function saveBlend() {
   const cr    = document.getElementById('resultCr').value.trim()        || baseMonster.cr    || '1';
 
   // Build actions: base actions + grafted actions
-  const baseActions    = (baseMonster.actions || []).filter(a => a.toHit || a.damage);
+  const baseActions    = getMonsterActions(baseMonster);
   const graftedActions = graftedItems.filter(g => g.type === 'action').map(g => ({
     ...g.feature,
     desc: (g.feature.desc || '') + (g.feature.desc ? '' : '') + ' [Grafted from ' + g.fromMonster.name + ']'
@@ -1641,12 +1714,20 @@ async function saveBlend() {
 
   // Build special abilities: base specials + grafted traits
   // Normalise: SRD monsters use .special, DB monsters use .special_abilities, blender maps both
-  const baseSpecials    = baseMonster.special_abilities || baseMonster.special || [];
+  const baseSpecials    = getMonsterSpecials(baseMonster);
   const graftedTraits   = graftedItems.filter(g => g.type === 'trait').map(g => ({
     name: g.feature.name,
     desc: (g.feature.desc || g.feature.description || '') + ' [Grafted from ' + g.fromMonster.name + ']'
   }));
   const allSpecials = [...baseSpecials, ...graftedTraits];
+
+  // Spells: preserve base spell list and add grafted spell objects if present.
+  const baseSpells    = getMonsterSpells(baseMonster);
+  const graftedSpells = graftedItems.filter(g => g.type === 'spell').map(g => ({
+    ...g.feature,
+    desc: (g.feature.desc || g.feature.description || '') + ' [Grafted from ' + g.fromMonster.name + ']'
+  }));
+  const allSpells = [...baseSpells, ...graftedSpells];
 
   // Legendary actions
   const baseLeg    = baseMonster.legendary_actions || [];
@@ -1688,6 +1769,7 @@ async function saveBlend() {
     languages:    baseMonster.languages || '',
     actions:      allActions,
     special_abilities: allSpecials,
+    spells:       allSpells,
     legendary:    isLegendary,
     legendary_resistance: baseMonster.legendary_resistance || 0,
     legendary_actions:    allLeg,
