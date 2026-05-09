@@ -6397,13 +6397,22 @@ body.mobile-mode #sb-modal { display: none !important; }
             <input id="nf-count" type="number" min="3" max="24" value="10">
           </div>
         </div>
-        <div class="name-forge-field full">
-          <label for="nf-pasted">Optional Pasted Translation / Related Words</label>
-          <textarea id="nf-pasted" placeholder="Paste related words from a dictionary, notes, or Google Translate. The forge extracts roots locally; it does not call an API."></textarea>
+        <div class="name-forge-source-note">
+          Wiktionary lookup uses the public MediaWiki API to harvest translation and etymology-like fragments, then recombines them locally. No Google Translate scraping.
         </div>
         <div class="name-forge-actions">
+          <button type="button" onclick="fetchNameForgeRoots()">Fetch Roots</button>
           <button type="button" onclick="generateNameForgeResults()">Regenerate</button>
           <button type="button" onclick="clearNameForgeInputs()">Clear</button>
+        </div>
+        <div id="name-forge-root-status"></div>
+        <div class="name-forge-field full">
+          <label>Extracted Root Chips</label>
+          <div id="name-forge-root-chips"><span class="name-forge-empty">Fetch roots or add seed words.</span></div>
+        </div>
+        <div class="name-forge-field full">
+          <label for="nf-pasted">Manual Fallback Corpus</label>
+          <textarea id="nf-pasted" placeholder="Optional: paste dictionary entries, synonyms, roots, or your own notes. The forge will extract additional fragments from this text."></textarea>
         </div>
         <div id="name-forge-scratch">
           <h4>Scratch List</h4>
@@ -13246,6 +13255,8 @@ function promoteOrDemoteOpenNode(newScope, newCollectionId) {
 let nameForgeCtx = null;       // { nodeId, frame, targetKey, nodeType }
 let nameForgeLast = [];
 let nameForgeScratch = [];
+let nameForgeFetchedRoots = [];   // [{root, lang, source, seed}]
+let nameForgePinnedRoots = new Set();
 
 const NAME_FORGE_ROOTS = {
   Latin: {
@@ -13282,6 +13293,12 @@ const NAME_FORGE_TONE_PREFIXES = {
   subtle:['',''], ominous:['Black','Hollow','Grave','Dread','Ashen'], whimsical:['Bright','Merry','Odd','Copper','Winking'],
   'high fantasy':['Aurel','Eld','Myth','Star','High'], ancient:['Old','Elder','First','Prime','Dust'], scholarly:['Sage','Lex','Script','Archiv','Codex']
 };
+const NAME_FORGE_STYLE_LANGS = {
+  Latin:['la'], Greek:['grc','el'], Norse:['non','is','no'], Welsh:['cy'], Sanskrit:['sa'],
+  'Japanese-inspired':['ja'], 'Hebrew-inspired':['he','hbo']
+};
+const NAME_FORGE_LANG_LABELS = { la:'Latin', grc:'Ancient Greek', el:'Greek', non:'Old Norse', is:'Icelandic', no:'Norwegian', cy:'Welsh', sa:'Sanskrit', ja:'Japanese', he:'Hebrew', hbo:'Biblical Hebrew' };
+
 function renderNameForgeLauncher(node) {
   if (!node || (node.type !== 'npc' && node.type !== 'scene')) return '';
   const target = node.type === 'npc' ? 'name' : 'location';
@@ -13316,6 +13333,7 @@ function openNameForge(targetKey) {
   document.getElementById('nf-type').value = node.type === 'npc' ? 'person' : 'place';
   const modal = document.getElementById('name-forge-modal');
   if (modal) modal.classList.add('open');
+  renderNameForgeRootChips();
   generateNameForgeResults();
 }
 function closeNameForge() {
@@ -13324,6 +13342,9 @@ function closeNameForge() {
 }
 function clearNameForgeInputs() {
   ['nf-seeds','nf-pasted'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  nameForgeFetchedRoots = [];
+  nameForgePinnedRoots = new Set();
+  renderNameForgeRootChips();
   generateNameForgeResults();
 }
 function _nfWords(text) {
@@ -13361,6 +13382,111 @@ function _nfRootsForSeed(seed, styles) {
   if (!out.length && key) out.push(key);
   return out;
 }
+
+function _nfStyleLangs(style) {
+  if (style === 'Mixed') return Object.values(NAME_FORGE_STYLE_LANGS).flat();
+  return NAME_FORGE_STYLE_LANGS[style] || [];
+}
+function _nfExtractFragments(word) {
+  const w = _nfCleanRoot(word);
+  if (!w || w.length < 3) return [];
+  const out = new Set([w]);
+  ['in','un','im','il','ir','re','de','con','com','sub','super','anti','pre','post'].forEach(pref => {
+    if (w.startsWith(pref) && w.length - pref.length >= 4) out.add(w.slice(pref.length));
+  });
+  ['us','um','is','a','ae','os','on','ion','ium','or','er','ar','en','eth','el','an'].forEach(suf => {
+    if (w.endsWith(suf) && w.length - suf.length >= 4) out.add(w.slice(0, -suf.length));
+  });
+  if (w.length >= 7) {
+    out.add(w.slice(0, Math.min(6, w.length)));
+    out.add(w.slice(Math.max(0, w.length - 6)));
+  }
+  return Array.from(out).filter(x => x.length >= 3);
+}
+function _nfParseWiktionaryWikitext(wikitext, langCodes) {
+  const roots = [];
+  const seen = new Set();
+  const add = (root, lang, source, seed) => {
+    const clean = _nfCleanRoot(root);
+    if (!clean || clean.length < 3 || clean.length > 18) return;
+    _nfExtractFragments(clean).forEach(frag => {
+      const key = `${frag}|${lang || ''}`;
+      if (!seen.has(key)) { seen.add(key); roots.push({ root: frag, lang: lang || '', source: source || 'wiktionary', seed: seed || '' }); }
+    });
+  };
+  const wanted = new Set(langCodes || []);
+  const tpl = /\{\{t[+\-]?(?:-check)?\|([^|}]+)\|([^|}]+)(?:\|[^}]*)?\}\}/g;
+  let m;
+  while ((m = tpl.exec(wikitext || ''))) {
+    const lang = (m[1] || '').trim();
+    if (wanted.size && !wanted.has(lang)) continue;
+    add(m[2], lang, 'translation');
+  }
+  // Also harvest italicized/linked related forms from Etymology/Derived/Related sections.
+  const sectionish = String(wikitext || '').split(/\n==+/).filter(sec => /Etymology|Derived terms|Related terms|Descendants|Synonyms/i.test(sec)).join('\n');
+  const link = /\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g;
+  while ((m = link.exec(sectionish))) add(m[2] || m[1], '', 'related');
+  return roots;
+}
+async function _nfFetchWiktionaryPage(seed) {
+  const url = 'https://en.wiktionary.org/w/api.php?action=parse&format=json&origin=*&prop=wikitext&page=' + encodeURIComponent(seed);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Wiktionary HTTP ' + res.status);
+  const data = await res.json();
+  if (data && data.error) throw new Error(data.error.info || data.error.code || 'Wiktionary lookup failed');
+  return data && data.parse && data.parse.wikitext && data.parse.wikitext['*'] ? data.parse.wikitext['*'] : '';
+}
+function renderNameForgeRootChips() {
+  const el = document.getElementById('name-forge-root-chips');
+  if (!el) return;
+  const all = [];
+  const seen = new Set();
+  nameForgeFetchedRoots.forEach(r => {
+    if (!r || !r.root) return;
+    const key = r.root.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key); all.push(r);
+  });
+  if (!all.length) { el.innerHTML = '<span class="name-forge-empty">Fetch roots or add seed words.</span>'; return; }
+  el.innerHTML = all.slice(0, 80).map(r => {
+    const pinned = nameForgePinnedRoots.has(r.root);
+    const label = r.lang ? (NAME_FORGE_LANG_LABELS[r.lang] || r.lang) : r.source;
+    return `<button class="name-forge-chip${pinned ? ' pinned' : ''}" type="button" data-nf-root-chip="${escAttr(r.root)}" title="${escAttr(label || '')}">${escHtml(r.root)}</button>`;
+  }).join('');
+  el.querySelectorAll('[data-nf-root-chip]').forEach(btn => btn.addEventListener('click', () => {
+    const root = btn.dataset.nfRootChip;
+    if (nameForgePinnedRoots.has(root)) nameForgePinnedRoots.delete(root); else nameForgePinnedRoots.add(root);
+    renderNameForgeRootChips();
+    generateNameForgeResults();
+  }));
+}
+async function fetchNameForgeRoots() {
+  const status = document.getElementById('name-forge-root-status');
+  const styleEl = document.getElementById('nf-style');
+  const style = styleEl ? styleEl.value : 'Mixed';
+  const seeds = _nfWords((document.getElementById('nf-seeds') || {}).value || '').slice(0, 8);
+  if (!seeds.length) { if (status) { status.className = 'error'; status.textContent = 'Add at least one seed word first.'; } return; }
+  const langCodes = _nfStyleLangs(style);
+  if (status) { status.className = ''; status.textContent = 'Fetching open Wiktionary roots…'; }
+  const found = [];
+  let failures = 0;
+  for (const seed of seeds) {
+    try {
+      const wt = await _nfFetchWiktionaryPage(seed);
+      const parsed = _nfParseWiktionaryWikitext(wt, langCodes).map(r => ({ ...r, seed }));
+      found.push(...parsed);
+    } catch (err) { failures++; console.warn('Name Forge Wiktionary lookup failed:', seed, err); }
+  }
+  const byKey = new Map();
+  [...nameForgeFetchedRoots, ...found].forEach(r => { if (r && r.root) byKey.set(r.root.toLowerCase(), r); });
+  nameForgeFetchedRoots = Array.from(byKey.values());
+  renderNameForgeRootChips();
+  if (status) {
+    status.className = found.length ? 'good' : 'error';
+    status.textContent = found.length ? `Fetched ${found.length} root fragments from Wiktionary. Click chips to pin/emphasize them.` : `No matching Wiktionary translations found${failures ? ' (some lookups failed)' : ''}. Local root tables and fallback corpus still work.`;
+  }
+  generateNameForgeResults();
+}
 function buildNameForgeName(parts, type, tone, style) {
   const suffixes = NAME_FORGE_SUFFIXES[type] || NAME_FORGE_SUFFIXES.person;
   const prefixes = NAME_FORGE_TONE_PREFIXES[tone] || NAME_FORGE_TONE_PREFIXES.subtle;
@@ -13391,11 +13517,15 @@ function generateNameForgeResults() {
   const tone = toneSel ? toneSel.value : 'subtle';
   const count = Math.max(3, Math.min(24, parseInt(countEl && countEl.value, 10) || 10));
   const seedWords = _nfWords((document.getElementById('nf-seeds') || {}).value || '');
-  const pastedWords = _nfWords((document.getElementById('nf-pasted') || {}).value || '').filter(w => w.length <= 14);
+  const pastedWords = _nfWords((document.getElementById('nf-pasted') || {}).value || '').filter(w => w.length <= 18);
   const styles = style === 'Mixed' ? Object.keys(NAME_FORGE_ROOTS) : [style];
   let parts = [];
   seedWords.forEach(w => { parts.push(..._nfRootsForSeed(w, styles)); });
-  parts.push(...pastedWords.slice(0, 40));
+  nameForgeFetchedRoots.forEach(r => { if (r && r.root) parts.push(r.root); });
+  pastedWords.slice(0, 60).forEach(w => parts.push(..._nfExtractFragments(w)));
+  // Pinned chips are intentionally over-weighted so the visible semantic roots
+  // stay inside the generated names, e.g. firmus → Firmian, stabulum → Stabulor.
+  nameForgePinnedRoots.forEach(r => { parts.push(r, r, r); });
   if (!parts.length) parts = ['moon','memory','shadow','gate','ember','thorn'].flatMap(w => _nfRootsForSeed(w, styles));
   parts = parts.map(_nfCleanRoot).filter(Boolean);
   const seen = new Set();
@@ -13419,7 +13549,7 @@ function renderNameForgeResults() {
   const useLabel = nameForgeCtx && nameForgeCtx.nodeType === 'scene' ? 'Use for Scene' : 'Use for NPC';
   el.innerHTML = nameForgeLast.map((name, idx) => `
     <div class="name-forge-result">
-      <div><div class="name-forge-name">${escHtml(name)}</div><div class="name-forge-sub">local hybrid result ${idx + 1}</div></div>
+      <div><div class="name-forge-name">${escHtml(name)}</div><div class="name-forge-sub">root-forged result ${idx + 1}</div></div>
       <button class="primary" type="button" data-nf-use="${escAttr(name)}">${escHtml(useLabel)}</button>
       <button type="button" data-nf-copy="${escAttr(name)}">Copy</button>
       <button type="button" data-nf-save="${escAttr(name)}">Save</button>
