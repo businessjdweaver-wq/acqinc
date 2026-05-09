@@ -4146,7 +4146,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7178
+      Version 1.7179
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -20242,6 +20242,31 @@ function resolveDowntimeRoll(pending, roll){
   var c=S.party[job.ci];
   if(!c)return null;
   if(!c.dtProgress)c.dtProgress={};
+  if(downtimeTargetAlreadyOwned(c,job.type,job.target)){
+    var staleKey=job.type+':'+(job.target||'core');
+    var staleThreshold=downtimeThreshold(job.type,job.target,c);
+    var staleTrack=downtimeTrackLabel(job.type,job.target);
+    var staleMsg='⏭ '+c.name+' already has '+staleTrack+'; no downtime progress was added.';
+    logAdd('🕯 Downtime skipped: '+c.name+' · '+staleTrack+' · already owned','adv');
+    S.downtimeRollHistory.push({
+      ci: job.ci,
+      name: c.name,
+      type: job.type,
+      target: job.target||'',
+      track: staleTrack,
+      roll: roll,
+      mod: 0,
+      durMod: 0,
+      total: roll,
+      gain: 0,
+      unlocked: false,
+      unlockMsg: staleMsg,
+      rolledAt: Date.now(),
+      rolledAtLabel: _dtFmtDate(Date.now())
+    });
+    if(S.downtimeRollHistory.length>200)S.downtimeRollHistory=S.downtimeRollHistory.slice(-200);
+    return {roll:roll,mod:0,durMod:0,total:roll,gain:0,unlocked:false,unlockMsg:staleMsg,key:staleKey,threshold:staleThreshold,track:staleTrack,name:c.name,progress:(c.dtProgress[staleKey]||0)};
+  }
   var mod=0;
   if(job.type==='skill'||job.type==='intel'){
     var iMod=Math.floor((((c.stats&&c.stats.int)||10)-10)/2);
@@ -20424,6 +20449,29 @@ function startDowntimeForChar(ci){
   renderDowntimeModal();
   openOv('ov-downtime');
 }
+
+// v1.7179 — Downtime reward gate.
+// Skill/language/faith downtime should never be startable for a reward the
+// runner already owns. The target picker already excluded these in the normal
+// flow, but resume-last-track and stale open modals could still carry an
+// obsolete target through to confirmation. Keep this helper small and reuse it
+// at every gate / safety-net site.
+function downtimeTargetAlreadyOwned(c,type,target){
+  if(!c)return false;
+  var clean=(target||'').replace(/^(?:★|🔄) /,'');
+  if(type==='skill')return (c.skills||[]).indexOf(clean)!==-1;
+  if(type==='language')return (c.lang||[]).indexOf(clean)!==-1;
+  if(type==='faith')return !!clean&&c.rel===clean;
+  return false;
+}
+function downtimeRedundantMessage(c,type,target){
+  var clean=(target||'').replace(/^(?:★|🔄) /,'');
+  var nm=(c&&c.name)||'This character';
+  if(type==='skill')return nm+' already has the '+clean+' skill. Choose a different downtime target.';
+  if(type==='language')return nm+' already speaks '+clean+'. Choose a different downtime target.';
+  if(type==='faith')return nm+' is already devoted to '+clean+'. Choose a different downtime target.';
+  return nm+' already has this downtime reward. Choose a different target.';
+}
 function _franchiseCoveredSet(key){
   // Returns a Set of values already covered by anyone in the party
   var covered={};
@@ -20493,7 +20541,13 @@ function renderDowntimeModal(){
     // Find the key with the highest progress value (most recent meaningful track)
     var prog=c.dtProgress||{};
     var bestKey=Object.keys(prog)
-      .filter(function(k){return (prog[k]||0)>0;})
+      .filter(function(k){
+        if((prog[k]||0)<=0)return false;
+        var parts=k.split(':');
+        var t=parts[0];
+        var target=parts.slice(1).join(':')||'core';
+        return !downtimeTargetAlreadyOwned(c,t,target);
+      })
       .sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
     if(bestKey){
       var bParts=bestKey.split(':');
@@ -20677,6 +20731,17 @@ function confirmDowntimeModal(){
   var targetSel=document.getElementById('ov-dt-target');
   var type=(actSel&&actSel.value)||DOWNTIME_PENDING.type||'skill';
   var target=((targetSel&&targetSel.value)||'core').replace(/^(?:★|🔄) /,'');
+  if((type==='skill'||type==='language'||type==='faith')&&(!target||target==='core'||(targetSel&&targetSel.disabled))){
+    alert('No available '+(type==='language'?'language':type==='faith'?'faith':'skill')+' targets remain for '+c.name+'. Choose another downtime activity.');
+    renderDowntimeModal();
+    return;
+  }
+  if(downtimeTargetAlreadyOwned(c,type,target)){
+    alert(downtimeRedundantMessage(c,type,target));
+    DOWNTIME_PENDING.target='';
+    renderDowntimeModal();
+    return;
+  }
   var ts=DOWNTIME_PENDING.endsAt||Date.now()+480*60000;
   if(ts<=Date.now()){
     // Default to 8h if somehow in the past
@@ -36965,7 +37030,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7178';
+var RQ_CLIENT_VERSION='v1.7179';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
