@@ -3121,6 +3121,140 @@ function showScalePrompt() {
   if (btn) btn.style.display = 'inline-flex';
 }
 
+
+// ── DPR / MULTIATTACK HELPERS ──
+// Estimate the monster's expected one-turn DPR from the currently rendered Actions.
+// This is intentionally heuristic: it handles the common 5e forms such as
+// "Makes two greataxe attacks", "one bite and two claws", and
+// "one with its bite and one with its claws". If parsing fails, it falls back
+// to the strongest single damaging action.
+function averageDamageFormulaValue(formula) {
+  if (!formula) return 0;
+  const text = String(formula).replace(/\s+/g, '');
+  let total = 0;
+  let matched = false;
+  text.replace(/(\d+)d(\d+)([+-]\d+)?/gi, (whole, n, die, mod) => {
+    matched = true;
+    total += parseInt(n) * (parseInt(die) + 1) / 2 + (mod ? parseInt(mod) : 0);
+    return whole;
+  });
+  if (matched) return Math.max(0, total);
+  const flat = parseInt(text, 10);
+  return Number.isFinite(flat) ? Math.max(0, flat) : 0;
+}
+
+function numberWordToInt(word) {
+  const map = {
+    one:1, a:1, an:1, two:2, twice:2, three:3, four:4, five:5,
+    six:6, seven:7, eight:8, nine:9, ten:10
+  };
+  if (word == null) return 0;
+  const w = String(word).toLowerCase();
+  if (/^\d+$/.test(w)) return parseInt(w, 10);
+  return map[w] || 0;
+}
+
+function singularizeAttackName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, '')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/ies\b/g, 'y')
+    .replace(/ves\b/g, 'f')
+    .replace(/s\b/g, '');
+}
+
+function getActionCardFields(card) {
+  const nameInput = card.querySelector('.action-name-input');
+  const statInputs = card.querySelectorAll('.field-row-4 input.field-input');
+  return {
+    nameInput,
+    name: nameInput?.value || '',
+    toHitInput: statInputs[0] || null,
+    reachInput: statInputs[1] || null,
+    dmgInput: statInputs[2] || null,
+    typeInput: statInputs[3] || null,
+    descInput: card.querySelector('textarea')
+  };
+}
+
+function readAttackActionsFromDom() {
+  return [...document.querySelectorAll('#actionsContainer .action-card')]
+    .map(card => {
+      const f = getActionCardFields(card);
+      return {
+        card,
+        name: f.name,
+        key: singularizeAttackName(f.name),
+        desc: f.descInput?.value || '',
+        toHitInput: f.toHitInput,
+        dmgInput: f.dmgInput,
+        avg: averageDamageFormulaValue(f.dmgInput?.value || '')
+      };
+    });
+}
+
+function estimateTurnDPRFromDom() {
+  const actions = readAttackActionsFromDom();
+  const attacks = actions.filter(a => a.dmgInput && a.dmgInput.value && a.avg > 0);
+  if (!attacks.length) return 0;
+
+  const multi = actions.find(a => /multiattack/i.test(a.name));
+  if (!multi || !multi.desc) return Math.max(...attacks.map(a => a.avg));
+
+  const desc = multi.desc.toLowerCase();
+  let counts = new Map();
+
+  // Direct references: "two greataxe attacks", "three longsword attacks".
+  attacks.forEach(atk => {
+    const escaped = atk.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+(?:with\\s+(?:its|the)\\s+)?' + escaped + 's?\\b', 'i');
+    const m = desc.match(re);
+    if (m) counts.set(atk.key, Math.max(counts.get(atk.key) || 0, numberWordToInt(m[1])));
+  });
+
+  // Generic common forms: "one bite and two claw attacks", "one with its bite and one with its claws".
+  if (!counts.size) {
+    attacks.forEach(atk => {
+      const key = atk.key;
+      const variants = [key, key + ' attack', key + ' attacks'];
+      variants.forEach(v => {
+        const escaped = v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+(?:with\\s+(?:its|the)\\s+)?' + escaped + 's?\\b', 'ig');
+        let m;
+        while ((m = re.exec(desc))) {
+          counts.set(key, Math.max(counts.get(key) || 0, numberWordToInt(m[1])));
+        }
+      });
+    });
+  }
+
+  // If the text only says "makes two attacks" and there is one damaging attack, assume repeats of that attack.
+  if (!counts.size && attacks.length === 1) {
+    const m = desc.match(/makes?\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+attacks?/i);
+    if (m) counts.set(attacks[0].key, numberWordToInt(m[1]));
+  }
+
+  if (counts.size) {
+    let total = 0;
+    attacks.forEach(atk => { total += (counts.get(atk.key) || 0) * atk.avg; });
+    if (total > 0) return total;
+  }
+
+  return Math.max(...attacks.map(a => a.avg));
+}
+
+function getDamageScalingRatioForTargetCR(newT, fallbackOldT) {
+  const newDprMid = Math.round((newT.dprLo + newT.dprHi) / 2) || 1;
+  const currentTurnDpr = estimateTurnDPRFromDom();
+  if (currentTurnDpr > 0) return newDprMid / currentTurnDpr;
+
+  const oldDprMid = Math.round((fallbackOldT.dprLo + fallbackOldT.dprHi) / 2) || 1;
+  return newDprMid / oldDprMid;
+}
+
 function applyCRScaling() {
   const newCR = document.getElementById('f_cr').value;
   const newT  = CR_TABLE[newCR];
@@ -3155,25 +3289,28 @@ function applyCRScaling() {
   if (acField && !acField.readOnly) acField.value = newAc;
 
   // ── DPR ratio for damage scaling ──
-  const oldDprMid = Math.round((oldT.dprLo + oldT.dprHi) / 2) || 1;
-  const newDprMid = Math.round((newT.dprLo + newT.dprHi) / 2) || 1;
-  const dprRatio  = newDprMid / oldDprMid;
+  // v0.5.1: Estimate current one-turn DPR from the rendered Actions, including
+  // Multiattack, then scale toward the target CR's DPR midpoint. This prevents
+  // multiattack monsters from being treated as if each attack were the whole turn.
+  const currentTurnDpr = estimateTurnDPRFromDom();
+  const targetDprMid = Math.round((newT.dprLo + newT.dprHi) / 2) || 1;
+  const dprRatio = getDamageScalingRatioForTargetCR(newT, oldT);
 
   // ── To-hit: read from new CR table ──
   const newToHit = parseInt(newT.atk) || 3;
 
-  // ── Scale action damage and to-hit ──
-  document.querySelectorAll('.action-card').forEach(card => {
-    const inputs = card.querySelectorAll('input[type=text]');
-    if (inputs.length >= 4) {
-      const toHitInput = inputs[1];
-      if (toHitInput && !toHitInput.readOnly && toHitInput.value && toHitInput.value !== '') {
-        toHitInput.value = (newToHit >= 0 ? '+' : '') + newToHit;
-      }
-      const dmgInput = inputs[3];
-      if (dmgInput && !dmgInput.readOnly && dmgInput.value) {
-        dmgInput.value = scaleDamageFormula(dmgInput.value, dprRatio);
-      }
+  // ── Scale attack action damage and to-hit ──
+  // Only the main Actions container is adjusted here. Traits, legendary actions,
+  // and lair actions are handled in the prose/DC scan below.
+  document.querySelectorAll('#actionsContainer .action-card').forEach(card => {
+    const fields = getActionCardFields(card);
+    const toHitInput = fields.toHitInput;
+    if (toHitInput && !toHitInput.readOnly && toHitInput.value && toHitInput.value !== '') {
+      toHitInput.value = (newToHit >= 0 ? '+' : '') + newToHit;
+    }
+    const dmgInput = fields.dmgInput;
+    if (dmgInput && !dmgInput.readOnly && dmgInput.value) {
+      dmgInput.value = scaleDamageFormula(dmgInput.value, dprRatio);
     }
   });
 
@@ -3318,6 +3455,7 @@ function applyCRScaling() {
     `WIS: ${newWisScore}`,
     `CHA: ${newChaScore}`,
     `Save DC: ${newDC}`,
+    `DPR ${currentTurnDpr ? currentTurnDpr.toFixed(1) : '?'}→${targetDprMid}`,
     `Dmg ×${dprRatio.toFixed(2)}`,
     `Prose: ${formulasScaled} dmg, ${dcsUpdated} DC`
   ].join(' · ');
@@ -3870,44 +4008,30 @@ function updatePublishedPill() {
 }
 
 async function loadCustomMonsters() {
+  // v0.3.6 — fire the published-set fetch in parallel; it doesn't block
+  // the main rq_monsters load and it's fine if it lags slightly.
   loadPublishedSet();
-
   try {
-    const PAGE = 1000;
-    let allRows = [];
-    let offset = 0;
-
-    while (true) {
-      const res = await fetch(
-        `${SB_URL}/rest/v1/rq_monsters?select=*&order=name.asc&limit=${PAGE}&offset=${offset}`,
-        { headers: { ...sbHeaders(), 'Prefer': 'count=none' } }
-      );
-
-      if (!res.ok) {
-        console.warn('loadCustomMonsters HTTP', res.status, await res.text());
-        break;
-      }
-
-      const batch = await res.json();
-      allRows = allRows.concat(batch);
-
-      if (batch.length < PAGE) break;
-      offset += PAGE;
+    const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?order=created_at.desc&limit=2000`, { headers: sbHeaders() });
+    if (res.ok) {
+      const rows = await res.json();
+      customMonsters = rows.map(r => ({
+        ...r,
+        slug:    'custom-' + r.id,
+        type:    r.monster_type || r.tags?.[0] || 'custom',
+        source:  'custom',
+        actions: r.actions || [],
+        special: r.special_abilities || []
+      }));
+      // Always re-render if we're already on the custom tab
+      if (currentTab === 'custom') renderBrowserList(customMonsters);
+      return customMonsters.length;
+    } else {
+      const err = await res.text();
+      console.warn('loadCustomMonsters HTTP', res.status, err);
+      return 0;
     }
-
-    customMonsters = allRows.map(r => ({
-      ...r,
-      slug: 'custom-' + r.id,
-      type: r.monster_type || r.tags?.[0] || 'custom',
-      source: 'custom',
-      actions: r.actions || [],
-      special_abilities: r.special_abilities || [],
-      special: r.special_abilities || []
-    }));
-
-    if (currentTab === 'custom') renderBrowserList(customMonsters);
-    return customMonsters.length;
-  } catch (e) {
+  } catch(e) {
     console.warn('loadCustomMonsters error:', e);
     return 0;
   }
