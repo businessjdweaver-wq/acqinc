@@ -1759,7 +1759,7 @@ body {
       <div class="browser-tabs">
         <button class="browser-tab active-srd" onclick="setTab('srd',this)">D&amp;D SRD</button>
         <button class="browser-tab" onclick="setTab('ds',this)">Draw Steel</button>
-        <button class="browser-tab" onclick="setTab('custom',this); loadCustomMonsters();">My Monsters</button>
+        <button class="browser-tab" onclick="setTab('custom',this); loadCustomMonsters();">Library</button>
       </div>
       <div class="search-box">
         <input class="search-input" type="text" id="searchInput" placeholder="Search monsters…" oninput="filterMonsters()">
@@ -1780,7 +1780,25 @@ body {
             <option>swarm</option>
           </optgroup>
         </select>
-        <select class="filter-select" id="filterCR" onchange="filterMonsters()">
+        <select class="filter-select" id="filterCR"">
+<select id="filterEnvironment" onchange="filterMonsters()" style="margin-left:6px;">
+  <option value="">All Environments</option>
+</select>
+
+<select id="filterSource" onchange="filterMonsters()" style="margin-left:6px;">
+  <option value="">All Sources</option>
+</select>
+
+<input id="filterCRMin" type="number" min="0" max="30" step="0.125"
+       placeholder="CR Min"
+       oninput="filterMonsters()"
+       style="width:80px;margin-left:6px;">
+
+<input id="filterCRMax" type="number" min="0" max="30" step="0.125"
+       placeholder="CR Max"
+       oninput="filterMonsters()"
+       style="width:80px;margin-left:6px;">
+ onchange="filterMonsters()">
           <option value="">All CR</option>
           <option>0</option><option>1/8</option><option>1/4</option><option>1/2</option>
           <option>1</option><option>2</option><option>3</option><option>4</option>
@@ -2046,6 +2064,22 @@ async function sbAuthFetch(url, opts) {
   const req = Object.assign({}, opts);
   req.headers = Object.assign({}, sbHeaders(), opts.headers || {});
   return fetch(url, req);
+}
+
+
+// Remove UI/import-only helper fields before sending a monster to Supabase.
+// PostgREST rejects any key that does not correspond to a real rq_monsters column.
+function sanitizeMonsterForSupabase(monster) {
+  const clean = { ...(monster || {}) };
+  Object.keys(clean).forEach(k => {
+    if (k.startsWith('_')) delete clean[k];
+  });
+  delete clean.slug;
+  delete clean.special;
+  delete clean._unresolvedSpells;
+  delete clean._foundryActor;
+  delete clean._raw;
+  return clean;
 }
 
 function setLoginStatus(msg, isErr) {
@@ -2622,9 +2656,6 @@ function convertDSMonster(ds, entry) {
     senses:           '',
     languages:        (ds.languages || []).join(', '),
     actions,
-    bonus_actions:    [],
-    reactions:        [],
-    villain_actions:  villainActions,
     special_abilities: special,
     legendary:        villainActions.length > 0,
     legendary_resistance: 0,
@@ -2685,7 +2716,7 @@ function evToCR(ev, roleStr) {
 
 
 // ── STATE ──
-let currentTab = 'srd';
+let currentTab = 'custom';
 let allMonsters = [...SRD_MONSTERS];
 let customMonsters = [];
 let currentMonster = null;
@@ -2716,40 +2747,79 @@ function setTab(tab, btn) {
 }
 
 // ── FILTER ──
-function filterMonsters() {
-  const q    = document.getElementById('searchInput').value.toLowerCase();
-  const type = document.getElementById('filterType').value;
-  const cr   = document.getElementById('filterCR').value;
-  const data = currentTab === 'srd' ? SRD_MONSTERS : currentTab === 'ds' ? DS_MONSTERS : customMonsters;
-  const filtered = data.filter(m => {
-    const matchQ    = !q    || m.name.toLowerCase().includes(q) || (m.type||'').toLowerCase().includes(q);
-    const matchType = !type || (m.type||'').toLowerCase().includes(type.toLowerCase());
-    // For DS monsters with cr='?', skip CR filter (loaded on demand)
-    const matchCR   = !cr   || m.cr === cr || m.cr === '?';
-    return matchQ && matchType && matchCR;
-  });
-  renderBrowserList(filtered);
+
+function normalizeCR(v) {
+  if (v == null) return 0;
+  if (typeof v === 'number') return v;
+  const s = String(v).trim();
+  if (s.includes('/')) {
+    const parts = s.split('/');
+    return Number(parts[0]) / Number(parts[1]);
+  }
+  return Number(s) || 0;
+}
+
+function populateAdvancedFilters(monsters) {
+  const envSel = document.getElementById('filterEnvironment');
+  const srcSel = document.getElementById('filterSource');
+
+  if (!envSel || !srcSel) return;
+
+  const envs = [...new Set(monsters.map(m =>
+    m.environment ||
+    m.details?.environment ||
+    ''
+  ).filter(Boolean))].sort();
+
+  const srcs = [...new Set(monsters.map(m =>
+    m.sourcebook ||
+    m.source ||
+    m.details?.source?.custom ||
+    ''
+  ).filter(Boolean))].sort();
+
+  envSel.innerHTML =
+    '<option value="">All Environments</option>' +
+    envs.map(e => `<option value="${e}">${e}</option>`).join('');
+
+  srcSel.innerHTML =
+    '<option value="">All Sources</option>' +
+    srcs.map(s => `<option value="${s}">${s}</option>`).join('');
 }
 
 function filterMonsters() {
-  const q    = document.getElementById('searchInput').value.toLowerCase().trim();
-  const type = document.getElementById('filterType').value;
-  const cr   = document.getElementById('filterCR').value;
+  const q      = (document.getElementById('searchInput')?.value || '').toLowerCase().trim();
+  const type   = (document.getElementById('filterType')?.value || '').toLowerCase();
+  const cr     = document.getElementById('filterCR')?.value || '';
+  const env    = (document.getElementById('filterEnvironment')?.value || '').toLowerCase();
+  const src    = (document.getElementById('filterSource')?.value || '').toLowerCase();
+  const crMin  = normalizeCR(document.getElementById('filterCRMin')?.value || 0);
+  const crMaxV = document.getElementById('filterCRMax')?.value;
+  const crMax  = crMaxV === '' ? Infinity : normalizeCR(crMaxV);
 
-  // If there is a search term, search all buckets.
-  // If search is blank, preserve normal tab behavior.
-  const data = q
-    ? [...SRD_MONSTERS, ...DS_MONSTERS, ...customMonsters]
-    : currentTab === 'srd'
-      ? SRD_MONSTERS
-      : currentTab === 'ds'
-        ? DS_MONSTERS
-        : customMonsters;
+  const data = [...customMonsters];
+
+  populateAdvancedFilters(data);
 
   const filtered = data.filter(m => {
     const name = (m.name || '').toLowerCase();
     const typeText = (m.type || m.monster_type || '').toLowerCase();
     const roleText = (m._dsRole || '').toLowerCase();
+
+    const envText = (
+      m.environment ||
+      m.details?.environment ||
+      ''
+    ).toLowerCase();
+
+    const sourceText = (
+      m.sourcebook ||
+      m.source ||
+      m.details?.source?.custom ||
+      ''
+    ).toLowerCase();
+
+    const numericCR = normalizeCR(m.cr);
 
     const matchQ =
       !q ||
@@ -2758,16 +2828,33 @@ function filterMonsters() {
       roleText.includes(q);
 
     const matchType =
-      !type || typeText.includes(type.toLowerCase());
+      !type || typeText.includes(type);
 
     const matchCR =
-      !cr || String(m.cr) === String(cr) || m.cr === '?';
+      !cr || String(m.cr) === String(cr);
 
-    return matchQ && matchType && matchCR;
+    const matchEnv =
+      !env || envText.includes(env);
+
+    const matchSource =
+      !src || sourceText.includes(src);
+
+    const matchCRRange =
+      numericCR >= crMin && numericCR <= crMax;
+
+    return (
+      matchQ &&
+      matchType &&
+      matchCR &&
+      matchEnv &&
+      matchSource &&
+      matchCRRange
+    );
   });
 
   renderBrowserList(filtered);
 }
+
 
 // ── SELECT MONSTER (async for DS lazy-load) ──
 async function selectMonster(slug) {
@@ -2929,7 +3016,7 @@ function renderEditor(m) {
         <div class="field">
           <span class="field-label">Special Abilities / Traits</span>
           <div id="specialAbilitiesContainer">
-            ${getMonsterSpecialAbilities(m).map((s,i)=>`
+            ${(m.special||[]).map((s,i)=>`
               <div class="action-card" style="margin-bottom:6px;">
                 <div class="action-card-header">
                   <input class="action-name-input" type="text" value="${s.name}" placeholder="Ability name" ${ro}>
@@ -2950,51 +3037,9 @@ function renderEditor(m) {
       </div>
       <div class="section-body">
         <div id="actionsContainer">
-          ${getMonsterActions(m).map((a,i) => renderActionCard(a, isCustom, 'Action')).join('')}
+          ${(m.actions||[]).map((a,i) => renderActionCard(a, isCustom)).join('')}
         </div>
         ${isCustom ? `<button class="btn btn-ghost btn-sm" onclick="addAction()">+ Add Action</button>` : ''}
-      </div>
-    </div>
-
-    <!-- BONUS ACTIONS -->
-    <div class="section open" id="sec-bonus-actions">
-      <div class="section-header" onclick="toggleSection('sec-bonus-actions')">
-        <span class="section-chevron">▶</span>
-        <span class="section-title">Bonus Actions</span>
-      </div>
-      <div class="section-body">
-        <div id="bonusActionsContainer">
-          ${getMonsterBonusActions(m).map((a,i) => renderActionCard(a, isCustom, 'Bonus Action')).join('')}
-        </div>
-        ${isCustom ? `<button class="btn btn-ghost btn-sm" onclick="addBonusAction()">+ Add Bonus Action</button>` : ''}
-      </div>
-    </div>
-
-    <!-- REACTIONS -->
-    <div class="section open" id="sec-reactions">
-      <div class="section-header" onclick="toggleSection('sec-reactions')">
-        <span class="section-chevron">▶</span>
-        <span class="section-title">Reactions</span>
-      </div>
-      <div class="section-body">
-        <div id="reactionsContainer">
-          ${getMonsterReactions(m).map((a,i) => renderActionCard(a, isCustom, 'Reaction')).join('')}
-        </div>
-        ${isCustom ? `<button class="btn btn-ghost btn-sm" onclick="addReaction()">+ Add Reaction</button>` : ''}
-      </div>
-    </div>
-
-    <!-- VILLAIN ACTIONS -->
-    <div class="section ${getMonsterVillainActions(m).length ? 'open' : ''}" id="sec-villain-actions">
-      <div class="section-header" onclick="toggleSection('sec-villain-actions')">
-        <span class="section-chevron">▶</span>
-        <span class="section-title">Villain Actions</span>
-      </div>
-      <div class="section-body">
-        <div id="villainActionsContainer">
-          ${getMonsterVillainActions(m).map((a,i) => renderActionCard(a, isCustom, 'Villain Action')).join('')}
-        </div>
-        ${isCustom ? `<button class="btn btn-ghost btn-sm" onclick="addVillainAction()">+ Add Villain Action</button>` : ''}
       </div>
     </div>
 
@@ -3098,72 +3143,23 @@ function renderEditor(m) {
   `;
 }
 
-function renderActionCard(a, editable, sectionLabel) {
+function renderActionCard(a, editable) {
   const ro = editable ? '' : 'readonly';
-  const badge = sectionLabel || (a.type === 'special' ? 'Special' : a.toHit ? 'Attack' : 'Action');
   return `<div class="action-card">
     <div class="action-card-header">
-      <input class="action-name-input" type="text" value="${escapeAttr(a.name||'')}" placeholder="${escapeAttr(badge)} name" ${ro}>
-      <span class="action-type-badge">${escapeHtml(badge)}</span>
+      <input class="action-name-input" type="text" value="${a.name||''}" placeholder="Action name" ${ro}>
+      <span class="action-type-badge">${a.type==='special'?'Special':a.toHit?'Attack':'Action'}</span>
       ${editable ? `<button class="icon-btn" onclick="this.closest('.action-card').remove()" title="Remove">✕</button>` : ''}
     </div>
-    ${(a.toHit || a.damage || a.dmgType || a.reach || a.range) ? `<div class="field-row-4" style="margin-bottom:6px;">
-      <div class="field"><span class="field-label">To Hit</span><input class="field-input" type="text" value="${escapeAttr(a.toHit||'')}" ${ro}></div>
-      <div class="field"><span class="field-label">Reach/Range</span><input class="field-input" type="text" value="${escapeAttr(a.reach||a.range||'')}" ${ro}></div>
-      <div class="field"><span class="field-label">Damage</span><input class="field-input" type="text" value="${escapeAttr(a.damage||'')}" ${ro}></div>
-      <div class="field"><span class="field-label">Type</span><input class="field-input" type="text" value="${escapeAttr(a.dmgType||'')}" ${ro}></div>
+    ${a.toHit ? `<div class="field-row-4" style="margin-bottom:6px;">
+      <div class="field"><span class="field-label">To Hit</span><input class="field-input" type="text" value="${a.toHit||''}" ${ro}></div>
+      <div class="field"><span class="field-label">Reach/Range</span><input class="field-input" type="text" value="${a.reach||a.range||''}" ${ro}></div>
+      <div class="field"><span class="field-label">Damage</span><input class="field-input" type="text" value="${a.damage||''}" ${ro}></div>
+      <div class="field"><span class="field-label">Type</span><input class="field-input" type="text" value="${a.dmgType||''}" ${ro}></div>
     </div>` : ''}
-    <textarea class="field-textarea" style="min-height:40px;" ${ro}>${escapeHtml(a.desc||'')}</textarea>
+    <textarea class="field-textarea" style="min-height:40px;" ${ro}>${a.desc||''}</textarea>
   </div>`;
 }
-
-function normalizeFeatureArray(value) {
-  return Array.isArray(value) ? value.filter(Boolean) : [];
-}
-
-function getMonsterActions(m) {
-  return normalizeFeatureArray(m?.actions);
-}
-
-function getMonsterBonusActions(m) {
-  return normalizeFeatureArray(m?.bonus_actions || m?.bonusActions);
-}
-
-function getMonsterReactions(m) {
-  return normalizeFeatureArray(m?.reactions);
-}
-
-function getMonsterVillainActions(m) {
-  return normalizeFeatureArray(m?.villain_actions || m?.villainActions);
-}
-
-function getMonsterSpecialAbilities(m) {
-  return normalizeFeatureArray(m?.special_abilities || m?.special);
-}
-
-function collectActionCards(containerId) {
-  return [...document.querySelectorAll('#' + containerId + ' .action-card')].map(card => {
-    const inputs = card.querySelectorAll('input');
-    const ta = card.querySelector('textarea');
-    return {
-      name: inputs[0]?.value || '',
-      toHit: inputs[1]?.value || '',
-      reach: inputs[2]?.value || '',
-      damage: inputs[3]?.value || '',
-      dmgType: inputs[4]?.value || '',
-      desc: ta?.value || ''
-    };
-  }).filter(a => a.name || a.desc || a.toHit || a.damage);
-}
-
-function collectTextFeatureCards(containerId) {
-  return [...document.querySelectorAll('#' + containerId + ' .action-card')].map(card => {
-    const inputs = card.querySelectorAll('input');
-    const ta = card.querySelector('textarea');
-    return { name: inputs[0]?.value || '', desc: ta?.value || '' };
-  }).filter(a => a.name || a.desc);
-}
-
 
 function renderSimplifiedCard(m) {
   const firstAtk = (m.actions||[]).find(a => a.toHit);
@@ -3603,28 +3599,7 @@ function addAction() {
   const c = document.getElementById('actionsContainer');
   if (!c) return;
   const div = document.createElement('div');
-  div.innerHTML = renderActionCard({name:'',toHit:'',reach:'5 ft.',damage:'1d6',dmgType:'',desc:''}, true, 'Action');
-  c.appendChild(div.firstElementChild);
-}
-function addBonusAction() {
-  const c = document.getElementById('bonusActionsContainer');
-  if (!c) return;
-  const div = document.createElement('div');
-  div.innerHTML = renderActionCard({name:'',toHit:'',reach:'',damage:'',dmgType:'',desc:''}, true, 'Bonus Action');
-  c.appendChild(div.firstElementChild);
-}
-function addReaction() {
-  const c = document.getElementById('reactionsContainer');
-  if (!c) return;
-  const div = document.createElement('div');
-  div.innerHTML = renderActionCard({name:'',toHit:'',reach:'',damage:'',dmgType:'',desc:''}, true, 'Reaction');
-  c.appendChild(div.firstElementChild);
-}
-function addVillainAction() {
-  const c = document.getElementById('villainActionsContainer');
-  if (!c) return;
-  const div = document.createElement('div');
-  div.innerHTML = renderActionCard({name:'',toHit:'',reach:'',damage:'',dmgType:'',desc:''}, true, 'Villain Action');
+  div.innerHTML = renderActionCard({name:'',toHit:'',reach:'5 ft.',damage:'1d6',dmgType:'',desc:''},true);
   c.appendChild(div.firstElementChild);
 }
 function addSpecialAbility() {
@@ -3644,14 +3619,14 @@ function addLegendaryAction() {
   const c = document.getElementById('legendaryActionsContainer');
   if (!c) return;
   const div = document.createElement('div');
-  div.innerHTML = renderActionCard({name:'',desc:''}, true, 'Legendary Action');
+  div.innerHTML = renderActionCard({name:'',desc:''},true);
   c.appendChild(div.firstElementChild);
 }
 function addLairAction() {
   const c = document.getElementById('lairActionsContainer');
   if (!c) return;
   const div = document.createElement('div');
-  div.innerHTML = renderActionCard({name:'',desc:''}, true, 'Lair Action');
+  div.innerHTML = renderActionCard({name:'',desc:''},true);
   c.appendChild(div.firstElementChild);
 }
 function addLegendaryFromLib(chip, name, desc) {
@@ -3660,7 +3635,7 @@ function addLegendaryFromLib(chip, name, desc) {
     const c = document.getElementById('legendaryActionsContainer');
     if (!c) return;
     const div = document.createElement('div');
-    div.innerHTML = renderActionCard({name:name.replace(/&#39;/g,"'"),desc:desc.replace(/&#39;/g,"'")}, true, 'Legendary Action');
+    div.innerHTML = renderActionCard({name:name.replace(/&#39;/g,"'"),desc:desc.replace(/&#39;/g,"'")},true);
     c.appendChild(div.firstElementChild);
   }
 }
@@ -3670,7 +3645,7 @@ function addLairFromLib(chip, name, desc) {
     const c = document.getElementById('lairActionsContainer');
     if (!c) return;
     const div = document.createElement('div');
-    div.innerHTML = renderActionCard({name:name.replace(/&#39;/g,"'"),desc:desc.replace(/&#39;/g,"'")}, true, 'Lair Action');
+    div.innerHTML = renderActionCard({name:name.replace(/&#39;/g,"'"),desc:desc.replace(/&#39;/g,"'")},true);
     c.appendChild(div.firstElementChild);
   }
 }
@@ -3711,14 +3686,37 @@ function collectFormData() {
     abilities[ab] = [score, modFromScore(score)];
   });
 
-  // Collect actions and action-like sections
-  const actions = collectActionCards('actionsContainer');
-  const bonusActions = collectActionCards('bonusActionsContainer');
-  const reactions = collectActionCards('reactionsContainer');
-  const villainActions = collectTextFeatureCards('villainActionsContainer');
-  const legActions = collectTextFeatureCards('legendaryActionsContainer');
-  const lairActions = collectTextFeatureCards('lairActionsContainer');
-  const special = collectTextFeatureCards('specialAbilitiesContainer');
+  // Collect actions
+  const actions = [...document.querySelectorAll('#actionsContainer .action-card')].map(card => {
+    const inputs = card.querySelectorAll('input');
+    const ta = card.querySelector('textarea');
+    return {
+      name: inputs[0]?.value || '',
+      toHit: inputs[1]?.value || '',
+      reach: inputs[2]?.value || '',
+      damage: inputs[3]?.value || '',
+      dmgType: inputs[4]?.value || '',
+      desc: ta?.value || ''
+    };
+  });
+
+  const legActions = [...document.querySelectorAll('#legendaryActionsContainer .action-card')].map(card => {
+    const inputs = card.querySelectorAll('input');
+    const ta = card.querySelector('textarea');
+    return { name: inputs[0]?.value || '', desc: ta?.value || '' };
+  });
+
+  const lairActions = [...document.querySelectorAll('#lairActionsContainer .action-card')].map(card => {
+    const inputs = card.querySelectorAll('input');
+    const ta = card.querySelector('textarea');
+    return { name: inputs[0]?.value || '', desc: ta?.value || '' };
+  });
+
+  const special = [...document.querySelectorAll('#specialAbilitiesContainer .action-card')].map(card => {
+    const inputs = card.querySelectorAll('input');
+    const ta = card.querySelector('textarea');
+    return { name: inputs[0]?.value || '', desc: ta?.value || '' };
+  });
 
   const isLegendary = document.getElementById('legendaryToggle')?.classList.contains('on') || false;
 
@@ -3742,9 +3740,6 @@ function collectFormData() {
     senses: g('f_senses'),
     languages: g('f_languages'),
     actions: actions,
-    bonus_actions: bonusActions,
-    reactions: reactions,
-    villain_actions: villainActions,
     special_abilities: special,
     legendary: isLegendary,
     legendary_resistance: parseInt(g('f_leg_res')) || 0,
@@ -3759,7 +3754,7 @@ function collectFormData() {
 // ── SUPABASE ──
 async function saveMonster() {
   if (!isEditing) { showToast('Duplicate the monster first to edit and save it', true); return; }
-  const data = collectFormData();
+  const data = sanitizeMonsterForSupabase(collectFormData());
   try {
     let res;
     if (currentMonster?.id) {
@@ -4146,10 +4141,11 @@ async function loadCustomMonsters() {
       type: r.monster_type || r.tags?.[0] || 'custom',
       source: 'custom',
       actions: r.actions || [],
+      special_abilities: r.special_abilities || [],
       bonus_actions: r.bonus_actions || [],
       reactions: r.reactions || [],
       villain_actions: r.villain_actions || [],
-      special_abilities: r.special_abilities || [],
+      spells: r.spells || [],
       special: r.special_abilities || []
     }));
 
@@ -4319,9 +4315,6 @@ function addToEncounterTray() {
     senses:      data.senses || '',
     languages:   data.languages || '',
     actions:     data.actions || [],
-    bonus_actions: data.bonus_actions || [],
-    reactions: data.reactions || [],
-    villain_actions: data.villain_actions || [],
     special_abilities: data.special_abilities || data.special || [],
     legendary:   data.legendary || false,
     legendary_resistance: data.legendary_resistance || 0,
@@ -4540,7 +4533,6 @@ function convertFoundryActor(f) {
   // Actions / Special abilities — Foundry stores these as embedded Items
   const items = f.items || [];
   const actions = [];
-  const bonusActions = [];
   const special = [];
   const legActions = [];
   const reactions = [];
@@ -4550,8 +4542,7 @@ function convertFoundryActor(f) {
     const activation = iSys.activation?.type;
     const isLegendary = activation === 'legendary';
     const isReaction = activation === 'reaction';
-    const isBonus = activation === 'bonus';
-    const isAction = activation === 'action' || !activation;
+    const isAction = activation === 'action' || activation === 'bonus' || !activation;
 
     // Build action object
     const atk = iSys.attack;
@@ -4585,8 +4576,6 @@ function convertFoundryActor(f) {
       legActions.push({ name: item.name, desc: desc.slice(0, 5000) });
     } else if (isReaction) {
       reactions.push(actionObj);
-    } else if (isBonus) {
-      bonusActions.push(actionObj);
     } else if (item.type === 'feat' && !toHit) {
       special.push({ name: item.name, desc: desc.slice(0, 5000) });
     } else if (isAction || item.type === 'weapon') {
@@ -4619,9 +4608,6 @@ function convertFoundryActor(f) {
     senses,
     languages: typeof languages === 'string' ? languages : (languages || []).join(', '),
     actions,
-    bonus_actions: bonusActions,
-    reactions,
-    villain_actions: [],
     special_abilities: special,
     legendary: isLegendary,
     legendary_resistance: legRes,
@@ -4630,7 +4616,7 @@ function convertFoundryActor(f) {
     lair_actions: [],
     notes: '',
     tags: [det.type?.value || 'custom'].filter(Boolean)
-    // Note: _foundryId and _foundryName intentionally omitted
+    // Note: _foundryId, _foundryName, reactions omitted — not in schema
   };
 }
 
@@ -4898,7 +4884,7 @@ async function importSelected() {
       const res = await fetch(`${SB_URL}/rest/v1/rq_monsters`, {
         method: 'POST',
         headers: { ...sbHeaders(), 'Prefer': 'return=minimal' },
-        body: JSON.stringify(m)
+        body: JSON.stringify(sanitizeMonsterForSupabase(m))
       });
       if (res.ok || res.status === 201) {
         succeeded++;
@@ -5144,44 +5130,38 @@ function buildRSBContent(m) {
     })
   ).join('');
 
-  // ── Action-like sections (attack + damage + description) ──
-  function renderRSBActionList(list) {
-    return (list || []).map(a => {
-      if (!a.name && !a.desc) return '';
-      const hasAtk = a.toHit && a.toHit !== '';
-      const hasDmg = a.damage && a.damage !== '';
-      const atkBonus = hasAtk ? (parseInt(a.toHit) || 0) : 0;
-      const atkBonusStr = fmtMod(atkBonus);
-      const reachStr = a.reach || a.range || '';
-      const dmgTypeStr = a.dmgType ? ' ' + a.dmgType : '';
+  // ── Actions (attack + damage) ──
+  const actionHTML = (m.actions||[]).map(a => {
+    if (!a.name) return '';
+    const hasAtk = a.toHit && a.toHit !== '';
+    const hasDmg = a.damage && a.damage !== '';
+    const atkBonus = hasAtk ? (parseInt(a.toHit) || 0) : 0;
+    const atkBonusStr = fmtMod(atkBonus);
+    const reachStr = a.reach || a.range || '';
+    const dmgTypeStr = a.dmgType ? ' ' + a.dmgType : '';
+    const extraDmgStr = a.extra ? ` + ${a.extra}${a.extraType ? ' ' + a.extraType : ''}` : '';
 
-      return `<div class="rsb-action">
-        <div class="rsb-action-header">
-          <span class="rsb-action-name">${escapeHtml(a.name || '')}</span>
-          ${reachStr ? `<span class="rsb-action-meta">${escapeHtml(reachStr)}</span>` : ''}
-          ${hasAtk ? `<span class="rsb-action-meta">${escapeHtml(a.toHit)} to hit</span>` : ''}
-          ${hasDmg ? `<span class="rsb-action-meta">${escapeHtml(a.damage)}${escapeHtml(dmgTypeStr)}</span>` : ''}
-        </div>
-        <div class="rsb-roll-grid">
-          ${hasAtk ? `<button class="rsb-roll-btn rsb-attack" onclick="rollWithMode(${atkBonus},'${escapeAttr(a.name)} Attack','rsbResult')">
-            ⚔ Attack Roll <span class="rsb-bonus">${atkBonusStr}</span>
-          </button>` : ''}
-          ${hasDmg ? `<button class="rsb-roll-btn rsb-damage" onclick="rollDamageResult('${escapeAttr(a.damage)}','${escapeAttr(a.name)} Damage','rsbResult')">
-            💥 Damage <span class="rsb-bonus">${escapeHtml(a.damage)}${escapeHtml(dmgTypeStr)}</span>
-          </button>` : ''}
-          ${a.extra ? `<button class="rsb-roll-btn rsb-damage" onclick="rollDamageResult('${escapeAttr(a.extra)}','${escapeAttr(a.name)} Extra Dmg','rsbResult')">
-            💥 Extra <span class="rsb-bonus">${escapeHtml(a.extra)}${a.extraType ? ' ' + escapeHtml(a.extraType) : ''}</span>
-          </button>` : ''}
-        </div>
-        ${a.desc ? `<div class="rsb-action-desc">${escapeHtml(a.desc)}</div>` : ''}
-      </div>`;
-    }).join('');
-  }
-
-  const actionHTML = renderRSBActionList(m.actions || []);
-  const bonusHTML = renderRSBActionList(m.bonus_actions || []);
-  const reactionHTML = renderRSBActionList(m.reactions || []);
-  const villainHTML = renderRSBActionList(m.villain_actions || []);
+    return `<div class="rsb-action">
+      <div class="rsb-action-header">
+        <span class="rsb-action-name">${a.name}</span>
+        ${reachStr ? `<span class="rsb-action-meta">${reachStr}</span>` : ''}
+        ${hasAtk ? `<span class="rsb-action-meta">${a.toHit} to hit</span>` : ''}
+        ${hasDmg ? `<span class="rsb-action-meta">${a.damage}${dmgTypeStr}</span>` : ''}
+      </div>
+      <div class="rsb-roll-grid">
+        ${hasAtk ? `<button class="rsb-roll-btn rsb-attack" onclick="rollWithMode(${atkBonus},'${a.name} Attack','rsbResult')">
+          ⚔ Attack Roll <span class="rsb-bonus">${atkBonusStr}</span>
+        </button>` : ''}
+        ${hasDmg ? `<button class="rsb-roll-btn rsb-damage" onclick="rollDamageResult('${a.damage}','${a.name} Damage','rsbResult')">
+          💥 Damage <span class="rsb-bonus">${a.damage}${dmgTypeStr}</span>
+        </button>` : ''}
+        ${a.extra ? `<button class="rsb-roll-btn rsb-damage" onclick="rollDamageResult('${a.extra}','${a.name} Extra Dmg','rsbResult')">
+          💥 Extra <span class="rsb-bonus">${a.extra}${a.extraType ? ' ' + a.extraType : ''}</span>
+        </button>` : ''}
+      </div>
+      ${a.desc ? `<div class="rsb-action-desc">${a.desc}</div>` : ''}
+    </div>`;
+  }).join('');
 
   // ── Special abilities ──
   const specialAbils = (m.special || m.special_abilities || []);
@@ -5261,9 +5241,6 @@ function buildRSBContent(m) {
     <div class="rsb-roll-grid">${skillBtns}</div>
 
     ${(m.actions||[]).length ? `<div class="rsb-section-title">Actions</div>${actionHTML}` : ''}
-    ${(m.bonus_actions||[]).length ? `<div class="rsb-section-title">Bonus Actions</div>${bonusHTML}` : ''}
-    ${(m.reactions||[]).length ? `<div class="rsb-section-title">Reactions</div>${reactionHTML}` : ''}
-    ${(m.villain_actions||[]).length ? `<div class="rsb-section-title">Villain Actions</div>${villainHTML}` : ''}
     ${specialHTML ? `<div class="rsb-section-title">Traits &amp; Special Abilities</div>${specialHTML}` : ''}
     ${legHTML}
   `;
