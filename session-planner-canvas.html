@@ -17107,16 +17107,41 @@ function renderNpcActionButton(a, actIdx, opts) {
   </span>`;
 }
 
-// NPC peek body: HP/multiplier, ability grid, save row. NO horde row
-// (your earlier design call: NPCs are individuals, not packs).
-function renderNpcPeekBody(skin) {
+// NPC HP bar mirrors the encounter monster HP affordance, but stores
+// state on node.fields.skin so the NPC's battle damage persists.
+function renderNpcHpBar(skin) {
   const sn = skin.snapshot || {};
   const maxHp = parseInt(sn.hp) || 0;
   const curHp = (typeof skin.hp_current === 'number') ? skin.hp_current : maxHp;
+  const hasPrev = (typeof skin._hpPrev === 'number') && skin._hpPrev !== curHp;
+  return `
+    <div class="node-mon-hpbar" data-npc-hpbar="1">
+      <span class="hpbar-label">HP</span>
+      <input type="text" inputmode="numeric"
+             class="hpbar-input"
+             data-npc-peek-hp="1"
+             value="${curHp}"
+             title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
+      <span class="hpbar-ticks">
+        <button class="hpbar-tick" data-npc-hp-tick="1"  type="button" title="+1 HP">▴</button>
+        <button class="hpbar-tick" data-npc-hp-tick="-1" type="button" title="−1 HP">▾</button>
+      </span>
+      <span class="hpbar-max">/ ${maxHp}</span>
+      <button class="hpbar-undo ${hasPrev ? '' : 'hidden'}"
+              data-npc-hp-undo="1" type="button"
+              title="${hasPrev ? 'Undo last HP change (back to ' + skin._hpPrev + ')' : 'No previous HP value to revert to'}"
+              ${hasPrev ? '' : 'disabled'}>↶</button>
+    </div>
+  `;
+}
+
+// NPC peek body: HP/multiplier, ability grid, save row. NO horde row
+// (your earlier design call: NPCs are individuals, not packs).
+function renderNpcPeekBody(skin) {
   const mult  = (typeof skin.mult === 'number' && skin.mult >= 1) ? skin.mult : 1;
   return `
+    ${renderNpcHpBar(skin)}
     <div class="node-mon-hpmult">
-      <span>HP <input type="number" data-npc-peek-hp="1" value="${curHp}" min="-99" max="999"> / ${maxHp}</span>
       <span style="margin-left:auto;">
         × <span class="mult-stepper ${mult > 1 ? 'active' : ''}" data-npc-peek-mult-wrap="1">
           <button class="mult-btn" data-npc-peek-mult-delta="-1" type="button">−</button>
@@ -17191,7 +17216,9 @@ function wireNpcPeekClicks(nodeEl, node) {
     'button[data-npc-readout]',
     'button[data-npc-show-hidden]',
     'button[data-npc-peek-mult-delta]',
-    'button[data-npc-peek-hp]',
+    'button[data-npc-hp-tick]',
+    'button[data-npc-hp-undo]',
+    'input[data-npc-peek-hp]',
     'button[data-ov-action]',
     // NPC peek-body rollables — same accumulation issue
     '[data-npc-peek-abil]',
@@ -17379,15 +17406,96 @@ function wireNpcPeekClicks(nodeEl, node) {
     });
   });
 
-  // HP — persistent
+  // HP — persistent. Mirrors encounter monster HP editing:
+  //   • focus selects the value
+  //   • plain number sets absolute HP
+  //   • +N / -N applies a delta from current HP
+  //   • Enter commits, Escape reverts, blur commits if changed
+  //   • ↶ swaps current HP with the one-step previous value
+  const _commitNpcHp = (raw) => {
+    if (raw === null || raw === undefined) return;
+    const s = String(raw).trim();
+    if (!s) {
+      refreshNodeFace(node);
+      return;
+    }
+    const cur = (typeof skin.hp_current === 'number') ? skin.hp_current : (parseInt((skin.snapshot || {}).hp) || 0);
+    let next;
+    const deltaMatch = s.match(/^([+-])\s*(\d+)$/);
+    if (deltaMatch) {
+      const sign = deltaMatch[1] === '-' ? -1 : 1;
+      const n = parseInt(deltaMatch[2], 10);
+      next = cur + sign * n;
+    } else {
+      const abs = parseInt(s, 10);
+      if (Number.isNaN(abs)) {
+        refreshNodeFace(node);
+        return;
+      }
+      next = abs;
+    }
+    if (next === cur) {
+      refreshNodeFace(node);
+      return;
+    }
+    skin._hpPrev = cur;
+    skin.hp_current = next;
+    const cardEl = nodeEl.querySelector('.node-mon[data-npc-card]');
+    if (cardEl) cardEl.classList.toggle('dead', skin.hp_current <= 0);
+    refreshNodeFace(node);
+    markDirty();
+  };
+
   nodeEl.querySelectorAll('input[data-npc-peek-hp]').forEach(inp => {
     inp.addEventListener('mousedown', (e) => e.stopPropagation());
     inp.addEventListener('click', (e) => e.stopPropagation());
-    inp.addEventListener('change', (e) => {
+    inp.addEventListener('focus', () => {
+      setTimeout(() => {
+        try { inp.select(); } catch (_) { /* detached during refresh — ignore */ }
+      }, 0);
+    });
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        inp.dataset.justCommitted = '1';
+        _commitNpcHp(inp.value);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        inp.dataset.justCommitted = '1';
+        refreshNodeFace(node);
+      }
+    });
+    inp.addEventListener('blur', () => {
+      if (inp.dataset.justCommitted === '1') return;
+      const cur = (typeof skin.hp_current === 'number') ? skin.hp_current : (parseInt((skin.snapshot || {}).hp) || 0);
+      if (String(inp.value).trim() === String(cur)) return;
+      _commitNpcHp(inp.value);
+    });
+  });
+
+  nodeEl.querySelectorAll('button[data-npc-hp-tick]').forEach(btn => {
+    btn.addEventListener('mousedown', (e) => e.stopPropagation());
+    btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      skin.hp_current = parseInt(inp.value) || 0;
+      const d = parseInt(btn.dataset.npcHpTick);
+      if (!d) return;
+      _commitNpcHp((d > 0 ? '+' : '') + d);
+    });
+  });
+
+  nodeEl.querySelectorAll('button[data-npc-hp-undo]').forEach(btn => {
+    btn.addEventListener('mousedown', (e) => e.stopPropagation());
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (typeof skin._hpPrev !== 'number') return;
+      const cur = (typeof skin.hp_current === 'number') ? skin.hp_current : (parseInt((skin.snapshot || {}).hp) || 0);
+      skin.hp_current = skin._hpPrev;
+      skin._hpPrev = cur;
       const cardEl = nodeEl.querySelector('.node-mon[data-npc-card]');
       if (cardEl) cardEl.classList.toggle('dead', skin.hp_current <= 0);
+      refreshNodeFace(node);
       markDirty();
     });
   });
