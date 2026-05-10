@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.13 · CR/action fixes</span>
+  <span class="topbar-version">v0.5.14 · CR/action fixes</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3367,6 +3367,148 @@ function getDamageScalingRatioForTargetCR(newT, fallbackOldT) {
   return newDprMid / oldDprMid;
 }
 
+
+function parseDamageFormulaAverage(formula) {
+  return averageDamageFormulaValue(formula);
+}
+
+function extractFirstDiceFormula(text) {
+  const m = String(text || '').match(/(\d+)d(\d+)(\s*[+\-]\s*\d+)?/);
+  return m ? m[0].replace(/\s+/g, '') : '';
+}
+
+function formulaAverageParts(formula) {
+  const m = String(formula || '').trim().match(/^(\d+)d(\d+)([+-]\d+)?$/i);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  const die = parseInt(m[2], 10);
+  const bonus = m[3] ? parseInt(m[3], 10) : 0;
+  return { n, die, bonus, avg: n * (die + 1) / 2 + bonus };
+}
+
+function buildFormulaForTargetAverage(baseFormula, targetAvg) {
+  const parts = formulaAverageParts(baseFormula);
+  if (!parts || !Number.isFinite(targetAvg) || targetAvg <= 0) {
+    return String(Math.max(1, Math.round(targetAvg)));
+  }
+
+  const dieAvg = (parts.die + 1) / 2;
+
+  // Preserve the approximate bonus-to-dice relationship from the source formula.
+  // Example: 3d12+7 at target avg 84 becomes about 10d12+19, not 23d12+53.
+  const baseDiceAvg = parts.n * dieAvg;
+  const bonusRatio = baseDiceAvg > 0 ? parts.bonus / baseDiceAvg : 0;
+
+  let best = null;
+  for (let n = 1; n <= 40; n++) {
+    const diceAvg = n * dieAvg;
+    let bonus = Math.round(diceAvg * bonusRatio);
+    let avg = diceAvg + bonus;
+
+    // If preserving the original ratio lands too far away, adjust bonus to hit target.
+    if (Math.abs(avg - targetAvg) > dieAvg) {
+      bonus = Math.round(targetAvg - diceAvg);
+      avg = diceAvg + bonus;
+    }
+
+    const diff = Math.abs(avg - targetAvg);
+    const candidate = { n, bonus, avg, diff };
+
+    if (!best || candidate.diff < best.diff || (candidate.diff === best.diff && candidate.n < best.n)) {
+      best = candidate;
+    }
+  }
+
+  if (!best) return String(Math.max(1, Math.round(targetAvg)));
+  return best.n + 'd' + parts.die + (best.bonus ? (best.bonus > 0 ? '+' : '') + best.bonus : '');
+}
+
+function getMultiattackCountsFromDom() {
+  const actions = readAttackActionsFromDom();
+  const attacks = actions.filter(a => a.dmgInput && (a.dmgInput.value || extractFirstDiceFormula(a.desc)));
+  const multi = actions.find(a => /multiattack/i.test(a.name));
+  const counts = new Map();
+
+  if (!attacks.length) return { attacks, counts, totalAttacks: 0 };
+
+  if (multi && multi.desc) {
+    const desc = multi.desc.toLowerCase();
+
+    attacks.forEach(atk => {
+      const escaped = atk.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const patterns = [
+        new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+(?:with\\s+(?:its|the)\\s+)?' + escaped + 's?\\b', 'i'),
+        new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+' + escaped + '\\s+attacks?\\b', 'i')
+      ];
+
+      patterns.forEach(re => {
+        const m = desc.match(re);
+        if (m) counts.set(atk.key, Math.max(counts.get(atk.key) || 0, numberWordToInt(m[1])));
+      });
+    });
+
+    if (!counts.size && attacks.length === 1) {
+      const m = desc.match(/makes?\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+attacks?/i);
+      if (m) counts.set(attacks[0].key, numberWordToInt(m[1]));
+    }
+  }
+
+  if (!counts.size) {
+    // No parsed multiattack: assume the strongest damaging action represents the turn.
+    const strongest = attacks.reduce((best, a) => (a.avg || 0) > (best.avg || 0) ? a : best, attacks[0]);
+    counts.set(strongest.key, 1);
+  }
+
+  let totalAttacks = 0;
+  counts.forEach(v => totalAttacks += v);
+  return { attacks, counts, totalAttacks };
+}
+
+function synchronizeActionDamageProse(card, targetAvg) {
+  const fields = getActionCardFields(card);
+  if (!fields.dmgInput) return false;
+
+  const desc = fields.descInput?.value || '';
+  const existingFormula = extractFirstDiceFormula(desc);
+  let newFormula = existingFormula
+    ? buildFormulaForTargetAverage(existingFormula, targetAvg)
+    : String(Math.max(1, Math.round(targetAvg)));
+
+  const avg = Math.max(1, Math.round(parseDamageFormulaAverage(newFormula)));
+  fields.dmgInput.value = String(avg);
+
+  if (fields.descInput && existingFormula) {
+    const old = fields.descInput.value;
+    let updated = old.replace(existingFormula, newFormula);
+
+    // Also update "Hit: 26 (" to match the new average before the formula.
+    updated = updated.replace(/Hit:\s*\d+\s*\(/i, 'Hit: ' + avg + ' (');
+
+    fields.descInput.value = updated;
+  }
+
+  return true;
+}
+
+function scaleActionsToTargetTurnDpr(newT) {
+  const targetTurnDpr = Math.round((newT.dprLo + newT.dprHi) / 2) || 1;
+  const { attacks, counts, totalAttacks } = getMultiattackCountsFromDom();
+  if (!attacks.length || !totalAttacks) return { changed: 0, targetTurnDpr, perAttack: 0 };
+
+  let changed = 0;
+
+  attacks.forEach(atk => {
+    const count = counts.get(atk.key) || 0;
+    if (!count) return;
+
+    const targetAvg = targetTurnDpr / totalAttacks;
+    if (synchronizeActionDamageProse(atk.card, targetAvg)) changed++;
+  });
+
+  return { changed, targetTurnDpr, perAttack: targetTurnDpr / totalAttacks };
+}
+
+
 function applyCRScaling() {
   const newCR = document.getElementById('f_cr').value;
   const newT  = CR_TABLE[newCR];
@@ -3400,29 +3542,23 @@ function applyCRScaling() {
   const acField = document.getElementById('f_ac');
   if (acField && !acField.readOnly) acField.value = newAc;
 
-  // ── DPR ratio for damage scaling ──
-  // v0.5.1: Estimate current one-turn DPR from the rendered Actions, including
-  // Multiattack, then scale toward the target CR's DPR midpoint. This prevents
-  // multiattack monsters from being treated as if each attack were the whole turn.
+  // ── DPR / damage scaling ──
+  // v0.5.14: Treat CR damage as expected turn DPR, not as independent
+  // per-action scaling. Allocate the target DPR across the attacks named by
+  // Multiattack, then synchronize the average damage field and the prose formula.
   const currentTurnDpr = estimateTurnDPRFromDom();
   const targetDprMid = Math.round((newT.dprLo + newT.dprHi) / 2) || 1;
   const dprRatio = getDamageScalingRatioForTargetCR(newT, oldT);
+  const actionScale = scaleActionsToTargetTurnDpr(newT);
 
   // ── To-hit: read from new CR table ──
   const newToHit = parseInt(newT.atk) || 3;
 
-  // ── Scale attack action damage and to-hit ──
-  // Only the main Actions container is adjusted here. Traits, legendary actions,
-  // and lair actions are handled in the prose/DC scan below.
   document.querySelectorAll('#actionsContainer .action-card').forEach(card => {
     const fields = getActionCardFields(card);
     const toHitInput = fields.toHitInput;
     if (toHitInput && !toHitInput.readOnly && toHitInput.value && toHitInput.value !== '') {
       toHitInput.value = (newToHit >= 0 ? '+' : '') + newToHit;
-    }
-    const dmgInput = fields.dmgInput;
-    if (dmgInput && !dmgInput.readOnly && dmgInput.value) {
-      dmgInput.value = scaleDamageFormula(dmgInput.value, dprRatio);
     }
   });
 
@@ -3534,6 +3670,10 @@ function applyCRScaling() {
   document.querySelectorAll('.action-card').forEach(card => {
     const ta = card.querySelector('textarea');
     if (!ta || ta.readOnly || !ta.value) return;
+
+    // Main attack action prose was already synchronized above. Do not
+    // multiply those formulas a second time.
+    if (card.closest('#actionsContainer')) return;
     const original = ta.value;
     let updated = original;
     // 1) Dice formulas — NdM, NdM+K, NdM-K (with optional whitespace
@@ -3568,6 +3708,7 @@ function applyCRScaling() {
     `CHA: ${newChaScore}`,
     `Save DC: ${newDC}`,
     `DPR ${currentTurnDpr ? currentTurnDpr.toFixed(1) : '?'}→${targetDprMid}`,
+    `Actions: ${actionScale.changed} @ ~${Math.round(actionScale.perAttack || 0)}`,
     `Dmg ×${dprRatio.toFixed(2)}`,
     `Prose: ${formulasScaled} dmg, ${dcsUpdated} DC`
   ].join(' · ');
