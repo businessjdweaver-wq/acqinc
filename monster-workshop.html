@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.17 · CR/action fixes</span>
+  <span class="topbar-version">v0.5.18 · CR/action fixes</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3314,6 +3314,7 @@ function estimateTurnDPRFromDom() {
   if (!attacks.length) return 0;
 
   const multi = actions.find(a => /multiattack/i.test(a.name));
+  const multiText = (multi && multi.desc) ? multi.desc : findMultiattackTextFromDom();
   if (!multi || !multi.desc) return Math.max(...attacks.map(a => a.avg));
 
   const desc = multi.desc.toLowerCase();
@@ -3417,10 +3418,38 @@ function buildFormulaForTargetAverage(baseFormula, targetAvg) {
   return best.n + 'd' + parts.die + (best.bonus ? (best.bonus > 0 ? '+' : '') + best.bonus : '');
 }
 
+
+function findMultiattackTextFromDom() {
+  // Multiattack is often imported as a description-only action or trait.
+  // It may not appear in #actionsContainer if the editor classifies it as
+  // special_abilities, so search all rendered cards.
+  const cards = [...document.querySelectorAll('.action-card')];
+
+  for (const card of cards) {
+    const name = (card.querySelector('.action-name-input')?.value || '').trim();
+    const desc = (card.querySelector('textarea')?.value || '').trim();
+    if (/multiattack/i.test(name) || /multiattack/i.test(desc)) {
+      return desc || name;
+    }
+  }
+
+  // Fallback: any textarea that looks like a multiattack routine.
+  for (const ta of [...document.querySelectorAll('textarea')]) {
+    const value = (ta.value || '').trim();
+    if (/makes?\s+.*attacks?/i.test(value) && /\bor\b|greataxe|rock|claw|bite|sword|bow|slam|tentacle/i.test(value)) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
+
 function getMultiattackCountsFromDom() {
   const actions = readAttackActionsFromDom();
   const attacks = actions.filter(a => a.dmgInput && (a.dmgInput.value || extractFirstDiceFormula(a.desc)));
   const multi = actions.find(a => /multiattack/i.test(a.name));
+  const multiText = (multi && multi.desc) ? multi.desc : findMultiattackTextFromDom();
   const counts = new Map();
 
   if (!attacks.length) return { attacks, counts, totalAttacks: 0, routines: [] };
@@ -3474,8 +3503,8 @@ function getMultiattackCountsFromDom() {
 
   let routines = [];
 
-  if (multi && multi.desc) {
-    const desc = multi.desc.toLowerCase().replace(/\beither\b/g, '');
+  if (multiText) {
+    const desc = multiText.toLowerCase().replace(/\beither\b/g, '');
 
     // Break "two greataxe attacks or one rock" into independent alternatives,
     // but preserve the leading verb phrase for the first option.
@@ -3533,6 +3562,13 @@ function getMultiattackCountsFromDom() {
 
   let totalAttacks = 0;
   counts.forEach(v => { if (v > totalAttacks) totalAttacks = v; });
+
+  console.log('[CR Multiattack Parse]', {
+    multiText,
+    attacks: attacks.map(a => ({ name: a.name, key: a.key, avg: a.avg })),
+    routines: routines.map(r => Object.fromEntries(r)),
+    counts: Object.fromEntries(counts)
+  });
 
   return { attacks, counts, totalAttacks, routines };
 }
@@ -3646,7 +3682,7 @@ function applyCRScaling() {
   if (acField && !acField.readOnly) acField.value = newAc;
 
   // ── DPR / damage scaling ──
-  // v0.5.17: Treat CR damage as expected turn DPR, not as independent
+  // v0.5.18: Treat CR damage as expected turn DPR, not as independent
   // per-action scaling. Allocate the target DPR across the attacks named by
   // Multiattack, then synchronize the average damage field and the prose formula.
   const currentTurnDpr = estimateTurnDPRFromDom();
