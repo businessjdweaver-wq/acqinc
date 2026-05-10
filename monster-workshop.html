@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.14 · CR/action fixes</span>
+  <span class="topbar-version">v0.5.15 · CR/action fixes</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3394,29 +3394,23 @@ function buildFormulaForTargetAverage(baseFormula, targetAvg) {
 
   const dieAvg = (parts.die + 1) / 2;
 
-  // Preserve the approximate bonus-to-dice relationship from the source formula.
-  // Example: 3d12+7 at target avg 84 becomes about 10d12+19, not 23d12+53.
-  const baseDiceAvg = parts.n * dieAvg;
-  const bonusRatio = baseDiceAvg > 0 ? parts.bonus / baseDiceAvg : 0;
-
+  // Build a formula whose average is close to targetAvg while keeping the
+  // same die size. For big CR jumps, prefer more dice over huge flat bonuses.
+  // Example: 3d12+7 targeting ~84 becomes 12d12+6, because 12*6.5+6 = 84.
   let best = null;
   for (let n = 1; n <= 40; n++) {
     const diceAvg = n * dieAvg;
-    let bonus = Math.round(diceAvg * bonusRatio);
-    let avg = diceAvg + bonus;
-
-    // If preserving the original ratio lands too far away, adjust bonus to hit target.
-    if (Math.abs(avg - targetAvg) > dieAvg) {
-      bonus = Math.round(targetAvg - diceAvg);
-      avg = diceAvg + bonus;
-    }
-
+    const bonus = Math.round(targetAvg - diceAvg);
+    const avg = diceAvg + bonus;
     const diff = Math.abs(avg - targetAvg);
-    const candidate = { n, bonus, avg, diff };
 
-    if (!best || candidate.diff < best.diff || (candidate.diff === best.diff && candidate.n < best.n)) {
-      best = candidate;
-    }
+    // Penalize extreme flat bonuses so we prefer reasonable dice pools.
+    const bonusPenalty = Math.abs(bonus) / Math.max(1, targetAvg);
+    const sizePenalty = Math.abs(n - Math.round(targetAvg / dieAvg)) * 0.01;
+    const score = diff + bonusPenalty + sizePenalty;
+
+    const candidate = { n, bonus, avg, diff, score };
+    if (!best || candidate.score < best.score) best = candidate;
   }
 
   if (!best) return String(Math.max(1, Math.round(targetAvg)));
@@ -3435,26 +3429,53 @@ function getMultiattackCountsFromDom() {
     const desc = multi.desc.toLowerCase();
 
     attacks.forEach(atk => {
-      const escaped = atk.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const patterns = [
-        new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+(?:with\\s+(?:its|the)\\s+)?' + escaped + 's?\\b', 'i'),
-        new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+' + escaped + '\\s+attacks?\\b', 'i')
-      ];
+      const key = atk.key;
+      const words = key.split(/\s+/).filter(Boolean);
+      const last = words[words.length - 1] || key;
+      const candidates = [...new Set([key, last, key + ' attack', last + ' attack'])];
 
-      patterns.forEach(re => {
-        const m = desc.match(re);
-        if (m) counts.set(atk.key, Math.max(counts.get(atk.key) || 0, numberWordToInt(m[1])));
-      });
+      for (const cand of candidates) {
+        const escaped = cand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const patterns = [
+          new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+(?:with\\s+(?:its|the)\\s+)?' + escaped + 's?\\b', 'i'),
+          new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+' + escaped + 's?\\s+attacks?\\b', 'i'),
+          new RegExp('\\b' + escaped + 's?\\s+attacks?\\b', 'i')
+        ];
+
+        for (const re of patterns) {
+          const m = desc.match(re);
+          if (m) {
+            const n = m[1] ? numberWordToInt(m[1]) : 1;
+            counts.set(atk.key, Math.max(counts.get(atk.key) || 0, n || 1));
+          }
+        }
+      }
     });
 
-    if (!counts.size && attacks.length === 1) {
-      const m = desc.match(/makes?\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+attacks?/i);
-      if (m) counts.set(attacks[0].key, numberWordToInt(m[1]));
+    // Common form: "The giant makes two greataxe attacks."
+    // If the text names exactly one damaging action, assign all attacks to it.
+    if (!counts.size) {
+      const totalMatch = desc.match(/makes?\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+attacks?/i);
+      if (totalMatch) {
+        const n = numberWordToInt(totalMatch[1]);
+        const named = attacks.filter(atk => desc.includes(atk.key) || desc.includes(atk.key.split(/\s+/).pop()));
+        if (named.length === 1) counts.set(named[0].key, n);
+      }
+    }
+
+    // If it says "two attacks" and one melee attack action is clearly primary,
+    // prefer that over splitting between ranged options like Rock.
+    if (!counts.size) {
+      const totalMatch = desc.match(/makes?\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+attacks?/i);
+      if (totalMatch) {
+        const n = numberWordToInt(totalMatch[1]);
+        const melee = attacks.filter(atk => /melee/i.test(atk.desc || '') || /reach/i.test(atk.desc || ''));
+        if (melee.length === 1) counts.set(melee[0].key, n);
+      }
     }
   }
 
   if (!counts.size) {
-    // No parsed multiattack: assume the strongest damaging action represents the turn.
     const strongest = attacks.reduce((best, a) => (a.avg || 0) > (best.avg || 0) ? a : best, attacks[0]);
     counts.set(strongest.key, 1);
   }
@@ -3505,6 +3526,7 @@ function scaleActionsToTargetTurnDpr(newT) {
     if (synchronizeActionDamageProse(atk.card, targetAvg)) changed++;
   });
 
+  console.log('[CR Scale DPR]', { targetTurnDpr, totalAttacks, perAttack: targetTurnDpr / totalAttacks, counts: [...counts.entries()] });
   return { changed, targetTurnDpr, perAttack: targetTurnDpr / totalAttacks };
 }
 
@@ -3543,7 +3565,7 @@ function applyCRScaling() {
   if (acField && !acField.readOnly) acField.value = newAc;
 
   // ── DPR / damage scaling ──
-  // v0.5.14: Treat CR damage as expected turn DPR, not as independent
+  // v0.5.15: Treat CR damage as expected turn DPR, not as independent
   // per-action scaling. Allocate the target DPR across the attacks named by
   // Multiattack, then synchronize the average damage field and the prose formula.
   const currentTurnDpr = estimateTurnDPRFromDom();
