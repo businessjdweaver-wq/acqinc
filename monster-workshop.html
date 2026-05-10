@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.19 · CR/action fixes</span>
+  <span class="topbar-version">v0.5.20 · CR/action fixes</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3548,6 +3548,30 @@ function getMultiattackCountsFromDom() {
     }
   }
 
+  // Fallback for named alternate options that the regex parser missed.
+  // Example: "or hurls a rock" or "or throws a boulder" should count as
+  // a one-attack full-turn routine for Rock/Boulder.
+  if (multiText) {
+    const lowerMulti = String(multiText).toLowerCase();
+    attacks.forEach(atk => {
+      const aliases = [...new Set([
+        atk.key,
+        ...(atk.key || '').split(/\s+/).filter(Boolean),
+        singularizeAttackName(atk.name || '')
+      ])].filter(Boolean);
+
+      const already = routines.some(r => r.has(atk.key));
+      if (!already && aliases.some(alias => {
+        const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp('\\b' + escaped + 's?\\b', 'i').test(lowerMulti);
+      })) {
+        const r = new Map();
+        r.set(atk.key, 1);
+        routines.push(r);
+      }
+    });
+  }
+
   if (!routines.length) {
     const strongest = attacks.reduce((best, a) => (a.avg || 0) > (best.avg || 0) ? a : best, attacks[0]);
     const r = new Map();
@@ -3665,6 +3689,28 @@ function synchronizeActionDamageProse(card, targetAvg) {
 function scaleActionsToTargetTurnDpr(newT) {
   const targetTurnDpr = Math.round((newT.dprLo + newT.dprHi) / 2) || 1;
   const { attacks, counts, routines } = getMultiattackCountsFromDom();
+  // Defensive fallback: if the multiattack text names an action but the
+  // routine parser still missed it, treat that named action as a one-attack
+  // alternate routine. This is especially important for "Rock" style options.
+  if (attacks.length && typeof findMultiattackTextFromDom === 'function') {
+    const mt = (findMultiattackTextFromDom() || '').toLowerCase();
+    attacks.forEach(atk => {
+      if (!counts.has(atk.key)) {
+        const aliases = [...new Set([
+          atk.key,
+          ...(atk.key || '').split(/\s+/).filter(Boolean),
+          singularizeAttackName(atk.name || '')
+        ])].filter(Boolean);
+        if (aliases.some(alias => new RegExp('\\b' + alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + 's?\\b', 'i').test(mt))) {
+          counts.set(atk.key, 1);
+          const r = new Map();
+          r.set(atk.key, 1);
+          routines.push(r);
+        }
+      }
+    });
+  }
+
   if (!attacks.length || !counts.size) return { changed: 0, targetTurnDpr, perAttack: 0 };
 
   let changed = 0;
@@ -3734,7 +3780,7 @@ function applyCRScaling() {
   if (acField && !acField.readOnly) acField.value = newAc;
 
   // ── DPR / damage scaling ──
-  // v0.5.19: Treat CR damage as expected turn DPR, not as independent
+  // v0.5.20: Treat CR damage as expected turn DPR, not as independent
   // per-action scaling. Allocate the target DPR across the attacks named by
   // Multiattack, then synchronize the average damage field and the prose formula.
   const currentTurnDpr = estimateTurnDPRFromDom();
