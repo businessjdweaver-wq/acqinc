@@ -4146,7 +4146,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7179
+      Version 1.7180
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -20472,6 +20472,70 @@ function downtimeRedundantMessage(c,type,target){
   if(type==='faith')return nm+' is already devoted to '+clean+'. Choose a different downtime target.';
   return nm+' already has this downtime reward. Choose a different target.';
 }
+
+// v1.7180 — Obsolete downtime-track cleanup.
+// The reward gate prevents new redundant skill/language/faith work, but old
+// saves may still contain dtProgress keys (and occasionally active/pending
+// jobs) for rewards the character now owns. Those stale keys made the QP
+// Spender's "Continue Downtime" bar offer fruitless work again. This cleanup
+// is intentionally conservative: it only removes tracks whose reward is
+// already present on the same character.
+function _downtimeKeyParts(key){
+  var parts=String(key||'').split(':');
+  return {type:parts[0]||'',target:parts.slice(1).join(':')||'core'};
+}
+function downtimeProgressKeyIsObsolete(c,key){
+  if(!c||!key)return false;
+  var p=_downtimeKeyParts(key);
+  if(downtimeTargetAlreadyOwned(c,p.type,p.target))return true;
+  if(p.type==='contacts'&&c.contact)return true;
+  return false;
+}
+function cleanupObsoleteDowntimeTracks(opts){
+  opts=opts||{};
+  if(!S||!Array.isArray(S.party))return {changed:false,progress:0,jobs:0,pending:0};
+  var removedProgress=0,removedJobs=0,removedPending=0;
+
+  S.party.forEach(function(c){
+    if(!c||!c.dtProgress)return;
+    Object.keys(c.dtProgress).forEach(function(k){
+      if((c.dtProgress[k]||0)>0&&downtimeProgressKeyIsObsolete(c,k)){
+        delete c.dtProgress[k];
+        removedProgress++;
+      }
+    });
+  });
+
+  if(Array.isArray(S.downtimeJobs)){
+    S.downtimeJobs=S.downtimeJobs.filter(function(j){
+      var c=S.party[j&&j.ci];
+      if(j&&c&&(downtimeTargetAlreadyOwned(c,j.type,j.target)||(j.type==='contacts'&&c.contact))){
+        removedJobs++;
+        return false;
+      }
+      return true;
+    });
+  }
+
+  if(Array.isArray(S.pendingDowntimeRolls)){
+    S.pendingDowntimeRolls=S.pendingDowntimeRolls.filter(function(p){
+      var c=S.party[p&&p.ci];
+      var j=p&&p.job;
+      if(j&&c&&(downtimeTargetAlreadyOwned(c,j.type,j.target)||(j.type==='contacts'&&c.contact))){
+        removedPending++;
+        return false;
+      }
+      return true;
+    });
+  }
+
+  var changed=!!(removedProgress||removedJobs||removedPending);
+  if(changed&&opts.log!==false){
+    logAdd('🧹 Cleaned obsolete downtime tracks: '+removedProgress+' progress, '+removedJobs+' active, '+removedPending+' pending','sys');
+  }
+  if(changed&&opts.save!==false)save();
+  return {changed:changed,progress:removedProgress,jobs:removedJobs,pending:removedPending};
+}
 function _franchiseCoveredSet(key){
   // Returns a Set of values already covered by anyone in the party
   var covered={};
@@ -21847,9 +21911,11 @@ function renderParty(){
       _markBusy((_sp[sid]||{}).pending);
       _markBusy((_sp[sid]||{}).grindPending);
     });
+    if(typeof cleanupObsoleteDowntimeTracks==='function')cleanupObsoleteDowntimeTracks({log:false,save:true});
     var resumable=(S.party||[]).map(function(c,ci){return{c:c,ci:ci};}).filter(function(e){
       if(!e.c)return false;
-      var hasProgress=e.c.dtProgress&&Object.keys(e.c.dtProgress).some(function(k){return (e.c.dtProgress[k]||0)>0;});
+      var prog=e.c.dtProgress||{};
+      var hasProgress=Object.keys(prog).some(function(k){return (prog[k]||0)>0&&!downtimeProgressKeyIsObsolete(e.c,k);});
       var isBusy=!!(S.downtimeJobs||[]).some(function(j){return j.ci===e.ci&&(j.endsAt||0)>_now;});
       var isQuesting=!!_questingCis[e.ci];
       return hasProgress&&!isBusy&&!isQuesting;
@@ -21875,9 +21941,8 @@ function renderParty(){
     // Build per-character rows with checkbox + track + progress bar
     var charRows=resumable.map(function(e,idx){
       var prog=e.c.dtProgress||{};
-      var bestKey=Object.keys(prog).filter(function(k){return (prog[k]||0)>0;})
-        .sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0]
-        ||Object.keys(prog).sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
+      var bestKey=Object.keys(prog).filter(function(k){return (prog[k]||0)>0&&!downtimeProgressKeyIsObsolete(e.c,k);})
+        .sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
       var trackLabel='',trackProg=0,trackThreshold=8;
       if(bestKey){
         var bParts=bestKey.split(':');
@@ -21988,9 +22053,8 @@ function renderParty(){
           var _endsAt=Date.now()+_ms;
           _selected.forEach(function(e){
             var prog=e.c.dtProgress||{};
-            var bestKey=Object.keys(prog).filter(function(k){return (prog[k]||0)>0;})
-              .sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0]
-              ||Object.keys(prog).sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
+            var bestKey=Object.keys(prog).filter(function(k){return (prog[k]||0)>0&&!downtimeProgressKeyIsObsolete(e.c,k);})
+              .sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
             if(!bestKey)return;
             var parts=bestKey.split(':');
             var type=parts[0],target=parts.slice(1).join(':')||'core';
@@ -37030,7 +37094,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7179';
+var RQ_CLIENT_VERSION='v1.7180';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
