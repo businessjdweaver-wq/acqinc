@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.11 · CR/action fixes</span>
+  <span class="topbar-version">v0.5.12 · CR/action fixes</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3762,51 +3762,108 @@ function collectFormData() {
 }
 
 // ── SUPABASE ──
+function wrapRqMonsterRow(r) {
+  return {
+    ...r,
+    slug: r.slug || ('custom-' + r.id),
+    type: r.monster_type || r.tags?.[0] || 'custom',
+    source: 'custom',
+    actions: r.actions || [],
+    special_abilities: r.special_abilities || [],
+    bonus_actions: r.bonus_actions || [],
+    reactions: r.reactions || [],
+    villain_actions: r.villain_actions || [],
+    spells: r.spells || [],
+    special: r.special_abilities || []
+  };
+}
+
 async function saveMonster() {
   if (!isEditing) { showToast('Duplicate the monster first to edit and save it', true); return; }
+
   const data = sanitizeMonsterForSupabase(collectFormData());
+  console.log('[Workshop saveMonster] Saving payload:', data);
+
   try {
     let res;
+    let savedRow = null;
+
     if (currentMonster?.id) {
       res = await fetch(`${SB_URL}/rest/v1/rq_monsters?id=eq.${currentMonster.id}`, {
-        method: 'PATCH', headers: sbHeaders(), body: JSON.stringify(data)
-      });
-    } else {
-      res = await fetch(`${SB_URL}/rest/v1/rq_monsters`, {
-        method: 'POST', headers: { ...sbHeaders(), 'Prefer': 'return=representation' },
+        method: 'PATCH',
+        headers: {
+          ...sbHeaders(),
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation'
+        },
         body: JSON.stringify(data)
       });
+
       if (res.ok) {
         const rows = await res.json();
-        if (rows[0]) currentMonster.id = rows[0].id;
+        savedRow = rows && rows[0] ? rows[0] : null;
+      }
+    } else {
+      res = await fetch(`${SB_URL}/rest/v1/rq_monsters`, {
+        method: 'POST',
+        headers: {
+          ...sbHeaders(),
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation'
+        },
+        body: JSON.stringify(data)
+      });
+
+      if (res.ok) {
+        const rows = await res.json();
+        savedRow = rows && rows[0] ? rows[0] : null;
       }
     }
+
     if (res.ok) {
-      // Keep the currently selected monster coherent immediately, then reload
-      // the authoritative list from Supabase. The old UI had a third "My Monsters"
-      // tab here; the unified Library has only one tab, so do not index tabs[2].
-      currentMonster = { ...(currentMonster || {}), ...data, id: currentMonster?.id };
+      if (savedRow) {
+        currentMonster = wrapRqMonsterRow(savedRow);
+      } else {
+        currentMonster = {
+          ...(currentMonster || {}),
+          ...data,
+          slug: currentMonster?.slug || (currentMonster?.id ? 'custom-' + currentMonster.id : undefined)
+        };
+      }
+
       await loadCustomMonsters();
 
       const refreshed = customMonsters.find(m => String(m.id) === String(currentMonster?.id));
       if (refreshed) currentMonster = refreshed;
 
-      // Signal to Blender that custom monsters changed
       try { localStorage.setItem('rq_custom_monsters_dirty', Date.now().toString()); } catch(e) {}
+
       showToast('✓ ' + data.name + ' saved');
       currentTab = 'custom';
       document.querySelectorAll('.browser-tab').forEach(b => {
         b.classList.remove('active-srd','active-ds','active-custom');
         b.classList.add('active-custom');
       });
+
+      // Preserve search if it matches the new name; otherwise clear stale filters
+      // only when the saved monster would otherwise disappear.
+      const q = document.getElementById('searchInput')?.value || '';
+      const visibleName = (currentMonster?.name || '').toLowerCase();
+      if (q && !visibleName.includes(q.toLowerCase())) {
+        document.getElementById('searchInput').value = '';
+      }
+
       filterMonsters();
       if (currentMonster) renderEditor(currentMonster);
+      console.log('[Workshop saveMonster] Saved row returned:', savedRow || currentMonster);
     } else {
       const err = await res.text();
       showToast('Save failed: ' + err, true);
+      console.warn('[Workshop saveMonster] Save failed payload:', data);
     }
   } catch(e) {
     showToast('Network error: ' + e.message, true);
+    console.error('[Workshop saveMonster] Network error:', e);
   }
 }
 
@@ -4154,19 +4211,7 @@ async function loadCustomMonsters() {
       offset += PAGE;
     }
 
-    customMonsters = allRows.map(r => ({
-      ...r,
-      slug: r.slug || ('custom-' + r.id),
-      type: r.monster_type || r.tags?.[0] || 'custom',
-      source: 'custom',
-      actions: r.actions || [],
-      special_abilities: r.special_abilities || [],
-      bonus_actions: r.bonus_actions || [],
-      reactions: r.reactions || [],
-      villain_actions: r.villain_actions || [],
-      spells: r.spells || [],
-      special: r.special_abilities || []
-    }));
+    customMonsters = allRows.map(r => typeof wrapRqMonsterRow === 'function' ? wrapRqMonsterRow(r) : ({ ...r, slug: r.slug || ('custom-' + r.id), type: r.monster_type || r.tags?.[0] || 'custom', source: 'custom', actions: r.actions || [], special_abilities: r.special_abilities || [], bonus_actions: r.bonus_actions || [], reactions: r.reactions || [], villain_actions: r.villain_actions || [], spells: r.spells || [], special: r.special_abilities || [] }));
 
     populateAdvancedFilters(customMonsters);
     if (currentTab === 'custom') renderBrowserList(customMonsters);
