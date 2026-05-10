@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.18 · CR/action fixes</span>
+  <span class="topbar-version">v0.5.19 · CR/action fixes</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3242,7 +3242,10 @@ function showScalePrompt() {
 // to the strongest single damaging action.
 function averageDamageFormulaValue(formula) {
   if (!formula) return 0;
-  const text = String(formula).replace(/\s+/g, '');
+  const text = String(formula)
+    .replace(/\[[^\]]*\]/g, '')
+    .replace(/@mod/gi, '0')
+    .replace(/\s+/g, '');
   let total = 0;
   let matched = false;
   text.replace(/(\d+)d(\d+)([+-]\d+)?/gi, (whole, n, die, mod) => {
@@ -3573,39 +3576,88 @@ function getMultiattackCountsFromDom() {
   return { attacks, counts, totalAttacks, routines };
 }
 
+function cleanFoundryFormula(formula) {
+  // Converts Foundry-ish formulas like "4d10[bludgeoning] + @mod"
+  // into a usable Workshop dice expression like "4d10+7" when possible.
+  let s = String(formula || '').trim();
+  s = s.replace(/\[[^\]]*\]/g, '');
+  s = s.replace(/\s+/g, '');
+  // @mod cannot be known from the action field alone; prefer the prose formula
+  // when available. If not, treat @mod as 0 rather than keeping invalid syntax.
+  s = s.replace(/@mod/gi, '0');
+  s = s.replace(/\+0\b/g, '');
+  return s;
+}
+
+function formatFormulaForProse(formula) {
+  return String(formula || '').replace(/([+-])/g, ' $1 ').replace(/\s+/g, ' ').trim();
+}
+
+function replaceAllHitAveragesAndFormula(desc, avg, formula) {
+  let updated = String(desc || '');
+  const prettyFormula = formatFormulaForProse(formula);
+
+  // Replace each "Hit: 26 (3d12 + 7)" style segment.
+  updated = updated.replace(
+    /Hit:\s*\d+\s*\((\d+d\d+(?:\s*[+\-]\s*\d+)?)\)/gi,
+    'Hit: ' + avg + ' (' + prettyFormula + ')'
+  );
+
+  // If no formula-bearing Hit segment was found, replace bare Hit average.
+  updated = updated.replace(/Hit:\s*\d+\b/gi, 'Hit: ' + avg);
+
+  return updated;
+}
+
 function synchronizeActionDamageProse(card, targetAvg) {
   const fields = getActionCardFields(card);
   if (!fields.dmgInput) return false;
 
   const desc = fields.descInput?.value || '';
   const descFormula = extractFirstDiceFormula(desc);
-
-  // Prefer the visible stat-block prose formula because Foundry damage fields
-  // often contain expressions like 3d12[slashing] + @mod.
-  const fieldFormula = extractFirstDiceFormula(fields.dmgInput.value);
+  const fieldFormula = extractFirstDiceFormula(cleanFoundryFormula(fields.dmgInput.value));
   const baseFormula = descFormula || fieldFormula;
 
-  let newFormula = baseFormula
+  const newFormula = baseFormula
     ? buildFormulaForTargetAverage(baseFormula, targetAvg)
     : String(Math.max(1, Math.round(targetAvg)));
 
   const avg = Math.max(1, Math.round(parseDamageFormulaAverage(newFormula)));
 
-  // The compact Damage field is an average-number field in Workshop.
-  fields.dmgInput.value = String(avg);
+  // Store dice formula, not average integer, so future scaling and VTT export
+  // keep a usable damage expression.
+  fields.dmgInput.value = newFormula;
 
-  if (fields.descInput && baseFormula) {
-    let updated = fields.descInput.value;
+  if (fields.descInput) {
+    let updated = replaceAllHitAveragesAndFormula(fields.descInput.value, avg, newFormula);
 
-    if (descFormula) {
-      updated = updated.replace(descFormula, newFormula);
+    // If the action has a "while raging" alternate damage clause, scale it too
+    // by preserving the same delta ratio from the original alternate average.
+    // Example source: Hit: 26 (3d12+7), or 30 (3d12+11) while raging.
+    const altMatch = updated.match(/,\s*or\s+(\d+)\s*\((\d+d\d+(?:\s*[+\-]\s*\d+)?)\)([^.]*while raging[^.]*)/i);
+    const originalAltMatch = desc.match(/,\s*or\s+(\d+)\s*\((\d+d\d+(?:\s*[+\-]\s*\d+)?)\)([^.]*while raging[^.]*)/i);
+    if (altMatch && originalAltMatch && descFormula) {
+      const oldBaseAvg = parseDamageFormulaAverage(descFormula);
+      const oldAltAvg = parseDamageFormulaAverage(originalAltMatch[2].replace(/\s+/g, ''));
+      const extra = Math.max(0, Math.round(oldAltAvg - oldBaseAvg));
+      const altTarget = avg + extra;
+      const altFormula = buildFormulaForTargetAverage(originalAltMatch[2].replace(/\s+/g, ''), altTarget);
+      const altAvg = Math.max(1, Math.round(parseDamageFormulaAverage(altFormula)));
+      updated = updated.replace(
+        /,\s*or\s+\d+\s*\((\d+d\d+(?:\s*[+\-]\s*\d+)?)\)([^.]*while raging[^.]*)/i,
+        ', or ' + altAvg + ' (' + formatFormulaForProse(altFormula) + ')$2'
+      );
     }
-
-    // Also update "Hit: 26 (" to match the new average before the formula.
-    updated = updated.replace(/Hit:\s*\d+\s*\(/i, 'Hit: ' + avg + ' (');
 
     fields.descInput.value = updated;
   }
+
+  console.log('[CR Scale Action Sync]', {
+    action: fields.name,
+    targetAvg,
+    formula: newFormula,
+    average: avg
+  });
 
   return true;
 }
@@ -3682,7 +3734,7 @@ function applyCRScaling() {
   if (acField && !acField.readOnly) acField.value = newAc;
 
   // ── DPR / damage scaling ──
-  // v0.5.18: Treat CR damage as expected turn DPR, not as independent
+  // v0.5.19: Treat CR damage as expected turn DPR, not as independent
   // per-action scaling. Allocate the target DPR across the attacks named by
   // Multiattack, then synchronize the average damage field and the prose formula.
   const currentTurnDpr = estimateTurnDPRFromDom();
@@ -3985,7 +4037,7 @@ function collectFormData() {
       name: inputs[0]?.value || '',
       toHit: cleanToHitValue(inputs[1]?.value),
       reach: inputs[2]?.value || '',
-      damage: inputs[3]?.value || '',
+      damage: cleanFoundryFormula(inputs[3]?.value || ''),
       dmgType: inputs[4]?.value || '',
       desc: ta?.value || ''
     };
