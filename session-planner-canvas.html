@@ -3824,6 +3824,94 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   gap: 6px;
   min-height: 24px;
 }
+
+/* Dock the forge beside the open node editor instead of underneath it. */
+body.name-forge-open #side-panel.open {
+  width: min(720px, 58vw);
+  max-width: 58vw;
+}
+body.name-forge-open #name-forge-modal.open {
+  top: 44px;
+  left: 0;
+  bottom: 0;
+  right: min(720px, 58vw);
+  inset: 44px min(720px, 58vw) 0 0;
+  align-items: stretch;
+  justify-content: stretch;
+  background: rgba(0,0,0,0.55);
+  z-index: 140;
+}
+body.name-forge-open #name-forge-card {
+  width: 100%;
+  max-height: none;
+  border-radius: 0;
+  border-left: 0;
+  border-top: 0;
+  border-bottom: 0;
+}
+body.name-forge-open #name-forge-body {
+  grid-template-columns: 1fr;
+  overflow-y: auto;
+}
+body.name-forge-open .name-forge-result {
+  grid-template-columns: 1fr auto auto auto;
+}
+@media (max-width: 1050px) {
+  body.name-forge-open #side-panel.open {
+    width: 100vw;
+    max-width: 100vw;
+    opacity: 0.18;
+    pointer-events: none;
+  }
+  body.name-forge-open #name-forge-modal.open {
+    inset: 44px 0 0 0;
+    right: 0;
+    z-index: 180;
+  }
+}
+#name-forge-collections {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(184,134,11,0.25);
+}
+.name-forge-collection-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  margin-bottom: 7px;
+}
+.name-forge-collection-row select,
+.name-forge-collection-row input {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(184,134,11,0.35);
+  color: var(--bone);
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.86rem;
+  padding: 6px 8px;
+  border-radius: 2px;
+  min-width: 0;
+}
+.name-forge-collection-row button,
+#name-forge-collection-names button {
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(184,134,11,0.4);
+  color: var(--gold-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
+  padding: 5px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+.name-forge-collection-row button:hover,
+#name-forge-collection-names button:hover { filter: brightness(1.25); border-color: var(--gold); }
+#name-forge-collection-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 24px;
+}
 .name-forge-empty {
   color: var(--steel-pale);
   font-style: italic;
@@ -6433,6 +6521,18 @@ body.mobile-mode #sb-modal { display: none !important; }
           <h4>Scratch List</h4>
           <div id="name-forge-scratch-list"><span class="name-forge-empty">No saved names yet.</span></div>
         </div>
+        <div id="name-forge-collections">
+          <h4>Name Collections</h4>
+          <div class="name-forge-collection-row">
+            <select id="nf-collection-select" aria-label="Name collection"></select>
+            <button type="button" onclick="saveCurrentNameForgeResultToCollection()">Save Result</button>
+          </div>
+          <div class="name-forge-collection-row">
+            <input id="nf-new-collection-title" type="text" placeholder="New collection theme, e.g. Clara Oram nobles">
+            <button type="button" onclick="createNameForgeCollectionFromInput()">Create</button>
+          </div>
+          <div id="name-forge-collection-names"><span class="name-forge-empty">No collection loaded yet.</span></div>
+        </div>
       </div>
       <div class="name-forge-panel">
         <h4>Generated Names</h4>
@@ -6736,6 +6836,10 @@ async function rqLogout() {
     generateNameForgeResults();
   });
 });
+
+const nfCollectionSelect = document.getElementById('nf-collection-select');
+if (nfCollectionSelect) nfCollectionSelect.addEventListener('change', () => renderNameForgeCollections(nfCollectionSelect.value));
+
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
   const ov = document.getElementById('rqAuthOverlay');
@@ -6932,6 +7036,10 @@ function _broadcastEligible(el) {
     generateNameForgeResults();
   });
 });
+
+const nfCollectionSelect = document.getElementById('nf-collection-select');
+if (nfCollectionSelect) nfCollectionSelect.addEventListener('change', () => renderNameForgeCollections(nfCollectionSelect.value));
+
 document.addEventListener('keydown', (e) => {
   // Cmd+B (mac) or Ctrl+B (other) — but NOT when other modifiers like
   // Alt/Shift are held (those combos belong to OS / browser shortcuts).
@@ -9227,6 +9335,10 @@ async function confirmCopyToSession() {
     generateNameForgeResults();
   });
 });
+
+const nfCollectionSelect = document.getElementById('nf-collection-select');
+if (nfCollectionSelect) nfCollectionSelect.addEventListener('change', () => renderNameForgeCollections(nfCollectionSelect.value));
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     const m = document.getElementById('copy-modal');
@@ -13419,13 +13531,16 @@ function openNameForge(targetKey) {
   document.getElementById('nf-seeds').value = seeds;
   document.getElementById('nf-type').value = node.type === 'npc' ? 'person' : 'place';
   const modal = document.getElementById('name-forge-modal');
+  document.body.classList.add('name-forge-open');
   if (modal) modal.classList.add('open');
   renderNameForgeRootChips();
+  renderNameForgeCollections();
   generateNameForgeResults();
 }
 function closeNameForge() {
   const modal = document.getElementById('name-forge-modal');
   if (modal) modal.classList.remove('open');
+  document.body.classList.remove('name-forge-open');
 }
 function clearNameForgeInputs() {
   ['nf-seeds','nf-pasted'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -13781,7 +13896,7 @@ function renderNameForgeResults() {
     </div>`).join('');
   el.querySelectorAll('[data-nf-use]').forEach(btn => btn.addEventListener('click', () => applyNameForgeName(btn.dataset.nfUse)));
   el.querySelectorAll('[data-nf-copy]').forEach(btn => btn.addEventListener('click', () => copyNameForgeName(btn.dataset.nfCopy, btn)));
-  el.querySelectorAll('[data-nf-save]').forEach(btn => btn.addEventListener('click', () => saveNameForgeScratch(btn.dataset.nfSave)));
+  el.querySelectorAll('[data-nf-save]').forEach(btn => btn.addEventListener('click', () => { saveNameForgeScratch(btn.dataset.nfSave); saveNameToSelectedNameForgeCollection(btn.dataset.nfSave); applyNameForgeName(btn.dataset.nfSave); }));
 }
 function applyNameForgeName(name) {
   if (!nameForgeCtx) return;
@@ -13826,6 +13941,96 @@ function renderNameForgeScratch() {
   el.querySelectorAll('[data-nf-scratch]').forEach(btn => btn.addEventListener('click', () => copyNameForgeName(btn.dataset.nfScratch, btn)));
 }
 
+
+const NAME_FORGE_COLLECTIONS_KEY = 'rq_name_forge_collections_v1';
+function getNameForgeCollections() {
+  try {
+    const raw = localStorage.getItem(NAME_FORGE_COLLECTIONS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) { return []; }
+}
+function setNameForgeCollections(cols) {
+  try { localStorage.setItem(NAME_FORGE_COLLECTIONS_KEY, JSON.stringify(cols || [])); } catch (e) {}
+}
+function createNameForgeCollection(title, meta = {}) {
+  title = String(title || '').trim();
+  if (!title) return null;
+  const cols = getNameForgeCollections();
+  let existing = cols.find(c => (c.title || '').toLowerCase() === title.toLowerCase());
+  if (existing) return existing;
+  const style = (document.getElementById('nf-style') || {}).value || '';
+  const tone = (document.getElementById('nf-tone') || {}).value || '';
+  const col = { id: 'nfcol_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8), title, style, tone, notes: meta.notes || '', names: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+  cols.push(col);
+  setNameForgeCollections(cols);
+  renderNameForgeCollections(col.id);
+  return col;
+}
+function createNameForgeCollectionFromInput() {
+  const input = document.getElementById('nf-new-collection-title');
+  const col = createNameForgeCollection(input ? input.value : '');
+  if (input && col) input.value = '';
+}
+function getSelectedNameForgeCollection() {
+  const sel = document.getElementById('nf-collection-select');
+  const cols = getNameForgeCollections();
+  return cols.find(c => c.id === (sel && sel.value));
+}
+function saveNameToSelectedNameForgeCollection(name) {
+  name = String(name || '').trim();
+  if (!name) return;
+  let cols = getNameForgeCollections();
+  let sel = document.getElementById('nf-collection-select');
+  let col = cols.find(c => c.id === (sel && sel.value));
+  if (!col) {
+    col = createNameForgeCollection('Untitled Name Pool') || getSelectedNameForgeCollection();
+    cols = getNameForgeCollections();
+    col = cols.find(c => c.id === (col && col.id));
+  }
+  if (!col) return;
+  col.names = Array.isArray(col.names) ? col.names : [];
+  if (!col.names.some(n => (n.name || n).toLowerCase() === name.toLowerCase())) {
+    col.names.push({ name, seed: (document.getElementById('nf-seeds') || {}).value || '', style: (document.getElementById('nf-style') || {}).value || '', tone: (document.getElementById('nf-tone') || {}).value || '', created_at: new Date().toISOString() });
+    col.updated_at = new Date().toISOString();
+    setNameForgeCollections(cols);
+  }
+  renderNameForgeCollections(col.id);
+}
+function saveCurrentNameForgeResultToCollection() {
+  const name = (nameForgeLast && nameForgeLast[0]) || '';
+  if (name) saveNameToSelectedNameForgeCollection(name);
+}
+function renderNameForgeCollections(selectedId) {
+  const sel = document.getElementById('nf-collection-select');
+  const list = document.getElementById('name-forge-collection-names');
+  if (!sel || !list) return;
+  const cols = getNameForgeCollections();
+  if (!cols.length) {
+    sel.innerHTML = '<option value="">No collections yet</option>';
+    list.innerHTML = '<span class="name-forge-empty">Create a collection to save themed names.</span>';
+    return;
+  }
+  const current = selectedId || sel.value || cols[0].id;
+  sel.innerHTML = cols.map(c => `<option value="${escAttr(c.id)}">${escHtml(c.title)} (${(c.names || []).length})</option>`).join('');
+  sel.value = cols.some(c => c.id === current) ? current : cols[0].id;
+  const col = cols.find(c => c.id === sel.value);
+  const names = col && Array.isArray(col.names) ? col.names : [];
+  if (!names.length) {
+    list.innerHTML = '<span class="name-forge-empty">This collection is empty.</span>';
+  } else {
+    list.innerHTML = names.map(item => {
+      const n = item.name || item;
+      return `<button type="button" data-nf-collection-name="${escAttr(n)}">${escHtml(n)}</button>`;
+    }).join('');
+    list.querySelectorAll('[data-nf-collection-name]').forEach(btn => btn.addEventListener('click', () => {
+      const n = btn.dataset.nfCollectionName;
+      saveNameForgeScratch(n);
+      applyNameForgeName(n);
+    }));
+  }
+}
+
 ['nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
@@ -13841,6 +14046,10 @@ function renderNameForgeScratch() {
     generateNameForgeResults();
   });
 });
+
+const nfCollectionSelect = document.getElementById('nf-collection-select');
+if (nfCollectionSelect) nfCollectionSelect.addEventListener('change', () => renderNameForgeCollections(nfCollectionSelect.value));
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     const m = document.getElementById('name-forge-modal');
@@ -14733,6 +14942,10 @@ function renderStatblockBody(row, bodyEl, titleEl) {
     generateNameForgeResults();
   });
 });
+
+const nfCollectionSelect = document.getElementById('nf-collection-select');
+if (nfCollectionSelect) nfCollectionSelect.addEventListener('change', () => renderNameForgeCollections(nfCollectionSelect.value));
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     const m = document.getElementById('sb-modal');
@@ -16553,6 +16766,10 @@ window.addEventListener('resize', () => _tablePopover.hide());
     generateNameForgeResults();
   });
 });
+
+const nfCollectionSelect = document.getElementById('nf-collection-select');
+if (nfCollectionSelect) nfCollectionSelect.addEventListener('change', () => renderNameForgeCollections(nfCollectionSelect.value));
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && _tablePopover.inp) {
     _tablePopover.hide();
