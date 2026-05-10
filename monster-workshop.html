@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.10 · CR/action fixes</span>
+  <span class="topbar-version">v0.5.11 · CR/action fixes</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -2057,6 +2057,16 @@ function sanitizeMonsterForSupabase(monster) {
   Object.keys(clean).forEach(k => {
     if (k.startsWith('_')) delete clean[k];
   });
+
+  const cleanActionList = list => Array.isArray(list)
+    ? list.map(a => ({ ...(a || {}), toHit: cleanToHitValue(a?.toHit) }))
+    : [];
+
+  clean.actions = cleanActionList(clean.actions);
+  if (Array.isArray(clean.bonus_actions)) clean.bonus_actions = cleanActionList(clean.bonus_actions);
+  if (Array.isArray(clean.reactions)) clean.reactions = cleanActionList(clean.reactions);
+  if (Array.isArray(clean.villain_actions)) clean.villain_actions = cleanActionList(clean.villain_actions);
+
   delete clean.slug;
   delete clean.special;
   delete clean._unresolvedSpells;
@@ -2863,6 +2873,21 @@ async function selectMonster(slug) {
 }
 
 // ── RENDER EDITOR ──
+
+function cleanToHitValue(v) {
+  const s = String(v ?? '').trim();
+  if (!s || s === 'false' || s === '+false' || s === '-false' || s === 'null' || s === 'undefined') return '';
+  return s;
+}
+
+function attrEsc(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function renderEditor(m) {
   const isDS = m.source === 'draw-steel';
   const isCustom = m.source === 'custom';
@@ -2886,7 +2911,7 @@ function renderEditor(m) {
     <!-- STAT BLOCK HEADER -->
     <div class="sb-header">
       <div class="sb-name-row">
-        <input class="sb-name-input" id="f_name" type="text" value="${m.name}" placeholder="Creature Name" ${ro}>
+        <input class="sb-name-input" id="f_name" type="text" value="${attrEsc(m.name)}" placeholder="Creature Name" ${ro}>
       </div>
       <div class="sb-meta-row">
         <div class="sb-meta-field">
@@ -2897,15 +2922,15 @@ function renderEditor(m) {
         </div>
         <div class="sb-meta-field">
           <span class="sb-meta-label">Type</span>
-          <input class="sb-meta-input" id="f_type" type="text" value="${m.type||''}" style="width:110px;" ${ro}>
+          <input class="sb-meta-input" id="f_type" type="text" value="${attrEsc(m.type||m.monster_type||'')}" style="width:110px;" ${ro}>
         </div>
         <div class="sb-meta-field">
           <span class="sb-meta-label">Alignment</span>
-          <input class="sb-meta-input" id="f_alignment" type="text" value="${m.alignment||''}" style="width:120px;" ${ro}>
+          <input class="sb-meta-input" id="f_alignment" type="text" value="${attrEsc(m.alignment||'')}" style="width:120px;" ${ro}>
         </div>
         <div class="sb-meta-field">
           <span class="sb-meta-label">Speed</span>
-          <input class="sb-meta-input" id="f_speed" type="text" value="${m.speed||''}" style="width:150px;" ${ro}>
+          <input class="sb-meta-input" id="f_speed" type="text" value="${attrEsc(m.speed||'')}" style="width:150px;" ${ro}>
         </div>
       </div>
     </div>
@@ -3126,26 +3151,28 @@ function renderEditor(m) {
 
 function renderActionCard(a, editable) {
   const ro = editable ? '' : 'readonly';
+  const toHit = cleanToHitValue(a.toHit);
+  const isAttack = !!toHit;
   return `<div class="action-card">
     <div class="action-card-header">
-      <input class="action-name-input" type="text" value="${a.name||''}" placeholder="Action name" ${ro}>
-      <span class="action-type-badge">${a.type==='special'?'Special':a.toHit?'Attack':'Action'}</span>
+      <input class="action-name-input" type="text" value="${attrEsc(a.name||'')}" placeholder="Action name" ${ro}>
+      <span class="action-type-badge">${a.type==='special'?'Special':isAttack?'Attack':'Action'}</span>
       ${editable ? `<button class="icon-btn" onclick="this.closest('.action-card').remove()" title="Remove">✕</button>` : ''}
     </div>
-    ${a.toHit ? `<div class="field-row-4" style="margin-bottom:6px;">
-      <div class="field"><span class="field-label">To Hit</span><input class="field-input" type="text" value="${a.toHit||''}" ${ro}></div>
-      <div class="field"><span class="field-label">Reach/Range</span><input class="field-input" type="text" value="${a.reach||a.range||''}" ${ro}></div>
-      <div class="field"><span class="field-label">Damage</span><input class="field-input" type="text" value="${a.damage||''}" ${ro}></div>
-      <div class="field"><span class="field-label">Type</span><input class="field-input" type="text" value="${a.dmgType||''}" ${ro}></div>
+    ${isAttack ? `<div class="field-row-4" style="margin-bottom:6px;">
+      <div class="field"><span class="field-label">To Hit</span><input class="field-input" type="text" value="${attrEsc(toHit)}" ${ro}></div>
+      <div class="field"><span class="field-label">Reach/Range</span><input class="field-input" type="text" value="${attrEsc(a.reach||a.range||'')}" ${ro}></div>
+      <div class="field"><span class="field-label">Damage</span><input class="field-input" type="text" value="${attrEsc(a.damage||'')}" ${ro}></div>
+      <div class="field"><span class="field-label">Type</span><input class="field-input" type="text" value="${attrEsc(a.dmgType||'')}" ${ro}></div>
     </div>` : ''}
-    <textarea class="field-textarea" style="min-height:40px;" ${ro}>${a.desc||''}</textarea>
+    <textarea class="field-textarea" style="min-height:40px;" ${ro}>${escapeHtml(a.desc||'')}</textarea>
   </div>`;
 }
 
 function renderSimplifiedCard(m) {
-  const firstAtk = (m.actions||[]).find(a => a.toHit);
+  const firstAtk = (m.actions||[]).find(a => cleanToHitValue(a.toHit));
   const atkStr = firstAtk
-    ? `${firstAtk.name} ${firstAtk.toHit} — ${firstAtk.damage} ${firstAtk.dmgType}${firstAtk.extra ? ' + ' + firstAtk.extra + ' ' + firstAtk.extraType : ''}`
+    ? `${firstAtk.name} ${cleanToHitValue(firstAtk.toHit)} — ${firstAtk.damage} ${firstAtk.dmgType}${firstAtk.extra ? ' + ' + firstAtk.extra + ' ' + firstAtk.extraType : ''}`
     : 'No attack defined';
   return `<div class="preview-card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
@@ -3673,7 +3700,7 @@ function collectFormData() {
     const ta = card.querySelector('textarea');
     return {
       name: inputs[0]?.value || '',
-      toHit: inputs[1]?.value || '',
+      toHit: cleanToHitValue(inputs[1]?.value),
       reach: inputs[2]?.value || '',
       damage: inputs[3]?.value || '',
       dmgType: inputs[4]?.value || '',
@@ -3713,6 +3740,8 @@ function collectFormData() {
     size: g('f_size'),
     monster_type: g('f_type'),
     alignment: g('f_alignment'),
+    environment: currentMonster?.environment || currentMonster?.details?.environment || currentMonster?.system?.details?.environment || '',
+    source_detail: currentMonster?.source_detail || currentMonster?.sourcebook || currentMonster?.details?.source?.custom || currentMonster?.system?.details?.source?.custom || '',
     abilities: abilities,
     saves:  parseSavesSkills(g('f_saves')),
     skills: parseSavesSkills(g('f_skills')),
@@ -3753,16 +3782,25 @@ async function saveMonster() {
       }
     }
     if (res.ok) {
+      // Keep the currently selected monster coherent immediately, then reload
+      // the authoritative list from Supabase. The old UI had a third "My Monsters"
+      // tab here; the unified Library has only one tab, so do not index tabs[2].
+      currentMonster = { ...(currentMonster || {}), ...data, id: currentMonster?.id };
       await loadCustomMonsters();
+
+      const refreshed = customMonsters.find(m => String(m.id) === String(currentMonster?.id));
+      if (refreshed) currentMonster = refreshed;
+
       // Signal to Blender that custom monsters changed
       try { localStorage.setItem('rq_custom_monsters_dirty', Date.now().toString()); } catch(e) {}
-      showToast('✓ ' + data.name + ' saved — switching to My Monsters');
-      // Switch to custom tab so user sees the saved monster
+      showToast('✓ ' + data.name + ' saved');
       currentTab = 'custom';
-      const customBtn = document.querySelectorAll('.browser-tab')[2];
-      document.querySelectorAll('.browser-tab').forEach(b => b.classList.remove('active-srd','active-ds','active-custom'));
-      customBtn.classList.add('active-custom');
-      renderBrowserList(customMonsters);
+      document.querySelectorAll('.browser-tab').forEach(b => {
+        b.classList.remove('active-srd','active-ds','active-custom');
+        b.classList.add('active-custom');
+      });
+      filterMonsters();
+      if (currentMonster) renderEditor(currentMonster);
     } else {
       const err = await res.text();
       showToast('Save failed: ' + err, true);
