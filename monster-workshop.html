@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.6 · unified library</span>
+  <span class="topbar-version">v0.5.8 · CR/action fixes</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -2178,6 +2178,12 @@ const CR_TABLE = {
   '22':  { prof:7, ac:19, hpLo:446, hpHi:490, atk:'+11',dprLo:159,dprHi:176,dc:20 },
   '23':  { prof:7, ac:19, hpLo:491, hpHi:535, atk:'+11',dprLo:177,dprHi:194,dc:20 },
   '24':  { prof:7, ac:19, hpLo:536, hpHi:580, atk:'+12',dprLo:195,dprHi:212,dc:21 },
+  '25':  { prof:8, ac:19, hpLo:581, hpHi:625, atk:'+12',dprLo:213,dprHi:230,dc:21 },
+  '26':  { prof:8, ac:19, hpLo:626, hpHi:670, atk:'+13',dprLo:231,dprHi:248,dc:22 },
+  '27':  { prof:8, ac:19, hpLo:671, hpHi:715, atk:'+13',dprLo:249,dprHi:266,dc:22 },
+  '28':  { prof:8, ac:19, hpLo:716, hpHi:760, atk:'+13',dprLo:267,dprHi:284,dc:23 },
+  '29':  { prof:9, ac:19, hpLo:761, hpHi:805, atk:'+13',dprLo:285,dprHi:302,dc:23 },
+  '30':  { prof:9, ac:19, hpLo:806, hpHi:850, atk:'+14',dprLo:303,dprHi:320,dc:23 },
 };
 
 // ── LEGENDARY ACTION LIBRARY ──
@@ -2908,7 +2914,7 @@ function renderEditor(m) {
     <div class="cr-row">
       <span class="cr-label">Challenge Rating</span>
       <select class="cr-select" id="f_cr" onchange="updateCRGuidance();showScalePrompt();" ${ro}>
-        ${Object.keys(CR_TABLE).map(c=>`<option value="${c}" ${m.cr===c?'selected':''}>${c}</option>`).join('')}
+        ${Object.keys(CR_TABLE).map(c=>`<option value="${c}" ${String(m.cr)===String(c)?'selected':''}>${c}</option>`).join('')}
       </select>
       <div class="cr-guidance" id="crGuidance">
         <div class="cr-stat"><span class="cr-stat-label">Prof</span><span class="cr-stat-val" id="cg_prof">+${cr.prof}</span></div>
@@ -4521,11 +4527,23 @@ function convertFoundryActor(f) {
     const isAction = activation === 'action' || activation === 'bonus' || !activation;
 
     // Build action object
-    const atk = iSys.attack;
+    const atk = iSys.attack || {};
     const dmg = iSys.damage?.parts || [];
-    const toHit = atk?.flat != null
-      ? (atk.flat >= 0 ? '+' : '') + atk.flat
-      : atk?.bonus || '';
+
+    // Foundry dnd5e uses attack.flat as a boolean flag, not as the attack bonus.
+    // If we stringify it, the Workshop displays "+false". Prefer attack.bonus
+    // only when it is numeric/textual, otherwise parse the visible stat-block text.
+    let toHit = '';
+    const atkBonusRaw = atk.bonus;
+    if (atkBonusRaw !== undefined && atkBonusRaw !== null && atkBonusRaw !== '' && atkBonusRaw !== false) {
+      const s = String(atkBonusRaw).trim();
+      toHit = /^[+-]/.test(s) ? s : ('+' + s);
+    }
+    if (!toHit) {
+      const rawDesc = stripHtml(iSys.description?.value || '');
+      const hitMatch = rawDesc.match(/([+-]\s*\d+)\s*to hit/i);
+      if (hitMatch) toHit = hitMatch[1].replace(/\s+/g, '');
+    }
 
     const damage = dmg[0] ? dmg[0][0] : '';
     const dmgType = dmg[0] ? dmg[0][1] : '';
