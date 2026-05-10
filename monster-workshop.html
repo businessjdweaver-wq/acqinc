@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.20 · CR/action fixes</span>
+  <span class="topbar-version">v0.5.21 · CR/action fixes</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3572,6 +3572,34 @@ function getMultiattackCountsFromDom() {
     });
   }
 
+  // Explicit alternate-phrase fallback:
+  // parse common clauses like "or hurls a rock", "or throws one rock",
+  // "or makes one rock attack" as a one-attack alternate routine.
+  if (multiText) {
+    const lower = String(multiText).toLowerCase();
+    attacks.forEach(atk => {
+      const key = atk.key;
+      const aliases = [...new Set([
+        key,
+        ...(key || '').split(/\s+/).filter(Boolean),
+        singularizeAttackName(atk.name || '')
+      ])].filter(Boolean);
+
+      const already = routines.some(r => r.has(key));
+      if (!already) {
+        const mentioned = aliases.some(alias => {
+          const esc = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          return new RegExp('(?:or\\s+)?(?:hurls?|throws?|makes?|uses?)?\\s*(?:one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)?\\s*' + esc + 's?(?:\\s+attacks?)?', 'i').test(lower);
+        });
+        if (mentioned) {
+          const r = new Map();
+          r.set(key, 1);
+          routines.push(r);
+        }
+      }
+    });
+  }
+
   if (!routines.length) {
     const strongest = attacks.reduce((best, a) => (a.avg || 0) > (best.avg || 0) ? a : best, attacks[0]);
     const r = new Map();
@@ -3688,7 +3716,11 @@ function synchronizeActionDamageProse(card, targetAvg) {
 
 function scaleActionsToTargetTurnDpr(newT) {
   const targetTurnDpr = Math.round((newT.dprLo + newT.dprHi) / 2) || 1;
-  const { attacks, counts, routines } = getMultiattackCountsFromDom();
+  const parsed = getMultiattackCountsFromDom();
+  const attacks = parsed.attacks || [];
+  const counts = parsed.counts || new Map();
+  const routines = parsed.routines || [];
+
   // Defensive fallback: if the multiattack text names an action but the
   // routine parser still missed it, treat that named action as a one-attack
   // alternate routine. This is especially important for "Rock" style options.
@@ -3713,24 +3745,40 @@ function scaleActionsToTargetTurnDpr(newT) {
 
   if (!attacks.length || !counts.size) return { changed: 0, targetTurnDpr, perAttack: 0 };
 
+  function routineAttackTotal(routine) {
+    let total = 0;
+    routine.forEach(count => total += Math.max(0, Number(count) || 0));
+    return total || 1;
+  }
+
   let changed = 0;
   let maxPerAttack = 0;
 
   attacks.forEach(atk => {
-    let count = counts.get(atk.key) || 0;
-    if (!count) return;
+    if (!counts.has(atk.key)) return;
 
-    // If the action appears in alternate routines, scale it according to the
-    // routine where it appears. A routine of "two greataxe attacks" and another
-    // routine of "two rock attacks" means BOTH greataxe and rock get target/2.
-    let targetAvg = targetTurnDpr / count;
+    // Correct allocation:
+    // Each routine receives the full target DPR once.
+    // Every hit inside that routine receives targetDPR / totalHitsInRoutine.
+    //
+    // Examples:
+    //   Frost giant: Greataxe x2 OR Rock x1
+    //     Greataxe = 168/2 = 84
+    //     Rock     = 168/1 = 168
+    //
+    //   Dragon: Bite x1 + Claw x2
+    //     Bite = 65/3 ~= 22
+    //     Claw = 65/3 ~= 22 each
+    //
+    // If an action appears in multiple alternate routines, use the highest
+    // per-hit target.
+    const routineTargets = routines
+      .filter(r => r.has(atk.key))
+      .map(r => targetTurnDpr / routineAttackTotal(r));
 
-    if (Array.isArray(routines) && routines.length) {
-      const routineTargets = routines
-        .filter(r => r.has(atk.key))
-        .map(r => targetTurnDpr / (r.get(atk.key) || count));
-      if (routineTargets.length) targetAvg = Math.max(...routineTargets);
-    }
+    const targetAvg = routineTargets.length
+      ? Math.max(...routineTargets)
+      : targetTurnDpr / Math.max(1, counts.get(atk.key) || 1);
 
     maxPerAttack = Math.max(maxPerAttack, targetAvg);
     if (synchronizeActionDamageProse(atk.card, targetAvg)) changed++;
@@ -3739,8 +3787,19 @@ function scaleActionsToTargetTurnDpr(newT) {
   console.log('[CR Scale DPR]', {
     targetTurnDpr,
     alternateRoutines: (routines || []).map(r => Object.fromEntries(r)),
-    counts: [...counts.entries()],
-    maxPerAttack
+    counts: Object.fromEntries(counts),
+    perActionTargets: attacks
+      .filter(atk => counts.has(atk.key))
+      .map(atk => {
+        const targets = routines
+          .filter(r => r.has(atk.key))
+          .map(r => targetTurnDpr / routineAttackTotal(r));
+        return {
+          name: atk.name,
+          key: atk.key,
+          targetAvg: targets.length ? Math.max(...targets) : targetTurnDpr / Math.max(1, counts.get(atk.key) || 1)
+        };
+      })
   });
 
   return { changed, targetTurnDpr, perAttack: maxPerAttack };
@@ -3780,7 +3839,7 @@ function applyCRScaling() {
   if (acField && !acField.readOnly) acField.value = newAc;
 
   // ── DPR / damage scaling ──
-  // v0.5.20: Treat CR damage as expected turn DPR, not as independent
+  // v0.5.21: Treat CR damage as expected turn DPR, not as independent
   // per-action scaling. Allocate the target DPR across the attacks named by
   // Multiattack, then synchronize the average damage field and the prose formula.
   const currentTurnDpr = estimateTurnDPRFromDom();
