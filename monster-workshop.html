@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.15 · CR/action fixes</span>
+  <span class="topbar-version">v0.5.16 · CR/action fixes</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3423,66 +3423,116 @@ function getMultiattackCountsFromDom() {
   const multi = actions.find(a => /multiattack/i.test(a.name));
   const counts = new Map();
 
-  if (!attacks.length) return { attacks, counts, totalAttacks: 0 };
+  if (!attacks.length) return { attacks, counts, totalAttacks: 0, routines: [] };
 
-  if (multi && multi.desc) {
-    const desc = multi.desc.toLowerCase();
+  function actionAliases(atk) {
+    const key = atk.key;
+    const words = key.split(/\s+/).filter(Boolean);
+    const last = words[words.length - 1] || key;
+    return [...new Set([key, last])].filter(Boolean);
+  }
 
+  function findAttackByPhrase(phrase) {
+    const p = singularizeAttackName(phrase);
+    return attacks.find(atk =>
+      actionAliases(atk).some(alias => p === alias || p.includes(alias) || alias.includes(p))
+    );
+  }
+
+  function parseRoutine(text) {
+    const routine = new Map();
+    const lower = String(text || '').toLowerCase();
+
+    // Explicit named counts: "two greataxe attacks", "one bite and two claws"
     attacks.forEach(atk => {
-      const key = atk.key;
-      const words = key.split(/\s+/).filter(Boolean);
-      const last = words[words.length - 1] || key;
-      const candidates = [...new Set([key, last, key + ' attack', last + ' attack'])];
-
-      for (const cand of candidates) {
-        const escaped = cand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      for (const alias of actionAliases(atk)) {
+        const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const patterns = [
-          new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+(?:with\\s+(?:its|the)\\s+)?' + escaped + 's?\\b', 'i'),
           new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+' + escaped + 's?\\s+attacks?\\b', 'i'),
-          new RegExp('\\b' + escaped + 's?\\s+attacks?\\b', 'i')
+          new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+(?:with\\s+(?:its|the)\\s+)?' + escaped + 's?\\b', 'i')
         ];
-
         for (const re of patterns) {
-          const m = desc.match(re);
+          const m = lower.match(re);
           if (m) {
-            const n = m[1] ? numberWordToInt(m[1]) : 1;
-            counts.set(atk.key, Math.max(counts.get(atk.key) || 0, n || 1));
+            routine.set(atk.key, Math.max(routine.get(atk.key) || 0, numberWordToInt(m[1]) || 1));
           }
         }
       }
     });
 
-    // Common form: "The giant makes two greataxe attacks."
-    // If the text names exactly one damaging action, assign all attacks to it.
-    if (!counts.size) {
-      const totalMatch = desc.match(/makes?\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+attacks?/i);
-      if (totalMatch) {
-        const n = numberWordToInt(totalMatch[1]);
-        const named = attacks.filter(atk => desc.includes(atk.key) || desc.includes(atk.key.split(/\s+/).pop()));
-        if (named.length === 1) counts.set(named[0].key, n);
+    // Generic "makes two attacks with its greataxe" form.
+    if (!routine.size) {
+      const m = lower.match(/makes?\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+attacks?\s+(?:with|using)\s+(?:its|the)?\s*([a-z ]+)/i);
+      if (m) {
+        const n = numberWordToInt(m[1]);
+        const atk = findAttackByPhrase(m[2]);
+        if (atk) routine.set(atk.key, n);
       }
     }
 
-    // If it says "two attacks" and one melee attack action is clearly primary,
-    // prefer that over splitting between ranged options like Rock.
-    if (!counts.size) {
-      const totalMatch = desc.match(/makes?\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+attacks?/i);
-      if (totalMatch) {
-        const n = numberWordToInt(totalMatch[1]);
-        const melee = attacks.filter(atk => /melee/i.test(atk.desc || '') || /reach/i.test(atk.desc || ''));
-        if (melee.length === 1) counts.set(melee[0].key, n);
+    // Generic "makes two attacks" with exactly one named action in this option.
+    if (!routine.size) {
+      const m = lower.match(/makes?\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+attacks?/i);
+      if (m) {
+        const n = numberWordToInt(m[1]);
+        const named = attacks.filter(atk => actionAliases(atk).some(alias => lower.includes(alias)));
+        if (named.length === 1) routine.set(named[0].key, n);
       }
+    }
+
+    return routine;
+  }
+
+  let routines = [];
+
+  if (multi && multi.desc) {
+    const desc = multi.desc.toLowerCase();
+
+    // Split alternatives such as:
+    // "makes two greataxe attacks or two rock attacks"
+    // "makes either two greataxe attacks or two rock attacks"
+    // "makes two attacks with its greataxe, or two attacks with rocks"
+    const optionTexts = desc
+      .replace(/\beither\b/g, '')
+      .split(/\s+or\s+|;\s*or\s+|,\s*or\s+/i)
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    if (optionTexts.length > 1) {
+      routines = optionTexts
+        .map(parseRoutine)
+        .filter(r => r && r.size);
+    }
+
+    // If no alternatives parsed, treat the full text as one routine.
+    if (!routines.length) {
+      const one = parseRoutine(desc);
+      if (one.size) routines = [one];
     }
   }
 
-  if (!counts.size) {
+  // Fallback: strongest action as a one-action routine.
+  if (!routines.length) {
     const strongest = attacks.reduce((best, a) => (a.avg || 0) > (best.avg || 0) ? a : best, attacks[0]);
-    counts.set(strongest.key, 1);
+    const r = new Map();
+    r.set(strongest.key, 1);
+    routines = [r];
   }
+
+  // For scaling, each alternate routine should independently equal target DPR.
+  // Therefore an action's per-hit target uses the routine it appears in:
+  // targetPerHit = targetTurnDpr / countWithinThatRoutine.
+  // If an action appears in multiple routines, use the highest per-hit target.
+  routines.forEach(routine => {
+    routine.forEach((count, key) => {
+      counts.set(key, Math.max(counts.get(key) || 0, count));
+    });
+  });
 
   let totalAttacks = 0;
-  counts.forEach(v => totalAttacks += v);
-  return { attacks, counts, totalAttacks };
+  counts.forEach(v => { if (v > totalAttacks) totalAttacks = v; });
+
+  return { attacks, counts, totalAttacks, routines };
 }
 
 function synchronizeActionDamageProse(card, targetAvg) {
@@ -3513,23 +3563,41 @@ function synchronizeActionDamageProse(card, targetAvg) {
 
 function scaleActionsToTargetTurnDpr(newT) {
   const targetTurnDpr = Math.round((newT.dprLo + newT.dprHi) / 2) || 1;
-  const { attacks, counts, totalAttacks } = getMultiattackCountsFromDom();
-  if (!attacks.length || !totalAttacks) return { changed: 0, targetTurnDpr, perAttack: 0 };
+  const { attacks, counts, routines } = getMultiattackCountsFromDom();
+  if (!attacks.length || !counts.size) return { changed: 0, targetTurnDpr, perAttack: 0 };
 
   let changed = 0;
+  let maxPerAttack = 0;
 
   attacks.forEach(atk => {
-    const count = counts.get(atk.key) || 0;
+    let count = counts.get(atk.key) || 0;
     if (!count) return;
 
-    const targetAvg = targetTurnDpr / totalAttacks;
+    // If the action appears in alternate routines, scale it according to the
+    // routine where it appears. A routine of "two greataxe attacks" and another
+    // routine of "two rock attacks" means BOTH greataxe and rock get target/2.
+    let targetAvg = targetTurnDpr / count;
+
+    if (Array.isArray(routines) && routines.length) {
+      const routineTargets = routines
+        .filter(r => r.has(atk.key))
+        .map(r => targetTurnDpr / (r.get(atk.key) || count));
+      if (routineTargets.length) targetAvg = Math.max(...routineTargets);
+    }
+
+    maxPerAttack = Math.max(maxPerAttack, targetAvg);
     if (synchronizeActionDamageProse(atk.card, targetAvg)) changed++;
   });
 
-  console.log('[CR Scale DPR]', { targetTurnDpr, totalAttacks, perAttack: targetTurnDpr / totalAttacks, counts: [...counts.entries()] });
-  return { changed, targetTurnDpr, perAttack: targetTurnDpr / totalAttacks };
-}
+  console.log('[CR Scale DPR]', {
+    targetTurnDpr,
+    alternateRoutines: (routines || []).map(r => Object.fromEntries(r)),
+    counts: [...counts.entries()],
+    maxPerAttack
+  });
 
+  return { changed, targetTurnDpr, perAttack: maxPerAttack };
+}
 
 function applyCRScaling() {
   const newCR = document.getElementById('f_cr').value;
@@ -3565,7 +3633,7 @@ function applyCRScaling() {
   if (acField && !acField.readOnly) acField.value = newAc;
 
   // ── DPR / damage scaling ──
-  // v0.5.15: Treat CR damage as expected turn DPR, not as independent
+  // v0.5.16: Treat CR damage as expected turn DPR, not as independent
   // per-action scaling. Allocate the target DPR across the attacks named by
   // Multiattack, then synchronize the average damage field and the prose formula.
   const currentTurnDpr = estimateTurnDPRFromDom();
