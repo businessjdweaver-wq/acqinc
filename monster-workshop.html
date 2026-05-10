@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.9 · CR/action fixes</span>
+  <span class="topbar-version">v0.5.10 · CR/action fixes</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -4413,17 +4413,33 @@ function readFoundryFile(file) {
   reader.onload = (e) => {
     try {
       const raw = JSON.parse(e.target.result);
-      // Accept both single actor object and array of actors
-      const actors = Array.isArray(raw) ? raw : [raw];
-      const npcs = actors.filter(a => a.type === 'npc' || a.type === 'character');
+
+      // Accept all supported shapes:
+      // 1) legacy bulk export: [actor, actor, actor]
+      // 2) single actor export: { name, type: "npc", ... }
+      // 3) wrapped export: { meta: {...}, actors: [actor, actor, actor] }
+      let actors = [];
+      if (Array.isArray(raw)) {
+        actors = raw;
+      } else if (raw && Array.isArray(raw.actors)) {
+        actors = raw.actors;
+      } else if (raw && (raw.type === 'npc' || raw.type === 'character')) {
+        actors = [raw];
+      }
+
+      const npcs = actors.filter(a => a && (a.type === 'npc' || a.type === 'character'));
       if (!npcs.length) {
-        showToast('No NPC actors found in this file', true);
+        showToast('No NPC actors found. Expected a raw actor array, a single actor, or { meta, actors: [...] }.', true);
+        console.warn('Foundry import payload shape was not recognized:', raw);
         return;
       }
+
       foundryParsed = npcs.map(convertFoundryActor);
       renderImportList(foundryParsed, file.name);
+      showToast(`Loaded ${foundryParsed.length} NPC actors from ${file.name}`);
     } catch(err) {
       showToast('Could not parse JSON: ' + err.message, true);
+      console.error('Foundry import parse error:', err);
     }
   };
   reader.readAsText(file);
