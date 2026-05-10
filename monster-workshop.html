@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.12 · CR/action fixes</span>
+  <span class="topbar-version">v0.5.13 · CR/action fixes</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -1805,6 +1805,7 @@ body {
       <span class="editor-source-pill pill-srd" id="editorSourcePill" style="display:none"></span>
       <div style="margin-left:auto;display:flex;gap:8px;">
         <button class="btn btn-ghost btn-sm" onclick="duplicateAsCustom()" id="btnDuplicate" style="display:none">⎘ Skin as Custom</button>
+        <button class="btn btn-ember" id="btnSaveAsSkin" onclick="saveMonsterAsSkin()" title="Create a new custom row based on this monster">Save as Skin</button>
         <button class="btn btn-ember btn-sm" onclick="addToEncounterTray()" id="btnAddEncounter" style="display:none">+ Queue for Encounter</button>
       </div>
     </div>
@@ -2902,6 +2903,8 @@ function renderEditor(m) {
   pill.className = 'editor-source-pill pill-' + src;
   pill.style.display = 'inline-block';
   document.getElementById('btnDuplicate').style.display = isCustom ? 'none' : 'inline-block';
+  const skinBtn = document.getElementById('btnSaveAsSkin');
+  if (skinBtn) skinBtn.style.display = 'inline-block';
   document.getElementById('btnAddEncounter').style.display = 'inline-block';
 
   const cr = CR_TABLE[m.cr] || CR_TABLE['5'];
@@ -3778,11 +3781,112 @@ function wrapRqMonsterRow(r) {
   };
 }
 
+
+function stripIdentityForNewSkin(data) {
+  const clean = sanitizeMonsterForSupabase(data);
+  delete clean.id;
+  delete clean.created_at;
+  delete clean.updated_at;
+  delete clean.user_id;
+  delete clean.slug;
+
+  clean.source = 'custom';
+  clean.base_monster_slug =
+    currentMonster?.base_monster_slug ||
+    currentMonster?.slug ||
+    (currentMonster?.id ? 'custom-' + currentMonster.id : null);
+
+  const tags = Array.isArray(clean.tags) ? clean.tags : [];
+  clean.tags = [...new Set([...tags, clean.monster_type || clean.type || 'custom', 'skin'].filter(Boolean))];
+
+  return clean;
+}
+
+function isLikelyImportedBaseMonster(monster) {
+  // Imported Foundry/DDB rows should remain pristine base-library rows.
+  // They often have base_monster_slug starting with foundry- or source_detail/sourcebook values.
+  const slug = String(monster?.base_monster_slug || monster?.slug || '');
+  const srcDetail = String(monster?.source_detail || monster?.sourcebook || '');
+  return (
+    slug.startsWith('foundry-') ||
+    /monster manual|volo|mordenkainen|fizban|bigby|dungeon|dragon|ddb|d&d beyond/i.test(srcDetail)
+  );
+}
+
+async function saveMonsterAsSkin() {
+  if (!currentMonster) {
+    showToast('Select a monster first.', true);
+    return;
+  }
+
+  const data = stripIdentityForNewSkin(collectFormData());
+
+  if (!data.name || data.name === currentMonster.name) {
+    const proposed = prompt('Name for this skinned monster:', data.name ? data.name + ' Skin' : 'New Skinned Monster');
+    if (!proposed) return;
+    data.name = proposed;
+    const nameEl = document.getElementById('f_name');
+    if (nameEl) nameEl.value = proposed;
+  }
+
+  console.log('[Workshop saveMonsterAsSkin] Creating skin payload:', data);
+
+  try {
+    const res = await fetch(`${SB_URL}/rest/v1/rq_monsters`, {
+      method: 'POST',
+      headers: {
+        ...sbHeaders(),
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation'
+      },
+      body: JSON.stringify(data)
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      showToast('Save as skin failed: ' + err, true);
+      console.warn('[Workshop saveMonsterAsSkin] Failed payload:', data);
+      return;
+    }
+
+    const rows = await res.json();
+    const savedRow = rows && rows[0] ? rows[0] : null;
+    if (savedRow) currentMonster = wrapRqMonsterRow(savedRow);
+
+    isEditing = true;
+    await loadCustomMonsters();
+
+    const refreshed = customMonsters.find(m => String(m.id) === String(currentMonster?.id));
+    if (refreshed) currentMonster = refreshed;
+
+    try { localStorage.setItem('rq_custom_monsters_dirty', Date.now().toString()); } catch(e) {}
+
+    const search = document.getElementById('searchInput');
+    if (search) search.value = data.name;
+    filterMonsters();
+    if (currentMonster) renderEditor(currentMonster);
+
+    showToast('✓ Created skin: ' + data.name);
+    console.log('[Workshop saveMonsterAsSkin] Created row:', savedRow || currentMonster);
+  } catch(e) {
+    showToast('Network error: ' + e.message, true);
+    console.error('[Workshop saveMonsterAsSkin] Network error:', e);
+  }
+}
+
+
 async function saveMonster() {
   if (!isEditing) { showToast('Duplicate the monster first to edit and save it', true); return; }
 
   const data = sanitizeMonsterForSupabase(collectFormData());
   console.log('[Workshop saveMonster] Saving payload:', data);
+
+  // If the user edits the name of an imported/base monster, treat it as a new skin.
+  // This avoids overwriting the imported monster library row and restores the older
+  // skinning workflow where a renamed monster becomes its own custom row.
+  if (currentMonster?.id && isLikelyImportedBaseMonster(currentMonster) && data.name && data.name !== currentMonster.name) {
+    return await saveMonsterAsSkin();
+  }
 
   try {
     let res;
@@ -3866,6 +3970,8 @@ async function saveMonster() {
     console.error('[Workshop saveMonster] Network error:', e);
   }
 }
+
+window.saveMonsterAsSkin = saveMonsterAsSkin;
 
 // ── PUBLISH TO RELENTLESS QUEST'S CONTENT SYSTEM ────────────────────────
 // v0.3.6 — Maps the full Workshop monster schema to the simplified
