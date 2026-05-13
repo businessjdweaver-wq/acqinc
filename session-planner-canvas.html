@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Session Planner — Canvas (Stage 1)</title>
+<title>Session Planner — Canvas — Node Type Change v0.2</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -6449,7 +6449,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 53 — Universal Node Collapse v0.1</span>
+  <span class="topbar-version">Stage 54 — Node Type Change v0.2</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -21403,13 +21403,46 @@ function wireNodeTypeChangeIcon(el, node) {
   icon.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    openNodeTypeChangeModal(node);
+    const liveNode = state.nodes.get(el.dataset.nodeId) || node;
+    openNodeTypeChangeModal(liveNode);
   });
   icon.addEventListener('mousedown', (e) => {
     // Keep right-clicking the icon from initiating the normal canvas pan/context flow.
-    if (e.button === 2) e.stopPropagation();
+    if (e.button === 2) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   });
 }
+
+// Node Type Change v0.2: delegated fallback. Some freshly-rendered nodes can
+// receive the hover title before the direct contextmenu listener is active, and
+// the canvas-level right-click-pan handler can steal the gesture. This capture
+// listener catches right-clicks on any .node-icon in the live canvas first, then
+// resolves the current node from state.nodes at event time.
+(function installDelegatedNodeTypeChangeIconHandler(){
+  if (window.__nodeTypeChangeDelegatedV02) return;
+  window.__nodeTypeChangeDelegatedV02 = true;
+  const root = (typeof content !== 'undefined' && content) ? content : document;
+  root.addEventListener('mousedown', (e) => {
+    if (e.button !== 2) return;
+    const icon = e.target.closest && e.target.closest('.node .node-icon');
+    if (!icon) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+  root.addEventListener('contextmenu', (e) => {
+    const icon = e.target.closest && e.target.closest('.node .node-icon');
+    if (!icon) return;
+    const host = icon.closest('.node');
+    const nodeId = host && host.dataset ? host.dataset.nodeId : '';
+    const node = nodeId ? state.nodes.get(nodeId) : null;
+    if (!node) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openNodeTypeChangeModal(node);
+  }, true);
+})();
 
 function openNodeTypeChangeModal(node) {
   closeNodeTypeChangeModal();
