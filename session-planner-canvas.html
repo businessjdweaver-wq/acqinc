@@ -2737,6 +2737,109 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
   text-transform: uppercase;
 }
 .node-icon { font-size: 1.9rem; }
+
+/* ── NODE TYPE CHANGE MENU (Image Pins v0.8) ────────────── */
+.node-icon {
+  cursor: context-menu;
+}
+.node-type-change-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.68);
+}
+.node-type-change-card {
+  width: min(560px, 92vw);
+  max-height: 82vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #1a1610 0%, #14110b 100%);
+  border: 1px solid var(--gold);
+  border-radius: 4px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.8);
+}
+.node-type-change-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--gold-faint);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.node-type-change-head span:first-child {
+  flex: 1;
+  font-family: 'Cinzel', serif;
+  color: var(--gold-pale);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.92rem;
+}
+.node-type-change-close {
+  background: transparent;
+  border: 1px solid var(--gold-faint);
+  color: var(--steel-pale);
+  width: 28px;
+  height: 28px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+}
+.node-type-change-close:hover { color: var(--gold-pale); border-color: var(--gold); }
+.node-type-change-note {
+  padding: 10px 16px;
+  color: var(--steel-pale);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  border-bottom: 1px dashed rgba(184,134,11,0.18);
+}
+.node-type-change-grid {
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+  gap: 8px;
+}
+.node-type-change-choice {
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(184,134,11,0.32);
+  color: var(--bone);
+  border-radius: 3px;
+  padding: 9px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  font-family: 'Crimson Pro', Georgia, serif;
+  font-size: 0.95rem;
+}
+.node-type-change-choice:hover {
+  background: rgba(184,134,11,0.16);
+  border-color: var(--gold);
+  color: var(--gold-pale);
+}
+.node-type-change-choice.current {
+  opacity: 0.45;
+  cursor: default;
+}
+.node-type-change-choice.current:hover {
+  background: rgba(0,0,0,0.35);
+  border-color: rgba(184,134,11,0.32);
+  color: var(--bone);
+}
+.node-type-change-icon { font-size: 1.15rem; width: 1.4rem; text-align: center; }
+.node-type-change-label { flex: 1; }
+.node-type-change-blocked {
+  padding: 12px 16px 16px;
+  color: #e0a0a0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
 .node-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-title-dim {
   font-size: 0.85em;
@@ -6346,7 +6449,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">stage 50 / RETRY chatgpt adds non-damage abilities as clikcable/tooltips</span>
+  <span class="topbar-version">Stage 52 — Image Pins v0.8</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -11399,6 +11502,7 @@ window.addEventListener('keydown', (e) => {
     if (state.selectedEdge)  clearEdgeSelection();
     if (state.marquee)       marqueeCancel();
     if (typeChooser.classList.contains('visible')) hideTypeChooser();
+    closeNodeTypeChangeModal();
     clearNodeSelection();
   } else if (e.key === 'Delete' || e.key === 'Backspace') {
     if (state.selectedEdge) {
@@ -11568,6 +11672,7 @@ function createNode({ x, y, type = 'scene', title = null, summary = '' } = {}) {
   wireImageNode(el, data);
   wireNodeCollapseToggle(el, data);
   wireMagnifyBtn(el, data);
+  wireNodeTypeChangeIcon(el, data);
   wireEdgeHoverForEndpoint(el, data.id);
   updateEmptyHint();
   markDirty();
@@ -11694,6 +11799,10 @@ const IMAGE_PIN_ICONS = [
 ];
 let imageAddPinNodeId = null;
 let imagePinDrag = null;
+// Image Pins v0.7: after a pin drag, browsers still dispatch a click on mouseup.
+// Suppress that one trailing click so the parent image node does not open its editor.
+let imagePinSuppressClickUntil = 0;
+let imagePinSuppressClickTarget = null;
 
 function makeImagePinEndpointId(imageNodeId, pinId) { return 'pin:' + imageNodeId + ':' + pinId; }
 function parseImagePinEndpointId(endpointId) {
@@ -12034,6 +12143,11 @@ function wireImageNode(host, node) {
     });
     pinEl.addEventListener('click', e => {
       e.stopPropagation();
+      if (Date.now() < imagePinSuppressClickUntil) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
       if (e.target.closest('[data-pin-endpoint]')) return;
       if (imagePinDrag && imagePinDrag.moved) return;
       const pin = node.image.pins.find(p => p.id === pinEl.dataset.imagePin);
@@ -12054,13 +12168,35 @@ function onImagePinDragMove(e) {
   redrawEdges();
   markDirty();
 }
-function onImagePinDragEnd() {
+function onImagePinDragEnd(e) {
   const was = imagePinDrag;
   document.removeEventListener('mousemove', onImagePinDragMove, true);
   document.removeEventListener('mouseup', onImagePinDragEnd, true);
+  if (was && was.moved) {
+    imagePinSuppressClickUntil = Date.now() + 450;
+    imagePinSuppressClickTarget = was.node && was.node.id ? was.node.id : null;
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
   imagePinDrag = null;
   if (was && sidePanel.classList.contains('open') && openNodeId === was.node.id) renderSidePanelBody(was.node, BLOCK_TYPES.image);
 }
+// Capture-phase guard for the trailing click after dragging an image pin.
+// This runs before the normal node click handler, preventing the image-node editor
+// slideout from opening when the user simply released a dragged pin.
+document.addEventListener('click', (e) => {
+  if (Date.now() >= imagePinSuppressClickUntil) return;
+  const inImageNode = e.target && e.target.closest && e.target.closest('.node[data-type="image"], .image-node-stage, .image-map-pin');
+  if (!inImageNode) return;
+  const nodeEl = e.target.closest && e.target.closest('.node');
+  if (imagePinSuppressClickTarget && nodeEl && nodeEl.dataset && nodeEl.dataset.id && nodeEl.dataset.id !== imagePinSuppressClickTarget) return;
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+}, true);
+
 function wireImageSidePanel(node) {
   const upload = spBody.querySelector(`[data-sp-image-upload="${CSS.escape(node.id)}"]`);
   const fileInput = spBody.querySelector(`[data-sp-image-file-input="${CSS.escape(node.id)}"]`);
@@ -21191,6 +21327,7 @@ function refreshNodeFace(node) {
   wireImageNode(node.el, node);
   wireNodeCollapseToggle(node.el, node);
   wireMagnifyBtn(node.el, node);
+  wireNodeTypeChangeIcon(node.el, node);
   wireEdgeHoverForEndpoint(node.el, node.id);
   // Restore selected styling if applicable
   if (state.selectedNodes.has(node.id)) node.el.classList.add('selected');
@@ -21245,6 +21382,144 @@ function wireNodeCollapseToggle(el, node) {
 }
 
 function escAttr(s) { return escHtml(s).replace(/"/g, '&quot;'); }
+
+
+
+// ── NODE TYPE CHANGE (Image Pins v0.8) ───────────────────
+// Right-clicking a node's icon lets the user convert the node type, but
+// only while the node is still essentially blank other than its title.
+// This prevents accidental data loss when a scene already has room text,
+// an encounter has monsters, an image has pins, etc.
+function wireNodeTypeChangeIcon(el, node) {
+  const icon = el.querySelector('.node-icon');
+  if (!icon || icon.dataset.typeChangeWired === '1') return;
+  icon.dataset.typeChangeWired = '1';
+  icon.title = 'Right-click to change node type (only while blank)';
+  icon.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openNodeTypeChangeModal(node);
+  });
+  icon.addEventListener('mousedown', (e) => {
+    // Keep right-clicking the icon from initiating the normal canvas pan/context flow.
+    if (e.button === 2) e.stopPropagation();
+  });
+}
+
+function openNodeTypeChangeModal(node) {
+  closeNodeTypeChangeModal();
+  const blank = isNodeSafeToRetype(node);
+  const modal = document.createElement('div');
+  modal.className = 'node-type-change-modal';
+  modal.id = 'node-type-change-modal';
+  const currentDef = BLOCK_TYPES[node.type] || BLOCK_TYPES.scene;
+  const typeButtons = Object.entries(BLOCK_TYPES).map(([key, def]) => {
+    const current = key === node.type;
+    return `<button type="button" class="node-type-change-choice${current ? ' current' : ''}" data-node-type-choice="${escAttr(key)}" ${current || !blank ? 'disabled' : ''}>
+      <span class="node-type-change-icon">${escHtml(def.icon || '◇')}</span>
+      <span class="node-type-change-label">${escHtml(def.label || key)}</span>
+    </button>`;
+  }).join('');
+  modal.innerHTML = `<div class="node-type-change-card">
+    <div class="node-type-change-head"><span>Change Node Type</span><button type="button" class="node-type-change-close" data-node-type-close>×</button></div>
+    <div class="node-type-change-note">
+      <b>${escHtml(node.title || currentDef.defaultTitle || 'Untitled Node')}</b> is currently a ${escHtml(currentDef.label || node.type)}.
+      ${blank
+        ? 'Choose a new type. The title, position, and connection lines will be preserved.'
+        : 'This node already contains content beyond its title, so conversion is locked to prevent accidental data loss.'}
+    </div>
+    ${blank ? `<div class="node-type-change-grid">${typeButtons}</div>` : `<div class="node-type-change-blocked">Clear this node\'s fields/content first, then right-click the icon again to change its type.</div>`}
+  </div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('[data-node-type-close]')?.addEventListener('click', closeNodeTypeChangeModal);
+  modal.addEventListener('mousedown', (e) => { if (e.target === modal) closeNodeTypeChangeModal(); });
+  modal.querySelectorAll('[data-node-type-choice]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const newType = btn.dataset.nodeTypeChoice;
+      if (!newType || newType === node.type || !BLOCK_TYPES[newType]) return;
+      convertNodeType(node, newType);
+      closeNodeTypeChangeModal();
+    });
+  });
+}
+
+function closeNodeTypeChangeModal() {
+  const existing = document.getElementById('node-type-change-modal');
+  if (existing) existing.remove();
+}
+
+function isNodeSafeToRetype(node) {
+  if (!node) return false;
+  if (String(node.summary || '').trim()) return false;
+  if (hasMeaningfulObjectValue(node.fields)) return false;
+  if (node.table && hasMeaningfulTableValue(node.table)) return false;
+  if (node.brainstorm && hasMeaningfulBrainstormValue(node.brainstorm)) return false;
+  if (node.image && hasMeaningfulImageValue(node.image)) return false;
+  return true;
+}
+
+function hasMeaningfulObjectValue(obj) {
+  if (!obj || typeof obj !== 'object') return false;
+  if (Array.isArray(obj)) return obj.some(v => hasMeaningfulAnyValue(v));
+  return Object.values(obj).some(v => hasMeaningfulAnyValue(v));
+}
+function hasMeaningfulAnyValue(v) {
+  if (v == null) return false;
+  if (typeof v === 'string') return v.trim().length > 0;
+  if (typeof v === 'number') return Number.isFinite(v);
+  if (typeof v === 'boolean') return v === true;
+  if (Array.isArray(v)) return v.some(x => hasMeaningfulAnyValue(x));
+  if (typeof v === 'object') return hasMeaningfulObjectValue(v);
+  return !!v;
+}
+function hasMeaningfulTableValue(table) {
+  if (!table || typeof table !== 'object') return false;
+  const headers = Array.isArray(table.headers) ? table.headers : [];
+  const rows = Array.isArray(table.rows) ? table.rows : [];
+  return headers.some(h => String(h || '').trim()) || rows.some(r => Array.isArray(r) && r.some(c => String(c || '').trim()));
+}
+function hasMeaningfulBrainstormValue(brainstorm) {
+  const items = brainstorm && Array.isArray(brainstorm.items) ? brainstorm.items : [];
+  return items.some(s => String(s || '').trim());
+}
+function hasMeaningfulImageValue(image) {
+  if (!image || typeof image !== 'object') return false;
+  if (String(image.dataUrl || '').trim()) return true;
+  if (String(image.name || '').trim()) return true;
+  if (image.disabled) return true;
+  const pins = Array.isArray(image.pins) ? image.pins : [];
+  return pins.length > 0;
+}
+
+function convertNodeType(node, newType) {
+  const def = BLOCK_TYPES[newType] || BLOCK_TYPES.scene;
+  if (!isNodeSafeToRetype(node)) {
+    alert('This node already contains content beyond its title. Clear the content first to change its type.');
+    return;
+  }
+  const oldType = node.type;
+  node.type = newType;
+  node.icon = def.icon;
+  node.summary = '';
+  node.fields = {};
+  delete node.table;
+  delete node.brainstorm;
+  delete node.image;
+  if (def.isTable) node.table = JSON.parse(JSON.stringify(def.defaultTable));
+  if (def.isBrainstorm) node.brainstorm = JSON.parse(JSON.stringify(def.defaultBrainstorm));
+  if (def.isImage) node.image = JSON.parse(JSON.stringify(def.defaultImage));
+  if (node.el) {
+    node.el.dataset.type = newType;
+    node.el.dataset.size = def.size;
+    node.el.classList.remove('collapsed');
+  }
+  node.collapsed = false;
+  refreshNodeFace(node);
+  if (sidePanel.classList.contains('open') && openNodeId === node.id) openSidePanel(node);
+  redrawEdges();
+  markDirty();
+  if (typeof showToast === 'function') showToast(`Changed node type from ${oldType} to ${newType}.`);
+}
 
 // Click on a node body opens the panel. Header click stays as drag/select.
 // We attach this in createNode below by listening on the body element.
