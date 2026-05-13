@@ -3185,8 +3185,12 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 .node[data-type="skillchallenge"]  { --accent: #9a6cb6; }
 .node[data-type="brainstorm"]      { --accent: #d4c376; }
 .node[data-type="image"]           { --accent: #8bb6d9; z-index: 8; }
-.node.pinned-on-image             { z-index: 14; }
-.node.pinned-on-image.selected    { z-index: 16; }
+/* Image-pin feature v0.6: pinned/edge-linked nodes must always float above the map,
+   including immediately after creation and after reload, even when the image node is selected. */
+.node.pinned-on-image,
+.node[data-pinned-on-image="true"]      { z-index: 90 !important; }
+.node.pinned-on-image.selected,
+.node[data-pinned-on-image="true"].selected { z-index: 110 !important; }
 .node::before {
   content: '';
   position: absolute;
@@ -9822,8 +9826,12 @@ function serializeCanvas() {
 
   const edges = state.edges.map(e => ({
     id: e.id,
-    from_node: e.from.nodeId,
-    to_node:   e.to.nodeId,
+    // Image pins are synthetic endpoints with ids like `pin:<imageNodeId>:<pinId>`.
+    // Persist them exactly like regular node ids so node↔pin edges survive refresh.
+    from_node: (e.from && e.from.nodeId) || e.from,
+    to_node:   (e.to   && e.to.nodeId)   || e.to,
+    from_anchor: (e.from && e.from.anchor) || 'pin',
+    to_anchor:   (e.to   && e.to.anchor)   || 'pin',
     dir:       e.dir,
     label:     e.label || '',
   }));
@@ -9983,33 +9991,26 @@ function deserializeCanvas(data) {
 
   if (maxIdSeq >= nodeIdSeq) nodeIdSeq = maxIdSeq + 1;
 
-  // Restore edges (target nodes might be in any scope — but at this
-  // point all nodes that should be on the canvas are loaded).
+  // Restore edges (regular nodes, frame nodes, collections, and synthetic image-pin endpoints).
+  // Do not require both endpoints to exist in state.nodes: image pins and frame cards are valid
+  // endpoints resolved by resolveAnchorEndpoint/resolveEdgeEndpoint.
   (data.edges || []).forEach(ed => {
-    const a = state.nodes.get(ed.from_node);
-    const b = state.nodes.get(ed.to_node);
-    if (!a || !b) {
-      // Edge target lives in the frame (campaign scope, non-home session).
-      // We still want to render this — but the existing createEdge expects
-      // both endpoints to be canvas nodes. Use the cross-scope variant.
-      const ra = a ? { nodeId: ed.from_node, scope: 'session' } : resolveAnchorEndpoint(ed.from_node);
-      const rb = b ? { nodeId: ed.to_node,   scope: 'session' } : resolveAnchorEndpoint(ed.to_node);
-      if (!ra || !rb) return;     // dangling — silently drop
-      createEdge(
-        { nodeId: ed.from_node, anchor: ed.from_anchor || 'mr' },
-        { nodeId: ed.to_node,   anchor: ed.to_anchor   || 'ml' },
-        ed.dir || 'forward',
-        ed.label || ''
-      );
-      return;
-    }
+    const fromId = ed.from_node || (ed.from && ed.from.nodeId) || ed.from;
+    const toId   = ed.to_node   || (ed.to   && ed.to.nodeId)   || ed.to;
+    if (!fromId || !toId) return;
+    const ra = resolveAnchorEndpoint(fromId);
+    const rb = resolveAnchorEndpoint(toId);
+    if (!ra || !rb) return;     // dangling endpoint — silently drop
     createEdge(
-      { nodeId: ed.from_node },
-      { nodeId: ed.to_node },
+      { nodeId: fromId, anchor: ed.from_anchor || (parseImagePinEndpointId(fromId) ? 'pin' : 'mr') },
+      { nodeId: toId,   anchor: ed.to_anchor   || (parseImagePinEndpointId(toId)   ? 'pin' : 'ml') },
       ed.dir || 'forward',
       ed.label || ''
     );
   });
+
+  refreshPinnedNodeStacking();
+  requestAnimationFrame(refreshPinnedNodeStacking);
 
   // Restore view
   if (data.view) {
@@ -10044,7 +10045,20 @@ function resolveAnchorEndpoint(nodeId) {
       return null;
     }
   }
-  // 3) Campaign-frame node
+  // 3) Image pin endpoint. Pin endpoints are synthetic edge targets, so
+  // they will never be found in state.nodes. Without this branch, node↔pin
+  // connector lines were serialized but silently dropped during reload.
+  const pinRef = parseImagePinEndpointId(nodeId);
+  if (pinRef) {
+    const imageNode = state.nodes.get(pinRef.imageNodeId);
+    const pin = imageNode && imageNode.image && Array.isArray(imageNode.image.pins)
+      ? imageNode.image.pins.find(p => p.id === pinRef.pinId)
+      : null;
+    if (imageNode && pin) return { nodeId, scope: 'image-pin' };
+    return null;
+  }
+
+  // 4) Campaign-frame node
   const cn = (sessionState.campaignBlocks.nodes || []).find(n => n.id === nodeId);
   if (cn) return { nodeId, scope: 'campaign' };
   // 4) Arc-frame node — was missing before this fix; without it, edges
@@ -11878,8 +11892,12 @@ function findImageNodeContainingCanvasPoint(cx, cy, excludeNodeId = null) {
     const stage = imgNode.el.querySelector(`[data-image-stage="${CSS.escape(imgNode.id)}"]`);
     if (!stage) return;
     const r = stage.getBoundingClientRect();
-    const sx = VIEW.x + cx * VIEW.zoom;
-    const sy = VIEW.y + cy * VIEW.zoom;
+    // Convert canvas-space to viewport-space using the transformed content origin.
+    // VIEW.x/VIEW.y alone misses the canvas-wrap's screen offset, so hit-testing
+    // could fail and leave newly-created map nodes unpinned/buried under the image.
+    const cr = content.getBoundingClientRect();
+    const sx = cr.left + cx * VIEW.zoom;
+    const sy = cr.top  + cy * VIEW.zoom;
     if (sx >= r.left && sx <= r.right && sy >= r.top && sy <= r.bottom) {
       best = { imageNode: imgNode, stageRect: r, sx, sy };
     }
@@ -11904,8 +11922,11 @@ function autoPinNodeIfCreatedOnImage(node, centerCx, centerCy) {
   });
   // Nodes created on top of an image should remain visually above the image node.
   // The linked pin is a relationship marker, not a reason to bury the node under the map.
-  node.el?.classList.add('pinned-on-image');
-  node.el?.setAttribute('data-pinned-on-image', hit.imageNode.id);
+  node.el.classList.add('pinned-on-image');
+  node.el.setAttribute('data-pinned-on-image', 'true');
+  node.el.style.zIndex = '90';
+  refreshPinnedNodeStacking();
+  requestAnimationFrame(refreshPinnedNodeStacking);
   refreshNodeFace(hit.imageNode);
   if (sidePanel.classList.contains('open') && openNodeId === hit.imageNode.id) renderSidePanelBody(hit.imageNode, BLOCK_TYPES.image);
   redrawEdges();
@@ -12056,6 +12077,7 @@ function wireImageSidePanel(node) {
       if (el.dataset.spPinIcon) pin.icon = el.value;
       if (el.dataset.spPinLabel) pin.label = el.value;
       if (el.dataset.spPinNode) pin.nodeId = el.value;
+      refreshPinnedNodeStacking();
       refreshNodeFace(node); markDirty();
     });
   });
@@ -12064,6 +12086,7 @@ function wireImageSidePanel(node) {
       const id = btn.dataset.spPinDelete;
       removeEdgesForImagePin(node.id, id);
       node.image.pins = (node.image.pins || []).filter(p => p.id !== id);
+      refreshPinnedNodeStacking();
       closeImagePinPopover();
       refreshNodeFace(node);
       renderSidePanelBody(node, BLOCK_TYPES.image);
@@ -12877,6 +12900,35 @@ function wireEdgeHoverForEndpoint(el, endpointId) {
   el.addEventListener('mouseenter', () => setEdgeHoverForEndpoint(endpointId, true));
   el.addEventListener('mouseleave', () => setEdgeHoverForEndpoint(endpointId, false));
 }
+function refreshPinnedNodeStacking() {
+  // Nodes linked to an image pin should always float above the map surface,
+  // even if the image node itself remains selected. This is a visual stacking
+  // concern only; the node still behaves like an ordinary canvas node.
+  state.nodes.forEach(n => {
+    if (!n || !n.el || n.type === 'image') return;
+    let pinned = false;
+    state.nodes.forEach(img => {
+      if (pinned || !img || img.type !== 'image' || !img.image || !Array.isArray(img.image.pins)) return;
+      for (const pin of img.image.pins) {
+        if (pin.nodeId === n.id) { pinned = true; break; }
+        const endpointId = makeImagePinEndpointId(img.id, pin.id);
+        if ((state.edges || []).some(e =>
+          ((e.from && e.from.nodeId === endpointId && e.to && e.to.nodeId === n.id) ||
+           (e.to && e.to.nodeId === endpointId && e.from && e.from.nodeId === n.id)))) {
+          pinned = true; break;
+        }
+      }
+    });
+    n.el.classList.toggle('pinned-on-image', !!pinned);
+    if (pinned) {
+      n.el.setAttribute('data-pinned-on-image', 'true');
+      n.el.style.zIndex = n.el.classList.contains('selected') ? '110' : '90';
+    } else {
+      n.el.removeAttribute('data-pinned-on-image');
+      if (n.el.style.zIndex === '90' || n.el.style.zIndex === '110') n.el.style.zIndex = '';
+    }
+  });
+}
 function getCanvasEndpointPos(res, fallbackAnchor = 'ml') {
   if (!res) return null;
   if (res.where === 'canvas-pin') return getImagePinCanvasPos(res.imageNode, res.pin);
@@ -13310,6 +13362,7 @@ function createEdge(from, to, dir = 'forward', label = '') {
     startEdgeLabelEdit(edge);
   });
 
+  refreshPinnedNodeStacking();
   markDirty();
   return edge;
 }
