@@ -3185,6 +3185,8 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 .node[data-type="skillchallenge"]  { --accent: #9a6cb6; }
 .node[data-type="brainstorm"]      { --accent: #d4c376; }
 .node[data-type="image"]           { --accent: #8bb6d9; z-index: 8; }
+.node.pinned-on-image             { z-index: 14; }
+.node.pinned-on-image.selected    { z-index: 16; }
 .node::before {
   content: '';
   position: absolute;
@@ -3214,7 +3216,8 @@ body.connecting #canvas-wrap { cursor: crosshair; }
   flex-direction: column;
   gap: 8px;
 }
-.image-node-toolbar {
+.image-node-toolbar,
+.image-node-toolbar-bottom {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3306,6 +3309,48 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 .image-map-pin:hover .pin-anchor,
 body.connecting .image-map-pin .pin-anchor,
 .image-map-pin .pin-anchor.active { opacity: 1; }
+.image-map-pin:hover .pin-anchor,
+body.connecting .image-map-pin:hover .pin-anchor {
+  width: 14px;
+  height: 14px;
+  right: -9px;
+  box-shadow: 0 0 0 6px rgba(212,160,23,0.16);
+}
+.image-map-pin.proximity .pin-anchor {
+  opacity: 1;
+  width: 14px;
+  height: 14px;
+  right: -9px;
+  box-shadow: 0 0 0 6px rgba(212,160,23,0.16);
+}
+.image-pin-tooltip {
+  position: fixed;
+  z-index: 190;
+  pointer-events: none;
+  background: linear-gradient(180deg, #1f1a12 0%, #14110b 100%);
+  border: 1px solid var(--gold);
+  border-radius: 3px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.68);
+  color: var(--bone);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.25;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 260px;
+  white-space: nowrap;
+}
+.image-pin-tooltip-icon {
+  color: var(--gold-pale);
+  font-weight: 700;
+  font-size: 14px;
+}
+.image-pin-tooltip-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .image-pin-icon-modal {
   position: fixed;
   inset: 0;
@@ -3342,8 +3387,11 @@ body.connecting .image-map-pin .pin-anchor,
   font-weight:700;
 }
 .image-pin-icon-choice:hover, .image-pin-icon-choice.selected { border-color:var(--gold); background:rgba(184,134,11,0.2); }
-.image-pin-icon-close { background:transparent; border:1px solid rgba(184,134,11,0.35); color:var(--steel-pale); cursor:pointer; border-radius:2px; padding:3px 8px; }
+.image-pin-icon-close,
+.image-pin-icon-delete { background:transparent; border:1px solid rgba(184,134,11,0.35); color:var(--steel-pale); cursor:pointer; border-radius:2px; padding:3px 8px; }
 .image-pin-icon-close:hover { color:var(--gold-pale); border-color:var(--gold); }
+.image-pin-icon-delete { border-color: rgba(180,70,70,0.45); color: #ffb0a0; }
+.image-pin-icon-delete:hover { border-color: rgba(230,90,90,0.9); background: rgba(139,26,26,0.22); color: #ffd0c8; }
 .image-pin-popover {
   position: fixed;
   z-index: 180;
@@ -3380,6 +3428,7 @@ body.connecting .image-map-pin .pin-anchor,
 }
 .image-node-disabled .image-node-stage { display:none; }
 .image-node-disabled .image-node-toolbar::after { content:'disabled preview'; color:var(--steel-pale); font-style:italic; }
+.image-node-disabled .image-node-toolbar-bottom::after { content:'disabled preview'; color:var(--steel-pale); font-style:italic; }
 
 /* ── NODE TYPE-SPECIFIC FACE FIELDS ─────────────────────── */
 /* The default face is just the title + a "type label" + an optional summary
@@ -11668,6 +11717,31 @@ function resolveNodeByAnyScope(id) {
       || (sessionState.arcBlocks.nodes || []).find(n => n.id === id)
       || null;
 }
+function findNodeLinkedToPin(imageNode, pin) {
+  if (!imageNode || !pin) return null;
+  if (pin.nodeId) {
+    const direct = resolveNodeByAnyScope(pin.nodeId);
+    if (direct) return direct;
+  }
+  const endpointId = makeImagePinEndpointId(imageNode.id, pin.id);
+  for (const edge of state.edges || []) {
+    if (!edge || !edge.from || !edge.to) continue;
+    let otherId = null;
+    if (edge.from.nodeId === endpointId) otherId = edge.to.nodeId;
+    else if (edge.to.nodeId === endpointId) otherId = edge.from.nodeId;
+    if (!otherId || parseImagePinEndpointId(otherId)) continue;
+    const other = resolveNodeByAnyScope(otherId);
+    if (other) return other;
+  }
+  return null;
+}
+function isImagePinLinked(imageNode, pin) {
+  return !!findNodeLinkedToPin(imageNode, pin);
+}
+function pinDisplayTitle(imageNode, pin) {
+  const linked = findNodeLinkedToPin(imageNode, pin);
+  return (linked && linked.title) || pin.label || 'Unlinked pin';
+}
 function renderImageNodeBodyHtml(node) {
   const img = ensureImageNodePayload(node);
   const pins = img.pins || [];
@@ -11682,7 +11756,15 @@ function renderImageNodeBodyHtml(node) {
     </div>
     <div class="image-node-stage${imageAddPinNodeId === node.id ? ' adding-pin' : ''}" data-image-stage="${escAttr(node.id)}">
       ${img.dataUrl && !img.disabled ? `<img class="image-node-img" src="${escAttr(img.dataUrl)}" alt="${escAttr(img.name || node.title || 'Image')}">` : `<div class="image-node-placeholder">${img.dataUrl ? 'Preview disabled to reduce active rendering.' : 'Upload a map, puzzle, cipher, diagram, or handout image.'}</div>`}
-      ${img.dataUrl && !img.disabled ? pins.map(pin => `<button type="button" class="image-map-pin ${pin.nodeId ? '' : 'unlinked'}" data-image-pin="${escAttr(pin.id)}" data-node-id="${escAttr(node.id)}" style="left:${Number(pin.x)||0}%;top:${Number(pin.y)||0}%" title="${escAttr(pin.label || 'Pin')}"><span class="pin-glyph">${escHtml(pin.icon || '•')}</span><span class="pin-anchor" data-anchor="pin" data-pin-endpoint="${escAttr(makeImagePinEndpointId(node.id, pin.id))}" title="Connect this pin"></span></button>`).join('') : ''}
+      ${img.dataUrl && !img.disabled ? pins.map(pin => {
+        const linked = isImagePinLinked(node, pin);
+        const title = pinDisplayTitle(node, pin);
+        return `<button type="button" class="image-map-pin ${linked ? '' : 'unlinked'}" data-image-pin="${escAttr(pin.id)}" data-node-id="${escAttr(node.id)}" style="left:${Number(pin.x)||0}%;top:${Number(pin.y)||0}%" title="${escAttr(title)}" aria-label="${escAttr(title)}"><span class="pin-glyph">${escHtml(pin.icon || '•')}</span><span class="pin-anchor" data-anchor="pin" data-pin-endpoint="${escAttr(makeImagePinEndpointId(node.id, pin.id))}" title="Connect this pin"></span></button>`;
+      }).join('') : ''}
+    </div>
+    <div class="image-node-toolbar-bottom">
+      <button type="button" class="image-node-btn" data-image-add-pin="${escAttr(node.id)}" ${img.dataUrl ? '' : 'disabled'}>Add Pin</button>
+      <button type="button" class="image-node-btn" data-image-toggle-disabled="${escAttr(node.id)}">${img.disabled ? 'Enable Preview' : 'Disable Preview'}</button>
     </div>
   </div>`;
 }
@@ -11731,13 +11813,24 @@ function openImagePinIconModal(imageNode, pin) {
   modal.className = 'image-pin-icon-modal';
   modal.id = 'image-pin-icon-modal';
   modal.innerHTML = `<div class="image-pin-icon-card">
-    <div class="image-pin-icon-head"><span>Choose Pin Icon</span><button type="button" class="image-pin-icon-close" data-pin-icon-close>Close</button></div>
+    <div class="image-pin-icon-head"><span>Choose Pin Icon</span><span style="display:flex;gap:6px;"><button type="button" class="image-pin-icon-delete" data-pin-icon-delete>Delete Pin</button><button type="button" class="image-pin-icon-close" data-pin-icon-close>Close</button></span></div>
     <div class="image-pin-icon-grid">
       ${IMAGE_PIN_ICONS.map(ic => `<button type="button" class="image-pin-icon-choice${ic === (pin.icon || '') ? ' selected' : ''}" data-pin-icon-choice="${escAttr(ic)}">${escHtml(ic)}</button>`).join('')}
     </div>
   </div>`;
   document.body.appendChild(modal);
   modal.querySelector('[data-pin-icon-close]')?.addEventListener('click', () => modal.remove());
+  modal.querySelector('[data-pin-icon-delete]')?.addEventListener('click', () => {
+    if (!confirm('Delete this pin?')) return;
+    removeEdgesForImagePin(imageNode.id, pin.id);
+    imageNode.image.pins = (imageNode.image.pins || []).filter(p => p.id !== pin.id);
+    modal.remove();
+    closeImagePinPopover();
+    refreshNodeFace(imageNode);
+    if (sidePanel.classList.contains('open') && openNodeId === imageNode.id) renderSidePanelBody(imageNode, BLOCK_TYPES.image);
+    redrawEdges();
+    markDirty();
+  });
   modal.addEventListener('mousedown', e => { if (e.target === modal) modal.remove(); });
   modal.querySelectorAll('[data-pin-icon-choice]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -11809,6 +11902,10 @@ function autoPinNodeIfCreatedOnImage(node, centerCx, centerCy) {
     label: node.title || '',
     nodeId: node.id
   });
+  // Nodes created on top of an image should remain visually above the image node.
+  // The linked pin is a relationship marker, not a reason to bury the node under the map.
+  node.el?.classList.add('pinned-on-image');
+  node.el?.setAttribute('data-pinned-on-image', hit.imageNode.id);
   refreshNodeFace(hit.imageNode);
   if (sidePanel.classList.contains('open') && openNodeId === hit.imageNode.id) renderSidePanelBody(hit.imageNode, BLOCK_TYPES.image);
   redrawEdges();
@@ -11816,6 +11913,32 @@ function autoPinNodeIfCreatedOnImage(node, centerCx, centerCy) {
   if (typeof showToast === 'function') showToast('Created a linked map pin for the new node.');
 }
 
+function showImagePinTooltip(pinEl, imageNode, pin, clientX, clientY) {
+  hideImagePinTooltip();
+  const tip = document.createElement('div');
+  tip.className = 'image-pin-tooltip';
+  tip.id = 'image-pin-tooltip';
+  const title = pinDisplayTitle(imageNode, pin);
+  tip.innerHTML = `<span class="image-pin-tooltip-icon">${escHtml(pin.icon || '•')}</span><span class="image-pin-tooltip-title">${escHtml(title)}</span>`;
+  document.body.appendChild(tip);
+  moveImagePinTooltip(clientX, clientY);
+}
+function moveImagePinTooltip(clientX, clientY) {
+  const tip = document.getElementById('image-pin-tooltip');
+  if (!tip) return;
+  const margin = 8;
+  const r = tip.getBoundingClientRect();
+  let x = clientX + 14;
+  let y = clientY + 14;
+  if (x + r.width > window.innerWidth - margin) x = clientX - r.width - 14;
+  if (y + r.height > window.innerHeight - margin) y = clientY - r.height - 14;
+  tip.style.left = Math.max(margin, x) + 'px';
+  tip.style.top = Math.max(margin, y) + 'px';
+}
+function hideImagePinTooltip() {
+  const tip = document.getElementById('image-pin-tooltip');
+  if (tip) tip.remove();
+}
 function wireImageNode(host, node) {
   if (!node || !host) return;
   ensureImageNodePayload(node);
@@ -11826,19 +11949,17 @@ function wireImageNode(host, node) {
     upload.addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
     fileInput.addEventListener('change', () => handleImageFile(node, fileInput.files && fileInput.files[0]));
   }
-  const addBtn = host.querySelector(`[data-image-add-pin="${CSS.escape(node.id)}"]`);
-  if (addBtn) {
+  host.querySelectorAll(`[data-image-add-pin="${CSS.escape(node.id)}"]`).forEach(addBtn => {
     addBtn.addEventListener('mousedown', e => e.stopPropagation());
     addBtn.addEventListener('click', e => {
       e.stopPropagation(); imageAddPinNodeId = (imageAddPinNodeId === node.id) ? null : node.id; refreshNodeFace(node);
       if (typeof showToast === 'function' && imageAddPinNodeId) showToast('Click the image to place the new pin.');
     });
-  }
-  const toggle = host.querySelector(`[data-image-toggle-disabled="${CSS.escape(node.id)}"]`);
-  if (toggle) {
+  });
+  host.querySelectorAll(`[data-image-toggle-disabled="${CSS.escape(node.id)}"]`).forEach(toggle => {
     toggle.addEventListener('mousedown', e => e.stopPropagation());
     toggle.addEventListener('click', e => { e.stopPropagation(); node.image.disabled = !node.image.disabled; closeImagePinPopover(); refreshNodeFace(node); markDirty(); });
-  }
+  });
   const stage = host.querySelector(`[data-image-stage="${CSS.escape(node.id)}"]`);
   if (stage) {
     stage.addEventListener('mousedown', e => {
@@ -11873,6 +11994,13 @@ function wireImageNode(host, node) {
     });
     const pinEndpointId = makeImagePinEndpointId(node.id, pinEl.dataset.imagePin || '');
     wireEdgeHoverForEndpoint(pinEl, pinEndpointId);
+    pinEl.addEventListener('mouseenter', e => {
+      const pin = node.image.pins.find(p => p.id === pinEl.dataset.imagePin);
+      pinEl.classList.add('proximity');
+      if (pin) showImagePinTooltip(pinEl, node, pin, e.clientX, e.clientY);
+    });
+    pinEl.addEventListener('mousemove', e => moveImagePinTooltip(e.clientX, e.clientY));
+    pinEl.addEventListener('mouseleave', () => { pinEl.classList.remove('proximity'); hideImagePinTooltip(); });
     pinEl.querySelectorAll('[data-pin-endpoint]').forEach(anchorEl => {
       anchorEl.addEventListener('mousedown', e => { if (e.button === 0) e.stopPropagation(); });
       anchorEl.addEventListener('click', e => handleImagePinAnchorClick(anchorEl, e));
@@ -11934,6 +12062,7 @@ function wireImageSidePanel(node) {
   spBody.querySelectorAll('[data-sp-pin-delete]').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = btn.dataset.spPinDelete;
+      removeEdgesForImagePin(node.id, id);
       node.image.pins = (node.image.pins || []).filter(p => p.id !== id);
       closeImagePinPopover();
       refreshNodeFace(node);
@@ -11958,7 +12087,7 @@ function renderPinNodeQuickRef(target) {
 }
 function openImagePinPopover(imageNode, pin, clientX, clientY) {
   closeImagePinPopover();
-  const target = resolveNodeByAnyScope(pin.nodeId);
+  const target = findNodeLinkedToPin(imageNode, pin);
   const pop = document.createElement('div');
   pop.className = 'image-pin-popover';
   pop.id = 'image-pin-popover';
@@ -11978,6 +12107,12 @@ function openImagePinPopover(imageNode, pin, clientX, clientY) {
 function imagePinOutsideClose(e) {
   const pop = document.getElementById('image-pin-popover');
   if (pop && !e.target.closest('#image-pin-popover') && !e.target.closest('.image-map-pin')) closeImagePinPopover();
+}
+function removeEdgesForImagePin(imageNodeId, pinId) {
+  const endpointId = makeImagePinEndpointId(imageNodeId, pinId);
+  (state.edges || []).slice().forEach(edge => {
+    if ((edge.from && edge.from.nodeId === endpointId) || (edge.to && edge.to.nodeId === endpointId)) removeEdge(edge);
+  });
 }
 function closeImagePinPopover() {
   document.removeEventListener('mousedown', imagePinOutsideClose, true);
