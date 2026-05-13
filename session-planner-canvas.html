@@ -3284,6 +3284,59 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 }
 .image-map-pin:active { cursor: grabbing; }
 .image-map-pin.unlinked { opacity: 0.72; filter: grayscale(0.3); }
+.image-map-pin .pin-anchor {
+  position: absolute;
+  width: 8px; height: 8px;
+  right: -5px; top: 50%;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  background: var(--gold-pale);
+  border: 1px solid rgba(0,0,0,0.55);
+  opacity: 0;
+  cursor: crosshair;
+  z-index: 2;
+}
+.image-map-pin:hover .pin-anchor,
+body.connecting .image-map-pin .pin-anchor,
+.image-map-pin .pin-anchor.active { opacity: 1; }
+.image-pin-icon-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.72);
+}
+.image-pin-icon-card {
+  width: min(560px, 94vw);
+  max-height: 84vh;
+  overflow: auto;
+  background: linear-gradient(180deg, #1f1a12 0%, #14110b 100%);
+  border: 1px solid var(--gold);
+  border-radius: 4px;
+  box-shadow: 0 8px 34px rgba(0,0,0,0.8);
+  padding: 14px;
+}
+.image-pin-icon-head {
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  font-family:'Cinzel',serif; color:var(--gold-pale); letter-spacing:0.08em;
+  border-bottom:1px solid rgba(184,134,11,0.25); padding-bottom:8px; margin-bottom:10px;
+}
+.image-pin-icon-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap:6px; }
+.image-pin-icon-choice {
+  min-height: 38px;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(184,134,11,0.35);
+  color: var(--gold-pale);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family:'JetBrains Mono',monospace;
+  font-weight:700;
+}
+.image-pin-icon-choice:hover, .image-pin-icon-choice.selected { border-color:var(--gold); background:rgba(184,134,11,0.2); }
+.image-pin-icon-close { background:transparent; border:1px solid rgba(184,134,11,0.35); color:var(--steel-pale); cursor:pointer; border-radius:2px; padding:3px 8px; }
+.image-pin-icon-close:hover { color:var(--gold-pale); border-color:var(--gold); }
 .image-pin-popover {
   position: fixed;
   z-index: 180;
@@ -11548,6 +11601,12 @@ const IMAGE_PIN_ICONS = [
 let imageAddPinNodeId = null;
 let imagePinDrag = null;
 
+function makeImagePinEndpointId(imageNodeId, pinId) { return 'pin:' + imageNodeId + ':' + pinId; }
+function parseImagePinEndpointId(endpointId) {
+  const m = String(endpointId || '').match(/^pin:([^:]+):(.+)$/);
+  return m ? { imageNodeId: m[1], pinId: m[2] } : null;
+}
+
 function ensureImageNodePayload(node) {
   if (!node.image || typeof node.image !== 'object') node.image = { dataUrl: '', name: '', disabled: false, pins: [] };
   if (!Array.isArray(node.image.pins)) node.image.pins = [];
@@ -11592,7 +11651,7 @@ function renderImageNodeBodyHtml(node) {
     </div>
     <div class="image-node-stage${imageAddPinNodeId === node.id ? ' adding-pin' : ''}" data-image-stage="${escAttr(node.id)}">
       ${img.dataUrl && !img.disabled ? `<img class="image-node-img" src="${escAttr(img.dataUrl)}" alt="${escAttr(img.name || node.title || 'Image')}">` : `<div class="image-node-placeholder">${img.dataUrl ? 'Preview disabled to reduce active rendering.' : 'Upload a map, puzzle, cipher, diagram, or handout image.'}</div>`}
-      ${img.dataUrl && !img.disabled ? pins.map(pin => `<button type="button" class="image-map-pin ${pin.nodeId ? '' : 'unlinked'}" data-image-pin="${escAttr(pin.id)}" data-node-id="${escAttr(node.id)}" style="left:${Number(pin.x)||0}%;top:${Number(pin.y)||0}%" title="${escAttr(pin.label || 'Pin')}">${escHtml(pin.icon || '•')}</button>`).join('') : ''}
+      ${img.dataUrl && !img.disabled ? pins.map(pin => `<button type="button" class="image-map-pin ${pin.nodeId ? '' : 'unlinked'}" data-image-pin="${escAttr(pin.id)}" data-node-id="${escAttr(node.id)}" style="left:${Number(pin.x)||0}%;top:${Number(pin.y)||0}%" title="${escAttr(pin.label || 'Pin')}"><span class="pin-glyph">${escHtml(pin.icon || '•')}</span><span class="pin-anchor" data-anchor="pin" data-pin-endpoint="${escAttr(makeImagePinEndpointId(node.id, pin.id))}" title="Connect this pin"></span></button>`).join('') : ''}
     </div>
   </div>`;
 }
@@ -11632,6 +11691,100 @@ function handleImageFile(node, file) {
   };
   reader.readAsDataURL(file);
 }
+
+function openImagePinIconModal(imageNode, pin) {
+  closeImagePinPopover();
+  const existing = document.getElementById('image-pin-icon-modal');
+  if (existing) existing.remove();
+  const modal = document.createElement('div');
+  modal.className = 'image-pin-icon-modal';
+  modal.id = 'image-pin-icon-modal';
+  modal.innerHTML = `<div class="image-pin-icon-card">
+    <div class="image-pin-icon-head"><span>Choose Pin Icon</span><button type="button" class="image-pin-icon-close" data-pin-icon-close>Close</button></div>
+    <div class="image-pin-icon-grid">
+      ${IMAGE_PIN_ICONS.map(ic => `<button type="button" class="image-pin-icon-choice${ic === (pin.icon || '') ? ' selected' : ''}" data-pin-icon-choice="${escAttr(ic)}">${escHtml(ic)}</button>`).join('')}
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('[data-pin-icon-close]')?.addEventListener('click', () => modal.remove());
+  modal.addEventListener('mousedown', e => { if (e.target === modal) modal.remove(); });
+  modal.querySelectorAll('[data-pin-icon-choice]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      pin.icon = btn.dataset.pinIconChoice || pin.icon || '•';
+      modal.remove();
+      refreshNodeFace(imageNode);
+      if (sidePanel.classList.contains('open') && openNodeId === imageNode.id) renderSidePanelBody(imageNode, BLOCK_TYPES.image);
+      redrawEdges();
+      markDirty();
+    });
+  });
+}
+
+function handleImagePinAnchorClick(anchorEl, e) {
+  e.stopPropagation();
+  const endpointId = anchorEl.dataset.pinEndpoint;
+  if (!endpointId) return;
+  if (!state.pendingAnchor) {
+    anchorEl.classList.add('active');
+    state.pendingAnchor = { nodeId: endpointId, anchor: 'pin', anchorEl };
+    document.body.classList.add('connecting');
+    showPendingFrom(anchorEl);
+    const res = resolveEdgeEndpoint(endpointId);
+    const p = res ? getCanvasEndpointPos(res, 'pin') : null;
+    if (p) updatePending(p);
+  } else {
+    const p = state.pendingAnchor;
+    if (p.nodeId === endpointId) { clearPending(); return; }
+    const srcResolved = resolveEdgeEndpoint(p.nodeId);
+    if (!srcResolved) { clearPending(); return; }
+    createEdge(
+      { nodeId: p.nodeId, anchor: p.anchor || 'pin' },
+      { nodeId: endpointId, anchor: 'pin' },
+      'forward'
+    );
+    clearPending();
+    redrawEdges();
+  }
+}
+
+function findImageNodeContainingCanvasPoint(cx, cy, excludeNodeId = null) {
+  let best = null;
+  state.nodes.forEach(imgNode => {
+    if (best || imgNode.id === excludeNodeId || imgNode.type !== 'image' || !imgNode.el) return;
+    const stage = imgNode.el.querySelector(`[data-image-stage="${CSS.escape(imgNode.id)}"]`);
+    if (!stage) return;
+    const r = stage.getBoundingClientRect();
+    const sx = VIEW.x + cx * VIEW.zoom;
+    const sy = VIEW.y + cy * VIEW.zoom;
+    if (sx >= r.left && sx <= r.right && sy >= r.top && sy <= r.bottom) {
+      best = { imageNode: imgNode, stageRect: r, sx, sy };
+    }
+  });
+  return best;
+}
+
+function autoPinNodeIfCreatedOnImage(node, centerCx, centerCy) {
+  const hit = findImageNodeContainingCanvasPoint(centerCx, centerCy, node.id);
+  if (!hit) return;
+  const img = ensureImageNodePayload(hit.imageNode);
+  if ((img.pins || []).some(p => p.nodeId === node.id)) return;
+  const x = Math.max(0, Math.min(100, ((hit.sx - hit.stageRect.left) / hit.stageRect.width) * 100));
+  const y = Math.max(0, Math.min(100, ((hit.sy - hit.stageRect.top) / hit.stageRect.height) * 100));
+  const pins = img.pins;
+  pins.push({
+    id: 'pin_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+    x, y,
+    icon: String(Math.min(20, pins.length)),
+    label: node.title || '',
+    nodeId: node.id
+  });
+  refreshNodeFace(hit.imageNode);
+  if (sidePanel.classList.contains('open') && openNodeId === hit.imageNode.id) renderSidePanelBody(hit.imageNode, BLOCK_TYPES.image);
+  redrawEdges();
+  markDirty();
+  if (typeof showToast === 'function') showToast('Created a linked map pin for the new node.');
+}
+
 function wireImageNode(host, node) {
   if (!node || !host) return;
   ensureImageNodePayload(node);
@@ -11678,6 +11831,7 @@ function wireImageNode(host, node) {
   }
   host.querySelectorAll('.image-map-pin').forEach(pinEl => {
     pinEl.addEventListener('mousedown', e => {
+      if (e.target.closest('[data-pin-endpoint]')) return;
       e.stopPropagation();
       const pin = node.image.pins.find(p => p.id === pinEl.dataset.imagePin);
       const st = pinEl.closest('.image-node-stage');
@@ -11686,8 +11840,19 @@ function wireImageNode(host, node) {
       document.addEventListener('mousemove', onImagePinDragMove, true);
       document.addEventListener('mouseup', onImagePinDragEnd, true);
     });
+    pinEl.querySelectorAll('[data-pin-endpoint]').forEach(anchorEl => {
+      anchorEl.addEventListener('mousedown', e => { if (e.button === 0) e.stopPropagation(); });
+      anchorEl.addEventListener('click', e => handleImagePinAnchorClick(anchorEl, e));
+    });
+    pinEl.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const pin = node.image.pins.find(p => p.id === pinEl.dataset.imagePin);
+      if (pin) openImagePinIconModal(node, pin);
+    });
     pinEl.addEventListener('click', e => {
       e.stopPropagation();
+      if (e.target.closest('[data-pin-endpoint]')) return;
       if (imagePinDrag && imagePinDrag.moved) return;
       const pin = node.image.pins.find(p => p.id === pinEl.dataset.imagePin);
       if (pin) openImagePinPopover(node, pin, e.clientX, e.clientY);
@@ -12474,6 +12639,22 @@ function getAnchorCanvasPos(node, anchorKey) {
   const [fx, fy] = ANCHOR_FRAC[anchorKey];
   return { x: node.x + w * fx, y: node.y + h * fy };
 }
+function getImagePinCanvasPos(imageNode, pin) {
+  const stage = imageNode && imageNode.el ? imageNode.el.querySelector(`[data-image-stage="${CSS.escape(imageNode.id)}"]`) : null;
+  if (!stage) return getAnchorCanvasPos(imageNode, 'tc');
+  const sr = stage.getBoundingClientRect();
+  const cr = content.getBoundingClientRect();
+  return {
+    x: (sr.left - cr.left) / VIEW.zoom + (sr.width / VIEW.zoom) * ((Number(pin.x) || 0) / 100),
+    y: (sr.top - cr.top) / VIEW.zoom + (sr.height / VIEW.zoom) * ((Number(pin.y) || 0) / 100)
+  };
+}
+function getCanvasEndpointPos(res, fallbackAnchor = 'ml') {
+  if (!res) return null;
+  if (res.where === 'canvas-pin') return getImagePinCanvasPos(res.imageNode, res.pin);
+  if (res.where === 'canvas') return getAnchorCanvasPos(res.node, fallbackAnchor || 'ml');
+  return null;
+}
 
 // ── EDGE RENDERING ───────────────────────────────────────
 const svg = document.getElementById('canvas-svg');
@@ -12627,6 +12808,56 @@ function redrawEdge(edge) {
     return;
   }
 
+  // Canvas pins can be connected like node anchors. They render in canvas space,
+  // but their endpoint is the pin location rather than the image node's edge.
+  if (aRes.where === 'canvas-pin' || bRes.where === 'canvas-pin') {
+    if (edge.groupEl.parentNode !== svg) {
+      svg.appendChild(edge.groupEl);
+      edge.pathEl.classList.remove('cross-scope');
+    }
+    const otherAnchorForNode = (nodeRes, otherPos) => {
+      if (!nodeRes || nodeRes.where !== 'canvas') return 'pin';
+      let best = 'ml', bestScore = Infinity;
+      for (const k of ALL_ANCHORS) {
+        const p = getAnchorCanvasPos(nodeRes.node, k);
+        const score = Math.hypot(p.x - otherPos.x, p.y - otherPos.y);
+        if (score < bestScore) { bestScore = score; best = k; }
+      }
+      return best;
+    };
+    let p1, p2, aKey = edge.from.anchor || 'pin', bKey = edge.to.anchor || 'pin';
+    if (aRes.where === 'canvas-pin') p1 = getImagePinCanvasPos(aRes.imageNode, aRes.pin);
+    if (bRes.where === 'canvas-pin') p2 = getImagePinCanvasPos(bRes.imageNode, bRes.pin);
+    if (!p1 && p2) { aKey = otherAnchorForNode(aRes, p2); p1 = getAnchorCanvasPos(aRes.node, aKey); }
+    if (!p2 && p1) { bKey = otherAnchorForNode(bRes, p1); p2 = getAnchorCanvasPos(bRes.node, bKey); }
+    if (!p1 || !p2) return;
+    const normalFor = (res, key, from, to) => {
+      if (res.where === 'canvas-pin') {
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const len = Math.hypot(dx, dy) || 1;
+        return [dx / len, dy / len];
+      }
+      return ANCHOR_NORMAL[key] || ANCHOR_NORMAL.ml;
+    };
+    const n1 = normalFor(aRes, aKey, p1, p2);
+    const n2 = normalFor(bRes, bKey, p2, p1);
+    const d  = pathDFor(p1, p2, n1, n2);
+    edge.pathEl.setAttribute('d', d);
+    edge.hitEl.setAttribute('d', d);
+    let mx, my;
+    try {
+      const total = edge.pathEl.getTotalLength();
+      const pt = edge.pathEl.getPointAtLength(total / 2);
+      mx = pt.x; my = pt.y;
+    } catch (e) {
+      mx = (p1.x + p2.x) / 2; my = (p1.y + p2.y) / 2;
+    }
+    edge.pillFOEl.setAttribute('x', mx - 13);
+    edge.pillFOEl.setAttribute('y', my - 13);
+    positionEdgeLabel(edge, mx, my);
+    return;
+  }
+
   // Both endpoints are canvas nodes — render in canvas space as before.
   if (edge.groupEl.parentNode !== svg) {
     svg.appendChild(edge.groupEl);
@@ -12687,6 +12918,18 @@ function resolveEdgeEndpoint(nodeId) {
     const el = document.querySelector('.arc-collection-header[data-arc-collection-id="' + cid + '"]');
     if (el) return { where: 'arc-frame', tier: 'arc', node: { id: nodeId, title: c.title }, el, kind: 'collection', collection: c };
     return null;
+  }
+
+  const pinRef = parseImagePinEndpointId(nodeId);
+  if (pinRef) {
+    const imageNode = state.nodes.get(pinRef.imageNodeId);
+    if (!imageNode || imageNode.type !== 'image') return null;
+    const pin = imageNode.image && Array.isArray(imageNode.image.pins)
+      ? imageNode.image.pins.find(p => p.id === pinRef.pinId)
+      : null;
+    if (!pin) return null;
+    const el = document.querySelector(`.image-map-pin[data-node-id="${CSS.escape(pinRef.imageNodeId)}"][data-image-pin="${CSS.escape(pinRef.pinId)}"]`);
+    return { where: 'canvas-pin', node: { id: nodeId, title: pin.label || 'Pin' }, imageNode, pin, el };
   }
 
   // Canvas node
@@ -13362,6 +13605,7 @@ function addNodeAtCanvasPos(type, cx, cy) {
     node.el.style.left = node.x + 'px';
     node.el.style.top  = node.y + 'px';
     redrawEdges();
+    autoPinNodeIfCreatedOnImage(node, cx, cy);
   });
   return node;
 }
