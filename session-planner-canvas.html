@@ -187,6 +187,7 @@ html, body {
   gap: 2px;
   text-align: center;
   user-select: none;
+  z-index: 20;
   min-width: 70px;
   flex-shrink: 0;
 }
@@ -2650,7 +2651,9 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
   top: 0; left: 0;
   overflow: visible;
   pointer-events: none;
+  z-index: 15; /* above image nodes, below ordinary nodes */
 }
+
 
 /* ── NODES ──────────────────────────────────────────────── */
 .node {
@@ -2667,7 +2670,7 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
 }
 .node.dragging { cursor: grabbing; box-shadow: 0 8px 24px rgba(0,0,0,0.7); }
 .node:hover { border-color: var(--node-border-hover); }
-.node.selected {
+.node.selected { z-index: 30;
   border-color: var(--gold-bright);
   box-shadow: 0 0 0 2px rgba(212,160,23,0.4), 0 4px 14px rgba(0,0,0,0.5);
 }
@@ -2886,6 +2889,10 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 .edge-hitbox:hover + .edge-path,
 .edge-group:hover .edge-path { stroke: var(--gold-bright); stroke-width: 3.5; }
 .edge-path.selected { stroke: var(--gold-bright); stroke-width: 3.5; filter: drop-shadow(0 0 4px rgba(212,160,23,0.6)); }
+.edge-path.image-overlap { opacity: 0.26; }
+.edge-group.edge-hover-active .edge-path.image-overlap,
+.edge-group:hover .edge-path.image-overlap,
+.edge-path.image-overlap.selected { opacity: 1; }
 
 /* The transient pending line drawn while waiting for the second click */
 .edge-pending {
@@ -3177,7 +3184,7 @@ body.connecting #canvas-wrap { cursor: crosshair; }
 .node[data-type="reward"]          { --accent: #d4a017; }
 .node[data-type="skillchallenge"]  { --accent: #9a6cb6; }
 .node[data-type="brainstorm"]      { --accent: #d4c376; }
-.node[data-type="image"]           { --accent: #8bb6d9; }
+.node[data-type="image"]           { --accent: #8bb6d9; z-index: 8; }
 .node::before {
   content: '';
   position: absolute;
@@ -9866,6 +9873,25 @@ function deserializeCanvas(data) {
       // Re-derive the summary on load so the face matches what's saved.
       updateBrainstormSummary(node);
     }
+    // Restore image-node payload. This was being serialized, but without this
+    // deserialization branch image previews/pins decayed to the default empty
+    // image object after refresh.
+    if (def.isImage) {
+      const src = nd.image && typeof nd.image === 'object' ? nd.image : {};
+      node.image = {
+        dataUrl: String(src.dataUrl || ''),
+        name: String(src.name || ''),
+        disabled: !!src.disabled,
+        pins: Array.isArray(src.pins) ? src.pins.map(pin => ({
+          id: String(pin.id || ('pin_' + Date.now() + Math.random().toString(36).slice(2,6))),
+          x: Number(pin.x) || 0,
+          y: Number(pin.y) || 0,
+          icon: String(pin.icon || '•'),
+          label: String(pin.label || ''),
+          nodeId: String(pin.nodeId || ''),
+        })) : [],
+      };
+    }
     const el = document.createElement('div');
     el.className = 'node';
     el.dataset.nodeId = nd.id;
@@ -9889,6 +9915,7 @@ function deserializeCanvas(data) {
     wireImageNode(el, node);
     wireNodeCollapseToggle(el, node);
     wireMagnifyBtn(el, node);
+    wireEdgeHoverForEndpoint(el, node.id);
     const m = String(nd.id).match(/^n(\d+)$/);
     if (m) { const n = parseInt(m[1]); if (n > maxIdSeq) maxIdSeq = n; }
   };
@@ -11191,7 +11218,10 @@ wrap.addEventListener('mousedown', (e) => {
   if (e.button === 1) {
     e.preventDefault();
     const onNode = e.target.closest('.node');
-    if (!onNode && !e.target.closest('.edge-group')) {
+    const onImageStage = e.target.closest('.image-node-stage');
+    // Image nodes are a special case: middle-click over the image should still
+    // create a node at that map/puzzle coordinate, then auto-link it as a pin.
+    if ((!onNode || onImageStage) && !e.target.closest('.edge-group') && !e.target.closest('.image-map-pin')) {
       showTypeChooser(e.clientX, e.clientY);
     }
     return;
@@ -11475,6 +11505,7 @@ function createNode({ x, y, type = 'scene', title = null, summary = '' } = {}) {
   wireImageNode(el, data);
   wireNodeCollapseToggle(el, data);
   wireMagnifyBtn(el, data);
+  wireEdgeHoverForEndpoint(el, data.id);
   updateEmptyHint();
   markDirty();
   return data;
@@ -11840,6 +11871,8 @@ function wireImageNode(host, node) {
       document.addEventListener('mousemove', onImagePinDragMove, true);
       document.addEventListener('mouseup', onImagePinDragEnd, true);
     });
+    const pinEndpointId = makeImagePinEndpointId(node.id, pinEl.dataset.imagePin || '');
+    wireEdgeHoverForEndpoint(pinEl, pinEndpointId);
     pinEl.querySelectorAll('[data-pin-endpoint]').forEach(anchorEl => {
       anchorEl.addEventListener('mousedown', e => { if (e.button === 0) e.stopPropagation(); });
       anchorEl.addEventListener('click', e => handleImagePinAnchorClick(anchorEl, e));
@@ -11869,6 +11902,7 @@ function onImagePinDragMove(e) {
   pin.y = Math.max(0, Math.min(100, ((e.clientY - r.top) / r.height) * 100));
   const el = stage.querySelector(`[data-image-pin="${CSS.escape(pin.id)}"]`);
   if (el) { el.style.left = pin.x + '%'; el.style.top = pin.y + '%'; }
+  redrawEdges();
   markDirty();
 }
 function onImagePinDragEnd() {
@@ -12649,6 +12683,65 @@ function getImagePinCanvasPos(imageNode, pin) {
     y: (sr.top - cr.top) / VIEW.zoom + (sr.height / VIEW.zoom) * ((Number(pin.y) || 0) / 100)
   };
 }
+function getImageStageCanvasRect(imageNode) {
+  const stage = imageNode && imageNode.el ? imageNode.el.querySelector(`[data-image-stage="${CSS.escape(imageNode.id)}"]`) : null;
+  if (!stage) return null;
+  const sr = stage.getBoundingClientRect();
+  const cr = content.getBoundingClientRect();
+  return {
+    x: (sr.left - cr.left) / VIEW.zoom,
+    y: (sr.top - cr.top) / VIEW.zoom,
+    w: sr.width / VIEW.zoom,
+    h: sr.height / VIEW.zoom,
+  };
+}
+function rectsIntersect(a, b) {
+  if (!a || !b) return false;
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+function updateEdgeImageOverlap(edge) {
+  if (!edge || !edge.pathEl) return;
+  let box = null;
+  try {
+    const bb = edge.pathEl.getBBox();
+    box = { x: bb.x, y: bb.y, w: bb.width, h: bb.height };
+  } catch (err) { return; }
+  let overlaps = false;
+  state.nodes.forEach(n => {
+    if (overlaps || n.type !== 'image') return;
+    const r = getImageStageCanvasRect(n);
+    if (rectsIntersect(box, r)) overlaps = true;
+  });
+  edge.pathEl.classList.toggle('image-overlap', overlaps);
+}
+function imagePinEndpointLinkedToNode(endpointId, nodeId) {
+  const ref = parseImagePinEndpointId(endpointId);
+  if (!ref) return false;
+  const img = state.nodes.get(ref.imageNodeId);
+  const pin = img && img.image && Array.isArray(img.image.pins) ? img.image.pins.find(p => p.id === ref.pinId) : null;
+  return !!pin && pin.nodeId === nodeId;
+}
+function edgeTouchesHoverEndpoint(edge, endpointId) {
+  if (!edge || !endpointId) return false;
+  if (edge.from.nodeId === endpointId || edge.to.nodeId === endpointId) return true;
+  // Hovering a regular node should also brighten any image-pin edge whose pin
+  // is linked to that node.
+  if (!parseImagePinEndpointId(endpointId)) {
+    return imagePinEndpointLinkedToNode(edge.from.nodeId, endpointId) || imagePinEndpointLinkedToNode(edge.to.nodeId, endpointId);
+  }
+  return false;
+}
+function setEdgeHoverForEndpoint(endpointId, active) {
+  state.edges.forEach(edge => {
+    if (edgeTouchesHoverEndpoint(edge, endpointId)) edge.groupEl.classList.toggle('edge-hover-active', !!active);
+  });
+}
+function wireEdgeHoverForEndpoint(el, endpointId) {
+  if (!el || !endpointId || el.dataset.edgeHoverWired === endpointId) return;
+  el.dataset.edgeHoverWired = endpointId;
+  el.addEventListener('mouseenter', () => setEdgeHoverForEndpoint(endpointId, true));
+  el.addEventListener('mouseleave', () => setEdgeHoverForEndpoint(endpointId, false));
+}
 function getCanvasEndpointPos(res, fallbackAnchor = 'ml') {
   if (!res) return null;
   if (res.where === 'canvas-pin') return getImagePinCanvasPos(res.imageNode, res.pin);
@@ -12805,6 +12898,7 @@ function redrawEdge(edge) {
     edge.pillFOEl.setAttribute('x', mx - 13);
     edge.pillFOEl.setAttribute('y', my - 13);
     positionEdgeLabel(edge, mx, my);
+    updateEdgeImageOverlap(edge);
     return;
   }
 
@@ -12855,6 +12949,7 @@ function redrawEdge(edge) {
     edge.pillFOEl.setAttribute('x', mx - 13);
     edge.pillFOEl.setAttribute('y', my - 13);
     positionEdgeLabel(edge, mx, my);
+    updateEdgeImageOverlap(edge);
     return;
   }
 
@@ -12885,6 +12980,7 @@ function redrawEdge(edge) {
   edge.pillFOEl.setAttribute('x', mx - 13);
   edge.pillFOEl.setAttribute('y', my - 13);
   positionEdgeLabel(edge, mx, my);
+  updateEdgeImageOverlap(edge);
 }
 
 // Position the label foreignObject so its caption sits above the pill,
@@ -20907,6 +21003,7 @@ function refreshNodeFace(node) {
   wireImageNode(node.el, node);
   wireNodeCollapseToggle(node.el, node);
   wireMagnifyBtn(node.el, node);
+  wireEdgeHoverForEndpoint(node.el, node.id);
   // Restore selected styling if applicable
   if (state.selectedNodes.has(node.id)) node.el.classList.add('selected');
   // Stage 31: when the mobile node-view is showing this same node, mirror
