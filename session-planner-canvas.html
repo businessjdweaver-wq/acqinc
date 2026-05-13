@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Session Planner — Canvas — Node Type Change v0.2</title>
+<title>Session Planner — Canvas — Image Pins v0.8</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -3533,7 +3533,14 @@ body.connecting .image-map-pin:hover .pin-anchor {
   border-radius: 2px;
   min-width: 0;
 }
-.image-node-disabled .image-node-stage { display:none; }
+/* Image Pins v0.8: keep the stage box measurable while preview is disabled.
+   Previously display:none made every pin endpoint resolve to the same fallback
+   point when connector lines redrew, so linked nodes appeared to converge. */
+.image-node-disabled .image-node-stage {
+  display:block;
+  min-height:360px;
+  background:rgba(0,0,0,0.18);
+}
 .image-node-disabled .image-node-toolbar::after { content:'disabled preview'; color:var(--steel-pale); font-style:italic; }
 .image-node-disabled .image-node-toolbar-bottom::after { content:'disabled preview'; color:var(--steel-pale); font-style:italic; }
 
@@ -6449,7 +6456,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 54 — Node Type Change v0.2</span>
+  <span class="topbar-version">Stage 55 — Image Pins v0.8</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -12093,7 +12100,7 @@ function wireImageNode(host, node) {
   });
   host.querySelectorAll(`[data-image-toggle-disabled="${CSS.escape(node.id)}"]`).forEach(toggle => {
     toggle.addEventListener('mousedown', e => e.stopPropagation());
-    toggle.addEventListener('click', e => { e.stopPropagation(); node.image.disabled = !node.image.disabled; closeImagePinPopover(); refreshNodeFace(node); markDirty(); });
+    toggle.addEventListener('click', e => { e.stopPropagation(); node.image.disabled = !node.image.disabled; closeImagePinPopover(); refreshNodeFace(node); redrawEdges(); requestAnimationFrame(redrawEdges); markDirty(); });
   });
   const stage = host.querySelector(`[data-image-stage="${CSS.escape(node.id)}"]`);
   if (stage) {
@@ -12974,13 +12981,34 @@ function getAnchorCanvasPos(node, anchorKey) {
 }
 function getImagePinCanvasPos(imageNode, pin) {
   const stage = imageNode && imageNode.el ? imageNode.el.querySelector(`[data-image-stage="${CSS.escape(imageNode.id)}"]`) : null;
-  if (!stage) return getAnchorCanvasPos(imageNode, 'tc');
-  const sr = stage.getBoundingClientRect();
   const cr = content.getBoundingClientRect();
-  return {
-    x: (sr.left - cr.left) / VIEW.zoom + (sr.width / VIEW.zoom) * ((Number(pin.x) || 0) / 100),
-    y: (sr.top - cr.top) / VIEW.zoom + (sr.height / VIEW.zoom) * ((Number(pin.y) || 0) / 100)
-  };
+  if (stage) {
+    const sr = stage.getBoundingClientRect();
+    // Image Pins v0.8: when preview is disabled/re-enabled, the stage may be
+    // temporarily hidden or have a zero-size rect during the same render tick.
+    // Do not collapse every pin to the node fallback; use the stored percent
+    // position only when the measured stage is trustworthy.
+    if (sr.width > 2 && sr.height > 2) {
+      return {
+        x: (sr.left - cr.left) / VIEW.zoom + (sr.width / VIEW.zoom) * ((Number(pin.x) || 0) / 100),
+        y: (sr.top - cr.top) / VIEW.zoom + (sr.height / VIEW.zoom) * ((Number(pin.y) || 0) / 100)
+      };
+    }
+  }
+  // Fallback: approximate against the image node's body rectangle rather than
+  // one common anchor point, so connector lines stay distributed even during
+  // the disabled-preview transition.
+  if (imageNode && imageNode.el) {
+    const body = imageNode.el.querySelector('.node-body') || imageNode.el;
+    const br = body.getBoundingClientRect();
+    if (br.width > 2 && br.height > 2) {
+      return {
+        x: (br.left - cr.left) / VIEW.zoom + (br.width / VIEW.zoom) * ((Number(pin.x) || 0) / 100),
+        y: (br.top - cr.top) / VIEW.zoom + (br.height / VIEW.zoom) * ((Number(pin.y) || 0) / 100)
+      };
+    }
+  }
+  return getAnchorCanvasPos(imageNode, 'tc');
 }
 function getImageStageCanvasRect(imageNode) {
   const stage = imageNode && imageNode.el ? imageNode.el.querySelector(`[data-image-stage="${CSS.escape(imageNode.id)}"]`) : null;
