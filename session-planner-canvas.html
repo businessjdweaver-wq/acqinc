@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Session Planner — Canvas — Session Manager v1.0</title>
+<title>Session Planner — Canvas — Node Groups Marquee Append v1.2</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -638,9 +638,10 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
 #canvas-svg path.edge.cross-scope:hover { stroke: var(--gold-pale); }
 
 
-/* ── CANVAS GROUP BAR (Stage 57) ─────────────────────────
+/* ── CANVAS GROUP BAR (Stage 58) ─────────────────────────
    Screen-fixed strip under the arc frame. It stores named groups of
-   canvas-interior node ids per session and frames those nodes on demand. */
+   canvas-interior node ids per session, can create/append from direct
+   selection OR the active marquee rectangle, and frames groups on demand. */
 #canvas-group-bar {
   position: absolute;
   top: 124px; left: 88px; right: 0;
@@ -702,6 +703,52 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Mobile mirror of the canvas group navigator. The mobile reader does not
+   show the 2D canvas, but the controls still select/frame the group and
+   narrow the mobile node list to that group's live nodes. */
+#mobile-group-nav {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(184,134,11,0.22);
+  background: linear-gradient(180deg, #17130d 0%, #100d09 100%);
+  flex: 0 0 auto;
+}
+body.mobile-mode #mobile-group-nav { display: flex; }
+#mobile-group-nav.hidden { display: none !important; }
+#mobile-group-nav button,
+#mob-canvas-group-select {
+  background: rgba(0,0,0,0.38);
+  border: 1px solid rgba(184,134,11,0.42);
+  color: var(--bone);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  border-radius: 2px;
+  height: 28px;
+}
+#mobile-group-nav button {
+  cursor: pointer;
+  min-width: 32px;
+  padding: 3px 7px;
+}
+#mobile-group-nav button:hover:not(:disabled) {
+  color: var(--gold-pale);
+  border-color: var(--gold);
+  background: rgba(184,134,11,0.14);
+}
+#mobile-group-nav button:disabled,
+#mob-canvas-group-select:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+#mob-canvas-group-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 6px;
 }
 
 /* ── WRAP-SESSION MODAL ──────────────────────────────────────── */
@@ -6130,6 +6177,7 @@ body.mobile-mode #canvas-wrap,
 body.mobile-mode #side-panel,
 body.mobile-mode #campaign-frame,
 body.mobile-mode #arc-frame,
+body.mobile-mode #canvas-group-bar,
 body.mobile-mode #cross-scope-svg,
 body.mobile-mode #empty-hint,
 body.mobile-mode #search-modal,
@@ -6537,7 +6585,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 57.1 — Canvas Node Groups Login Hotfix v1.1.1</span>
+  <span class="topbar-version">Stage 58 — Canvas Node Groups Marquee + Append v1.2</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -6622,7 +6670,8 @@ body.mobile-mode #sb-modal { display: none !important; }
 <!-- ── CANVAS GROUP BAR (Stage 57) ── -->
 <div id="canvas-group-bar">
   <span class="groupbar-label">Canvas Groups</span>
-  <button id="canvas-group-create" type="button" title="Create a named group from the currently selected canvas nodes">+ Group</button>
+  <button id="canvas-group-create" type="button" title="Create a named group from the currently selected canvas nodes or active marquee">+ Group</button>
+  <button id="canvas-group-append" type="button" title="Append the current selection or active marquee to the selected group">Append</button>
   <button id="canvas-group-prev" type="button" title="Frame the previous group">←</button>
   <select id="canvas-group-select" title="Choose a node group to frame">
     <option value="">No groups yet</option>
@@ -6648,6 +6697,11 @@ body.mobile-mode #sb-modal { display: none !important; }
     <span class="mt-counter" id="mob-counter"></span>
     <span class="mt-status" id="mob-status">·</span>
     <button class="mt-leave" id="mob-leave-btn" type="button" title="Switch to desktop view"><span class="mt-leave-icon">🖥</span><span class="mt-leave-text">desktop</span></button>
+  </div>
+  <div id="mobile-group-nav" class="hidden">
+    <button id="mob-canvas-group-prev" type="button" title="Previous group">←</button>
+    <select id="mob-canvas-group-select" title="Choose a node group"></select>
+    <button id="mob-canvas-group-next" type="button" title="Next group">→</button>
   </div>
   <div id="mobile-screen">
     <div class="mob-screen-pad" id="mob-screen-content">
@@ -6883,7 +6937,7 @@ body.mobile-mode #sb-modal { display: none !important; }
     <b>Connect</b>: click an anchor, then click another<br>
     <b>Direction</b>: click the arrow pill or middle-click the line<br>
     <b>Label edge</b>: double-click the line<br>
-    <b>Select multiple</b>: drag on empty canvas; hold <kbd>Shift</kbd> on release to add to selection<br>
+    <b>Select multiple</b>: drag on empty canvas; hold <kbd>Shift</kbd> on release to add to selection; groups can use selection or the active marquee<br>
     <b>Delete</b>: <kbd>Del</kbd> on selected node(s) or connector<br>
     <b>Saving</b>: autosaved 600ms after each change<br>
     <b>Search</b>: topbar input or <kbd>Cmd</kbd>/<kbd>Ctrl</kbd>+<kbd>K</kbd><br>
@@ -11925,39 +11979,90 @@ function getActiveCanvasGroupIndex() {
   const groups = getCanvasGroupList();
   return groups.findIndex(g => String(g.id) === String(sessionState.activeCanvasGroupId));
 }
-function renderCanvasGroupBar() {
-  const createBtn = document.getElementById('canvas-group-create');
-  const prevBtn = document.getElementById('canvas-group-prev');
-  const nextBtn = document.getElementById('canvas-group-next');
-  const select = document.getElementById('canvas-group-select');
-  const status = document.getElementById('canvas-group-status');
-  if (!createBtn || !prevBtn || !nextBtn || !select || !status) return;
-  const groups = getCanvasGroupList();
-  const selectedCount = state && state.selectedNodes ? state.selectedNodes.size : 0;
-  createBtn.disabled = !sessionState.currentSessionId || selectedCount === 0;
-  select.disabled = groups.length === 0;
-  prevBtn.disabled = groups.length < 2;
-  nextBtn.disabled = groups.length < 2;
-  if (groups.length === 0) {
+function getMarqueeNodeIds() {
+  if (!state || !state.marquee) return [];
+  const s = state.marquee.startScreen;
+  const c = state.marquee.currentScreen;
+  const sx = Math.min(s.x, c.x);
+  const sy = Math.min(s.y, c.y);
+  const ex = Math.max(s.x, c.x);
+  const ey = Math.max(s.y, c.y);
+  const csx = (sx - VIEW.x) / VIEW.zoom;
+  const csy = (sy - VIEW.y) / VIEW.zoom;
+  const cex = (ex - VIEW.x) / VIEW.zoom;
+  const cey = (ey - VIEW.y) / VIEW.zoom;
+  const ids = [];
+  state.nodes.forEach(node => {
+    const { w, h } = nodeSize(node);
+    const overlaps =
+      node.x < cex && node.x + w > csx &&
+      node.y < cey && node.y + h > csy;
+    if (overlaps) ids.push(node.id);
+  });
+  return ids;
+}
+function getCanvasGroupCandidateIds() {
+  const set = new Set();
+  Array.from(state.selectedNodes || []).forEach(id => { if (state.nodes.has(id)) set.add(id); });
+  getMarqueeNodeIds().forEach(id => { if (state.nodes.has(id)) set.add(id); });
+  return Array.from(set);
+}
+function _populateCanvasGroupSelect(select, groups) {
+  if (!select) return;
+  if (!groups.length) {
     select.innerHTML = '<option value="">No groups yet</option>';
-    status.textContent = selectedCount ? (selectedCount + ' selected — create a group.') : 'Select canvas nodes, then create a group.';
+    select.value = '';
     return;
   }
-  const activeExists = groups.some(g => String(g.id) === String(sessionState.activeCanvasGroupId));
-  if (!activeExists) sessionState.activeCanvasGroupId = String(groups[0].id);
   select.innerHTML = groups.map(g => {
     const liveCount = (g.node_ids || []).filter(id => state.nodes.has(id)).length;
     const label = String(g.name || 'Untitled Group') + ' (' + liveCount + ')';
     return '<option value="' + escAttr(g.id) + '">' + escHtml(label) + '</option>';
   }).join('');
   select.value = sessionState.activeCanvasGroupId || '';
+}
+function renderCanvasGroupBar() {
+  const createBtn = document.getElementById('canvas-group-create');
+  const appendBtn = document.getElementById('canvas-group-append');
+  const prevBtn = document.getElementById('canvas-group-prev');
+  const nextBtn = document.getElementById('canvas-group-next');
+  const select = document.getElementById('canvas-group-select');
+  const status = document.getElementById('canvas-group-status');
+  const mobNav = document.getElementById('mobile-group-nav');
+  const mobPrev = document.getElementById('mob-canvas-group-prev');
+  const mobNext = document.getElementById('mob-canvas-group-next');
+  const mobSelect = document.getElementById('mob-canvas-group-select');
+  if (!createBtn || !prevBtn || !nextBtn || !select || !status) return;
+  const groups = getCanvasGroupList();
+  const candidateCount = getCanvasGroupCandidateIds().length;
+  const hasSession = !!sessionState.currentSessionId;
+  createBtn.disabled = !hasSession || candidateCount === 0;
+  if (appendBtn) appendBtn.disabled = !hasSession || candidateCount === 0 || groups.length === 0;
+  select.disabled = groups.length === 0;
+  prevBtn.disabled = groups.length < 2;
+  nextBtn.disabled = groups.length < 2;
+  if (mobNav) mobNav.classList.toggle('hidden', !hasSession || groups.length === 0);
+  if (mobPrev) mobPrev.disabled = groups.length < 2;
+  if (mobNext) mobNext.disabled = groups.length < 2;
+  if (mobSelect) mobSelect.disabled = groups.length === 0;
+  if (groups.length === 0) {
+    select.innerHTML = '<option value="">No groups yet</option>';
+    if (mobSelect) mobSelect.innerHTML = '<option value="">No groups yet</option>';
+    status.textContent = candidateCount ? (candidateCount + ' selected/marquee — create a group.') : 'Select or marquee canvas nodes, then create a group.';
+    return;
+  }
+  const activeExists = groups.some(g => String(g.id) === String(sessionState.activeCanvasGroupId));
+  if (!activeExists) sessionState.activeCanvasGroupId = String(groups[0].id);
+  _populateCanvasGroupSelect(select, groups);
+  _populateCanvasGroupSelect(mobSelect, groups);
   const active = groups.find(g => String(g.id) === String(sessionState.activeCanvasGroupId));
   const idx = getActiveCanvasGroupIndex();
-  status.textContent = active ? ((idx + 1) + '/' + groups.length + ' · ' + ((active.node_ids || []).filter(id => state.nodes.has(id)).length) + ' live nodes') : '';
+  const appendHint = candidateCount ? (' · ' + candidateCount + ' ready to append') : '';
+  status.textContent = active ? ((idx + 1) + '/' + groups.length + ' · ' + ((active.node_ids || []).filter(id => state.nodes.has(id)).length) + ' live nodes' + appendHint) : '';
 }
 function createCanvasGroupFromSelection() {
-  const ids = Array.from(state.selectedNodes || []).filter(id => state.nodes.has(id));
-  if (!ids.length) { alert('Select one or more canvas nodes first.'); return; }
+  const ids = getCanvasGroupCandidateIds();
+  if (!ids.length) { alert('Select or marquee one or more canvas nodes first.'); return; }
   const defaultName = ids.length === 1 ? ((state.nodes.get(ids[0]) || {}).title || 'Node Group') : (ids.length + ' Node Group');
   const name = prompt('Name this canvas group:', defaultName);
   if (name == null) return;
@@ -11974,6 +12079,30 @@ function createCanvasGroupFromSelection() {
   markDirty();
   frameCanvasGroup(group.id);
 }
+function appendSelectionToCanvasGroup() {
+  const groups = getCanvasGroupList();
+  if (!groups.length) { alert('Create a canvas group first.'); return; }
+  const ids = getCanvasGroupCandidateIds();
+  if (!ids.length) { alert('Select or marquee one or more canvas nodes to append.'); return; }
+  let group = groups.find(g => String(g.id) === String(sessionState.activeCanvasGroupId));
+  if (!group) group = groups[0];
+  const existing = new Set(Array.isArray(group.node_ids) ? group.node_ids.map(String) : []);
+  let added = 0;
+  ids.forEach(id => {
+    const sid = String(id);
+    if (!existing.has(sid)) { existing.add(sid); added++; }
+  });
+  group.node_ids = Array.from(existing);
+  sessionState.activeCanvasGroupId = String(group.id);
+  renderCanvasGroupBar();
+  markDirty();
+  if (added === 0) {
+    alert('Those nodes were already in the selected group.');
+  } else {
+    const status = document.getElementById('canvas-group-status');
+    if (status) status.textContent = 'Appended ' + added + ' node' + (added === 1 ? '' : 's') + ' to “' + (group.name || 'Untitled Group') + '”.';
+  }
+}
 function frameCanvasGroup(groupId) {
   const groups = getCanvasGroupList();
   const group = groups.find(g => String(g.id) === String(groupId));
@@ -11987,6 +12116,12 @@ function frameCanvasGroup(groupId) {
   updateFocusBtnState();
   renderCanvasGroupBar();
   frameNodes(nodes);
+  if (document.body.classList.contains('mobile-mode') && typeof mobileState !== 'undefined') {
+    mobileState.screen = 'nodes';
+    mobileState.nodeOrder = nodes.map(n => n.id);
+    mobileState.nodeIndex = 0;
+    renderMobileScreen();
+  }
   markDirty();
 }
 function stepCanvasGroup(delta) {
@@ -11999,13 +12134,21 @@ function stepCanvasGroup(delta) {
 }
 function wireCanvasGroupBar() {
   const createBtn = document.getElementById('canvas-group-create');
+  const appendBtn = document.getElementById('canvas-group-append');
   const prevBtn = document.getElementById('canvas-group-prev');
   const nextBtn = document.getElementById('canvas-group-next');
   const select = document.getElementById('canvas-group-select');
+  const mobPrev = document.getElementById('mob-canvas-group-prev');
+  const mobNext = document.getElementById('mob-canvas-group-next');
+  const mobSelect = document.getElementById('mob-canvas-group-select');
   if (createBtn) createBtn.addEventListener('click', createCanvasGroupFromSelection);
+  if (appendBtn) appendBtn.addEventListener('click', appendSelectionToCanvasGroup);
   if (prevBtn) prevBtn.addEventListener('click', () => stepCanvasGroup(-1));
   if (nextBtn) nextBtn.addEventListener('click', () => stepCanvasGroup(1));
   if (select) select.addEventListener('change', () => frameCanvasGroup(select.value));
+  if (mobPrev) mobPrev.addEventListener('click', () => stepCanvasGroup(-1));
+  if (mobNext) mobNext.addEventListener('click', () => stepCanvasGroup(1));
+  if (mobSelect) mobSelect.addEventListener('change', () => frameCanvasGroup(mobSelect.value));
   renderCanvasGroupBar();
 }
 
@@ -14059,6 +14202,7 @@ function marqueeFinish(additive) {
   marqueeEl.style.display = 'none';
   state.marquee = null;
   updateFocusBtnState();
+  renderCanvasGroupBar();
 }
 function marqueeCancel() {
   marqueeEl.style.display = 'none';
@@ -22091,6 +22235,7 @@ function renderMobileScreen() {
   if (!content) return;
   if (back) back.classList.toggle('hidden', screen === 'sessions');
   if (counterEl) counterEl.textContent = '';
+  renderCanvasGroupBar();
 
   if (screen === 'sessions') {
     if (titleEl) titleEl.textContent = 'Sessions';
@@ -22201,7 +22346,13 @@ function _mobileGatherNodes() {
 }
 
 function renderMobileNodeList() {
-  const nodes = _mobileGatherNodes();
+  let nodes = _mobileGatherNodes();
+  const activeGroup = getCanvasGroupList().find(g => String(g.id) === String(sessionState.activeCanvasGroupId));
+  if (activeGroup && Array.isArray(activeGroup.node_ids) && activeGroup.node_ids.length) {
+    const groupIds = new Set(activeGroup.node_ids.map(String));
+    const filtered = nodes.filter(n => groupIds.has(String(n.id)));
+    if (filtered.length) nodes = filtered;
+  }
   if (!nodes.length) {
     return `<div class="mob-empty-hint">No nodes in this session yet.</div>`;
   }
