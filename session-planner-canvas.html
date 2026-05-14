@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Session Planner — Canvas — Image Pins v0.9</title>
+<title>Session Planner — Canvas — Session Manager v1.0</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -5980,6 +5980,20 @@ body.name-forge-open .name-forge-result {
   color: var(--bone);
 }
 .sp-session:hover { background: rgba(184,134,11,0.12); border-color: rgba(184,134,11,0.4); color: var(--parchment); }
+.sp-session-actions { display: inline-flex; gap: 4px; margin-left: auto; }
+.sp-session-action {
+  background: transparent;
+  border: 1px solid rgba(184,134,11,0.28);
+  color: var(--steel-pale);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 6px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.sp-session-action:hover { color: var(--gold-pale); border-color: var(--gold); background: rgba(184,134,11,0.12); }
 .sp-session-title { flex: 1; font-size: 0.95rem; }
 .sp-session-meta {
   font-family: 'JetBrains Mono', monospace;
@@ -6456,7 +6470,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 55 — Image Pins v0.8</span>
+  <span class="topbar-version">Stage 56 — Session Rename &amp; Arc Transfer v1.0</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -9839,12 +9853,89 @@ function renderSessionInPicker(s) {
   const fmt = detectSessionFormat(s);
   const dateStr = s.session_date ? new Date(s.session_date).toLocaleDateString() : '';
   return `
-    <div class="sp-session" onclick="pickSession('${s.id}')">
+    <div class="sp-session" onclick="pickSession('${escAttr(s.id)}')">
       <span class="sp-session-fmt ${fmt}">${fmt}</span>
       <span class="sp-session-title">${escHtml(s.title || 'Untitled Session')}</span>
       ${dateStr ? `<span class="sp-session-meta">${escHtml(dateStr)}</span>` : ''}
+      <span class="sp-session-actions">
+        <button class="sp-session-action" onclick="event.stopPropagation(); renameSessionFromPicker('${escAttr(s.id)}')" title="Rename this session">Rename</button>
+        <button class="sp-session-action" onclick="event.stopPropagation(); moveSessionFromPicker('${escAttr(s.id)}')" title="Move this session to another arc">Move</button>
+      </span>
     </div>`;
 }
+
+
+// Stage 56 / Session Manager v1.0: lightweight session-row editing from
+// the picker. Sessions can be renamed and reassigned between arcs in the
+// same campaign without opening the classic planner.
+async function renameSessionFromPicker(id) {
+  const row = sessionState.sessions.find(s => String(s.id) === String(id));
+  if (!row) return;
+  const currentTitle = row.title || 'Untitled Session';
+  const nextTitle = (prompt('Rename session:', currentTitle) || '').trim();
+  if (!nextTitle || nextTitle === currentTitle) return;
+  try {
+    await flushSaveNow();
+    setCanvasSavedState('saving');
+    await sbFetch('sessions?id=eq.' + encodeURIComponent(id), {
+      method: 'PATCH',
+      prefer: 'return=minimal',
+      body: JSON.stringify({ title: nextTitle }),
+    });
+    row.title = nextTitle;
+    if (String(sessionState.currentSessionId) === String(id)) {
+      const el = document.getElementById('topbarSession');
+      if (el) el.textContent = nextTitle;
+    }
+    renderSessionPicker();
+    setCanvasSavedState('saved');
+  } catch (e) {
+    setCanvasSavedState('error');
+    alert('Could not rename session: ' + e.message);
+  }
+}
+
+async function moveSessionFromPicker(id) {
+  const row = sessionState.sessions.find(s => String(s.id) === String(id));
+  if (!row) return;
+  const arcs = (sessionState.arcs || []).filter(a => String(a.campaign_id) === String(row.campaign_id));
+  const choices = [{ id: null, name: '(no arc / loose sessions)' }, ...arcs.map(a => ({ id: a.id, name: a.name || 'Untitled Arc' }))];
+  const currentIdx = Math.max(0, choices.findIndex(c => String(c.id || '') === String(row.arc_id || '')));
+  const menu = choices.map((c, i) => `${i}. ${c.name}${i === currentIdx ? '  ← current' : ''}`).join('\n');
+  const raw = prompt('Move session to which arc?\n\n' + menu + '\n\nEnter a number:', String(currentIdx));
+  if (raw == null) return;
+  const idx = parseInt(raw, 10);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= choices.length) {
+    alert('No session was moved. Enter one of the listed numbers.');
+    return;
+  }
+  const nextArcId = choices[idx].id == null ? null : choices[idx].id;
+  if (String(nextArcId || '') === String(row.arc_id || '')) return;
+  try {
+    await flushSaveNow();
+    setCanvasSavedState('saving');
+    await sbFetch('sessions?id=eq.' + encodeURIComponent(id), {
+      method: 'PATCH',
+      prefer: 'return=minimal',
+      body: JSON.stringify({ arc_id: nextArcId == null ? null : parseInt(nextArcId, 10) }),
+    });
+    row.arc_id = nextArcId == null ? null : parseInt(nextArcId, 10);
+    if (String(sessionState.currentSessionId) === String(id)) {
+      sessionState.currentArcId = row.arc_id || null;
+      loadArcBlocksForCurrentSession();
+      renderArcFrame();
+      renderEdges();
+    }
+    renderSessionPicker();
+    setCanvasSavedState('saved');
+  } catch (e) {
+    setCanvasSavedState('error');
+    alert('Could not move session: ' + e.message);
+  }
+}
+
+window.renameSessionFromPicker = renameSessionFromPicker;
+window.moveSessionFromPicker = moveSessionFromPicker;
 
 function detectSessionFormat(sessionRow) {
   const b = sessionRow.blocks;
