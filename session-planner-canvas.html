@@ -81,8 +81,8 @@ html, body {
 /* ── CANVAS ──────────────────────────────────────────────── */
 #canvas-wrap {
   position: absolute;
-  /* top: 44px (topbar) + 80px (arc strip) = 124px ; left: 88px (camp frame) */
-  top: 124px; left: 88px; right: 0; bottom: 0;
+  /* top: 44px (topbar) + 80px (arc strip) + 36px (group nav) = 160px ; left: 88px (camp frame) */
+  top: 160px; left: 88px; right: 0; bottom: 0;
   overflow: hidden;
   background:
     radial-gradient(ellipse at center, #1f1a12 0%, #14110b 100%);
@@ -636,6 +636,73 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
   stroke-dasharray: 4 3;
 }
 #canvas-svg path.edge.cross-scope:hover { stroke: var(--gold-pale); }
+
+
+/* ── CANVAS GROUP BAR (Stage 57) ─────────────────────────
+   Screen-fixed strip under the arc frame. It stores named groups of
+   canvas-interior node ids per session and frames those nodes on demand. */
+#canvas-group-bar {
+  position: absolute;
+  top: 124px; left: 88px; right: 0;
+  height: 36px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: linear-gradient(180deg, #17130d 0%, #100d09 100%);
+  border-bottom: 1px solid rgba(184,134,11,0.24);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+}
+#canvas-group-bar .groupbar-label {
+  font-family: 'Cinzel', serif;
+  font-size: 0.58rem;
+  letter-spacing: 0.16em;
+  color: var(--gold-pale);
+  text-transform: uppercase;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+#canvas-group-bar button,
+#canvas-group-select {
+  background: rgba(0,0,0,0.38);
+  border: 1px solid rgba(184,134,11,0.42);
+  color: var(--bone);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.05em;
+  border-radius: 2px;
+  height: 24px;
+}
+#canvas-group-bar button {
+  cursor: pointer;
+  padding: 3px 9px;
+  text-transform: uppercase;
+}
+#canvas-group-bar button:hover:not(:disabled) {
+  color: var(--gold-pale);
+  border-color: var(--gold);
+  background: rgba(184,134,11,0.14);
+}
+#canvas-group-bar button:disabled,
+#canvas-group-select:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+#canvas-group-select {
+  min-width: 220px;
+  max-width: min(420px, 40vw);
+  padding: 3px 8px;
+}
+#canvas-group-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  color: var(--steel-pale);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* ── WRAP-SESSION MODAL ──────────────────────────────────────── */
 #wrap-modal {
@@ -6470,7 +6537,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 56 — Session Rename &amp; Arc Transfer v1.0</span>
+  <span class="topbar-version">Stage 57 — Canvas Node Groups v1.1</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -6550,6 +6617,18 @@ body.mobile-mode #sb-modal { display: none !important; }
     <button onclick="addEmptyArcCollection()" title="Create a new empty arc collection">+ Coll.</button>
     <button onclick="openArcCollectionManagerModal()" title="Manage arc collections">⚙ Manage</button>
   </div>
+</div>
+
+<!-- ── CANVAS GROUP BAR (Stage 57) ── -->
+<div id="canvas-group-bar">
+  <span class="groupbar-label">Canvas Groups</span>
+  <button id="canvas-group-create" type="button" title="Create a named group from the currently selected canvas nodes">+ Group</button>
+  <button id="canvas-group-prev" type="button" title="Frame the previous group">←</button>
+  <select id="canvas-group-select" title="Choose a node group to frame">
+    <option value="">No groups yet</option>
+  </select>
+  <button id="canvas-group-next" type="button" title="Frame the next group">→</button>
+  <span id="canvas-group-status">Select canvas nodes, then create a group.</span>
 </div>
 
 <!-- Cross-scope edges (canvas ↔ frame) draw in screen coordinates,
@@ -8188,6 +8267,8 @@ const sessionState = {
   arcs: [],        // [{id,campaign_id,title}]
   sessions: [],    // [{id,arc_id,campaign_id,title,session_date,blocks,...}]
   currentSessionId: null,
+  canvasGroups: [],       // Stage 57: per-session named groups of canvas node ids
+  activeCanvasGroupId: '',
   // Campaign-scope tracking. The current session belongs to one campaign;
   // we cache that campaign's full blocks JSONB here so the left frame can
   // render across sessions without re-fetching. Edits write back via PATCH
@@ -10116,6 +10197,13 @@ function serializeCanvas() {
     nodes: sessionNodes,
     edges,
     view: { x: VIEW.x, y: VIEW.y, zoom: VIEW.zoom },
+    canvas_groups: Array.isArray(sessionState.canvasGroups) ? sessionState.canvasGroups.map(g => ({
+      id: String(g.id || ('grp_' + Date.now())),
+      name: String(g.name || 'Untitled Group'),
+      node_ids: Array.isArray(g.node_ids) ? g.node_ids.map(String) : [],
+      created_at: g.created_at || new Date().toISOString(),
+    })) : [],
+    active_canvas_group_id: sessionState.activeCanvasGroupId || '',
     frame_view: {
       diminished_node_ids:           Array.from(sessionState.diminishedNodeIds           || []),
       diminished_collection_ids:     Array.from(sessionState.diminishedCollectionIds     || []),
@@ -10137,6 +10225,14 @@ function deserializeCanvas(data) {
   state.selectedEdge = null;
   state.pendingAnchor = null;
   document.body.classList.remove('connecting');
+
+  sessionState.canvasGroups = Array.isArray(data.canvas_groups) ? data.canvas_groups.map(g => ({
+    id: String(g.id || ('grp_' + Date.now() + '_' + Math.random().toString(36).slice(2,6))),
+    name: String(g.name || 'Untitled Group'),
+    node_ids: Array.isArray(g.node_ids) ? g.node_ids.map(String) : [],
+    created_at: g.created_at || new Date().toISOString(),
+  })) : [];
+  sessionState.activeCanvasGroupId = data.active_canvas_group_id || '';
 
   let maxIdSeq = 0;
   // Helper to instantiate a single node onto the canvas — used both for
@@ -10271,6 +10367,7 @@ function deserializeCanvas(data) {
     applyTransform();
   }
   updateEmptyHint();
+  renderCanvasGroupBar();
   requestAnimationFrame(() => redrawEdges());
 }
 
@@ -10347,6 +10444,7 @@ async function loadSessionData(sessionRow) {
   }
   renderCampaignFrame();
   renderArcFrame();
+  renderCanvasGroupBar();
   loadingSession = false;
   saveGen = lastSavedGen = 0;
   sessionState.campaignSaveGen = sessionState.campaignLastSavedGen = 0;
@@ -11769,7 +11867,127 @@ function frameSelection() {
   VIEW.x = wrap.clientWidth  / 2 - cx * newZoom;
   VIEW.y = wrap.clientHeight / 2 - cy * newZoom;
   applyTransform();
+
+
+function frameNodes(nodes) {
+  const targets = (nodes || []).filter(Boolean);
+  if (targets.length === 0) return;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  targets.forEach(n => {
+    const { w, h } = nodeSize(n);
+    if (n.x < minX) minX = n.x;
+    if (n.y < minY) minY = n.y;
+    if (n.x + w > maxX) maxX = n.x + w;
+    if (n.y + h > maxY) maxY = n.y + h;
+  });
+  const boxW = Math.max(1, maxX - minX);
+  const boxH = Math.max(1, maxY - minY);
+  const PAD = 80;
+  const availW = Math.max(100, wrap.clientWidth  - 2 * PAD);
+  const availH = Math.max(100, wrap.clientHeight - 2 * PAD);
+  const newZoom = clamp(Math.min(availW / boxW, availH / boxH), ZOOM_MIN, ZOOM_MAX);
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  VIEW.zoom = newZoom;
+  VIEW.x = wrap.clientWidth  / 2 - cx * newZoom;
+  VIEW.y = wrap.clientHeight / 2 - cy * newZoom;
+  applyTransform();
 }
+
+function getCanvasGroupList() {
+  if (!Array.isArray(sessionState.canvasGroups)) sessionState.canvasGroups = [];
+  // Prune node ids that no longer exist on the canvas, but keep empty groups
+  // visible so the user understands what happened after deleting nodes.
+  return sessionState.canvasGroups;
+}
+function getActiveCanvasGroupIndex() {
+  const groups = getCanvasGroupList();
+  return groups.findIndex(g => String(g.id) === String(sessionState.activeCanvasGroupId));
+}
+function renderCanvasGroupBar() {
+  const createBtn = document.getElementById('canvas-group-create');
+  const prevBtn = document.getElementById('canvas-group-prev');
+  const nextBtn = document.getElementById('canvas-group-next');
+  const select = document.getElementById('canvas-group-select');
+  const status = document.getElementById('canvas-group-status');
+  if (!createBtn || !prevBtn || !nextBtn || !select || !status) return;
+  const groups = getCanvasGroupList();
+  const selectedCount = state && state.selectedNodes ? state.selectedNodes.size : 0;
+  createBtn.disabled = !sessionState.currentSessionId || selectedCount === 0;
+  select.disabled = groups.length === 0;
+  prevBtn.disabled = groups.length < 2;
+  nextBtn.disabled = groups.length < 2;
+  if (groups.length === 0) {
+    select.innerHTML = '<option value="">No groups yet</option>';
+    status.textContent = selectedCount ? (selectedCount + ' selected — create a group.') : 'Select canvas nodes, then create a group.';
+    return;
+  }
+  const activeExists = groups.some(g => String(g.id) === String(sessionState.activeCanvasGroupId));
+  if (!activeExists) sessionState.activeCanvasGroupId = String(groups[0].id);
+  select.innerHTML = groups.map(g => {
+    const liveCount = (g.node_ids || []).filter(id => state.nodes.has(id)).length;
+    const label = String(g.name || 'Untitled Group') + ' (' + liveCount + ')';
+    return '<option value="' + escAttr(g.id) + '">' + escHtml(label) + '</option>';
+  }).join('');
+  select.value = sessionState.activeCanvasGroupId || '';
+  const active = groups.find(g => String(g.id) === String(sessionState.activeCanvasGroupId));
+  const idx = getActiveCanvasGroupIndex();
+  status.textContent = active ? ((idx + 1) + '/' + groups.length + ' · ' + ((active.node_ids || []).filter(id => state.nodes.has(id)).length) + ' live nodes') : '';
+}
+function createCanvasGroupFromSelection() {
+  const ids = Array.from(state.selectedNodes || []).filter(id => state.nodes.has(id));
+  if (!ids.length) { alert('Select one or more canvas nodes first.'); return; }
+  const defaultName = ids.length === 1 ? ((state.nodes.get(ids[0]) || {}).title || 'Node Group') : (ids.length + ' Node Group');
+  const name = prompt('Name this canvas group:', defaultName);
+  if (name == null) return;
+  const cleanName = String(name).trim() || defaultName;
+  const group = {
+    id: 'grp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+    name: cleanName,
+    node_ids: ids,
+    created_at: new Date().toISOString(),
+  };
+  sessionState.canvasGroups.push(group);
+  sessionState.activeCanvasGroupId = group.id;
+  renderCanvasGroupBar();
+  markDirty();
+  frameCanvasGroup(group.id);
+}
+function frameCanvasGroup(groupId) {
+  const groups = getCanvasGroupList();
+  const group = groups.find(g => String(g.id) === String(groupId));
+  if (!group) { renderCanvasGroupBar(); return; }
+  sessionState.activeCanvasGroupId = String(group.id);
+  const nodes = (group.node_ids || []).map(id => state.nodes.get(id)).filter(Boolean);
+  renderCanvasGroupBar();
+  if (!nodes.length) { alert('That group has no live canvas nodes in this session.'); markDirty(); return; }
+  clearNodeSelection();
+  nodes.forEach(n => { state.selectedNodes.add(n.id); if (n.el) n.el.classList.add('selected'); });
+  updateFocusBtnState();
+  renderCanvasGroupBar();
+  frameNodes(nodes);
+  markDirty();
+}
+function stepCanvasGroup(delta) {
+  const groups = getCanvasGroupList();
+  if (!groups.length) return;
+  let idx = getActiveCanvasGroupIndex();
+  if (idx < 0) idx = 0;
+  idx = (idx + delta + groups.length) % groups.length;
+  frameCanvasGroup(groups[idx].id);
+}
+function wireCanvasGroupBar() {
+  const createBtn = document.getElementById('canvas-group-create');
+  const prevBtn = document.getElementById('canvas-group-prev');
+  const nextBtn = document.getElementById('canvas-group-next');
+  const select = document.getElementById('canvas-group-select');
+  if (createBtn) createBtn.addEventListener('click', createCanvasGroupFromSelection);
+  if (prevBtn) prevBtn.addEventListener('click', () => stepCanvasGroup(-1));
+  if (nextBtn) nextBtn.addEventListener('click', () => stepCanvasGroup(1));
+  if (select) select.addEventListener('change', () => frameCanvasGroup(select.value));
+  renderCanvasGroupBar();
+}
+
 
 // ── NODE MODEL ───────────────────────────────────────────
 // Stage 1: just one node type, hardcoded. Stage 3 introduces real types.
@@ -13702,11 +13920,13 @@ function selectNode(node, additive = false) {
   state.selectedNodes.add(node.id);
   node.el.classList.add('selected');
   updateFocusBtnState();
+  renderCanvasGroupBar();
 }
 function deselectNode(node) {
   state.selectedNodes.delete(node.id);
   node.el.classList.remove('selected');
   updateFocusBtnState();
+  renderCanvasGroupBar();
 }
 function toggleNodeSelection(node) {
   if (state.selectedNodes.has(node.id)) deselectNode(node);
@@ -13731,6 +13951,7 @@ function clearNodeSelection() {
   });
   state.selectedArcFrameNodes.clear();
   updateFocusBtnState();
+  renderCanvasGroupBar();
 }
 
 // Toggle a frame card's selection state for focus mode. tier is
