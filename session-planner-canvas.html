@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Session Planner — Canvas — Image Pins v0.8</title>
+<title>Session Planner — Canvas — Image Pins v0.9</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -2738,7 +2738,7 @@ body.connecting .frame-collection-header .anchor { opacity: 1; }
 }
 .node-icon { font-size: 1.9rem; }
 
-/* ── NODE TYPE CHANGE MENU (Image Pins v0.8) ────────────── */
+/* ── NODE TYPE CHANGE MENU (Image Pins v0.9) ────────────── */
 .node-icon {
   cursor: context-menu;
 }
@@ -9542,6 +9542,51 @@ function _refreshCopyConfirmBtn() {
     : 'No nodes to copy';
 }
 
+
+// Stage 43 / Image Pins v0.9: copy-to-session needs the same deep-copy
+// handling as serializeCanvas for image nodes, plus endpoint rebinding for
+// synthetic image-pin edge ids (`pin:<imageNodeId>:<pinId>`).
+function cloneImagePayloadForSessionCopy(node, idMap) {
+  const src = node && node.image && typeof node.image === 'object' ? node.image : {};
+  return {
+    dataUrl: String(src.dataUrl || ''),
+    name: String(src.name || ''),
+    disabled: !!src.disabled,
+    pins: Array.isArray(src.pins) ? src.pins.map(pin => ({
+      id: String(pin.id || ('pin_' + Date.now() + Math.random().toString(36).slice(2, 6))),
+      x: Number(pin.x) || 0,
+      y: Number(pin.y) || 0,
+      icon: String(pin.icon || '•'),
+      label: String(pin.label || ''),
+      // If the linked node is part of the copied session payload, point the
+      // copied pin at the copied node. Campaign/arc/out-of-scope links keep
+      // their existing ids.
+      nodeId: idMap && idMap.has(String(pin.nodeId || '')) ? idMap.get(String(pin.nodeId || '')) : String(pin.nodeId || ''),
+    })) : [],
+  };
+}
+
+function remapCopiedEndpointForSessionCopy(endpoint, sessionScopeIds, idMap) {
+  const endpointId = (endpoint && endpoint.nodeId) || endpoint || '';
+  const pinRef = parseImagePinEndpointId(endpointId);
+  if (pinRef) {
+    // A pin endpoint belongs to a copied edge only when its parent image node
+    // is part of the copied session scope. Rebuild the synthetic endpoint id
+    // with the new image-node id while preserving the pin id.
+    if (!sessionScopeIds.has(pinRef.imageNodeId)) return null;
+    const newImageNodeId = idMap.get(pinRef.imageNodeId);
+    return newImageNodeId ? makeImagePinEndpointId(newImageNodeId, pinRef.pinId) : null;
+  }
+  return sessionScopeIds.has(endpointId) ? idMap.get(endpointId) : null;
+}
+
+function edgeIsCopyableSessionInterior(edge, sessionScopeIds) {
+  return !!(
+    remapCopiedEndpointForSessionCopy(edge && edge.from, sessionScopeIds, new Map([...sessionScopeIds].map(id => [id, id]))) &&
+    remapCopiedEndpointForSessionCopy(edge && edge.to,   sessionScopeIds, new Map([...sessionScopeIds].map(id => [id, id])))
+  );
+}
+
 async function confirmCopyToSession() {
   const targetId = _copyModalSelectedSessionId;
   if (!targetId) return;
@@ -9563,7 +9608,7 @@ async function confirmCopyToSession() {
     // 1. Build the cloned node + edge payload from current canvas state.
     const sessionScopeNodes = Array.from(state.nodes.values()).filter(n => !n.scope || n.scope === 'session');
     const sessionScopeIds   = new Set(sessionScopeNodes.map(n => n.id));
-    const interiorEdges     = state.edges.filter(e => sessionScopeIds.has(e.from.nodeId) && sessionScopeIds.has(e.to.nodeId));
+    const interiorEdges     = state.edges.filter(e => edgeIsCopyableSessionInterior(e, sessionScopeIds));
 
     const idMap = new Map();
     sessionScopeNodes.forEach(n => idMap.set(n.id, 'n' + (nodeIdSeq++)));
@@ -9609,16 +9654,21 @@ async function confirmCopyToSession() {
           items: Array.isArray(n.brainstorm.items) ? n.brainstorm.items.map(s => String(s || '')) : [],
         };
       }
+      if (n.image) {
+        rec.image = cloneImagePayloadForSessionCopy(n, idMap);
+      }
       return rec;
     });
 
     const clonedEdges = interiorEdges.map(e => ({
       id:        'e' + Date.now() + Math.random().toString(36).slice(2, 8),
-      from_node: idMap.get(e.from.nodeId),
-      to_node:   idMap.get(e.to.nodeId),
+      from_node: remapCopiedEndpointForSessionCopy(e.from, sessionScopeIds, idMap),
+      to_node:   remapCopiedEndpointForSessionCopy(e.to,   sessionScopeIds, idMap),
+      from_anchor: (e.from && e.from.anchor) || 'pin',
+      to_anchor:   (e.to   && e.to.anchor)   || 'pin',
       dir:       e.dir || 'forward',
       label:     e.label || '',
-    }));
+    })).filter(e => e.from_node && e.to_node);
 
     // 2. Fetch the destination session row to get its current blocks.
     const rows = await sbFetch('sessions?id=eq.' + encodeURIComponent(targetId) + '&select=*');
@@ -21418,7 +21468,7 @@ function escAttr(s) { return escHtml(s).replace(/"/g, '&quot;'); }
 
 
 
-// ── NODE TYPE CHANGE (Image Pins v0.8) ───────────────────
+// ── NODE TYPE CHANGE (Image Pins v0.9) ───────────────────
 // Right-clicking a node's icon lets the user convert the node type, but
 // only while the node is still essentially blank other than its title.
 // This prevents accidental data loss when a scene already has room text,
