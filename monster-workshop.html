@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.24 · DPR allocation hotfix</span>
+  <span class="topbar-version">v0.5.25 · DPR allocation parser repair</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3500,6 +3500,8 @@ function countForAttackInClause(atk, clause) {
       new RegExp('\\bmakes?\\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+' + escaped + 's?\\s+attacks?\\b', 'i'),
       new RegExp('\\bmakes?\\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+attacks?\\s+(?:with|using)\\s+(?:its|the)?\\s*' + escaped + 's?\\b', 'i'),
       new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+with\\s+(?:its|the)?\\s*' + escaped + 's?\\b', 'i'),
+      // v0.5.25: Amphisbanae-style text can say \"one to constrict\" instead of \"one with its constrict\".
+      new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+to\\s+' + escaped + 's?\\b', 'i'),
       new RegExp('\\b(?:hurls?|throws?|shoots?)\\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)?\\s*' + escaped + 's?\\b', 'i')
     ];
 
@@ -3594,6 +3596,14 @@ function buildCombatRoutinesFromDom() {
 
   let allocationMode = multiText ? 'parsed-multiattack' : 'unresolved';
 
+  // v0.5.25: A partially parsed natural suite should not be treated as
+  // authoritative. If the Multiattack text names 2–3 natural attacks but the
+  // parser captured only one, complete the routine with one use of each named
+  // natural attack before allocation.
+  if (expandParsedRoutinesWithMentionedNaturalAttacks(primaryRoutines, alternateRoutines, attacks, multiText)) {
+    allocationMode = 'parsed-multiattack-expanded-natural-suite';
+  }
+
   if (!primaryRoutines.length && !alternateRoutines.length) {
     const melee = attacks.filter(attackIsMelee);
     const naturalMelee = melee.filter(attackLooksLikeNaturalWeapon);
@@ -3653,6 +3663,32 @@ function mergeRoutineList(routines) {
     merged.set(key, Math.max(merged.get(key) || 0, count));
   }));
   return merged;
+}
+
+
+function expandParsedRoutinesWithMentionedNaturalAttacks(primaryRoutines, alternateRoutines, attacks, multiText) {
+  if (!multiText) return false;
+  const naturalMentioned = attacks.filter(atk =>
+    attackLooksLikeNaturalWeapon(atk) && findAttackMentionedInText([atk], multiText).length
+  );
+  if (naturalMentioned.length < 2 || naturalMentioned.length > 3) return false;
+
+  const routines = [...primaryRoutines, ...alternateRoutines];
+  if (!routines.length) return false;
+
+  let changed = false;
+  routines.forEach(routine => {
+    const included = naturalMentioned.filter(atk => routine.has(atk.key));
+    if (included.length >= 1 && included.length < naturalMentioned.length) {
+      naturalMentioned.forEach(atk => {
+        if (!routine.has(atk.key)) {
+          routine.set(atk.key, 1);
+          changed = true;
+        }
+      });
+    }
+  });
+  return changed;
 }
 
 function buildDprAllocationPlan(newT) {
@@ -3743,6 +3779,7 @@ function buildCurrentDprAuditRows(newT) {
   if (hasExplodedAllocated && hasUnallocatedDamager) warnings.push('Suspicious allocation: one action jumps sharply while another damaging action is not in the parsed routine.');
   if (!plan.multiText && rows.filter(r => r.flags.includes('implicit natural routine')).length >= 2) warnings.push('No Multiattack text found; using implicit one-each natural-attack suite.');
   if (plan.allocationMode === 'implicit-natural-suite' && rows.some(r => r.ratio >= 2.75)) warnings.push('Implicit natural suite is active, but source damage is already very uneven; if this monster was previously scaled, reset/reload the original before scaling again.');
+  if (plan.allocationMode === 'parsed-multiattack-expanded-natural-suite') warnings.push('Parser repair active: a partially parsed natural-attack suite was completed from the Multiattack text.');
   if (plan.multiText && !plan.primaryRoutines.length && !plan.alternateRoutines.length) warnings.push('Multiattack text exists but no routine parsed; fallback was used.');
 
   return { plan, rows, warnings };
