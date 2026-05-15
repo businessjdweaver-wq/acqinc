@@ -6709,7 +6709,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 59b — Encounter Wizard Entry Hotfix v1.3.1</span>
+  <span class="topbar-version">Stage 59c — Encounter Wizard Save Hotfix v1.3.2</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -17594,7 +17594,7 @@ function closeEncounterBalanceWizard() {
 }
 function _ebwApplyTargetScale() {
   if (!_ebwState) return;
-  const node = nodes.find(n => n.id === _ebwState.nodeId);
+  const node = state.nodes.get(_ebwState.nodeId);
   const inst = node && node.fields && node.fields.monsters && node.fields.monsters[_ebwState.idx];
   const source = inst && inst.snapshot ? inst.snapshot : _ebwState.scaledPreview;
   const scaled = scaleMonsterSnapshot(source, _ebwState.targetCr, String(source.cr || _ebwState.baseCr));
@@ -17676,8 +17676,9 @@ function wireEncounterBalanceWizard() {
     });
     row.querySelectorAll('[data-ebw-dice]').forEach(btn => btn.onclick = () => { a.n = Math.max(0, (parseInt(a.n)||0) + (parseInt(btn.dataset.ebwDice)||0)); renderEncounterBalanceWizard(); });
   });
-  const apply = document.getElementById('ebwApplyBtn'); if (apply) apply.onclick = () => _ebwCommit('apply');
-  const clone = document.getElementById('ebwCloneBtn'); if (clone) clone.onclick = () => _ebwCommit('clone');
+  const saveInst = document.getElementById('ebwSaveInstanceBtn'); if (saveInst) saveInst.onclick = () => _ebwCommit('apply', false);
+  const saveClose = document.getElementById('ebwSaveCloseBtn'); if (saveClose) saveClose.onclick = () => _ebwCommit('apply', true);
+  const clone = document.getElementById('ebwCloneBtn'); if (clone) clone.onclick = () => _ebwCommit('clone', false);
   const save = document.getElementById('ebwSaveWorkshopBtn'); if (save) save.onclick = _ebwSaveWorkshopSkin;
 }
 function _ebwBuildSnapshot() {
@@ -17699,9 +17700,9 @@ function _ebwBuildSnapshot() {
   }
   return sn;
 }
-function _ebwCommit(mode) {
+function _ebwCommit(mode, closeAfter = false) {
   if (!_ebwState) return;
-  const node = nodes.find(n => n.id === _ebwState.nodeId);
+  const node = state.nodes.get(_ebwState.nodeId);
   const arr = node && node.fields && node.fields.monsters;
   const inst = arr && arr[_ebwState.idx];
   if (!inst) return;
@@ -17712,8 +17713,12 @@ function _ebwCommit(mode) {
   else arr[_ebwState.idx] = next;
   recomputeMonsterLetters(node);
   if (sidePanel.classList.contains('open') && openNodeId === node.id) renderSidePanelBody(node, BLOCK_TYPES.encounter);
-  refreshNodeFace(node); redrawEdges(); markDirty(); closeEncounterBalanceWizard();
+  refreshNodeFace(node); redrawEdges(); markDirty();
+  if (typeof saveSession === 'function') { try { saveSession(); } catch (e) { console.warn('Encounter wizard saveSession failed', e); } }
+  if (closeAfter) closeEncounterBalanceWizard();
+  else renderEncounterBalanceWizard();
 }
+
 function _ebwSanitizeMonsterForSupabase(sn) {
   const allowed = ['name','monster_type','cr','hp','ac','size','actions','bonus_actions','reactions','special_abilities','legendary','legendary_actions','lair_actions','abilities','saves','skills','senses','languages','speed','alignment','hp_formula','spells','spell_save_dc','spell_attack_bonus'];
   const clean = {};
@@ -23121,7 +23126,8 @@ boot();
   <div class="ebw-foot">
     <button class="ebw-btn ghost" type="button" id="ebwCloneBtn">Clone in Encounter</button>
     <button class="ebw-btn ghost" type="button" id="ebwSaveWorkshopBtn">Save as Workshop Skin</button>
-    <button class="ebw-btn" type="button" id="ebwApplyBtn">Apply to This Instance</button>
+    <button class="ebw-btn" type="button" id="ebwSaveInstanceBtn">Save</button>
+    <button class="ebw-btn" type="button" id="ebwSaveCloseBtn">Save & Close</button>
   </div>
 </div>
 
