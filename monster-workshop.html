@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.22 · CR/action fixes</span>
+  <span class="topbar-version">v0.5.23 · DPR audit + implicit natural routines</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -2950,7 +2950,7 @@ function renderEditor(m) {
         <div class="cr-stat"><span class="cr-stat-label">HP Range</span><span class="cr-stat-val" id="cg_hp">${cr.hpLo}–${cr.hpHi}</span></div>
         <div class="cr-stat"><span class="cr-stat-label">Atk Bonus</span><span class="cr-stat-val" id="cg_atk">${cr.atk}</span></div>
         <div class="cr-stat"><span class="cr-stat-label">DPR / DC</span><span class="cr-stat-val" id="cg_dpr">${cr.dprLo}–${cr.dprHi} / ${cr.dc}</span></div>
-        ${isCustom ? `<button id="btnScaleStats" class="btn btn-ember btn-sm" onclick="applyCRScaling()" title="Scale HP, AC, and damage to match new CR" style="display:none;margin-left:8px;font-size:0.5rem;padding:3px 10px;">⚖ Scale Stats</button>` : ''}
+        ${isCustom ? `<button id="btnScaleStats" class="btn btn-ember btn-sm" onclick="applyCRScaling()" title="Scale HP, AC, and damage to match new CR" style="display:none;margin-left:8px;font-size:0.5rem;padding:3px 10px;">⚖ Scale Stats</button><button id="btnDprAudit" class="btn btn-ghost btn-sm" onclick="showDprAuditReport()" title="Preview DPR parser routines and scaling allocations for this monster" style="margin-left:6px;font-size:0.5rem;padding:3px 10px;">🧮 DPR Audit</button>` : ''}
       </div>
     </div>
 
@@ -3463,7 +3463,13 @@ function attackIsRanged(atk) {
 
 function attackIsMelee(atk) {
   const d = normalizeCombatText(atk?.desc || '');
-  return /melee weapon attack|reach\s+\d/.test(d);
+  const n = normalizeCombatText(atk?.name || '');
+  return /melee weapon attack|reach\s+\d/.test(d) || /bite|claw|constrict|tail|tentacle|slam|gore|horn|hoof|hooves|sting|stinger|pincer|fist|maul|beak/.test(n);
+}
+
+function attackLooksLikeNaturalWeapon(atk) {
+  const text = normalizeCombatText((atk?.name || '') + ' ' + (atk?.desc || ''));
+  return /(bite|claw|claws|constrict|tail|tentacle|tentacles|slam|gore|horns?|hoof|hooves|sting|stinger|pincer|pincers|beak|maw|mandibles?)/.test(text);
 }
 
 function getActionDamageAverage(atk) {
@@ -3588,12 +3594,26 @@ function buildCombatRoutinesFromDom() {
 
   if (!primaryRoutines.length && !alternateRoutines.length) {
     const melee = attacks.filter(attackIsMelee);
-    const pool = melee.length ? melee : attacks;
-    if (pool.length) {
-      const strongest = pool.reduce((best, a) => getActionDamageAverage(a) > getActionDamageAverage(best) ? a : best, pool[0]);
+    const naturalMelee = melee.filter(attackLooksLikeNaturalWeapon);
+
+    // v0.5.23: Some imported/custom monsters omit an explicit Multiattack
+    // line even though their intended turn package is a suite of natural
+    // attacks (Amphisbanae: Bite + Constrict). In that shape, scaling only
+    // the strongest action explodes Constrict and leaves Bite unchanged.
+    // Treat 2–3 natural melee attacks as an implicit one-each routine; keep
+    // humanoid/weapon alternatives on the older strongest-action fallback.
+    if (!multiText && naturalMelee.length >= 2 && naturalMelee.length <= 3) {
       const r = new Map();
-      r.set(strongest.key, 1);
+      naturalMelee.forEach(atk => r.set(atk.key, 1));
       primaryRoutines.push(r);
+    } else {
+      const pool = melee.length ? melee : attacks;
+      if (pool.length) {
+        const strongest = pool.reduce((best, a) => getActionDamageAverage(a) > getActionDamageAverage(best) ? a : best, pool[0]);
+        const r = new Map();
+        r.set(strongest.key, 1);
+        primaryRoutines.push(r);
+      }
     }
   }
 
@@ -3678,6 +3698,73 @@ function buildDprAllocationPlan(newT) {
   parsed.fallbackRanged.forEach(fb => assign(fb.key, targetTurnDpr * fb.ratio, fb.reason + ` ratio=${fb.ratio.toFixed(2)}`));
 
   return { targetTurnDpr, ...parsed, allocations };
+}
+
+
+function formatDprRoutineListForAudit(routines) {
+  if (!routines || !routines.length) return '—';
+  return routines.map(r => Object.entries(routineToObject(r)).map(([k,v]) => `${v}× ${k}`).join(' + ')).join(' OR ');
+}
+
+function buildCurrentDprAuditRows(newT) {
+  const plan = buildDprAllocationPlan(newT || CR_TABLE[document.getElementById('f_cr')?.value] || CR_TABLE['1']);
+  const allocatedKeys = new Set(plan.allocations.keys());
+  const rows = plan.attacks.map(atk => {
+    const baseAvg = getActionDamageAverage(atk || {});
+    const alloc = plan.allocations.get(atk.key);
+    const targetAvg = alloc ? alloc.targetAvg : 0;
+    const ratio = baseAvg > 0 && targetAvg > 0 ? targetAvg / baseAvg : 0;
+    const flags = [];
+    if (!alloc) flags.push('unallocated');
+    if (ratio >= 2.75) flags.push('large jump');
+    if (ratio > 0 && ratio <= 1.05) flags.push('nearly unchanged');
+    if (!plan.multiText && attackLooksLikeNaturalWeapon(atk) && plan.primaryRoutines.length) flags.push('implicit natural routine');
+    return {
+      name: atk.name || atk.key,
+      key: atk.key,
+      baseAvg,
+      targetAvg,
+      ratio,
+      reason: alloc?.reason || 'not in parsed routine',
+      flags
+    };
+  });
+
+  const hasExplodedAllocated = rows.some(r => r.ratio >= 2.75);
+  const hasUnallocatedDamager = rows.some(r => !allocatedKeys.has(r.key) && r.baseAvg > 0);
+  const warnings = [];
+  if (hasExplodedAllocated && hasUnallocatedDamager) warnings.push('Suspicious allocation: one action jumps sharply while another damaging action is not in the parsed routine.');
+  if (!plan.multiText && rows.filter(r => r.flags.includes('implicit natural routine')).length >= 2) warnings.push('No Multiattack text found; using implicit one-each natural-attack suite.');
+  if (plan.multiText && !plan.primaryRoutines.length && !plan.alternateRoutines.length) warnings.push('Multiattack text exists but no routine parsed; fallback was used.');
+
+  return { plan, rows, warnings };
+}
+
+function showDprAuditReport() {
+  const cr = document.getElementById('f_cr')?.value || '1';
+  const t = CR_TABLE[cr] || CR_TABLE['1'];
+  const audit = buildCurrentDprAuditRows(t);
+  const lines = [];
+  lines.push(`Monster: ${document.getElementById('f_name')?.value || '(unnamed)'}`);
+  lines.push(`Target CR ${cr} DPR midpoint: ${audit.plan.targetTurnDpr}`);
+  lines.push(`Multiattack text: ${audit.plan.multiText || '(none)'}`);
+  lines.push(`Primary: ${formatDprRoutineListForAudit(audit.plan.primaryRoutines)}`);
+  lines.push(`Alternate: ${formatDprRoutineListForAudit(audit.plan.alternateRoutines)}`);
+  lines.push('');
+  lines.push('Actions:');
+  audit.rows.forEach(r => {
+    const ratio = r.ratio ? ` ×${r.ratio.toFixed(2)}` : '';
+    const target = r.targetAvg ? r.targetAvg.toFixed(1) : '—';
+    const flags = r.flags.length ? ` [${r.flags.join(', ')}]` : '';
+    lines.push(`• ${r.name}: ${r.baseAvg.toFixed(1)} → ${target}${ratio}; ${r.reason}${flags}`);
+  });
+  if (audit.warnings.length) {
+    lines.push('');
+    lines.push('Warnings:');
+    audit.warnings.forEach(w => lines.push(`⚠ ${w}`));
+  }
+  console.log('[DPR Audit]', audit);
+  alert(lines.join('\n'));
 }
 
 function cleanFoundryFormula(formula) {
