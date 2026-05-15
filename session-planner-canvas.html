@@ -6653,6 +6653,19 @@ body.mobile-mode #sb-modal { display: none !important; }
 .ebw-action-head { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
 .ebw-action-name { flex:1; color:var(--gold-pale); font-family:'Cinzel',serif; font-size:0.72rem; }
 .ebw-action-dpr { font-family:'JetBrains Mono',monospace; color:var(--steel-pale); font-size:0.62rem; }
+
+.ebw-alt-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--bone);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.64rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.ebw-alt-toggle input { accent-color: var(--gold); }
 .ebw-action-controls { display:grid; grid-template-columns:1fr auto auto auto auto; gap:5px; align-items:center; }
 .ebw-mini { font-family:'JetBrains Mono',monospace; font-size:0.62rem; padding:5px 7px; }
 .ebw-budget {
@@ -17549,7 +17562,18 @@ function _ebwExtractActions(sn) {
   return (Array.isArray(sn.actions) ? sn.actions : []).map((a, i) => {
     const damage = a.damage || _ebwFirstDamageFormulaFromDesc(a.desc);
     const p = _ebwDamageParts(damage);
-    return { i, name:a.name || ('Action '+(i+1)), damage, n:p.n, die:p.die, flat:p.flat, avg:_ebwAvgFormula(damage), desc:a.desc || '' };
+    return {
+      i,
+      name:a.name || ('Action '+(i+1)),
+      damage,
+      n:p.n,
+      die:p.die,
+      flat:p.flat,
+      avg:_ebwAvgFormula(damage),
+      desc:a.desc || '',
+      altRanged: !!(a._ebwAltRanged || a.altRanged || a.single_alt_ranged),
+      altWeight: Math.max(0.05, Math.min(1, parseFloat(a._ebwAltWeight || a.altWeight || 0.5) || 0.5))
+    };
   }).filter(x => x.damage || x.desc);
 }
 function _ebwFindMultiattack(sn) {
@@ -17565,9 +17589,22 @@ function _ebwTargetDpr(cr) {
   const t = CANVAS_CR_TABLE[String(cr)];
   return t ? Math.round(((t.dprLo || 0) + (t.dprHi || 0)) / 2) : 0;
 }
+function _ebwActionRawDpr(a) {
+  return _ebwAvgFormula(_ebwFormula(a && a.n, a && a.die, a && a.flat));
+}
+function _ebwActionEffectiveDpr(a) {
+  const raw = _ebwActionRawDpr(a);
+  if (!a || !a.altRanged) return raw;
+  const w = Math.max(0.05, Math.min(1, parseFloat(a.altWeight) || 0.5));
+  return Math.round(raw * w * 10) / 10;
+}
 function _ebwCurrentTotal() {
   if (!_ebwState) return 0;
-  return _ebwState.actions.reduce((sum, a) => sum + _ebwAvgFormula(_ebwFormula(a.n, a.die, a.flat)), 0);
+  return _ebwState.actions.reduce((sum, a) => sum + (a && a.altRanged ? 0 : _ebwActionRawDpr(a)), 0);
+}
+function _ebwExcludedAltRangedTotal() {
+  if (!_ebwState) return 0;
+  return Math.round(_ebwState.actions.reduce((sum, a) => sum + (a && a.altRanged ? _ebwActionEffectiveDpr(a) : 0), 0) * 10) / 10;
 }
 function _ebwHpMidpointForCr(cr) {
   const t = CANVAS_CR_TABLE[String(cr)];
@@ -17635,6 +17672,7 @@ function renderEncounterBalanceWizard() {
   if (!left || !mid || !right) return;
   const target = _ebwTargetDpr(_ebwState.targetCr);
   const current = _ebwCurrentTotal();
+  const excludedAlt = _ebwExcludedAltRangedTotal();
   const remaining = Math.round((target - current) * 10) / 10;
   const over = remaining < 0;
   left.innerHTML = `
@@ -17657,11 +17695,13 @@ function renderEncounterBalanceWizard() {
     <div class="ebw-budget">
       <div class="ebw-budget-line"><span>Target CR ${escHtml(_ebwState.targetCr)} DPR budget</span><strong>${target || '?'}</strong></div>
       <div class="ebw-budget-line"><span>Allocated action damage</span><strong>${Math.round(current*10)/10}</strong></div>
+      <div class="ebw-budget-line"><span>Excluded alt-ranged damage</span><strong>${excludedAlt}</strong></div>
       <div class="ebw-budget-line ${over?'over':''}"><span>${over?'Overspent':'Remaining'}</span><strong>${Math.abs(remaining)}</strong></div>
     </div>
+    <p class="ebw-help">Mark an action as <b>Alt ranged solo</b> when it is an either/or ranged option, such as an ogre choosing javelin instead of greatclub. The stat block keeps the ranged dice, but the action is excluded from the main DPR point-buy so it will not create an overspent budget. The dropdown shows its tactical/ranged output factor for reference.</p>
     ${_ebwState.actions.length ? _ebwState.actions.map((a, pos)=>`
       <div class="ebw-action-row" data-ebw-action="${pos}">
-        <div class="ebw-action-head"><span class="ebw-action-name">${escHtml(a.name)}</span><span class="ebw-action-dpr">${_ebwAvgFormula(_ebwFormula(a.n,a.die,a.flat))} DPR</span></div>
+        <div class="ebw-action-head"><span class="ebw-action-name">${escHtml(a.name)}</span><label class="ebw-alt-toggle" title="Use when this is a ranged action the monster takes instead of its normal melee/offense routine. It keeps the real dice but excludes this option from the main DPR budget."><input type="checkbox" data-ebw-alt-ranged ${a.altRanged ? 'checked' : ''}> Alt ranged solo</label><span class="ebw-action-dpr">${a.altRanged ? ('excluded from budget / ' + _ebwActionEffectiveDpr(a) + ' tactical / ' + _ebwActionRawDpr(a) + ' raw DPR') : (_ebwActionRawDpr(a) + ' DPR')}</span></div>
         <div class="ebw-action-controls">
           <input class="ebw-input ebw-mini" data-ebw-key="name" value="${escAttr(a.name)}" title="Action name">
           <button class="ebw-btn ebw-mini" data-ebw-dice="-1" type="button">− die</button>
@@ -17670,7 +17710,7 @@ function renderEncounterBalanceWizard() {
           <button class="ebw-btn ebw-mini" data-ebw-dice="1" type="button">+ die</button>
           <span class="ebw-label">Flat</span><input class="ebw-input ebw-mini" data-ebw-key="flat" type="number" value="${a.flat}">
           <span class="ebw-label">Formula</span><input class="ebw-input ebw-mini" data-ebw-key="formula" value="${escAttr(_ebwFormula(a.n,a.die,a.flat))}">
-          <span></span>
+          <span class="ebw-label">Alt ranged factor</span><select class="ebw-select ebw-mini" data-ebw-alt-weight title="Reference factor for the solo ranged option; this does not spend the main DPR budget." ${a.altRanged ? '' : 'disabled'}>${[[0.25,'25%'],[0.33,'33%'],[0.5,'50%'],[0.67,'67%'],[0.75,'75%']].map(([v,l])=>`<option value="${v}" ${Math.abs((parseFloat(a.altWeight)||0.5)-v)<0.01?'selected':''}>${l} output</option>`).join('')}</select>
         </div>
       </div>`).join('') : '<p class="ebw-help">No damage formulas found on this snapshot. You can still scale CR/HP/AC, but there is nothing to allocate until actions include dice formulas.</p>'}`;
   const sn = _ebwState.scaledPreview || {};
@@ -17703,6 +17743,10 @@ function wireEncounterBalanceWizard() {
       };
     });
     row.querySelectorAll('[data-ebw-dice]').forEach(btn => btn.onclick = () => { a.n = Math.max(0, (parseInt(a.n)||0) + (parseInt(btn.dataset.ebwDice)||0)); renderEncounterBalanceWizard(); });
+    const alt = row.querySelector('[data-ebw-alt-ranged]');
+    if (alt) alt.onchange = () => { a.altRanged = !!alt.checked; if (!a.altWeight) a.altWeight = 0.5; renderEncounterBalanceWizard(); };
+    const wt = row.querySelector('[data-ebw-alt-weight]');
+    if (wt) wt.onchange = () => { a.altWeight = Math.max(0.05, Math.min(1, parseFloat(wt.value) || 0.5)); renderEncounterBalanceWizard(); };
   });
   const saveInst = document.getElementById('ebwSaveInstanceBtn'); if (saveInst) saveInst.onclick = () => _ebwCommit('apply', false);
   const saveClose = document.getElementById('ebwSaveCloseBtn'); if (saveClose) saveClose.onclick = () => _ebwCommit('apply', true);
@@ -17718,6 +17762,13 @@ function _ebwBuildSnapshot() {
     _ebwState.actions.forEach(a => {
       const act = sn.actions[a.i]; if (!act) return;
       act.name = a.name || act.name;
+      if (a.altRanged) {
+        act._ebwAltRanged = true;
+        act._ebwAltWeight = Math.max(0.05, Math.min(1, parseFloat(a.altWeight) || 0.5));
+      } else {
+        delete act._ebwAltRanged;
+        delete act._ebwAltWeight;
+      }
       const f = _ebwFormula(a.n, a.die, a.flat);
       if (act.damage || !act.desc) act.damage = f;
       if (act.desc) {
