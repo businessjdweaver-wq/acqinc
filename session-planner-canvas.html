@@ -17569,6 +17569,33 @@ function _ebwCurrentTotal() {
   if (!_ebwState) return 0;
   return _ebwState.actions.reduce((sum, a) => sum + _ebwAvgFormula(_ebwFormula(a.n, a.die, a.flat)), 0);
 }
+function _ebwHpMidpointForCr(cr) {
+  const t = CANVAS_CR_TABLE[String(cr)];
+  return t ? Math.round((t.hpLo + t.hpHi) / 2) : null;
+}
+function _ebwHpLooksUnscaledForTarget(sn, targetCr) {
+  const t = CANVAS_CR_TABLE[String(targetCr)];
+  if (!sn || !t) return false;
+  const hp = parseInt(sn.hp);
+  if (!Number.isFinite(hp)) return true;
+  return hp < t.hpLo || hp > t.hpHi;
+}
+function _ebwSyncDefenseToTarget(sn) {
+  const targetCr = _ebwState && String(_ebwState.targetCr || '');
+  const t = CANVAS_CR_TABLE[targetCr];
+  if (!sn || !t) return sn;
+  const oldCr = String(sn.cr || _ebwState.baseCr || targetCr);
+  const oldT = CANVAS_CR_TABLE[oldCr] || t;
+  const hpMid = _ebwHpMidpointForCr(targetCr);
+  if (hpMid != null && _ebwHpLooksUnscaledForTarget(sn, targetCr)) sn.hp = hpMid;
+  if (sn.ac == null || sn.ac === '') sn.ac = t.ac;
+  else {
+    const acDelta = (parseInt(sn.ac) || oldT.ac) - oldT.ac;
+    sn.ac = t.ac + Math.max(-2, Math.min(2, acDelta));
+  }
+  sn.cr = targetCr;
+  return sn;
+}
 function openEncounterBalanceWizard(node, idx) {
   if (!node || !node.fields || !Array.isArray(node.fields.monsters) || !node.fields.monsters[idx]) return;
   const m = node.fields.monsters[idx];
@@ -17655,14 +17682,14 @@ function renderEncounterBalanceWizard() {
       <div class="ebw-kpi"><span>Preview CR</span><b>${escHtml(sn.cr || '?')}</b></div>
       <div class="ebw-kpi"><span>Action Count</span><b>${(sn.actions||[]).length}</b></div>
     </div>
-    <p class="ebw-help"><b>Apply to This Instance</b> stores the adjusted stat block only on this encounter monster. <b>Clone in Encounter</b> adds a second copy using the current preview and allocation, so you can run two differently-scaled versions at once. <b>Save as Workshop Skin</b> creates a new rq_monsters row from this preview.</p>
+    <p class="ebw-help"><b>Apply to This Instance</b> stores the adjusted stat block only on this encounter monster. <b>Clone in Encounter</b> adds a second copy using the current preview and allocation, so you can run two differently-scaled versions at once. <b>Save as Workshop Skin</b> creates a new rq_monsters row from this preview. Changing Target CR now re-syncs HP/AC immediately, and saving defensively corrects out-of-band HP.</p>
     <div class="ebw-field"><label>Current Actions Preview</label><textarea class="ebw-textarea" readonly>${escHtml((sn.actions||[]).map(a => (a.name||'Action') + ': ' + (a.damage || _ebwFirstDamageFormulaFromDesc(a.desc) || '—') + (a.desc ? '\n' + a.desc : '')).join('\n\n'))}</textarea></div>`;
   wireEncounterBalanceWizard();
 }
 function wireEncounterBalanceWizard() {
   const close = document.getElementById('ebwCloseBtn'); if (close) close.onclick = closeEncounterBalanceWizard;
   const name = document.getElementById('ebwName'); if (name) name.oninput = () => { if (_ebwState) _ebwState.name = name.value; };
-  const cr = document.getElementById('ebwTargetCr'); if (cr) cr.onchange = () => { _ebwState.targetCr = cr.value; renderEncounterBalanceWizard(); };
+  const cr = document.getElementById('ebwTargetCr'); if (cr) cr.onchange = () => { _ebwState.targetCr = cr.value; _ebwApplyTargetScale(); renderEncounterBalanceWizard(); };
   const auto = document.getElementById('ebwAutoScaleBtn'); if (auto) auto.onclick = () => { _ebwApplyTargetScale(); renderEncounterBalanceWizard(); };
   document.querySelectorAll('[data-ebw-action]').forEach(row => {
     const pos = parseInt(row.dataset.ebwAction); const a = _ebwState.actions[pos]; if (!a) return;
@@ -17686,7 +17713,7 @@ function _ebwBuildSnapshot() {
   if (!_ebwState) return null;
   const sn = JSON.parse(JSON.stringify(_ebwState.scaledPreview || {}));
   sn.name = _ebwState.name || sn.name || 'Encounter Variant';
-  sn.cr = _ebwState.targetCr || sn.cr;
+  _ebwSyncDefenseToTarget(sn);
   if (Array.isArray(sn.actions)) {
     _ebwState.actions.forEach(a => {
       const act = sn.actions[a.i]; if (!act) return;
