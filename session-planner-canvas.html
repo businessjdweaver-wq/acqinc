@@ -6722,7 +6722,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 59d — Encounter Wizard CR Safe v1.3.3</span>
+  <span class="topbar-version">Stage 59g — Encounter Wizard Difficulty Sync v1.3.8</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -17633,6 +17633,36 @@ function _ebwSyncDefenseToTarget(sn) {
   sn.cr = targetCr;
   return sn;
 }
+
+function _ebwNormalizeVariantName(name) {
+  // Prevent the CR wizard from appending "Variant" on every open/save cycle.
+  // Keep a single intentional suffix, but collapse recursive tails such as
+  // "Goblin Variant Variant Variant" back to "Goblin Variant".
+  const raw = String(name || 'Monster').replace(/\s+/g, ' ').trim() || 'Monster';
+  return raw.replace(/(?:\s+Variant){2,}$/i, ' Variant');
+}
+function _ebwDefaultVariantName(name) {
+  const clean = _ebwNormalizeVariantName(name);
+  return /\sVariant$/i.test(clean) ? clean : (clean + ' Variant');
+}
+function refreshEncounterDifficultyDisplay(node) {
+  if (!node || node.type !== 'encounter' || !node.el) return;
+  const oldBar = node.el.querySelector('.encounter-difficulty');
+  if (!oldBar) return;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = renderEncounterDifficultyBar(node).trim();
+  const nextBar = wrap.firstElementChild;
+  if (nextBar) oldBar.replaceWith(nextBar);
+  node.el.querySelectorAll('button[data-encounter-party]').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const id = btn.dataset.encounterParty;
+      if (typeof openPartyModal === 'function') openPartyModal(id);
+    });
+  });
+}
+
 function openEncounterBalanceWizard(node, idx) {
   if (!node || !node.fields || !Array.isArray(node.fields.monsters) || !node.fields.monsters[idx]) return;
   const m = node.fields.monsters[idx];
@@ -17642,8 +17672,8 @@ function openEncounterBalanceWizard(node, idx) {
     idx,
     targetCr: String(sn.cr || '1'),
     baseCr: String(m._scaledFromCr || sn.cr || '1'),
-    name: (m.nameOverride || sn.name || 'Monster') + ' Variant',
-    sourceName: sn.name || 'Monster',
+    name: m.nameOverride ? _ebwNormalizeVariantName(m.nameOverride) : _ebwDefaultVariantName(sn.name || 'Monster'),
+    sourceName: _ebwNormalizeVariantName(sn.name || 'Monster'),
     actions: _ebwExtractActions(sn),
     multiattack: _ebwFindMultiattack(sn),
     scaledPreview: sn
@@ -17756,7 +17786,7 @@ function wireEncounterBalanceWizard() {
 function _ebwBuildSnapshot() {
   if (!_ebwState) return null;
   const sn = JSON.parse(JSON.stringify(_ebwState.scaledPreview || {}));
-  sn.name = _ebwState.name || sn.name || 'Encounter Variant';
+  sn.name = _ebwNormalizeVariantName(_ebwState.name || sn.name || 'Encounter Variant');
   _ebwSyncDefenseToTarget(sn);
   if (Array.isArray(sn.actions)) {
     _ebwState.actions.forEach(a => {
@@ -17787,12 +17817,12 @@ function _ebwCommit(mode, closeAfter = false) {
   if (!inst) return;
   const sn = _ebwBuildSnapshot();
   if (!sn) return;
-  const next = { ...inst, snapshot: sn, nameOverride: _ebwState.name, _scaledFromCr: inst._scaledFromCr || inst.snapshot?.cr || _ebwState.baseCr };
+  const next = { ...inst, snapshot: sn, nameOverride: _ebwNormalizeVariantName(_ebwState.name), _scaledFromCr: inst._scaledFromCr || inst.snapshot?.cr || _ebwState.baseCr };
   if (mode === 'clone') arr.push(JSON.parse(JSON.stringify({ ...next, flav:'', letter:'' })));
   else arr[_ebwState.idx] = next;
   recomputeMonsterLetters(node);
   if (sidePanel.classList.contains('open') && openNodeId === node.id) renderSidePanelBody(node, BLOCK_TYPES.encounter);
-  refreshNodeFace(node); redrawEdges(); markDirty();
+  refreshNodeFace(node); refreshEncounterDifficultyDisplay(node); redrawEdges(); markDirty();
   if (typeof saveSession === 'function') { try { saveSession(); } catch (e) { console.warn('Encounter wizard saveSession failed', e); } }
   if (closeAfter) closeEncounterBalanceWizard();
   else renderEncounterBalanceWizard();
@@ -19423,6 +19453,8 @@ function wireMonsterRollClicks(nodeEl, node) {
       btn.title = m._deactivated
         ? 'Reactivate this monster'
         : 'Sideline this monster (kept in encounter, just out of the fight)';
+      refreshEncounterDifficultyDisplay(node);
+      markDirty();
     });
   });
 
