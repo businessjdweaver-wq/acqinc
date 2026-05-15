@@ -14177,6 +14177,7 @@ function createEdge(from, to, dir = 'forward', label = '') {
   };
   state.edges.push(edge);
   applyEdgeMarkers(edge);
+  _syncEncounterTeamupEdgeClass(edge);
   redrawEdge(edge);
 
   // Hitbox click → select. Pill click → cycle direction. Both stop propagation
@@ -14390,11 +14391,11 @@ function cycleEdgeDirection(edge) {
 // is allowed; this list is merely a convenience.
 const ENCOUNTER_TEAMUP_LABEL = 'encounter team-up';
 const EDGE_LABEL_SUGGESTIONS = [
+  'encounter team-up',
   'family', 'ally', 'enemy', 'rival', 'mentor', 'student',
   'employer', 'employee', 'patron', 'agent', 'member-of',
   'owns', 'located-in', 'precedes', 'follows', 'contains',
   'created-by', 'knows', 'hires', 'opposes', 'protects',
-  'encounter team-up',
 ];
 
 // Stage 45: per-campaign custom edge labels. The user's relationship
@@ -14650,6 +14651,7 @@ function finishEdgeLabelEdit(commit) {
   edge.label = newLabel || '';
   edge.labelEl.textContent = edge.label;
   edge.labelEl.classList.toggle('empty', !edge.label);
+  _syncEncounterTeamupEdgeClass(edge);
   if (commit) {
     markDirty();
     if (_isEncounterTeamupEdge(edge) || String(newLabel || '').trim().toLowerCase() === ENCOUNTER_TEAMUP_LABEL) {
@@ -17978,6 +17980,11 @@ function _isEncounterTeamupEdge(edge) {
   return String(edge && edge.label || '').trim().toLowerCase() === ENCOUNTER_TEAMUP_LABEL;
 }
 
+function _syncEncounterTeamupEdgeClass(edge) {
+  if (!edge || !edge.groupEl) return;
+  edge.groupEl.classList.toggle('encounter-teamup', _isEncounterTeamupEdge(edge));
+}
+
 function _encounterXpStats(node) {
   const monsters = (node && node.fields && node.fields.monsters) || [];
   let totalXP = 0;
@@ -18001,6 +18008,7 @@ function _computeEncounterDifficultyFromMonsters(monsters, party) {
   }
   let totalXP = 0;
   let monsterCount = 0;
+  const xpEntries = [];
   (monsters || []).forEach(m => {
     if (m._deactivated) return;
     const cr = m.snapshot && m.snapshot.cr ? String(m.snapshot.cr) : null;
@@ -18010,11 +18018,16 @@ function _computeEncounterDifficultyFromMonsters(monsters, party) {
     const mult = (typeof m.mult === 'number' && m.mult >= 1) ? m.mult : 1;
     totalXP += xp * mult;
     monsterCount += mult;
+    xpEntries.push({ xp, mult });
   });
   if (monsterCount === 0) {
     return { configured: true, empty: true, party };
   }
   const partySize = party.characters.length;
+  // DMG encounter math: every active monster contributes its CR XP to base XP,
+  // and every active monster instance contributes to the encounter multiplier.
+  // Do this once on the combined pool; never sum already-adjusted encounter XP.
+  const multiplierCount = monsterCount;
   const factor = _encounterMultiplier(monsterCount, partySize);
   const adjustedXP = Math.round(totalXP * factor);
   const thresholds = { easy: 0, medium: 0, hard: 0, deadly: 0 };
@@ -18032,7 +18045,7 @@ function _computeEncounterDifficultyFromMonsters(monsters, party) {
   else if (adjustedXP >= thresholds.hard)   label = 'HARD';
   else if (adjustedXP >= thresholds.medium) label = 'MEDIUM';
   else if (adjustedXP >= thresholds.easy)   label = 'EASY';
-  return { label, totalXP, monsterCount, factor, adjustedXP, thresholds, partySize, party };
+  return { label, totalXP, monsterCount, multiplierCount, factor, adjustedXP, thresholds, partySize, party };
 }
 
 function _getEncounterTeamupMembers(startNode) {
@@ -18100,7 +18113,7 @@ function renderEncounterTeamupDifficultyBar(node) {
   const sourceName = result.partySource ? (result.partySource.title || 'largest encounter') : 'largest encounter';
   const tooltipParts = [
     `Team-up: ${names.join(' + ')}`,
-    `${_formatXP(result.totalXP)} base monster XP × ${result.factor.toFixed(1)} adjusted count factor`,
+    `${_formatXP(result.totalXP)} base monster XP × ${result.factor.toFixed(1)} monster-count factor (${result.monsterCount} active monsters)`,
     `= ${_formatXP(result.adjustedXP)} adjusted XP`,
     `Party from largest XP encounter: ${sourceName} (${partyDescriptor})`,
   ];
@@ -18109,7 +18122,7 @@ function renderEncounterTeamupDifficultyBar(node) {
       <div class="ed-headline">
         <span class="ed-tier-badge">TEAM-UP ${escHtml(result.label)}</span>
         <span class="ed-xp">${_formatXP(result.adjustedXP)} combined adj. XP</span>
-        <span class="ed-team-note">${result.members.length} linked encounters · party from ${escHtml(sourceName)}</span>
+        <span class="ed-team-note">${result.members.length} linked encounters · ${result.monsterCount} active monsters · party from ${escHtml(sourceName)}</span>
       </div>
     </div>`;
 }
@@ -18155,7 +18168,7 @@ function renderEncounterDifficultyBar(node) {
   }).join('');
   const tooltipParts = [
     `${result.monsterCount} monster${result.monsterCount === 1 ? '' : 's'}`,
-    `${_formatXP(result.totalXP)} base monster XP × ${result.factor.toFixed(1)} adjusted count factor`,
+    `${_formatXP(result.totalXP)} base monster XP × ${result.factor.toFixed(1)} monster-count factor (${result.monsterCount} active monsters)`,
     `= ${_formatXP(result.adjustedXP)} adjusted XP`,
     `Party of ${result.partySize}: ${partyDescriptor}`,
   ];
