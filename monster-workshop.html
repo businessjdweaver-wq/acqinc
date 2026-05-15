@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.23 · DPR audit + implicit natural routines</span>
+  <span class="topbar-version">v0.5.24 · DPR allocation hotfix</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3469,7 +3469,7 @@ function attackIsMelee(atk) {
 
 function attackLooksLikeNaturalWeapon(atk) {
   const text = normalizeCombatText((atk?.name || '') + ' ' + (atk?.desc || ''));
-  return /(bite|claw|claws|constrict|tail|tentacle|tentacles|slam|gore|horns?|hoof|hooves|sting|stinger|pincer|pincers|beak|maw|mandibles?)/.test(text);
+  return /\b(bite|claw|claws|constrict|tail|tentacle|tentacles|slam|gore|horns?|hoof|hooves|sting|stinger|pincer|pincers|beak|maw|mandibles?)\b/.test(text);
 }
 
 function getActionDamageAverage(atk) {
@@ -3592,20 +3592,24 @@ function buildCombatRoutinesFromDom() {
     }
   }
 
+  let allocationMode = multiText ? 'parsed-multiattack' : 'unresolved';
+
   if (!primaryRoutines.length && !alternateRoutines.length) {
     const melee = attacks.filter(attackIsMelee);
     const naturalMelee = melee.filter(attackLooksLikeNaturalWeapon);
 
-    // v0.5.23: Some imported/custom monsters omit an explicit Multiattack
-    // line even though their intended turn package is a suite of natural
-    // attacks (Amphisbanae: Bite + Constrict). In that shape, scaling only
-    // the strongest action explodes Constrict and leaves Bite unchanged.
-    // Treat 2–3 natural melee attacks as an implicit one-each routine; keep
-    // humanoid/weapon alternatives on the older strongest-action fallback.
+    // v0.5.24: The v0.5.23 audit correctly identified Amphisbanae-style
+    // failures, but a malformed word-boundary regex prevented the implicit
+    // natural suite from reliably winning during actual scaling. This path
+    // is now the scaler's source of truth: 2–3 natural melee attacks with no
+    // parsed Multiattack are treated as a one-each routine and receive
+    // proportional DPR allocation instead of letting the strongest action
+    // absorb the whole CR damage budget.
     if (!multiText && naturalMelee.length >= 2 && naturalMelee.length <= 3) {
       const r = new Map();
       naturalMelee.forEach(atk => r.set(atk.key, 1));
       primaryRoutines.push(r);
+      allocationMode = 'implicit-natural-suite';
     } else {
       const pool = melee.length ? melee : attacks;
       if (pool.length) {
@@ -3613,8 +3617,11 @@ function buildCombatRoutinesFromDom() {
         const r = new Map();
         r.set(strongest.key, 1);
         primaryRoutines.push(r);
+        allocationMode = 'strongest-action-fallback';
       }
     }
+  } else if (alternateRoutines.length && !primaryRoutines.length) {
+    allocationMode = 'alternate-routine-branches';
   }
 
   const included = new Set();
@@ -3637,7 +3644,7 @@ function buildCombatRoutinesFromDom() {
     return { key: atk.key, count: 1, ratio, reason: 'ranged-fallback-not-in-multiattack' };
   });
 
-  return { attacks, attackByKey, multiText, primaryRoutines, alternateRoutines, fallbackRanged, baselineDpr };
+  return { attacks, attackByKey, multiText, primaryRoutines, alternateRoutines, fallbackRanged, baselineDpr, allocationMode };
 }
 
 function mergeRoutineList(routines) {
@@ -3735,6 +3742,7 @@ function buildCurrentDprAuditRows(newT) {
   const warnings = [];
   if (hasExplodedAllocated && hasUnallocatedDamager) warnings.push('Suspicious allocation: one action jumps sharply while another damaging action is not in the parsed routine.');
   if (!plan.multiText && rows.filter(r => r.flags.includes('implicit natural routine')).length >= 2) warnings.push('No Multiattack text found; using implicit one-each natural-attack suite.');
+  if (plan.allocationMode === 'implicit-natural-suite' && rows.some(r => r.ratio >= 2.75)) warnings.push('Implicit natural suite is active, but source damage is already very uneven; if this monster was previously scaled, reset/reload the original before scaling again.');
   if (plan.multiText && !plan.primaryRoutines.length && !plan.alternateRoutines.length) warnings.push('Multiattack text exists but no routine parsed; fallback was used.');
 
   return { plan, rows, warnings };
@@ -3748,6 +3756,7 @@ function showDprAuditReport() {
   lines.push(`Monster: ${document.getElementById('f_name')?.value || '(unnamed)'}`);
   lines.push(`Target CR ${cr} DPR midpoint: ${audit.plan.targetTurnDpr}`);
   lines.push(`Multiattack text: ${audit.plan.multiText || '(none)'}`);
+  lines.push(`Allocation mode: ${audit.plan.allocationMode || '(unknown)'}`);
   lines.push(`Primary: ${formatDprRoutineListForAudit(audit.plan.primaryRoutines)}`);
   lines.push(`Alternate: ${formatDprRoutineListForAudit(audit.plan.alternateRoutines)}`);
   lines.push('');
@@ -3831,6 +3840,7 @@ function scaleActionsToTargetTurnDpr(newT) {
   console.log('[CR DPR Plan]', {
     targetTurnDpr: plan.targetTurnDpr,
     multiText: plan.multiText,
+    allocationMode: plan.allocationMode,
     primaryRoutines: plan.primaryRoutines.map(routineToObject),
     alternateRoutines: plan.alternateRoutines.map(routineToObject),
     fallbackRanged: plan.fallbackRanged,
