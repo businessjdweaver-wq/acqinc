@@ -3823,6 +3823,31 @@ body.connecting .image-map-pin:hover .pin-anchor {
   color: var(--bone);
   font-weight: 700;
 }
+
+/* Team-up risk bar: shown when encounter nodes are connected with the
+   "encounter team-up" edge type. It uses the same DMG math but combines
+   all active monsters across the connected encounter component. */
+.encounter-teamup-difficulty {
+  margin: -4px 0 10px;
+  padding: 6px 8px;
+  border: 1px dashed rgba(212,160,23,0.55);
+  border-radius: 3px;
+  background: rgba(40,30,10,0.42);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  color: var(--bone);
+}
+.encounter-teamup-difficulty .ed-tier-badge {
+  background: rgba(184,134,11,0.24);
+  color: var(--gold-pale);
+  border: 1px solid rgba(184,134,11,0.55);
+}
+.encounter-teamup-difficulty .ed-headline { flex-wrap: wrap; }
+.encounter-teamup-difficulty .ed-team-note {
+  color: var(--steel-pale);
+  font-size: 0.64rem;
+}
 /* ── TABLE NODE ─────────────────────────────────────────── */
 /* Tables are larger than other node types — the node card grows to fit
    the content. Cell inputs are always editable. Header row is bold/distinct. */
@@ -14193,6 +14218,7 @@ function createEdge(from, to, dir = 'forward', label = '') {
 
   refreshPinnedNodeStacking();
   markDirty();
+  if (_isEncounterTeamupEdge(edge)) _refreshAllEncounterDifficultyBars();
   return edge;
 }
 function removeEdge(edge) {
@@ -14200,6 +14226,7 @@ function removeEdge(edge) {
   state.edges = state.edges.filter(e => e !== edge);
   if (state.selectedEdge === edge) state.selectedEdge = null;
   markDirty();
+  if (_isEncounterTeamupEdge(edge)) _refreshAllEncounterDifficultyBars();
 }
 function selectEdge(edge) {
   if (state.selectedEdge && state.selectedEdge !== edge) {
@@ -14361,11 +14388,13 @@ function cycleEdgeDirection(edge) {
 
 // Common edge labels — populated as autocomplete suggestions. Free-form
 // is allowed; this list is merely a convenience.
+const ENCOUNTER_TEAMUP_LABEL = 'encounter team-up';
 const EDGE_LABEL_SUGGESTIONS = [
   'family', 'ally', 'enemy', 'rival', 'mentor', 'student',
   'employer', 'employee', 'patron', 'agent', 'member-of',
   'owns', 'located-in', 'precedes', 'follows', 'contains',
   'created-by', 'knows', 'hires', 'opposes', 'protects',
+  'encounter team-up',
 ];
 
 // Stage 45: per-campaign custom edge labels. The user's relationship
@@ -14621,7 +14650,12 @@ function finishEdgeLabelEdit(commit) {
   edge.label = newLabel || '';
   edge.labelEl.textContent = edge.label;
   edge.labelEl.classList.toggle('empty', !edge.label);
-  if (commit) markDirty();
+  if (commit) {
+    markDirty();
+    if (_isEncounterTeamupEdge(edge) || String(newLabel || '').trim().toLowerCase() === ENCOUNTER_TEAMUP_LABEL) {
+      _refreshAllEncounterDifficultyBars();
+    }
+  }
   redrawEdge(edge);   // recompute label position now that text length changed
 }
 
@@ -17932,18 +17966,42 @@ function _encounterMultiplier(monsterCount, partySize) {
   return ENCOUNTER_MULTIPLIER_STEPS[idx];
 }
 
-// Compute the encounter difficulty for an encounter node + party config.
-// Returns null if either input is missing/empty.
-function computeEncounterDifficulty(node, party) {
-  if (!node || node.type !== 'encounter') return null;
-  const monsters = (node.fields && node.fields.monsters) || [];
-  if (!party || !Array.isArray(party.characters) || !party.characters.length) {
-    return { unconfigured: true };
-  }
-  // Sum monster XP (excluding deactivated). Use mult (horde count) if set.
+
+function _refreshAllEncounterDifficultyBars() {
+  if (!state || !state.nodes) return;
+  state.nodes.forEach(node => {
+    if (node && node.type === 'encounter') refreshNodeFace(node);
+  });
+}
+
+function _isEncounterTeamupEdge(edge) {
+  return String(edge && edge.label || '').trim().toLowerCase() === ENCOUNTER_TEAMUP_LABEL;
+}
+
+function _encounterXpStats(node) {
+  const monsters = (node && node.fields && node.fields.monsters) || [];
   let totalXP = 0;
   let monsterCount = 0;
   monsters.forEach(m => {
+    if (m._deactivated) return;
+    const cr = m.snapshot && m.snapshot.cr ? String(m.snapshot.cr) : null;
+    if (!cr) return;
+    const xp = CR_XP[cr];
+    if (xp == null) return;
+    const mult = (typeof m.mult === 'number' && m.mult >= 1) ? m.mult : 1;
+    totalXP += xp * mult;
+    monsterCount += mult;
+  });
+  return { totalXP, monsterCount };
+}
+
+function _computeEncounterDifficultyFromMonsters(monsters, party) {
+  if (!party || !Array.isArray(party.characters) || !party.characters.length) {
+    return { unconfigured: true };
+  }
+  let totalXP = 0;
+  let monsterCount = 0;
+  (monsters || []).forEach(m => {
     if (m._deactivated) return;
     const cr = m.snapshot && m.snapshot.cr ? String(m.snapshot.cr) : null;
     if (!cr) return;
@@ -17959,8 +18017,6 @@ function computeEncounterDifficulty(node, party) {
   const partySize = party.characters.length;
   const factor = _encounterMultiplier(monsterCount, partySize);
   const adjustedXP = Math.round(totalXP * factor);
-
-  // Sum party thresholds
   const thresholds = { easy: 0, medium: 0, hard: 0, deadly: 0 };
   party.characters.forEach(ch => {
     const lvl = parseInt(ch.level) || 1;
@@ -17971,19 +18027,91 @@ function computeEncounterDifficulty(node, party) {
     thresholds.hard   += t.hard;
     thresholds.deadly += t.deadly;
   });
-
-  // Determine the highest tier the encounter meets
   let label = 'TRIVIAL';
   if (adjustedXP >= thresholds.deadly)      label = 'DEADLY';
   else if (adjustedXP >= thresholds.hard)   label = 'HARD';
   else if (adjustedXP >= thresholds.medium) label = 'MEDIUM';
   else if (adjustedXP >= thresholds.easy)   label = 'EASY';
+  return { label, totalXP, monsterCount, factor, adjustedXP, thresholds, partySize, party };
+}
 
-  return {
-    label, totalXP, monsterCount, factor, adjustedXP, thresholds,
-    partySize,
-    party,
-  };
+function _getEncounterTeamupMembers(startNode) {
+  if (!startNode || startNode.type !== 'encounter') return [];
+  const seen = new Set([startNode.id]);
+  const q = [startNode.id];
+  while (q.length) {
+    const id = q.shift();
+    state.edges.forEach(edge => {
+      if (!_isEncounterTeamupEdge(edge)) return;
+      const a = edge.from && edge.from.nodeId;
+      const b = edge.to && edge.to.nodeId;
+      if (!a || !b) return;
+      if (a !== id && b !== id) return;
+      const otherId = a === id ? b : a;
+      if (seen.has(otherId)) return;
+      const other = state.nodes.get(otherId);
+      if (!other || other.type !== 'encounter') return;
+      seen.add(otherId);
+      q.push(otherId);
+    });
+  }
+  return Array.from(seen).map(id => state.nodes.get(id)).filter(Boolean);
+}
+
+function computeEncounterTeamupDifficulty(node) {
+  const members = _getEncounterTeamupMembers(node);
+  if (members.length < 2) return null;
+  let partySource = members[0];
+  let maxXP = -1;
+  members.forEach(n => {
+    const stats = _encounterXpStats(n);
+    if (stats.totalXP > maxXP) {
+      maxXP = stats.totalXP;
+      partySource = n;
+    }
+  });
+  const party = _getEffectivePartyFor(partySource);
+  const allMonsters = [];
+  members.forEach(n => {
+    ((n.fields && n.fields.monsters) || []).forEach(m => allMonsters.push(m));
+  });
+  const result = _computeEncounterDifficultyFromMonsters(allMonsters, party);
+  if (!result || result.unconfigured || result.empty) return null;
+  result.members = members;
+  result.partySource = partySource;
+  return result;
+}
+
+// Compute the encounter difficulty for an encounter node + party config.
+// Returns null if either input is missing/empty.
+function computeEncounterDifficulty(node, party) {
+  if (!node || node.type !== 'encounter') return null;
+  const monsters = (node.fields && node.fields.monsters) || [];
+  return _computeEncounterDifficultyFromMonsters(monsters, party);
+}
+
+
+function renderEncounterTeamupDifficultyBar(node) {
+  const result = computeEncounterTeamupDifficulty(node);
+  if (!result) return '';
+  const partyDescriptor = result.party.characters.map(c => 'L' + (c.level || 1)).join(',');
+  const tierClass = result.label.toLowerCase();
+  const names = result.members.map(n => n.title || 'Encounter');
+  const sourceName = result.partySource ? (result.partySource.title || 'largest encounter') : 'largest encounter';
+  const tooltipParts = [
+    `Team-up: ${names.join(' + ')}`,
+    `${_formatXP(result.totalXP)} base monster XP × ${result.factor.toFixed(1)} adjusted count factor`,
+    `= ${_formatXP(result.adjustedXP)} adjusted XP`,
+    `Party from largest XP encounter: ${sourceName} (${partyDescriptor})`,
+  ];
+  return `
+    <div class="encounter-teamup-difficulty tier-${tierClass}" title="${escAttr(tooltipParts.join(' · '))}">
+      <div class="ed-headline">
+        <span class="ed-tier-badge">TEAM-UP ${escHtml(result.label)}</span>
+        <span class="ed-xp">${_formatXP(result.adjustedXP)} combined adj. XP</span>
+        <span class="ed-team-note">${result.members.length} linked encounters · party from ${escHtml(sourceName)}</span>
+      </div>
+    </div>`;
 }
 
 // Render the difficulty bar HTML for an encounter card. Always-shown
@@ -18042,7 +18170,7 @@ function renderEncounterDifficultyBar(node) {
                 >${isOverride ? '✎ override' : '+ override'}</button>
       </div>
       <div class="ed-tiers">${tiersHtml}</div>
-    </div>`;
+    </div>${renderEncounterTeamupDifficultyBar(node)}`;
 }
 
 function _formatXP(n) {
