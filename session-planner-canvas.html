@@ -6691,7 +6691,21 @@ body.mobile-mode #sb-modal { display: none !important; }
   white-space: nowrap;
 }
 .ebw-alt-toggle input { accent-color: var(--gold); }
-.ebw-action-controls { display:grid; grid-template-columns:1fr auto auto auto auto; gap:5px; align-items:center; }
+.ebw-action-controls { display:grid; grid-template-columns:1fr auto auto auto auto auto auto auto auto auto; gap:5px; align-items:center; }
+.ebw-action-meta-controls { display:grid; grid-template-columns:repeat(6, minmax(72px,1fr)); gap:5px; align-items:end; margin-top:6px; }
+.ebw-action-desc-row { margin-top:6px; }
+.ebw-action-desc-row textarea { min-height:54px; }
+.ebw-toolbox { border:1px dashed rgba(184,134,11,0.24); background:rgba(0,0,0,0.18); border-radius:4px; padding:8px; margin:10px 0; }
+.ebw-toolbox-title { font-family:'Cinzel',serif; color:var(--gold-pale); font-size:0.68rem; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:6px; }
+.ebw-search-row { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
+.ebw-search-row .ebw-input { flex:1; }
+.ebw-result-list { display:flex; flex-direction:column; gap:4px; max-height:150px; overflow:auto; }
+.ebw-result { display:grid; grid-template-columns:1fr auto; gap:6px; align-items:center; border:1px solid rgba(184,134,11,0.18); background:rgba(184,134,11,0.05); border-radius:3px; padding:6px; }
+.ebw-result-main { min-width:0; }
+.ebw-result-name { color:var(--gold-pale); font-family:'Cinzel',serif; font-size:0.68rem; }
+.ebw-result-meta { color:var(--steel-pale); font-family:'JetBrains Mono',monospace; font-size:0.55rem; margin-top:2px; }
+.ebw-result-desc { color:var(--bone); font-size:0.72rem; margin-top:3px; max-height:38px; overflow:hidden; }
+@media(max-width:1200px){ .ebw-action-controls,.ebw-action-meta-controls { grid-template-columns:1fr 1fr; } }
 .ebw-mini { font-family:'JetBrains Mono',monospace; font-size:0.62rem; padding:5px 7px; }
 .ebw-budget {
   position:sticky; top:0; z-index:2; background:linear-gradient(180deg,#1c160e,#15110b);
@@ -17607,10 +17621,68 @@ function _ebwExtractActions(sn) {
       flat:p.flat,
       avg:_ebwAvgFormula(damage),
       desc:a.desc || '',
+      range:a.range || a.reach || _ebwRangeFromDesc(a.desc) || '',
+      toHit:a.toHit || a.to_hit || '',
+      saveAbility:a.saveAbility || a.save_ability || _ebwSaveFromDesc(a.desc).ability || '',
+      saveDc:a.saveDc || a.save_dc || _ebwSaveFromDesc(a.desc).dc || '',
+      damageType:a.dmgType || a.damage_type || _ebwDamageTypeFromDesc(a.desc) || '',
+      source:a._ebwSource || '',
       altRanged: !!(a._ebwAltRanged || a.altRanged || a.single_alt_ranged),
       altWeight: Math.max(0.05, Math.min(1, parseFloat(a._ebwAltWeight || a.altWeight || 0.5) || 0.5))
     };
-  }).filter(x => x.damage || x.desc);
+  }).filter(x => x.damage || x.desc || x.name);
+}
+function _ebwRangeFromDesc(desc) {
+  const m = String(desc || '').match(/(?:range|reach)\s+([^,.]+(?:ft\.?|feet))/i);
+  return m ? m[1].trim() : '';
+}
+function _ebwSaveFromDesc(desc) {
+  const m = String(desc || '').match(/DC\s*(\d+)\s*(STR|DEX|CON|INT|WIS|CHA)/i);
+  return m ? { dc:m[1], ability:m[2].toUpperCase() } : { dc:'', ability:'' };
+}
+function _ebwDamageTypeFromDesc(desc) {
+  const m = String(desc || '').match(/\d+d\d+(?:\s*[+\-]\s*\d+)?\s+([a-z]+)\s+damage/i);
+  return m ? m[1].toLowerCase() : '';
+}
+function _ebwNewAction(seed) {
+  const p = _ebwDamageParts(seed && seed.damage || '1d6');
+  return Object.assign({
+    i:'new-' + Date.now() + '-' + Math.random().toString(36).slice(2,7),
+    name:'New Action', damage:'1d6', n:p.n || 1, die:p.die || 6, flat:p.flat || 0,
+    desc:'', range:'', toHit:'', saveAbility:'', saveDc:'', damageType:'', source:'custom',
+    altRanged:false, altWeight:0.5
+  }, seed || {});
+}
+function _ebwSpellToAction(spell) {
+  const damage = spell.damage || (spell.extra_type === 'damage' ? spell.extra : '') || '';
+  const p = _ebwDamageParts(damage || '1d6');
+  const attackText = spell.attack_type ? (String(spell.attack_type).toUpperCase() + ' spell attack. ') : '';
+  const saveText = spell.save_ability ? ('DC ' + ((_ebwState && _ebwState.scaledPreview && _ebwState.scaledPreview.spell_save_dc) || '') + ' ' + spell.save_ability + ' save. ') : '';
+  const dmgText = damage ? ('Hit/Fail: ' + damage + (spell.damage_type ? ' ' + spell.damage_type : '') + ' damage. ') : '';
+  return _ebwNewAction({
+    name: spell.name || 'Spell',
+    damage: damage || '0', n:p.n, die:p.die, flat:p.flat,
+    desc: [attackText, saveText, dmgText, spell.description || ''].filter(Boolean).join('').trim(),
+    range: spell.range || '',
+    saveAbility: spell.save_ability || '',
+    saveDc: ((_ebwState && _ebwState.scaledPreview && _ebwState.scaledPreview.spell_save_dc) || ''),
+    damageType: spell.damage_type || '',
+    source:'spell:' + (spell.id || spell.name || '')
+  });
+}
+function _ebwMonsterActionToAction(mon, act) {
+  const damage = act.damage || _ebwFirstDamageFormulaFromDesc(act.desc) || '0';
+  const p = _ebwDamageParts(damage || '1d6');
+  return _ebwNewAction({
+    name: act.name || 'Borrowed Action', damage, n:p.n, die:p.die, flat:p.flat,
+    desc: (act.desc || '') + (mon && mon.name ? ('\n\nBorrowed from ' + mon.name + '.') : ''),
+    range: act.range || act.reach || _ebwRangeFromDesc(act.desc) || '',
+    toHit: act.toHit || act.to_hit || '',
+    saveAbility: act.saveAbility || act.save_ability || _ebwSaveFromDesc(act.desc).ability || '',
+    saveDc: act.saveDc || act.save_dc || _ebwSaveFromDesc(act.desc).dc || '',
+    damageType: act.dmgType || act.damage_type || _ebwDamageTypeFromDesc(act.desc) || '',
+    source:'monster:' + (mon && (mon.id || mon.name) || '')
+  });
 }
 function _ebwFindMultiattack(sn) {
   const lists = [sn.actions, sn.special_abilities, sn.special, sn.legendary_actions].filter(Array.isArray);
@@ -17712,7 +17784,9 @@ function openEncounterBalanceWizard(node, idx) {
     sourceName: _ebwNormalizeVariantName(sn.name || 'Monster'),
     actions: _ebwExtractActions(sn),
     multiattack: _ebwFindMultiattack(sn),
-    scaledPreview: sn
+    scaledPreview: sn,
+    spellQuery:'', spellResults:[], spellSearching:false,
+    monsterQuery:'', monsterResults:[], monsterSearching:false
   };
   const modal = document.getElementById('enc-balance-modal');
   if (modal) { modal.classList.add('open'); modal.setAttribute('aria-hidden','false'); }
@@ -17732,6 +17806,73 @@ function _ebwApplyTargetScale() {
   _ebwState.scaledPreview = scaled;
   _ebwState.actions = _ebwExtractActions(scaled);
 }
+function _ebwRenderActionRow(a, pos) {
+  return `
+      <div class="ebw-action-row" data-ebw-action="${pos}">
+        <div class="ebw-action-head"><span class="ebw-action-name">${escHtml(a.name)}${a.source ? ` <span style="font-family:'JetBrains Mono',monospace;font-size:0.55rem;color:var(--steel-pale);">${escHtml(a.source.split(':')[0])}</span>` : ''}</span><label class="ebw-alt-toggle" title="Use when this is a ranged action the monster takes instead of its normal melee/offense routine. It keeps the real dice but excludes this option from the main DPR budget."><input type="checkbox" data-ebw-alt-ranged ${a.altRanged ? 'checked' : ''}> Alt ranged solo</label><span class="ebw-action-dpr">${a.altRanged ? ('excluded from budget / ' + _ebwActionEffectiveDpr(a) + ' tactical / ' + _ebwActionRawDpr(a) + ' raw DPR') : (_ebwActionRawDpr(a) + ' DPR')}</span></div>
+        <div class="ebw-action-controls">
+          <input class="ebw-input ebw-mini" data-ebw-key="name" value="${escAttr(a.name)}" title="Action name">
+          <button class="ebw-btn ebw-mini" data-ebw-dice="-1" type="button">− die</button>
+          <input class="ebw-input ebw-mini" data-ebw-key="n" type="number" min="0" value="${a.n}">
+          <select class="ebw-select ebw-mini" data-ebw-key="die">${[4,6,8,10,12].map(d=>`<option value="${d}" ${d===a.die?'selected':''}>d${d}</option>`).join('')}</select>
+          <button class="ebw-btn ebw-mini" data-ebw-dice="1" type="button">+ die</button>
+          <span class="ebw-label">Flat</span><input class="ebw-input ebw-mini" data-ebw-key="flat" type="number" value="${a.flat}">
+          <span class="ebw-label">Formula</span><input class="ebw-input ebw-mini" data-ebw-key="formula" value="${escAttr(_ebwFormula(a.n,a.die,a.flat))}">
+          <span class="ebw-label">Alt ranged factor</span><select class="ebw-select ebw-mini" data-ebw-alt-weight title="Reference factor for the solo ranged option; this does not spend the main DPR budget." ${a.altRanged ? '' : 'disabled'}>${[[0.25,'25%'],[0.33,'33%'],[0.5,'50%'],[0.67,'67%'],[0.75,'75%']].map(([v,l])=>`<option value="${v}" ${Math.abs((parseFloat(a.altWeight)||0.5)-v)<0.01?'selected':''}>${l} output</option>`).join('')}</select>
+        </div>
+        <div class="ebw-action-meta-controls">
+          <div class="ebw-field"><label>Range / Reach</label><input class="ebw-input ebw-mini" data-ebw-key="range" value="${escAttr(a.range || '')}" placeholder="80/320 ft."></div>
+          <div class="ebw-field"><label>To Hit</label><input class="ebw-input ebw-mini" data-ebw-key="toHit" value="${escAttr(a.toHit || '')}" placeholder="+7"></div>
+          <div class="ebw-field"><label>Save</label><select class="ebw-select ebw-mini" data-ebw-key="saveAbility"><option value=""></option>${['STR','DEX','CON','INT','WIS','CHA'].map(ab=>`<option value="${ab}" ${String(a.saveAbility||'').toUpperCase()===ab?'selected':''}>${ab}</option>`).join('')}</select></div>
+          <div class="ebw-field"><label>DC</label><input class="ebw-input ebw-mini" data-ebw-key="saveDc" type="number" value="${escAttr(a.saveDc || '')}"></div>
+          <div class="ebw-field"><label>Damage Type</label><input class="ebw-input ebw-mini" data-ebw-key="damageType" value="${escAttr(a.damageType || '')}" placeholder="fire"></div>
+          <div class="ebw-field"><label>Source</label><input class="ebw-input ebw-mini" value="${escAttr(a.source || 'native')}" readonly></div>
+        </div>
+        <div class="ebw-action-desc-row"><textarea class="ebw-textarea ebw-mini" data-ebw-key="desc" placeholder="Flavor text, rider, save effects, recharge notes…">${escHtml(a.desc || '')}</textarea></div>
+      </div>`;
+}
+function _ebwRenderToolboxes() {
+  const spells = (_ebwState.spellResults || []).map(sp => `
+    <div class="ebw-result">
+      <div class="ebw-result-main"><div class="ebw-result-name">${escHtml(sp.name || 'Spell')}</div><div class="ebw-result-meta">${sp.level ? 'Level '+sp.level : 'Cantrip'} · ${escHtml(sp.school || '')} · ${escHtml(sp.range || '')}${sp.damage ? ' · '+escHtml(sp.damage) : ''}${sp.save_ability ? ' · '+escHtml(sp.save_ability)+' save' : ''}</div><div class="ebw-result-desc">${escHtml(sp.description || '')}</div></div>
+      <button class="ebw-btn ebw-mini" data-ebw-add-spell="${escAttr(sp.id)}" type="button">Apply</button>
+    </div>`).join('') || '<p class="ebw-help">Search your Spell Workshop compendium, then Apply to convert the spell into a wizard action row.</p>';
+  const monsters = (_ebwState.monsterResults || []).map((mon, mi) => {
+    const actions = (mon.actions || []).filter(a => a && (a.damage || a.desc || a.name)).slice(0,8).map((a, ai) => `
+      <div class="ebw-result" style="grid-template-columns:1fr auto;">
+        <div class="ebw-result-main"><div class="ebw-result-name">${escHtml(a.name || 'Action')}</div><div class="ebw-result-meta">${escHtml(mon.name || 'Monster')} · CR ${escHtml(mon.cr || '?')}${(a.damage || _ebwFirstDamageFormulaFromDesc(a.desc)) ? ' · '+escHtml(a.damage || _ebwFirstDamageFormulaFromDesc(a.desc)) : ''}</div><div class="ebw-result-desc">${escHtml(a.desc || '')}</div></div>
+        <button class="ebw-btn ebw-mini" data-ebw-add-mon-action="${mi}:${ai}" type="button">Borrow</button>
+      </div>`).join('');
+    return actions;
+  }).join('') || '<p class="ebw-help">Search Monster Workshop rows, then Borrow an action/ability into this monster.</p>';
+  return `
+    <div class="ebw-toolbox">
+      <div class="ebw-toolbox-title">Create / Import Actions</div>
+      <div class="ebw-row"><button class="ebw-btn" id="ebwAddBlankAction" type="button">+ New Blank Action</button></div>
+      <div class="ebw-search-row"><input class="ebw-input" id="ebwSpellSearch" value="${escAttr(_ebwState.spellQuery || '')}" placeholder="Search Spell Workshop…"><button class="ebw-btn" id="ebwSpellSearchBtn" type="button">Search Spells</button></div>
+      <div class="ebw-result-list">${spells}</div>
+      <div class="ebw-search-row" style="margin-top:8px;"><input class="ebw-input" id="ebwMonsterSearch" value="${escAttr(_ebwState.monsterQuery || '')}" placeholder="Search monsters to borrow actions…"><button class="ebw-btn" id="ebwMonsterSearchBtn" type="button">Search Monsters</button></div>
+      <div class="ebw-result-list">${monsters}</div>
+    </div>`;
+}
+async function _ebwSearchSpells() {
+  if (!_ebwState) return;
+  const q = String(_ebwState.spellQuery || '').trim().toLowerCase();
+  const all = await fetchSpellCompendiumCached();
+  _ebwState.spellResults = (all || []).filter(sp => !q || String(sp.name || '').toLowerCase().includes(q) || String(sp.description || '').toLowerCase().includes(q)).slice(0,12);
+  renderEncounterBalanceWizard();
+}
+async function _ebwSearchMonsters() {
+  if (!_ebwState) return;
+  const q = String(_ebwState.monsterQuery || '').trim();
+  if (!q) { _ebwState.monsterResults = []; renderEncounterBalanceWizard(); return; }
+  try {
+    const rows = await sbFetch('rq_monsters?select=id,name,cr,actions,special_abilities,legendary_actions&order=name.asc&limit=20&name=ilike.*' + encodeURIComponent(q) + '*');
+    _ebwState.monsterResults = (Array.isArray(rows) ? rows : []).map(r => ({...r, actions:[...(r.actions||[]), ...(r.special_abilities||[]), ...(r.legendary_actions||[])]}));
+  } catch (e) { console.warn('EBW monster search failed', e); _ebwState.monsterResults = []; }
+  renderEncounterBalanceWizard();
+}
+
 function renderEncounterBalanceWizard() {
   if (!_ebwState) return;
   const left = document.getElementById('ebwLeft'), mid = document.getElementById('ebwMiddle'), right = document.getElementById('ebwRight');
@@ -17765,20 +17906,8 @@ function renderEncounterBalanceWizard() {
       <div class="ebw-budget-line ${over?'over':''}"><span>${over?'Overspent':'Remaining'}</span><strong>${Math.abs(remaining)}</strong></div>
     </div>
     <p class="ebw-help">Mark an action as <b>Alt ranged solo</b> when it is an either/or ranged option, such as an ogre choosing javelin instead of greatclub. The stat block keeps the ranged dice, but the action is excluded from the main DPR point-buy so it will not create an overspent budget. The dropdown shows its tactical/ranged output factor for reference.</p>
-    ${_ebwState.actions.length ? _ebwState.actions.map((a, pos)=>`
-      <div class="ebw-action-row" data-ebw-action="${pos}">
-        <div class="ebw-action-head"><span class="ebw-action-name">${escHtml(a.name)}</span><label class="ebw-alt-toggle" title="Use when this is a ranged action the monster takes instead of its normal melee/offense routine. It keeps the real dice but excludes this option from the main DPR budget."><input type="checkbox" data-ebw-alt-ranged ${a.altRanged ? 'checked' : ''}> Alt ranged solo</label><span class="ebw-action-dpr">${a.altRanged ? ('excluded from budget / ' + _ebwActionEffectiveDpr(a) + ' tactical / ' + _ebwActionRawDpr(a) + ' raw DPR') : (_ebwActionRawDpr(a) + ' DPR')}</span></div>
-        <div class="ebw-action-controls">
-          <input class="ebw-input ebw-mini" data-ebw-key="name" value="${escAttr(a.name)}" title="Action name">
-          <button class="ebw-btn ebw-mini" data-ebw-dice="-1" type="button">− die</button>
-          <input class="ebw-input ebw-mini" data-ebw-key="n" type="number" min="0" value="${a.n}">
-          <select class="ebw-select ebw-mini" data-ebw-key="die">${[4,6,8,10,12].map(d=>`<option value="${d}" ${d===a.die?'selected':''}>d${d}</option>`).join('')}</select>
-          <button class="ebw-btn ebw-mini" data-ebw-dice="1" type="button">+ die</button>
-          <span class="ebw-label">Flat</span><input class="ebw-input ebw-mini" data-ebw-key="flat" type="number" value="${a.flat}">
-          <span class="ebw-label">Formula</span><input class="ebw-input ebw-mini" data-ebw-key="formula" value="${escAttr(_ebwFormula(a.n,a.die,a.flat))}">
-          <span class="ebw-label">Alt ranged factor</span><select class="ebw-select ebw-mini" data-ebw-alt-weight title="Reference factor for the solo ranged option; this does not spend the main DPR budget." ${a.altRanged ? '' : 'disabled'}>${[[0.25,'25%'],[0.33,'33%'],[0.5,'50%'],[0.67,'67%'],[0.75,'75%']].map(([v,l])=>`<option value="${v}" ${Math.abs((parseFloat(a.altWeight)||0.5)-v)<0.01?'selected':''}>${l} output</option>`).join('')}</select>
-        </div>
-      </div>`).join('') : '<p class="ebw-help">No damage formulas found on this snapshot. You can still scale CR/HP/AC, but there is nothing to allocate until actions include dice formulas.</p>'}`;
+    ${_ebwRenderToolboxes()}
+    ${_ebwState.actions.length ? _ebwState.actions.map((a, pos)=>_ebwRenderActionRow(a, pos)).join('') : '<p class="ebw-help">No damage formulas found on this snapshot. Add a blank action, apply a spell, or borrow an action from another monster.</p>'}`;
   const sn = _ebwState.scaledPreview || {};
   right.innerHTML = `
     <h4>Preview & Export</h4>
@@ -17797,13 +17926,20 @@ function wireEncounterBalanceWizard() {
   const name = document.getElementById('ebwName'); if (name) name.oninput = () => { if (_ebwState) _ebwState.name = name.value; };
   const cr = document.getElementById('ebwTargetCr'); if (cr) cr.onchange = () => { _ebwState.targetCr = cr.value; _ebwApplyTargetScale(); renderEncounterBalanceWizard(); };
   const auto = document.getElementById('ebwAutoScaleBtn'); if (auto) auto.onclick = () => { _ebwApplyTargetScale(); renderEncounterBalanceWizard(); };
+  const addBlank = document.getElementById('ebwAddBlankAction'); if (addBlank) addBlank.onclick = () => { _ebwState.actions.push(_ebwNewAction()); renderEncounterBalanceWizard(); };
+  const spIn = document.getElementById('ebwSpellSearch'); if (spIn) { spIn.oninput = () => { _ebwState.spellQuery = spIn.value; }; spIn.onkeydown = e => { if (e.key === 'Enter') _ebwSearchSpells(); }; }
+  const spBtn = document.getElementById('ebwSpellSearchBtn'); if (spBtn) spBtn.onclick = _ebwSearchSpells;
+  document.querySelectorAll('[data-ebw-add-spell]').forEach(btn => btn.onclick = () => { const sp = (_ebwState.spellResults||[]).find(x => String(x.id) === String(btn.dataset.ebwAddSpell)); if (sp) { _ebwState.actions.push(_ebwSpellToAction(sp)); renderEncounterBalanceWizard(); } });
+  const monIn = document.getElementById('ebwMonsterSearch'); if (monIn) { monIn.oninput = () => { _ebwState.monsterQuery = monIn.value; }; monIn.onkeydown = e => { if (e.key === 'Enter') _ebwSearchMonsters(); }; }
+  const monBtn = document.getElementById('ebwMonsterSearchBtn'); if (monBtn) monBtn.onclick = _ebwSearchMonsters;
+  document.querySelectorAll('[data-ebw-add-mon-action]').forEach(btn => btn.onclick = () => { const [mi, ai] = String(btn.dataset.ebwAddMonAction||'').split(':').map(x=>parseInt(x)); const mon = (_ebwState.monsterResults||[])[mi]; const act = mon && (mon.actions||[])[ai]; if (act) { _ebwState.actions.push(_ebwMonsterActionToAction(mon, act)); renderEncounterBalanceWizard(); } });
   document.querySelectorAll('[data-ebw-action]').forEach(row => {
     const pos = parseInt(row.dataset.ebwAction); const a = _ebwState.actions[pos]; if (!a) return;
     row.querySelectorAll('[data-ebw-key]').forEach(el => {
       el.oninput = el.onchange = () => {
         const k = el.dataset.ebwKey;
         if (k === 'formula') { const p = _ebwDamageParts(el.value); if (p.valid) { a.n=p.n; a.die=p.die; a.flat=p.flat; } }
-        else if (k === 'name') a.name = el.value;
+        else if (['name','desc','range','toHit','saveAbility','saveDc','damageType'].includes(k)) a[k] = el.value;
         else a[k] = parseInt(el.value) || 0;
         renderEncounterBalanceWizard();
       };
@@ -17824,25 +17960,36 @@ function _ebwBuildSnapshot() {
   const sn = JSON.parse(JSON.stringify(_ebwState.scaledPreview || {}));
   sn.name = _ebwNormalizeVariantName(_ebwState.name || sn.name || 'Encounter Variant');
   _ebwSyncDefenseToTarget(sn);
-  if (Array.isArray(sn.actions)) {
-    _ebwState.actions.forEach(a => {
-      const act = sn.actions[a.i]; if (!act) return;
-      act.name = a.name || act.name;
-      if (a.altRanged) {
-        act._ebwAltRanged = true;
-        act._ebwAltWeight = Math.max(0.05, Math.min(1, parseFloat(a.altWeight) || 0.5));
-      } else {
-        delete act._ebwAltRanged;
-        delete act._ebwAltWeight;
-      }
-      const f = _ebwFormula(a.n, a.die, a.flat);
-      if (act.damage || !act.desc) act.damage = f;
-      if (act.desc) {
-        if (/\d+d\d+(?:\s*[+\-]\s*\d+)?/i.test(act.desc)) act.desc = act.desc.replace(/\d+d\d+(?:\s*[+\-]\s*\d+)?/i, f);
-        else if (f) act.desc += ' Hit: ' + f + ' damage.';
-      }
-    });
-  }
+  if (!Array.isArray(sn.actions)) sn.actions = [];
+  const nextActions = sn.actions.slice();
+  _ebwState.actions.forEach(a => {
+    const isNew = typeof a.i !== 'number';
+    const act = isNew ? {} : (nextActions[a.i] || {});
+    act.name = a.name || act.name || 'Action';
+    if (a.range) act.range = a.range; else delete act.range;
+    if (a.toHit) act.toHit = a.toHit; else delete act.toHit;
+    if (a.saveAbility) act.save_ability = String(a.saveAbility).toUpperCase(); else delete act.save_ability;
+    if (a.saveDc) act.save_dc = parseInt(a.saveDc) || a.saveDc; else delete act.save_dc;
+    if (a.damageType) act.damage_type = a.damageType;
+    if (a.source) act._ebwSource = a.source;
+    if (a.altRanged) {
+      act._ebwAltRanged = true;
+      act._ebwAltWeight = Math.max(0.05, Math.min(1, parseFloat(a.altWeight) || 0.5));
+    } else {
+      delete act._ebwAltRanged;
+      delete act._ebwAltWeight;
+    }
+    const f = _ebwFormula(a.n, a.die, a.flat);
+    act.damage = f;
+    let desc = String(a.desc || act.desc || '').trim();
+    const bits = [];
+    if (a.toHit && !/attack/i.test(desc)) bits.push('Attack: ' + a.toHit + ' to hit' + (a.range ? ', range/reach ' + a.range : '') + '.');
+    if (a.saveAbility && a.saveDc && !/saving throw|DC\s*\d+/i.test(desc)) bits.push('DC ' + a.saveDc + ' ' + String(a.saveAbility).toUpperCase() + ' saving throw.');
+    if (f && !/\d+d\d+|Hit:/i.test(desc)) bits.push('Hit/Fail: ' + f + (a.damageType ? ' ' + a.damageType : '') + ' damage.');
+    act.desc = [bits.join(' '), desc].filter(Boolean).join(' ');
+    if (isNew) nextActions.push(act); else nextActions[a.i] = act;
+  });
+  sn.actions = nextActions;
   return sn;
 }
 function _ebwCommit(mode, closeAfter = false) {
