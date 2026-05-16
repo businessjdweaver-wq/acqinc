@@ -6772,7 +6772,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 59 / DPR Flat Balanceg — Encounter Wizard Difficulty Sync v1.3.8</span>
+  <span class="topbar-version">Stage 60 / DC Revise Focus — Encounter Wizard v1.3.15</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -17666,11 +17666,82 @@ function _ebwNewAction(seed) {
     altRanged:false, altWeight:0.5, usageWeight:1, burstWeight:1
   }, seed || {});
 }
+
+function _ebwDefaultSaveDc(cr) {
+  const key = String(cr || (_ebwState && _ebwState.targetCr) || (_ebwState && _ebwState.scaledPreview && _ebwState.scaledPreview.cr) || '0');
+  const t = (typeof CANVAS_CR_TABLE !== 'undefined') ? CANVAS_CR_TABLE[key] : null;
+  return t && t.dc ? t.dc : 13;
+}
+function _ebwDefaultToHit(cr) {
+  const key = String(cr || (_ebwState && _ebwState.targetCr) || (_ebwState && _ebwState.scaledPreview && _ebwState.scaledPreview.cr) || '0');
+  const t = (typeof CANVAS_CR_TABLE !== 'undefined') ? CANVAS_CR_TABLE[key] : null;
+  return t && t.atk ? t.atk : '+3';
+}
+function _ebwAbilityFull(ab) {
+  const k = String(ab || '').trim().toUpperCase();
+  return ({STR:'Strength', DEX:'Dexterity', CON:'Constitution', INT:'Intelligence', WIS:'Wisdom', CHA:'Charisma'})[k] || String(ab || '').trim();
+}
+function _ebwParseFieldsFromDescIntoAction(a) {
+  if (!a) return a;
+  const desc = String(a.desc || '');
+  const dmg = _ebwFirstDamageFormulaFromDesc(desc);
+  if (dmg && (!a.n || !a.die || !a.damage)) {
+    const p = _ebwDamageParts(dmg);
+    if (p.valid) { a.n = p.n; a.die = p.die; a.flat = p.flat; a.damage = dmg; }
+  }
+  const save = _ebwSaveFromDesc(desc);
+  if (save.ability && !a.saveAbility) a.saveAbility = save.ability;
+  if (save.dc && !a.saveDc) a.saveDc = save.dc;
+  const dt = _ebwDamageTypeFromDesc(desc);
+  if (dt && !a.damageType) a.damageType = dt;
+  const rng = _ebwRangeFromDesc(desc);
+  if (rng && !a.range) a.range = rng;
+  const hit = desc.match(/([+\-]\d+)\s+to hit/i);
+  if (hit && !a.toHit) a.toHit = hit[1];
+  return a;
+}
+function _ebwStripMechanicalLead(desc) {
+  let text = String(desc || '').trim();
+  text = text.replace(/^\s*(?:Melee|Ranged|Melee or Ranged|Spell|Weapon|Melee Weapon|Ranged Weapon|Melee Spell|Ranged Spell)[^\.]*?Attack:[\s\S]*?\bdamage\.\s*/i, '');
+  text = text.replace(/^\s*Attack:\s*[\s\S]*?\bdamage\.\s*/i, '');
+  text = text.replace(/^\s*Hit\/?Fail:\s*[\s\S]*?\bdamage\.\s*/i, '');
+  text = text.replace(/^\s*DC\s*\d+\s*(?:STR|DEX|CON|INT|WIS|CHA|Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)[^\.]*?saving throw\.\s*/i, '');
+  return text.trim();
+}
+function _ebwRevisedActionDesc(a) {
+  if (!a) return '';
+  _ebwParseFieldsFromDescIntoAction(a);
+  if (a.saveAbility && !a.saveDc) a.saveDc = _ebwDefaultSaveDc();
+  const f = _ebwFormula(a.n, a.die, a.flat);
+  const avg = Math.round(_ebwAvgFormula(f));
+  const type = a.damageType ? ' ' + String(a.damageType).toLowerCase() : '';
+  const bits = [];
+  const range = String(a.range || '').trim();
+  const toHit = String(a.toHit || '').trim();
+  if (toHit) {
+    let kind = (a.source && String(a.source).startsWith('spell:')) ? 'Spell Attack' : 'Weapon Attack';
+    if (/\//.test(range) || /range/i.test(range)) kind = (a.source && String(a.source).startsWith('spell:')) ? 'Ranged Spell Attack' : 'Ranged Weapon Attack';
+    else if (/ft|reach/i.test(range)) kind = (a.source && String(a.source).startsWith('spell:')) ? 'Melee Spell Attack' : 'Melee Weapon Attack';
+    const reachText = range ? ((/\//.test(range) || /^\d/.test(range) && !/reach/i.test(range)) ? 'range ' + range : 'reach ' + range) : 'reach 5 ft.';
+    bits.push(kind + ': ' + toHit + ' to hit, ' + reachText + ', one target.');
+  }
+  if (f && f !== '0') bits.push('Hit: ' + avg + ' (' + f + ')' + type + ' damage.');
+  if (a.saveAbility && a.saveDc) bits.push('If the target is a creature, it must succeed on a DC ' + a.saveDc + ' ' + _ebwAbilityFull(a.saveAbility) + ' saving throw.');
+  const rider = _ebwStripMechanicalLead(a.desc || '');
+  return bits.concat(rider ? [rider] : []).join(' ').replace(/\s+/g, ' ').trim();
+}
+function _ebwParseAndReviseAllActionText() {
+  if (!_ebwState) return;
+  (_ebwState.actions || []).forEach(a => { a.desc = _ebwRevisedActionDesc(a); });
+  renderEncounterBalanceWizard();
+}
+
 function _ebwSpellToAction(spell) {
   const damage = spell.damage || (spell.extra_type === 'damage' ? spell.extra : '') || '';
   const p = _ebwDamageParts(damage || '1d6');
   const attackText = spell.attack_type ? (String(spell.attack_type).toUpperCase() + ' spell attack. ') : '';
-  const saveText = spell.save_ability ? ('DC ' + ((_ebwState && _ebwState.scaledPreview && _ebwState.scaledPreview.spell_save_dc) || '') + ' ' + spell.save_ability + ' save. ') : '';
+  const dc = spell.save_ability ? _ebwDefaultSaveDc() : '';
+  const saveText = spell.save_ability ? ('DC ' + dc + ' ' + spell.save_ability + ' save. ') : '';
   const dmgText = damage ? ('Hit/Fail: ' + damage + (spell.damage_type ? ' ' + spell.damage_type : '') + ' damage. ') : '';
   return _ebwNewAction({
     name: spell.name || 'Spell',
@@ -17678,7 +17749,7 @@ function _ebwSpellToAction(spell) {
     desc: [attackText, saveText, dmgText, spell.description || ''].filter(Boolean).join('').trim(),
     range: spell.range || '',
     saveAbility: spell.save_ability || '',
-    saveDc: ((_ebwState && _ebwState.scaledPreview && _ebwState.scaledPreview.spell_save_dc) || ''),
+    saveDc: dc,
     damageType: spell.damage_type || '',
     source:'spell:' + (spell.id || spell.name || '')
   });
@@ -17686,13 +17757,16 @@ function _ebwSpellToAction(spell) {
 function _ebwMonsterActionToAction(mon, act) {
   const damage = act.damage || _ebwFirstDamageFormulaFromDesc(act.desc) || '0';
   const p = _ebwDamageParts(damage || '1d6');
+  const parsedSave = _ebwSaveFromDesc(act.desc);
+  const saveAbility = act.saveAbility || act.save_ability || parsedSave.ability || '';
+  const saveDc = act.saveDc || act.save_dc || parsedSave.dc || (saveAbility ? _ebwDefaultSaveDc() : '');
   return _ebwNewAction({
     name: act.name || 'Borrowed Action', damage, n:p.n, die:p.die, flat:p.flat,
     desc: (act.desc || '') + (mon && mon.name ? ('\n\nBorrowed from ' + mon.name + '.') : ''),
     range: act.range || act.reach || _ebwRangeFromDesc(act.desc) || '',
     toHit: act.toHit || act.to_hit || '',
-    saveAbility: act.saveAbility || act.save_ability || _ebwSaveFromDesc(act.desc).ability || '',
-    saveDc: act.saveDc || act.save_dc || _ebwSaveFromDesc(act.desc).dc || '',
+    saveAbility: saveAbility,
+    saveDc: saveDc,
     damageType: act.dmgType || act.damage_type || _ebwDamageTypeFromDesc(act.desc) || '',
     source:'monster:' + (mon && (mon.id || mon.name) || '')
   });
@@ -18016,14 +18090,19 @@ function wireEncounterBalanceWizard() {
   document.querySelectorAll('[data-ebw-action]').forEach(row => {
     const pos = parseInt(row.dataset.ebwAction); const a = _ebwState.actions[pos]; if (!a) return;
     row.querySelectorAll('[data-ebw-key]').forEach(el => {
-      el.oninput = el.onchange = () => {
+      const syncField = () => {
         const k = el.dataset.ebwKey;
-        if (k === 'formula') { const p = _ebwDamageParts(el.value); if (p.valid) { a.n=p.n; a.die=p.die; a.flat=p.flat; } }
-        else if (['name','desc','range','toHit','saveAbility','saveDc','damageType'].includes(k)) a[k] = el.value;
+        if (k === 'formula') { const p = _ebwDamageParts(el.value); if (p.valid) { a.n=p.n; a.die=p.die; a.flat=p.flat; a.damage = _ebwFormula(a.n,a.die,a.flat); } }
+        else if (['name','desc','range','toHit','saveAbility','saveDc','damageType'].includes(k)) {
+          a[k] = el.value;
+          if (k === 'saveAbility' && a.saveAbility && !a.saveDc) a.saveDc = _ebwDefaultSaveDc();
+        }
         else if (['usageWeight','burstWeight'].includes(k)) a[k] = Math.max(0, parseFloat(el.value) || 0);
-        else a[k] = parseInt(el.value) || 0;
-        renderEncounterBalanceWizard();
+        else { a[k] = parseInt(el.value) || 0; a.damage = _ebwFormula(a.n,a.die,a.flat); }
       };
+      el.oninput = () => { syncField(); };
+      el.onchange = () => { syncField(); renderEncounterBalanceWizard(); };
+      el.onblur = () => { syncField(); renderEncounterBalanceWizard(); };
     });
     row.querySelectorAll('[data-ebw-dice]').forEach(btn => btn.onclick = () => { a.n = Math.max(0, (parseInt(a.n)||0) + (parseInt(btn.dataset.ebwDice)||0)); renderEncounterBalanceWizard(); });
     const alt = row.querySelector('[data-ebw-alt-ranged]');
@@ -18031,6 +18110,7 @@ function wireEncounterBalanceWizard() {
     const wt = row.querySelector('[data-ebw-alt-weight]');
     if (wt) wt.onchange = () => { a.altWeight = Math.max(0.05, Math.min(1, parseFloat(wt.value) || 0.5)); renderEncounterBalanceWizard(); };
   });
+  const parseRevise = document.getElementById('ebwParseReviseBtn'); if (parseRevise) parseRevise.onclick = _ebwParseAndReviseAllActionText;
   const saveInst = document.getElementById('ebwSaveInstanceBtn'); if (saveInst) saveInst.onclick = () => _ebwCommit('apply', false);
   const saveClose = document.getElementById('ebwSaveCloseBtn'); if (saveClose) saveClose.onclick = () => _ebwCommit('apply', true);
   const clone = document.getElementById('ebwCloneBtn'); if (clone) clone.onclick = () => _ebwCommit('clone', false);
@@ -18065,6 +18145,8 @@ function _ebwBuildSnapshot() {
     const f = _ebwFormula(a.n, a.die, a.flat);
     act.damage = f;
     let desc = String(a.desc || act.desc || '').trim();
+    // Keep saved/exported text aligned with the current structured fields when the text has stale DC or damage values.
+    if (desc && ((a.saveAbility && a.saveDc) || f)) desc = _ebwRevisedActionDesc(Object.assign({}, a, { desc }));
     const bits = [];
     if (a.toHit && !/attack/i.test(desc)) bits.push('Attack: ' + a.toHit + ' to hit' + (a.range ? ', range/reach ' + a.range : '') + '.');
     if (a.saveAbility && a.saveDc && !/saving throw|DC\s*\d+/i.test(desc)) bits.push('DC ' + a.saveDc + ' ' + String(a.saveAbility).toUpperCase() + ' saving throw.');
@@ -23620,6 +23702,7 @@ boot();
   <div class="ebw-foot">
     <button class="ebw-btn ghost" type="button" id="ebwCloneBtn">Clone in Encounter</button>
     <button class="ebw-btn ghost" type="button" id="ebwSaveWorkshopBtn">Save as Workshop Skin</button>
+    <button class="ebw-btn ghost" type="button" id="ebwParseReviseBtn">Parse & Revise Text</button>
     <button class="ebw-btn" type="button" id="ebwSaveInstanceBtn">Save</button>
     <button class="ebw-btn" type="button" id="ebwSaveCloseBtn">Save & Close</button>
   </div>
