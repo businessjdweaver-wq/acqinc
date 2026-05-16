@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.24 · save hydration fix</span>
+  <span class="topbar-version">v0.5.25 · save hydration fix</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -1741,7 +1741,7 @@ body {
     <a href="session-planner.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">← Session Planner</a>
     <a href="monster-blender.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">🧪 Blender</a>
     <a href="spell-workshop.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">📜 Spells</a>
-    <button class="btn btn-ghost btn-sm" onclick="openSchemaModal()" title="Show the SQL needed to add the spell-related columns to rq_monsters">🔧 Schema SQL</button>
+    <button class="btn btn-ghost btn-sm" onclick="openSchemaModal()" title="Show the SQL needed to add Workshop monster columns to rq_monsters">🔧 Schema SQL</button>
     <span id="user-email-badge" style="font-size:.7em;color:var(--steel-light,#888);margin-left:12px;align-self:center"></span>
     <button class="btn btn-ghost btn-sm" id="btn-logout" onclick="doLogout()" style="display:none">Log Out</button>
   </div>
@@ -4216,8 +4216,6 @@ function collectFormData() {
     actions: actions,
     bonus_actions: bonusActions,
     reactions: reactions,
-    bonus_actions: bonusActions,
-    reactions,
     special_abilities: special,
     legendary: isLegendary,
     legendary_resistance: parseInt(g('f_leg_res')) || 0,
@@ -4305,34 +4303,50 @@ function mergeSavedMonsterWithLivePayload(savedRow, livePayload) {
   });
 }
 
-function stripColumnsForLegacyRqMonsters(data) {
-  const clean = { ...(data || {}) };
-  // Older rq_monsters deployments may not yet have these columns. Store a full
-  // JSON fallback in notes, then rehydrate it in wrapRqMonsterRow on reload.
-  const extended = {
-    damage_resistances: clean.damage_resistances || [],
-    bonus_actions: clean.bonus_actions || [],
-    reactions: clean.reactions || []
-  };
-  const legacyBits = [];
-  if (Array.isArray(extended.damage_resistances) && extended.damage_resistances.length) legacyBits.push('Damage Resistances: ' + extended.damage_resistances.join(', '));
-  if (Array.isArray(extended.bonus_actions) && extended.bonus_actions.length) legacyBits.push('Bonus Actions: ' + extended.bonus_actions.map(a => a.name).join(', '));
-  if (Array.isArray(extended.reactions) && extended.reactions.length) legacyBits.push('Reactions: ' + extended.reactions.map(a => a.name).join(', '));
-  if (legacyBits.length || extended.bonus_actions.length || extended.reactions.length) {
-    const baseNotes = String(clean.notes || '').split(WORKSHOP_EXTENDED_FIELDS_MARKER)[0].trim();
-    clean.notes = [
-      baseNotes,
-      '[Workshop extended fields fallback]',
-      ...legacyBits,
-      WORKSHOP_EXTENDED_FIELDS_MARKER,
-      JSON.stringify(extended)
-    ].filter(Boolean).join('\n');
-  }
-  delete clean.damage_resistances;
-  delete clean.bonus_actions;
-  delete clean.reactions;
-  return clean;
+function getWorkshopSchemaSQL() {
+  return `-- Monster Workshop v0.5.25 schema support.
+-- Safe to run multiple times. These columns keep Workshop edits structured
+-- instead of hiding them in notes.
+
+ALTER TABLE rq_monsters
+  ADD COLUMN IF NOT EXISTS damage_resistances        jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS bonus_actions             jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS reactions                 jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS lair_actions              jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS legendary_actions         jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS legendary_actions_per_round int DEFAULT 3,
+  ADD COLUMN IF NOT EXISTS special_abilities         jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS abilities                 jsonb DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS saves                     jsonb DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS skills                    jsonb DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS tags                      jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS spells                    jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS spell_save_dc             int,
+  ADD COLUMN IF NOT EXISTS spell_attack_bonus        text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS hp_formula                text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS speed                     text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS size                      text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS alignment                 text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS environment               text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS source_detail             text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS base_monster_slug         text DEFAULT '';
+
+-- Helpful indexes for monsters with structured optional action blocks.
+CREATE INDEX IF NOT EXISTS rq_monsters_bonus_actions_gin ON rq_monsters USING gin (bonus_actions);
+CREATE INDEX IF NOT EXISTS rq_monsters_reactions_gin     ON rq_monsters USING gin (reactions);
+CREATE INDEX IF NOT EXISTS rq_monsters_resistances_gin   ON rq_monsters USING gin (damage_resistances);`;
 }
+
+function explainSupabaseSaveError(errText) {
+  const err = String(errText || '');
+  const col = err.match(/'([^']+)' column|column ([A-Za-z0-9_]+)|Could not find the '([^']+)'/i);
+  const colName = col ? (col[1] || col[2] || col[3]) : '';
+  if (/schema cache|Could not find|column/i.test(err)) {
+    return 'Supabase rejected the save because rq_monsters is missing a structured column' + (colName ? ` (${colName})` : '') + '. Open 🔧 Schema SQL, run the migration, then reload the page so PostgREST refreshes its schema cache.';
+  }
+  return 'Save failed: ' + err;
+}
+
 
 function isLikelyImportedBaseMonster(monster) {
   // Imported Foundry/DDB rows should remain pristine base-library rows.
@@ -4376,26 +4390,9 @@ async function saveMonsterAsSkin() {
 
     if (!res.ok) {
       const err = await res.text();
-      if (/damage_resistances|bonus_actions|reactions|schema cache|column/i.test(err)) {
-        const retry = await fetch(`${SB_URL}/rest/v1/rq_monsters`, {
-          method: 'POST',
-          headers: { ...sbHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-          body: JSON.stringify(stripColumnsForLegacyRqMonsters(data))
-        });
-        if (retry.ok) {
-          const retryRows = await retry.json();
-          const savedRow = retryRows && retryRows[0] ? retryRows[0] : null;
-          if (savedRow) currentMonster = mergeSavedMonsterWithLivePayload(savedRow, data);
-          isEditing = true;
-          await loadCustomMonsters();
-          filterMonsters();
-          if (currentMonster) renderEditor(currentMonster);
-          showToast('✓ Created skin: ' + data.name + ' (extended fields saved in notes; update rq_monsters schema for native columns)');
-          return;
-        }
-      }
-      showToast('Save as skin failed: ' + err, true);
-      console.warn('[Workshop saveMonsterAsSkin] Failed payload:', data);
+      currentMonster = mergeSavedMonsterWithLivePayload(currentMonster, data);
+      showToast(explainSupabaseSaveError(err), true);
+      console.warn('[Workshop saveMonsterAsSkin] Failed payload:', data, err);
       return;
     }
 
@@ -4512,27 +4509,12 @@ async function saveMonster() {
       console.log('[Workshop saveMonster] Saved row returned:', savedRow || currentMonster);
     } else {
       const err = await res.text();
-      if (/damage_resistances|bonus_actions|reactions|schema cache|column/i.test(err)) {
-        const legacyData = stripColumnsForLegacyRqMonsters(data);
-        const retry = await fetch(currentMonster?.id ? `${SB_URL}/rest/v1/rq_monsters?id=eq.${currentMonster.id}` : `${SB_URL}/rest/v1/rq_monsters`, {
-          method: currentMonster?.id ? 'PATCH' : 'POST',
-          headers: { ...sbHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
-          body: JSON.stringify(legacyData)
-        });
-        if (retry.ok) {
-          const rows = await retry.json();
-          const retryRow = rows && rows[0] ? rows[0] : null;
-          currentMonster = retryRow ? mergeSavedMonsterWithLivePayload(retryRow, data) : { ...(currentMonster || {}), ...data };
-          await loadCustomMonsters();
-          try { localStorage.setItem('rq_custom_monsters_dirty', Date.now().toString()); } catch(e) {}
-          filterMonsters();
-          if (currentMonster) renderEditor(currentMonster);
-          showToast('✓ ' + data.name + ' saved (extended fields saved in notes; update rq_monsters schema for native columns)');
-          return;
-        }
-      }
-      showToast('Save failed: ' + err, true);
-      console.warn('[Workshop saveMonster] Save failed payload:', data);
+      // Keep the live form payload in memory and do not re-render from stale DB rows
+      // when Supabase rejects the save. This prevents failed saves from visually
+      // wiping recent title/detail/resistance edits.
+      currentMonster = mergeSavedMonsterWithLivePayload(currentMonster, data);
+      showToast(explainSupabaseSaveError(err), true);
+      console.warn('[Workshop saveMonster] Save failed payload:', data, err);
     }
   } catch(e) {
     showToast('Network error: ' + e.message, true);
@@ -6687,18 +6669,36 @@ if (currentUser && currentUser.access_token) {
       <h3>🔧 Database Schema (one-time setup)</h3>
       <button class="ssm-close" onclick="closeSchemaModal()">✕</button>
     </div>
-    <pre id="spellSchemaPre">-- Adds three columns to rq_monsters for spell attachment.
--- Safe to run multiple times — uses IF NOT EXISTS.
+    <pre id="spellSchemaPre">-- Monster Workshop v0.5.25 schema support.
+-- Safe to run multiple times. These columns keep Workshop edits structured
+-- instead of hiding them in notes.
 
 ALTER TABLE rq_monsters
-  ADD COLUMN IF NOT EXISTS spells              jsonb DEFAULT '[]'::jsonb,
-  ADD COLUMN IF NOT EXISTS spell_save_dc       int,
-  ADD COLUMN IF NOT EXISTS spell_attack_bonus  text DEFAULT '';
+  ADD COLUMN IF NOT EXISTS damage_resistances          jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS bonus_actions               jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS reactions                   jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS lair_actions                jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS legendary_actions           jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS legendary_actions_per_round int DEFAULT 3,
+  ADD COLUMN IF NOT EXISTS special_abilities           jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS abilities                   jsonb DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS saves                       jsonb DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS skills                      jsonb DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS tags                        jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS spells                      jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS spell_save_dc               int,
+  ADD COLUMN IF NOT EXISTS spell_attack_bonus          text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS hp_formula                  text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS speed                       text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS size                        text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS alignment                   text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS environment                 text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS source_detail               text DEFAULT '',
+  ADD COLUMN IF NOT EXISTS base_monster_slug           text DEFAULT '';
 
--- Optional helpful index for monsters that have spells
-CREATE INDEX IF NOT EXISTS rq_monsters_with_spells_idx
-  ON rq_monsters ((jsonb_array_length(spells)))
-  WHERE jsonb_array_length(spells) > 0;</pre>
+CREATE INDEX IF NOT EXISTS rq_monsters_bonus_actions_gin ON rq_monsters USING gin (bonus_actions);
+CREATE INDEX IF NOT EXISTS rq_monsters_reactions_gin     ON rq_monsters USING gin (reactions);
+CREATE INDEX IF NOT EXISTS rq_monsters_resistances_gin   ON rq_monsters USING gin (damage_resistances);</pre>
     <div class="ssm-foot">
       <button class="btn btn-ghost" onclick="closeSchemaModal()">Close</button>
       <button class="btn btn-gold" onclick="copySchemaSQL()">📋 Copy SQL</button>
