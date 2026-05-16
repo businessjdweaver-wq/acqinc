@@ -17621,6 +17621,53 @@ function _ebwDamageParts(formula) {
   const flat = m[3] ? parseInt(String(m[3]).replace(/\s+/g,'')) || 0 : 0;
   return { n:parseInt(m[1])||0, die:parseInt(m[2])||6, flat, valid:true };
 }
+
+function _ebwParseDamagePartsFromText(text) {
+  // Parse official-style damage clauses, including flat bonuses and typed riders:
+  //   Hit: 18 (2d10 + 7) piercing damage plus 5 (1d10) lightning damage.
+  // Returns ordered parts so the first part stays as the main editable damage and
+  // subsequent parts are preserved as always-on rider damage for DPR/export.
+  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  const out = [];
+  const seen = new Set();
+  const addPart = (formula, type, label) => {
+    const p = _ebwDamageParts(formula);
+    if (!p.valid) return;
+    const f = _ebwFormula(p.n, p.die, p.flat);
+    const key = f + '|' + String(type || '').toLowerCase() + '|' + out.length;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ formula:f, n:p.n, die:p.die, flat:p.flat, type:String(type || '').toLowerCase(), label:label || '', avg:_ebwAvgFormula(f) });
+  };
+  // Parenthesized dice + following damage type is the most reliable WOTC pattern.
+  let m;
+  const parenRe = /(?:\d+\s*)?\(\s*(\d+d\d+(?:\s*[+\-]\s*\d+)?)\s*\)\s*([a-z]+)\s+damage/gi;
+  while ((m = parenRe.exec(raw))) addPart(m[1], m[2]);
+  // Fallback for generated/custom text without the average: "2d8+4 slashing damage".
+  if (!out.length) {
+    const bareRe = /(\d+d\d+(?:\s*[+\-]\s*\d+)?)\s*([a-z]+)?\s+damage/gi;
+    while ((m = bareRe.exec(raw))) addPart(m[1], m[2] || '');
+  }
+  // Final fallback for bare formula fields.
+  if (!out.length) {
+    const p = _ebwDamageParts(raw);
+    if (p.valid) addPart(_ebwFormula(p.n, p.die, p.flat), '');
+  }
+  return out;
+}
+function _ebwRiderAverage(a) {
+  const riders = Array.isArray(a && a.riders) ? a.riders : [];
+  return _ebwRound1(riders.reduce((sum, r) => sum + _ebwAvgFormula(r && (r.formula || _ebwFormula(r.n,r.die,r.flat))), 0));
+}
+function _ebwRiderText(a) {
+  const riders = Array.isArray(a && a.riders) ? a.riders : [];
+  return riders.map(r => {
+    const f = r.formula || _ebwFormula(r.n, r.die, r.flat);
+    const avg = Math.round(_ebwAvgFormula(f));
+    const type = r.type ? ' ' + String(r.type).toLowerCase() : '';
+    return avg + ' (' + f + ')' + type + ' damage';
+  }).filter(Boolean).join(' plus ');
+}
 function _ebwFormula(n, die, flat) {
   n = Math.max(0, parseInt(n)||0); die = Math.max(2, parseInt(die)||6); flat = parseInt(flat)||0;
   if (n <= 0) return flat ? String(flat) : '';
@@ -17628,9 +17675,19 @@ function _ebwFormula(n, die, flat) {
 }
 function _ebwExtractActions(sn) {
   return (Array.isArray(sn.actions) ? sn.actions : []).map((a, i) => {
-    const rawDamage = a.damage || a.damages || a.damageParts || a.desc || '';
-    const damage = (_ebwDamageParts(rawDamage).valid ? _ebwFormula(_ebwDamageParts(rawDamage).n, _ebwDamageParts(rawDamage).die, _ebwDamageParts(rawDamage).flat) : '') || _ebwFirstDamageFormulaFromDesc(a.desc);
+    const rawDamage = a.damage || a.damages || a.damageParts || '';
+    const descParts = _ebwParseDamagePartsFromText(a.desc || '');
+    const storedParts = Array.isArray(a._ebwDamageParts) ? a._ebwDamageParts : (Array.isArray(a.damage_parts) ? a.damage_parts : []);
+    const explicitRiders = Array.isArray(a._ebwRiders) ? a._ebwRiders : (Array.isArray(a.riders) ? a.riders : []);
+    const rawParts = _ebwParseDamagePartsFromText(rawDamage);
+    const parts = storedParts.length ? storedParts : (descParts.length ? descParts : rawParts);
+    const main = parts[0] || rawParts[0] || _ebwParseDamagePartsFromText(_ebwFirstDamageFormulaFromDesc(a.desc))[0] || null;
+    const damage = main ? (main.formula || _ebwFormula(main.n, main.die, main.flat)) : '';
     const p = _ebwDamageParts(damage);
+    const riders = (explicitRiders.length ? explicitRiders : parts.slice(1)).map(r => {
+      const rp = _ebwDamageParts(r.formula || _ebwFormula(r.n, r.die, r.flat));
+      return { formula:_ebwFormula(rp.n, rp.die, rp.flat), n:rp.n, die:rp.die, flat:rp.flat, type:(r.type || r.damageType || '').toLowerCase(), avg:_ebwAvgFormula(_ebwFormula(rp.n, rp.die, rp.flat)) };
+    }).filter(r => r.formula);
     return {
       i,
       name:a.name || ('Action '+(i+1)),
@@ -17638,13 +17695,14 @@ function _ebwExtractActions(sn) {
       n:p.n,
       die:p.die,
       flat:p.flat,
-      avg:_ebwAvgFormula(damage),
+      riders,
+      avg:_ebwAvgFormula(damage) + riders.reduce((sum,r)=>sum+_ebwAvgFormula(r.formula),0),
       desc:a.desc || '',
       range:a.range || a.reach || _ebwRangeFromDesc(a.desc) || '',
       toHit:a.toHit || a.to_hit || '',
       saveAbility:a.saveAbility || a.save_ability || _ebwSaveFromDesc(a.desc).ability || '',
       saveDc:a.saveDc || a.save_dc || _ebwSaveFromDesc(a.desc).dc || '',
-      damageType:a.dmgType || a.damage_type || _ebwDamageTypeFromDesc(a.desc) || '',
+      damageType:a.dmgType || a.damage_type || (main && main.type) || _ebwDamageTypeFromDesc(a.desc) || '',
       source:a._ebwSource || '',
       altRanged: !!(a._ebwAltRanged || a.altRanged || a.single_alt_ranged),
       altWeight: Math.max(0.05, Math.min(1, parseFloat(a._ebwAltWeight || a.altWeight || 0.5) || 0.5)),
@@ -17670,7 +17728,7 @@ function _ebwNewAction(seed) {
   return Object.assign({
     i:'new-' + Date.now() + '-' + Math.random().toString(36).slice(2,7),
     name:'New Action', damage:'1d6', n:p.n || 1, die:p.die || 6, flat:p.flat || 0,
-    desc:'', range:'', toHit:'', saveAbility:'', saveDc:'', damageType:'', source:'custom',
+    desc:'', range:'', toHit:'', saveAbility:'', saveDc:'', damageType:'', source:'custom', riders:[],
     altRanged:false, altWeight:0.5, usageWeight:1, burstWeight:1
   }, seed || {});
 }
@@ -17692,11 +17750,13 @@ function _ebwAbilityFull(ab) {
 function _ebwParseFieldsFromDescIntoAction(a) {
   if (!a) return a;
   const desc = String(a.desc || '');
-  const dmg = _ebwFirstDamageFormulaFromDesc(desc);
+  const parts = _ebwParseDamagePartsFromText(desc);
+  const dmg = parts[0] ? parts[0].formula : _ebwFirstDamageFormulaFromDesc(desc);
   if (dmg && (!a.n || !a.die || !a.damage)) {
     const p = _ebwDamageParts(dmg);
     if (p.valid) { a.n = p.n; a.die = p.die; a.flat = p.flat; a.damage = dmg; }
   }
+  if (parts.length > 1 && (!Array.isArray(a.riders) || !a.riders.length)) a.riders = parts.slice(1);
   const save = _ebwSaveFromDesc(desc);
   if (save.ability && !a.saveAbility) a.saveAbility = save.ability;
   if (save.dc && !a.saveDc) a.saveDc = save.dc;
@@ -17737,6 +17797,7 @@ function _ebwStripMechanicalLead(desc) {
     cleanLead();
     changed = text !== before;
   }
+  text = text.replace(/\s*Borrowed from [^.]+\.\s*/gi, ' ').replace(/\s+/g,' ').trim();
   return text.trim();
 }
 function _ebwRevisedActionDesc(a) {
@@ -17756,7 +17817,11 @@ function _ebwRevisedActionDesc(a) {
     const reachText = range ? ((/\//.test(range) || /^\d/.test(range) && !/reach/i.test(range)) ? 'range ' + range : 'reach ' + range) : 'reach 5 ft.';
     bits.push(kind + ': ' + toHit + ' to hit, ' + reachText + ', one target.');
   }
-  if (f && f !== '0') bits.push('Hit: ' + avg + ' (' + f + ')' + type + ' damage.');
+  if (f && f !== '0') {
+    const riderText = _ebwRiderText(a);
+    const totalAvg = Math.round(_ebwAvgFormula(f) + _ebwRiderAverage(a));
+    bits.push('Hit: ' + totalAvg + ' (' + f + ')' + type + ' damage' + (riderText ? ' plus ' + riderText : '') + '.');
+  }
   if (a.saveAbility && a.saveDc) bits.push('If the target is a creature, it must succeed on a DC ' + a.saveDc + ' ' + _ebwAbilityFull(a.saveAbility) + ' saving throw.');
   const rider = _ebwStripMechanicalLead(a.desc || '');
   return bits.concat(rider ? [rider] : []).join(' ').replace(/\s+/g, ' ').trim();
@@ -17793,7 +17858,7 @@ function _ebwMonsterActionToAction(mon, act) {
   const saveDc = act.saveDc || act.save_dc || parsedSave.dc || (saveAbility ? _ebwDefaultSaveDc() : '');
   return _ebwNewAction({
     name: act.name || 'Borrowed Action', damage, n:p.n, die:p.die, flat:p.flat,
-    desc: (act.desc || '') + (mon && mon.name ? ('\n\nBorrowed from ' + mon.name + '.') : ''),
+    desc: (act.desc || ''),
     range: act.range || act.reach || _ebwRangeFromDesc(act.desc) || '',
     toHit: act.toHit || act.to_hit || '',
     saveAbility: saveAbility,
@@ -17822,7 +17887,7 @@ function _ebwDiceAverage(a) {
 }
 function _ebwFlatAverage(a) { return _ebwRound1(parseInt(a && a.flat) || 0); }
 function _ebwActionRawDpr(a) {
-  return _ebwRound1(_ebwDiceAverage(a) + _ebwFlatAverage(a));
+  return _ebwRound1(_ebwDiceAverage(a) + _ebwFlatAverage(a) + _ebwRiderAverage(a));
 }
 function _ebwUsageWeight(a) {
   if (!a) return 1;
@@ -18184,6 +18249,8 @@ function _ebwBuildSnapshot() {
     act._ebwBurstWeight = Math.max(0, Math.min(6, parseFloat(a.burstWeight == null ? Math.max(1, _ebwUsageWeight(a)) : a.burstWeight) || 0));
     const f = _ebwFormula(a.n, a.die, a.flat);
     act.damage = f;
+    act._ebwRiders = Array.isArray(a.riders) ? a.riders.map(r => ({ formula:r.formula || _ebwFormula(r.n,r.die,r.flat), type:(r.type || '').toLowerCase() })) : [];
+    act._ebwDamageParts = [{ formula:f, type:(a.damageType || '').toLowerCase() }].concat(act._ebwRiders);
     // Always export the same idempotently rebuilt text shown by Parse & Revise.
     // Do not prepend fallback bits here; that was the source of duplicated clauses
     // in the preview/export pane after repeated parsing/saving.
