@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.25 · DPR allocation parser repair</span>
+  <span class="topbar-version">v0.5.23 · skin persistence + full actions</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -2064,8 +2064,8 @@ function sanitizeMonsterForSupabase(monster) {
     : [];
 
   clean.actions = cleanActionList(clean.actions);
-  if (Array.isArray(clean.bonus_actions)) clean.bonus_actions = cleanActionList(clean.bonus_actions);
-  if (Array.isArray(clean.reactions)) clean.reactions = cleanActionList(clean.reactions);
+  clean.bonus_actions = cleanActionList(clean.bonus_actions);
+  clean.reactions = cleanActionList(clean.reactions);
   if (Array.isArray(clean.villain_actions)) clean.villain_actions = cleanActionList(clean.villain_actions);
 
   delete clean.slug;
@@ -2656,6 +2656,8 @@ function convertDSMonster(ds, entry) {
     senses:           '',
     languages:        (ds.languages || []).join(', '),
     actions,
+    bonus_actions: bonusActions,
+    reactions,
     special_abilities: special,
     legendary:        villainActions.length > 0,
     legendary_resistance: 0,
@@ -2892,7 +2894,7 @@ function attrEsc(s) {
 function renderEditor(m) {
   const isDS = m.source === 'draw-steel';
   const isCustom = m.source === 'custom';
-  const readonly = !isCustom;
+  const readonly = false; // v0.5.23: allow edits to base monsters before 'Save as Skin'; Save still protects base rows.
   const ro = readonly ? 'readonly' : '';
   const src = isCustom ? 'custom' : isDS ? 'ds' : 'srd';
   const srcLabel = isCustom ? 'Custom' : isDS ? 'Draw Steel' : 'D&D SRD';
@@ -2950,7 +2952,7 @@ function renderEditor(m) {
         <div class="cr-stat"><span class="cr-stat-label">HP Range</span><span class="cr-stat-val" id="cg_hp">${cr.hpLo}–${cr.hpHi}</span></div>
         <div class="cr-stat"><span class="cr-stat-label">Atk Bonus</span><span class="cr-stat-val" id="cg_atk">${cr.atk}</span></div>
         <div class="cr-stat"><span class="cr-stat-label">DPR / DC</span><span class="cr-stat-val" id="cg_dpr">${cr.dprLo}–${cr.dprHi} / ${cr.dc}</span></div>
-        ${isCustom ? `<button id="btnScaleStats" class="btn btn-ember btn-sm" onclick="applyCRScaling()" title="Scale HP, AC, and damage to match new CR" style="display:none;margin-left:8px;font-size:0.5rem;padding:3px 10px;">⚖ Scale Stats</button><button id="btnDprAudit" class="btn btn-ghost btn-sm" onclick="showDprAuditReport()" title="Preview DPR parser routines and scaling allocations for this monster" style="margin-left:6px;font-size:0.5rem;padding:3px 10px;">🧮 DPR Audit</button>` : ''}
+        ${isCustom ? `<button id="btnScaleStats" class="btn btn-ember btn-sm" onclick="applyCRScaling()" title="Scale HP, AC, and damage to match new CR" style="display:none;margin-left:8px;font-size:0.5rem;padding:3px 10px;">⚖ Scale Stats</button>` : ''}
       </div>
     </div>
 
@@ -3002,7 +3004,11 @@ function renderEditor(m) {
             <input class="field-input" id="f_skills" type="text" value="${formatObj(m.skills)}" placeholder="Perception +8, Stealth +4" ${ro}>
           </div>
         </div>
-        <div class="field-row-2">
+        <div class="field-row-3">
+          <div class="field">
+            <span class="field-label">Damage Resistances</span>
+            <input class="field-input" id="f_dmg_res" type="text" value="${(m.damage_resistances||[]).join(', ')}" placeholder="cold, fire; bludgeoning from nonmagical attacks" ${ro}>
+          </div>
           <div class="field">
             <span class="field-label">Damage Immunities</span>
             <input class="field-input" id="f_dmg_imm" type="text" value="${(m.damage_immunities||[]).join(', ')}" placeholder="fire, poison" ${ro}>
@@ -3033,7 +3039,7 @@ function renderEditor(m) {
                 <textarea class="field-textarea" style="min-height:44px;" ${ro}>${s.desc}</textarea>
               </div>`).join('')}
           </div>
-          ${isCustom ? `<button class="btn btn-ghost btn-sm" onclick="addSpecialAbility()" style="margin-top:6px;">+ Add Trait</button>` : ''}
+          ${!readonly ? `<button class="btn btn-ghost btn-sm" onclick="addSpecialAbility()" style="margin-top:6px;">+ Add Trait</button>` : ''}
         </div>
       </div>
     </div>
@@ -3046,9 +3052,37 @@ function renderEditor(m) {
       </div>
       <div class="section-body">
         <div id="actionsContainer">
-          ${(m.actions||[]).map((a,i) => renderActionCard(a, isCustom)).join('')}
+          ${(m.actions||[]).map((a,i) => renderActionCard(a, !readonly)).join('')}
         </div>
-        ${isCustom ? `<button class="btn btn-ghost btn-sm" onclick="addAction()">+ Add Action</button>` : ''}
+        ${!readonly ? `<button class="btn btn-ghost btn-sm" onclick="addAction()">+ Add Action</button>` : ''}
+      </div>
+    </div>
+
+    <!-- BONUS ACTIONS -->
+    <div class="section open" id="sec-bonus-actions">
+      <div class="section-header" onclick="toggleSection('sec-bonus-actions')">
+        <span class="section-chevron">▶</span>
+        <span class="section-title">Bonus Actions</span>
+      </div>
+      <div class="section-body">
+        <div id="bonusActionsContainer">
+          ${(m.bonus_actions||[]).map((a,i) => renderActionCard(a, !readonly)).join('')}
+        </div>
+        ${!readonly ? `<button class="btn btn-ghost btn-sm" onclick="addBonusAction()">+ Add Bonus Action</button>` : ''}
+      </div>
+    </div>
+
+    <!-- REACTIONS -->
+    <div class="section open" id="sec-reactions">
+      <div class="section-header" onclick="toggleSection('sec-reactions')">
+        <span class="section-chevron">▶</span>
+        <span class="section-title">Reactions</span>
+      </div>
+      <div class="section-body">
+        <div id="reactionsContainer">
+          ${(m.reactions||[]).map((a,i) => renderActionCard(a, !readonly)).join('')}
+        </div>
+        ${!readonly ? `<button class="btn btn-ghost btn-sm" onclick="addReaction()">+ Add Reaction</button>` : ''}
       </div>
     </div>
 
@@ -3155,20 +3189,37 @@ function renderEditor(m) {
 function renderActionCard(a, editable) {
   const ro = editable ? '' : 'readonly';
   const toHit = cleanToHitValue(a.toHit);
-  const isAttack = !!toHit;
-  return `<div class="action-card">
+  const typeVal = a.type || (toHit ? 'attack' : 'special');
+  const rangeVal = a.reach || a.range || '';
+  return `<div class="action-card" data-action-type="${attrEsc(typeVal)}">
     <div class="action-card-header">
-      <input class="action-name-input" type="text" value="${attrEsc(a.name||'')}" placeholder="Action name" ${ro}>
-      <span class="action-type-badge">${a.type==='special'?'Special':isAttack?'Attack':'Action'}</span>
+      <input class="action-name-input" data-field="name" type="text" value="${attrEsc(a.name||'')}" placeholder="Action name" ${ro}>
+      <span class="action-type-badge">${typeVal === 'attack' ? 'Attack' : typeVal === 'save' ? 'Save' : 'Feature'}</span>
       ${editable ? `<button class="icon-btn" onclick="this.closest('.action-card').remove()" title="Remove">✕</button>` : ''}
     </div>
-    ${isAttack ? `<div class="field-row-4" style="margin-bottom:6px;">
-      <div class="field"><span class="field-label">To Hit</span><input class="field-input" type="text" value="${attrEsc(toHit)}" ${ro}></div>
-      <div class="field"><span class="field-label">Reach/Range</span><input class="field-input" type="text" value="${attrEsc(a.reach||a.range||'')}" ${ro}></div>
-      <div class="field"><span class="field-label">Damage</span><input class="field-input" type="text" value="${attrEsc(a.damage||'')}" ${ro}></div>
-      <div class="field"><span class="field-label">Type</span><input class="field-input" type="text" value="${attrEsc(a.dmgType||'')}" ${ro}></div>
-    </div>` : ''}
-    <textarea class="field-textarea" style="min-height:40px;" ${ro}>${escapeHtml(a.desc||'')}</textarea>
+    <div class="field-row-4" style="margin-bottom:6px;">
+      <div class="field"><span class="field-label">Mode</span><select class="field-select" data-field="type" ${editable ? '' : 'disabled'}>
+        ${['attack','save','special'].map(t=>`<option value="${t}" ${typeVal===t?'selected':''}>${t}</option>`).join('')}
+      </select></div>
+      <div class="field"><span class="field-label">Attack Bonus</span><input class="field-input" data-field="toHit" type="text" value="${attrEsc(toHit)}" placeholder="+7" ${ro}></div>
+      <div class="field"><span class="field-label">Reach / Range / Area</span><input class="field-input" data-field="reach" type="text" value="${attrEsc(rangeVal)}" placeholder="5 ft.; 60 ft.; 30 ft. cone" ${ro}></div>
+      <div class="field"><span class="field-label">Recharge / Uses</span><input class="field-input" data-field="recharge" type="text" value="${attrEsc(a.recharge||'')}" placeholder="Recharge 5–6; 3/day" ${ro}></div>
+    </div>
+    <div class="field-row-4" style="margin-bottom:6px;">
+      <div class="field"><span class="field-label">Damage</span><input class="field-input" data-field="damage" type="text" value="${attrEsc(a.damage||'')}" placeholder="2d10+7" ${ro}></div>
+      <div class="field"><span class="field-label">Damage Type</span><input class="field-input" data-field="dmgType" type="text" value="${attrEsc(a.dmgType||'')}" placeholder="piercing" ${ro}></div>
+      <div class="field"><span class="field-label">Rider Damage</span><input class="field-input" data-field="extra" type="text" value="${attrEsc(a.extra||'')}" placeholder="1d10" ${ro}></div>
+      <div class="field"><span class="field-label">Rider Type</span><input class="field-input" data-field="extraType" type="text" value="${attrEsc(a.extraType||'')}" placeholder="lightning" ${ro}></div>
+    </div>
+    <div class="field-row-4" style="margin-bottom:6px;">
+      <div class="field"><span class="field-label">Save DC</span><input class="field-input" data-field="saveDc" type="number" value="${attrEsc(a.saveDc||a.save_dc||'')}" placeholder="15" ${ro}></div>
+      <div class="field"><span class="field-label">Save Ability</span><select class="field-select" data-field="saveAbility" ${editable ? '' : 'disabled'}>
+        ${['','STR','DEX','CON','INT','WIS','CHA'].map(ab=>`<option value="${ab}" ${(String(a.saveAbility||a.save_ability||'').toUpperCase()===ab)?'selected':''}>${ab||'—'}</option>`).join('')}
+      </select></div>
+      <div class="field"><span class="field-label">Save Result</span><input class="field-input" data-field="saveResult" type="text" value="${attrEsc(a.saveResult||a.save_result||'')}" placeholder="half damage on success" ${ro}></div>
+      <div class="field"><span class="field-label">Duration</span><input class="field-input" data-field="duration" type="text" value="${attrEsc(a.duration||'')}" placeholder="1 minute; end of next turn" ${ro}></div>
+    </div>
+    <textarea class="field-textarea" data-field="desc" style="min-height:56px;" ${ro} placeholder="Rules text, riders, conditions, targeting, and VTT-visible description…">${escapeHtml(a.desc||'')}</textarea>
   </div>`;
 }
 
@@ -3194,6 +3245,7 @@ function renderSimplifiedCard(m) {
     <div class="preview-attack"><strong>Key Attack:</strong> ${atkStr}</div>
     <div class="preview-tags">
       <span class="preview-tag">${m.type}</span>
+      ${m.damage_resistances ? m.damage_resistances.map(i=>`<span class="preview-tag">resist: ${i}</span>`).join('') : ''}
       ${m.damage_immunities ? m.damage_immunities.map(i=>`<span class="preview-tag">immune: ${i}</span>`).join('') : ''}
       ${m.legendary ? '<span class="preview-tag" style="border-color:rgba(184,134,11,0.4);color:#b8860b;">legendary</span>' : ''}
     </div>
@@ -3463,13 +3515,7 @@ function attackIsRanged(atk) {
 
 function attackIsMelee(atk) {
   const d = normalizeCombatText(atk?.desc || '');
-  const n = normalizeCombatText(atk?.name || '');
-  return /melee weapon attack|reach\s+\d/.test(d) || /bite|claw|constrict|tail|tentacle|slam|gore|horn|hoof|hooves|sting|stinger|pincer|fist|maul|beak/.test(n);
-}
-
-function attackLooksLikeNaturalWeapon(atk) {
-  const text = normalizeCombatText((atk?.name || '') + ' ' + (atk?.desc || ''));
-  return /\b(bite|claw|claws|constrict|tail|tentacle|tentacles|slam|gore|horns?|hoof|hooves|sting|stinger|pincer|pincers|beak|maw|mandibles?)\b/.test(text);
+  return /melee weapon attack|reach\s+\d/.test(d);
 }
 
 function getActionDamageAverage(atk) {
@@ -3500,8 +3546,6 @@ function countForAttackInClause(atk, clause) {
       new RegExp('\\bmakes?\\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+' + escaped + 's?\\s+attacks?\\b', 'i'),
       new RegExp('\\bmakes?\\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+attacks?\\s+(?:with|using)\\s+(?:its|the)?\\s*' + escaped + 's?\\b', 'i'),
       new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+with\\s+(?:its|the)?\\s*' + escaped + 's?\\b', 'i'),
-      // v0.5.25: Amphisbanae-style text can say \"one to constrict\" instead of \"one with its constrict\".
-      new RegExp('\\b(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)\\s+to\\s+' + escaped + 's?\\b', 'i'),
       new RegExp('\\b(?:hurls?|throws?|shoots?)\\s+(one|a|an|two|three|four|five|six|seven|eight|nine|ten|\\d+)?\\s*' + escaped + 's?\\b', 'i')
     ];
 
@@ -3594,44 +3638,15 @@ function buildCombatRoutinesFromDom() {
     }
   }
 
-  let allocationMode = multiText ? 'parsed-multiattack' : 'unresolved';
-
-  // v0.5.25: A partially parsed natural suite should not be treated as
-  // authoritative. If the Multiattack text names 2–3 natural attacks but the
-  // parser captured only one, complete the routine with one use of each named
-  // natural attack before allocation.
-  if (expandParsedRoutinesWithMentionedNaturalAttacks(primaryRoutines, alternateRoutines, attacks, multiText)) {
-    allocationMode = 'parsed-multiattack-expanded-natural-suite';
-  }
-
   if (!primaryRoutines.length && !alternateRoutines.length) {
     const melee = attacks.filter(attackIsMelee);
-    const naturalMelee = melee.filter(attackLooksLikeNaturalWeapon);
-
-    // v0.5.24: The v0.5.23 audit correctly identified Amphisbanae-style
-    // failures, but a malformed word-boundary regex prevented the implicit
-    // natural suite from reliably winning during actual scaling. This path
-    // is now the scaler's source of truth: 2–3 natural melee attacks with no
-    // parsed Multiattack are treated as a one-each routine and receive
-    // proportional DPR allocation instead of letting the strongest action
-    // absorb the whole CR damage budget.
-    if (!multiText && naturalMelee.length >= 2 && naturalMelee.length <= 3) {
+    const pool = melee.length ? melee : attacks;
+    if (pool.length) {
+      const strongest = pool.reduce((best, a) => getActionDamageAverage(a) > getActionDamageAverage(best) ? a : best, pool[0]);
       const r = new Map();
-      naturalMelee.forEach(atk => r.set(atk.key, 1));
+      r.set(strongest.key, 1);
       primaryRoutines.push(r);
-      allocationMode = 'implicit-natural-suite';
-    } else {
-      const pool = melee.length ? melee : attacks;
-      if (pool.length) {
-        const strongest = pool.reduce((best, a) => getActionDamageAverage(a) > getActionDamageAverage(best) ? a : best, pool[0]);
-        const r = new Map();
-        r.set(strongest.key, 1);
-        primaryRoutines.push(r);
-        allocationMode = 'strongest-action-fallback';
-      }
     }
-  } else if (alternateRoutines.length && !primaryRoutines.length) {
-    allocationMode = 'alternate-routine-branches';
   }
 
   const included = new Set();
@@ -3654,7 +3669,7 @@ function buildCombatRoutinesFromDom() {
     return { key: atk.key, count: 1, ratio, reason: 'ranged-fallback-not-in-multiattack' };
   });
 
-  return { attacks, attackByKey, multiText, primaryRoutines, alternateRoutines, fallbackRanged, baselineDpr, allocationMode };
+  return { attacks, attackByKey, multiText, primaryRoutines, alternateRoutines, fallbackRanged, baselineDpr };
 }
 
 function mergeRoutineList(routines) {
@@ -3663,32 +3678,6 @@ function mergeRoutineList(routines) {
     merged.set(key, Math.max(merged.get(key) || 0, count));
   }));
   return merged;
-}
-
-
-function expandParsedRoutinesWithMentionedNaturalAttacks(primaryRoutines, alternateRoutines, attacks, multiText) {
-  if (!multiText) return false;
-  const naturalMentioned = attacks.filter(atk =>
-    attackLooksLikeNaturalWeapon(atk) && findAttackMentionedInText([atk], multiText).length
-  );
-  if (naturalMentioned.length < 2 || naturalMentioned.length > 3) return false;
-
-  const routines = [...primaryRoutines, ...alternateRoutines];
-  if (!routines.length) return false;
-
-  let changed = false;
-  routines.forEach(routine => {
-    const included = naturalMentioned.filter(atk => routine.has(atk.key));
-    if (included.length >= 1 && included.length < naturalMentioned.length) {
-      naturalMentioned.forEach(atk => {
-        if (!routine.has(atk.key)) {
-          routine.set(atk.key, 1);
-          changed = true;
-        }
-      });
-    }
-  });
-  return changed;
 }
 
 function buildDprAllocationPlan(newT) {
@@ -3741,76 +3730,6 @@ function buildDprAllocationPlan(newT) {
   parsed.fallbackRanged.forEach(fb => assign(fb.key, targetTurnDpr * fb.ratio, fb.reason + ` ratio=${fb.ratio.toFixed(2)}`));
 
   return { targetTurnDpr, ...parsed, allocations };
-}
-
-
-function formatDprRoutineListForAudit(routines) {
-  if (!routines || !routines.length) return '—';
-  return routines.map(r => Object.entries(routineToObject(r)).map(([k,v]) => `${v}× ${k}`).join(' + ')).join(' OR ');
-}
-
-function buildCurrentDprAuditRows(newT) {
-  const plan = buildDprAllocationPlan(newT || CR_TABLE[document.getElementById('f_cr')?.value] || CR_TABLE['1']);
-  const allocatedKeys = new Set(plan.allocations.keys());
-  const rows = plan.attacks.map(atk => {
-    const baseAvg = getActionDamageAverage(atk || {});
-    const alloc = plan.allocations.get(atk.key);
-    const targetAvg = alloc ? alloc.targetAvg : 0;
-    const ratio = baseAvg > 0 && targetAvg > 0 ? targetAvg / baseAvg : 0;
-    const flags = [];
-    if (!alloc) flags.push('unallocated');
-    if (ratio >= 2.75) flags.push('large jump');
-    if (ratio > 0 && ratio <= 1.05) flags.push('nearly unchanged');
-    if (!plan.multiText && attackLooksLikeNaturalWeapon(atk) && plan.primaryRoutines.length) flags.push('implicit natural routine');
-    return {
-      name: atk.name || atk.key,
-      key: atk.key,
-      baseAvg,
-      targetAvg,
-      ratio,
-      reason: alloc?.reason || 'not in parsed routine',
-      flags
-    };
-  });
-
-  const hasExplodedAllocated = rows.some(r => r.ratio >= 2.75);
-  const hasUnallocatedDamager = rows.some(r => !allocatedKeys.has(r.key) && r.baseAvg > 0);
-  const warnings = [];
-  if (hasExplodedAllocated && hasUnallocatedDamager) warnings.push('Suspicious allocation: one action jumps sharply while another damaging action is not in the parsed routine.');
-  if (!plan.multiText && rows.filter(r => r.flags.includes('implicit natural routine')).length >= 2) warnings.push('No Multiattack text found; using implicit one-each natural-attack suite.');
-  if (plan.allocationMode === 'implicit-natural-suite' && rows.some(r => r.ratio >= 2.75)) warnings.push('Implicit natural suite is active, but source damage is already very uneven; if this monster was previously scaled, reset/reload the original before scaling again.');
-  if (plan.allocationMode === 'parsed-multiattack-expanded-natural-suite') warnings.push('Parser repair active: a partially parsed natural-attack suite was completed from the Multiattack text.');
-  if (plan.multiText && !plan.primaryRoutines.length && !plan.alternateRoutines.length) warnings.push('Multiattack text exists but no routine parsed; fallback was used.');
-
-  return { plan, rows, warnings };
-}
-
-function showDprAuditReport() {
-  const cr = document.getElementById('f_cr')?.value || '1';
-  const t = CR_TABLE[cr] || CR_TABLE['1'];
-  const audit = buildCurrentDprAuditRows(t);
-  const lines = [];
-  lines.push(`Monster: ${document.getElementById('f_name')?.value || '(unnamed)'}`);
-  lines.push(`Target CR ${cr} DPR midpoint: ${audit.plan.targetTurnDpr}`);
-  lines.push(`Multiattack text: ${audit.plan.multiText || '(none)'}`);
-  lines.push(`Allocation mode: ${audit.plan.allocationMode || '(unknown)'}`);
-  lines.push(`Primary: ${formatDprRoutineListForAudit(audit.plan.primaryRoutines)}`);
-  lines.push(`Alternate: ${formatDprRoutineListForAudit(audit.plan.alternateRoutines)}`);
-  lines.push('');
-  lines.push('Actions:');
-  audit.rows.forEach(r => {
-    const ratio = r.ratio ? ` ×${r.ratio.toFixed(2)}` : '';
-    const target = r.targetAvg ? r.targetAvg.toFixed(1) : '—';
-    const flags = r.flags.length ? ` [${r.flags.join(', ')}]` : '';
-    lines.push(`• ${r.name}: ${r.baseAvg.toFixed(1)} → ${target}${ratio}; ${r.reason}${flags}`);
-  });
-  if (audit.warnings.length) {
-    lines.push('');
-    lines.push('Warnings:');
-    audit.warnings.forEach(w => lines.push(`⚠ ${w}`));
-  }
-  console.log('[DPR Audit]', audit);
-  alert(lines.join('\n'));
 }
 
 function cleanFoundryFormula(formula) {
@@ -3877,7 +3796,6 @@ function scaleActionsToTargetTurnDpr(newT) {
   console.log('[CR DPR Plan]', {
     targetTurnDpr: plan.targetTurnDpr,
     multiText: plan.multiText,
-    allocationMode: plan.allocationMode,
     primaryRoutines: plan.primaryRoutines.map(routineToObject),
     alternateRoutines: plan.alternateRoutines.map(routineToObject),
     fallbackRanged: plan.fallbackRanged,
@@ -4134,10 +4052,19 @@ function toggleLegendary() {
 
 // ── ACTIONS ──
 function addAction() {
-  const c = document.getElementById('actionsContainer');
+  addActionToContainer('actionsContainer', {name:'',type:'attack',toHit:'',reach:'5 ft.',damage:'1d6',dmgType:'',desc:''});
+}
+function addBonusAction() {
+  addActionToContainer('bonusActionsContainer', {name:'',type:'special',reach:'',damage:'',dmgType:'',desc:''});
+}
+function addReaction() {
+  addActionToContainer('reactionsContainer', {name:'',type:'special',reach:'',damage:'',dmgType:'',desc:''});
+}
+function addActionToContainer(containerId, seed) {
+  const c = document.getElementById(containerId);
   if (!c) return;
   const div = document.createElement('div');
-  div.innerHTML = renderActionCard({name:'',toHit:'',reach:'5 ft.',damage:'1d6',dmgType:'',desc:''},true);
+  div.innerHTML = renderActionCard(seed, true);
   c.appendChild(div.firstElementChild);
 }
 function addSpecialAbility() {
@@ -4216,39 +4143,45 @@ function parseSavesSkills(str) {
   return result;
 }
 
+function readActionCard(card) {
+  const q = fld => card.querySelector(`[data-field="${fld}"]`);
+  const val = fld => (q(fld)?.value || '').trim();
+  return {
+    name: val('name'),
+    type: val('type') || 'special',
+    toHit: cleanToHitValue(val('toHit')),
+    reach: val('reach'),
+    range: val('reach'),
+    recharge: val('recharge'),
+    damage: cleanFoundryFormula(val('damage')),
+    dmgType: val('dmgType'),
+    extra: cleanFoundryFormula(val('extra')),
+    extraType: val('extraType'),
+    saveDc: val('saveDc'),
+    save_dc: val('saveDc'),
+    saveAbility: val('saveAbility'),
+    save_ability: val('saveAbility'),
+    saveResult: val('saveResult'),
+    save_result: val('saveResult'),
+    duration: val('duration'),
+    desc: val('desc')
+  };
+}
+
 function collectFormData() {
   const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+  const list = id => g(id).split(',').map(s=>s.trim()).filter(Boolean);
   const abilities = {};
   ['str','dex','con','int','wis','cha'].forEach(ab => {
     const score = parseInt(g('f_ab_' + ab)) || 10;
     abilities[ab] = [score, modFromScore(score)];
   });
 
-  // Collect actions
-  const actions = [...document.querySelectorAll('#actionsContainer .action-card')].map(card => {
-    const inputs = card.querySelectorAll('input');
-    const ta = card.querySelector('textarea');
-    return {
-      name: inputs[0]?.value || '',
-      toHit: cleanToHitValue(inputs[1]?.value),
-      reach: inputs[2]?.value || '',
-      damage: cleanFoundryFormula(inputs[3]?.value || ''),
-      dmgType: inputs[4]?.value || '',
-      desc: ta?.value || ''
-    };
-  });
-
-  const legActions = [...document.querySelectorAll('#legendaryActionsContainer .action-card')].map(card => {
-    const inputs = card.querySelectorAll('input');
-    const ta = card.querySelector('textarea');
-    return { name: inputs[0]?.value || '', desc: ta?.value || '' };
-  });
-
-  const lairActions = [...document.querySelectorAll('#lairActionsContainer .action-card')].map(card => {
-    const inputs = card.querySelectorAll('input');
-    const ta = card.querySelector('textarea');
-    return { name: inputs[0]?.value || '', desc: ta?.value || '' };
-  });
+  const actions = [...document.querySelectorAll('#actionsContainer .action-card')].map(readActionCard);
+  const bonusActions = [...document.querySelectorAll('#bonusActionsContainer .action-card')].map(readActionCard);
+  const reactions = [...document.querySelectorAll('#reactionsContainer .action-card')].map(readActionCard);
+  const legActions = [...document.querySelectorAll('#legendaryActionsContainer .action-card')].map(readActionCard);
+  const lairActions = [...document.querySelectorAll('#lairActionsContainer .action-card')].map(readActionCard);
 
   const special = [...document.querySelectorAll('#specialAbilitiesContainer .action-card')].map(card => {
     const inputs = card.querySelectorAll('input');
@@ -4275,11 +4208,16 @@ function collectFormData() {
     abilities: abilities,
     saves:  parseSavesSkills(g('f_saves')),
     skills: parseSavesSkills(g('f_skills')),
-    damage_immunities: g('f_dmg_imm').split(',').map(s=>s.trim()).filter(Boolean),
-    condition_immunities: g('f_cond_imm').split(',').map(s=>s.trim()).filter(Boolean),
+    damage_resistances: list('f_dmg_res'),
+    damage_immunities: list('f_dmg_imm'),
+    condition_immunities: list('f_cond_imm'),
     senses: g('f_senses'),
     languages: g('f_languages'),
     actions: actions,
+    bonus_actions: bonusActions,
+    reactions: reactions,
+    bonus_actions: bonusActions,
+    reactions,
     special_abilities: special,
     legendary: isLegendary,
     legendary_resistance: parseInt(g('f_leg_res')) || 0,
@@ -4300,6 +4238,7 @@ function wrapRqMonsterRow(r) {
     source: 'custom',
     actions: r.actions || [],
     special_abilities: r.special_abilities || [],
+    damage_resistances: r.damage_resistances || [],
     bonus_actions: r.bonus_actions || [],
     reactions: r.reactions || [],
     villain_actions: r.villain_actions || [],
@@ -4326,6 +4265,21 @@ function stripIdentityForNewSkin(data) {
   const tags = Array.isArray(clean.tags) ? clean.tags : [];
   clean.tags = [...new Set([...tags, clean.monster_type || clean.type || 'custom', 'skin'].filter(Boolean))];
 
+  return clean;
+}
+
+function stripColumnsForLegacyRqMonsters(data) {
+  const clean = { ...(data || {}) };
+  // Older rq_monsters deployments may not yet have these columns. Keep the
+  // user-visible data in notes rather than failing the entire save.
+  const legacyBits = [];
+  if (Array.isArray(clean.damage_resistances) && clean.damage_resistances.length) legacyBits.push('Damage Resistances: ' + clean.damage_resistances.join(', '));
+  if (Array.isArray(clean.bonus_actions) && clean.bonus_actions.length) legacyBits.push('Bonus Actions: ' + clean.bonus_actions.map(a => a.name).join(', '));
+  if (Array.isArray(clean.reactions) && clean.reactions.length) legacyBits.push('Reactions: ' + clean.reactions.map(a => a.name).join(', '));
+  if (legacyBits.length) clean.notes = [clean.notes || '', '[Workshop extended fields fallback]', ...legacyBits].filter(Boolean).join('\n');
+  delete clean.damage_resistances;
+  delete clean.bonus_actions;
+  delete clean.reactions;
   return clean;
 }
 
@@ -4371,6 +4325,24 @@ async function saveMonsterAsSkin() {
 
     if (!res.ok) {
       const err = await res.text();
+      if (/damage_resistances|bonus_actions|reactions|schema cache|column/i.test(err)) {
+        const retry = await fetch(`${SB_URL}/rest/v1/rq_monsters`, {
+          method: 'POST',
+          headers: { ...sbHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+          body: JSON.stringify(stripColumnsForLegacyRqMonsters(data))
+        });
+        if (retry.ok) {
+          const retryRows = await retry.json();
+          const savedRow = retryRows && retryRows[0] ? retryRows[0] : null;
+          if (savedRow) currentMonster = wrapRqMonsterRow(savedRow);
+          isEditing = true;
+          await loadCustomMonsters();
+          filterMonsters();
+          if (currentMonster) renderEditor(currentMonster);
+          showToast('✓ Created skin: ' + data.name + ' (extended fields saved in notes; update rq_monsters schema for native columns)');
+          return;
+        }
+      }
       showToast('Save as skin failed: ' + err, true);
       console.warn('[Workshop saveMonsterAsSkin] Failed payload:', data);
       return;
@@ -4489,6 +4461,25 @@ async function saveMonster() {
       console.log('[Workshop saveMonster] Saved row returned:', savedRow || currentMonster);
     } else {
       const err = await res.text();
+      if (/damage_resistances|bonus_actions|reactions|schema cache|column/i.test(err)) {
+        const legacyData = stripColumnsForLegacyRqMonsters(data);
+        const retry = await fetch(currentMonster?.id ? `${SB_URL}/rest/v1/rq_monsters?id=eq.${currentMonster.id}` : `${SB_URL}/rest/v1/rq_monsters`, {
+          method: currentMonster?.id ? 'PATCH' : 'POST',
+          headers: { ...sbHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+          body: JSON.stringify(legacyData)
+        });
+        if (retry.ok) {
+          const rows = await retry.json();
+          const retryRow = rows && rows[0] ? rows[0] : null;
+          currentMonster = retryRow ? wrapRqMonsterRow(retryRow) : { ...(currentMonster || {}), ...legacyData };
+          await loadCustomMonsters();
+          try { localStorage.setItem('rq_custom_monsters_dirty', Date.now().toString()); } catch(e) {}
+          filterMonsters();
+          if (currentMonster) renderEditor(currentMonster);
+          showToast('✓ ' + data.name + ' saved (extended fields saved in notes; update rq_monsters schema for native columns)');
+          return;
+        }
+      }
       showToast('Save failed: ' + err, true);
       console.warn('[Workshop saveMonster] Save failed payload:', data);
     }
@@ -5259,6 +5250,7 @@ function convertFoundryActor(f) {
   // Actions / Special abilities — Foundry stores these as embedded Items
   const items = f.items || [];
   const actions = [];
+  const bonusActions = [];
   const special = [];
   const legActions = [];
   const reactions = [];
@@ -5268,7 +5260,8 @@ function convertFoundryActor(f) {
     const activation = iSys.activation?.type;
     const isLegendary = activation === 'legendary';
     const isReaction = activation === 'reaction';
-    const isAction = activation === 'action' || activation === 'bonus' || !activation;
+    const isBonus = activation === 'bonus';
+    const isAction = activation === 'action' || !activation;
 
     // Build action object
     const atk = iSys.attack || {};
@@ -5314,6 +5307,8 @@ function convertFoundryActor(f) {
       legActions.push({ name: item.name, desc: desc.slice(0, 5000) });
     } else if (isReaction) {
       reactions.push(actionObj);
+    } else if (isBonus) {
+      bonusActions.push(actionObj);
     } else if (item.type === 'feat' && !toHit) {
       special.push({ name: item.name, desc: desc.slice(0, 5000) });
     } else if (isAction || item.type === 'weapon') {
@@ -5341,11 +5336,14 @@ function convertFoundryActor(f) {
     abilities,
     saves:  typeof saves  === 'object' && !Array.isArray(saves)  ? saves  : {},
     skills: typeof skills === 'object' && !Array.isArray(skills) ? skills : {},
+    damage_resistances:  dmgRes,
     damage_immunities:    dmgImm,
     condition_immunities: condImm,
     senses,
     languages: typeof languages === 'string' ? languages : (languages || []).join(', '),
     actions,
+    bonus_actions: bonusActions,
+    reactions,
     special_abilities: special,
     legendary: isLegendary,
     legendary_resistance: legRes,
@@ -5354,7 +5352,7 @@ function convertFoundryActor(f) {
     lair_actions: [],
     notes: '',
     tags: [det.type?.value || 'custom'].filter(Boolean)
-    // Note: _foundryId, _foundryName, reactions omitted — not in schema
+    // Note: _foundryId and _foundryName omitted — not in schema
   };
 }
 
