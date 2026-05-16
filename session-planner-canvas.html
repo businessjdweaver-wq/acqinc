@@ -6695,6 +6695,22 @@ body.mobile-mode #sb-modal { display: none !important; }
 .ebw-action-meta-controls { display:grid; grid-template-columns:repeat(6, minmax(72px,1fr)); gap:5px; align-items:end; margin-top:6px; }
 .ebw-action-desc-row { margin-top:6px; }
 .ebw-action-desc-row textarea { min-height:54px; }
+.ebw-rider-box {
+  margin-top:6px;
+  border:1px dashed rgba(184,134,11,0.28);
+  background:rgba(184,134,11,0.045);
+  border-radius:4px;
+  padding:7px;
+}
+.ebw-rider-head { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+.ebw-rider-title {
+  flex:1; font-family:'JetBrains Mono',monospace; font-size:0.58rem;
+  color:var(--gold-pale); letter-spacing:0.07em; text-transform:uppercase;
+}
+.ebw-rider-grid { display:grid; grid-template-columns:1fr 1fr 1fr 1fr auto; gap:5px; align-items:end; }
+.ebw-rider-grid .ebw-field { margin:0; }
+.ebw-rider-empty { color:var(--steel-pale); font-family:'JetBrains Mono',monospace; font-size:0.58rem; opacity:0.85; }
+@media(max-width:1200px){ .ebw-rider-grid { grid-template-columns:1fr 1fr; } }
 .ebw-toolbox { border:1px dashed rgba(184,134,11,0.24); background:rgba(0,0,0,0.18); border-radius:4px; padding:8px; margin:10px 0; }
 .ebw-toolbox-title { font-family:'Cinzel',serif; color:var(--gold-pale); font-size:0.68rem; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:6px; }
 .ebw-search-row { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
@@ -6737,7 +6753,7 @@ body.mobile-mode #sb-modal { display: none !important; }
 }
 
 </style>
-<!-- v1.3.14b: sustained DPR, flat damage parsing, burst reference, and DPR warnings. -->
+<!-- v1.3.21: rider damage boxes, version bump, and clean player-facing action text. -->
 </head>
 <body>
 
@@ -6774,7 +6790,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 61 / Parse Idempotent — Encounter Wizard v1.3.17</span>
+  <span class="topbar-version">Stage 61 / Rider Damage Boxes — Encounter Wizard v1.3.21</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -18045,6 +18061,33 @@ function _ebwApplyTargetScale() {
   _ebwState.scaledPreview = scaled;
   _ebwState.actions = _ebwExtractActions(scaled);
 }
+
+function _ebwRenderRiderControls(a, pos) {
+  const riders = Array.isArray(a.riders) ? a.riders : [];
+  const rows = riders.map((r, ri) => {
+    const p = _ebwDamageParts(r.formula || _ebwFormula(r.n, r.die, r.flat));
+    const n = p.valid ? p.n : (parseInt(r.n)||1);
+    const die = p.valid ? p.die : (parseInt(r.die)||6);
+    const flat = p.valid ? p.flat : (parseInt(r.flat)||0);
+    const type = String(r.type || r.damageType || '').toLowerCase();
+    const avg = _ebwRound1(_ebwAvgFormula(_ebwFormula(n, die, flat)));
+    return `
+      <div class="ebw-rider-grid" data-ebw-rider="${ri}">
+        <div class="ebw-field"><label>Rider Dice</label><input class="ebw-input ebw-mini" data-ebw-rider-key="n" type="number" min="0" value="${n}"></div>
+        <div class="ebw-field"><label>Die</label><select class="ebw-select ebw-mini" data-ebw-rider-key="die">${[4,6,8,10,12].map(d=>`<option value="${d}" ${d===die?'selected':''}>d${d}</option>`).join('')}</select></div>
+        <div class="ebw-field"><label>Flat</label><input class="ebw-input ebw-mini" data-ebw-rider-key="flat" type="number" value="${flat}"></div>
+        <div class="ebw-field"><label>Type</label><input class="ebw-input ebw-mini" data-ebw-rider-key="type" value="${escAttr(type)}" placeholder="lightning"></div>
+        <button class="ebw-btn ebw-mini danger" data-ebw-rider-remove="${ri}" type="button" title="Remove this rider damage">×</button>
+        <div class="ebw-rider-empty" style="grid-column:1 / -1;">${escHtml(_ebwFormula(n,die,flat))}${type?' '+escHtml(type):''} damage · avg ${avg}</div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="ebw-rider-box">
+      <div class="ebw-rider-head"><div class="ebw-rider-title">Additional / Rider Damage</div><button class="ebw-btn ebw-mini" data-ebw-rider-add type="button">+ Rider</button></div>
+      ${rows || '<div class="ebw-rider-empty">No rider damage. Use this for always-on extra damage such as dragon elemental damage, poison, radiant riders, or smite-like add-ons.</div>'}
+    </div>`;
+}
+
 function _ebwRenderActionRow(a, pos) {
   const info = _ebwAnalyzeAction(a);
   const warningHtml = info.warnings.slice(0,3).map(w => `<div class="ebw-warning ${w.kind==='danger'?'danger':(w.kind==='good'?'good':'')}">${escHtml(w.text)}</div>`).join('');
@@ -18065,6 +18108,7 @@ function _ebwRenderActionRow(a, pos) {
           <span class="ebw-label">Burst uses</span><input class="ebw-input ebw-mini" data-ebw-key="burstWeight" type="number" min="0" max="6" step="0.25" value="${escAttr(a.burstWeight == null ? Math.max(1,_ebwUsageWeight(a)) : a.burstWeight)}" title="Biggest plausible round. Informational only.">
           <span class="ebw-label">Alt ranged factor</span><select class="ebw-select ebw-mini" data-ebw-alt-weight title="Reference factor for the solo ranged option; this does not spend the main DPR budget." ${a.altRanged ? '' : 'disabled'}>${[[0.25,'25%'],[0.33,'33%'],[0.5,'50%'],[0.67,'67%'],[0.75,'75%']].map(([v,l])=>`<option value="${v}" ${Math.abs((parseFloat(a.altWeight)||0.5)-v)<0.01?'selected':''}>${l} output</option>`).join('')}</select>
         </div>
+        ${_ebwRenderRiderControls(a, pos)}
         <div class="ebw-action-meta-controls">
           <div class="ebw-field"><label>Range / Reach</label><input class="ebw-input ebw-mini" data-ebw-key="range" value="${escAttr(a.range || '')}" placeholder="80/320 ft."></div>
           <div class="ebw-field"><label>To Hit</label><input class="ebw-input ebw-mini" data-ebw-key="toHit" value="${escAttr(a.toHit || '')}" placeholder="+7"></div>
@@ -18209,6 +18253,34 @@ function wireEncounterBalanceWizard() {
       // Do not re-render on blur. Rebuilding the modal while a user is
       // selecting/editing textarea text caused focus loss and scroll-to-top.
     });
+    row.querySelectorAll('[data-ebw-rider-key]').forEach(el => {
+      const riderRow = el.closest('[data-ebw-rider]');
+      const ri = riderRow ? parseInt(riderRow.dataset.ebwRider) : -1;
+      const r = Array.isArray(a.riders) ? a.riders[ri] : null;
+      if (!r) return;
+      const syncRider = () => {
+        const k = el.dataset.ebwRiderKey;
+        const p = _ebwDamageParts(r.formula || _ebwFormula(r.n, r.die, r.flat));
+        if (p.valid) { r.n = p.n; r.die = p.die; r.flat = p.flat; }
+        if (k === 'type') r.type = String(el.value || '').toLowerCase();
+        else r[k] = parseInt(el.value) || 0;
+        r.formula = _ebwFormula(r.n, r.die, r.flat);
+        r.avg = _ebwAvgFormula(r.formula);
+      };
+      el.oninput = () => { syncRider(); };
+      el.onchange = () => { syncRider(); renderEncounterBalanceWizard(); };
+    });
+    row.querySelectorAll('[data-ebw-rider-remove]').forEach(btn => btn.onclick = () => {
+      const ri = parseInt(btn.dataset.ebwRiderRemove);
+      if (Array.isArray(a.riders)) a.riders.splice(ri, 1);
+      renderEncounterBalanceWizard();
+    });
+    const addRider = row.querySelector('[data-ebw-rider-add]');
+    if (addRider) addRider.onclick = () => {
+      if (!Array.isArray(a.riders)) a.riders = [];
+      a.riders.push({ formula:'1d6', n:1, die:6, flat:0, type:a.damageType || '', avg:3.5 });
+      renderEncounterBalanceWizard();
+    };
     row.querySelectorAll('[data-ebw-dice]').forEach(btn => btn.onclick = () => { a.n = Math.max(0, (parseInt(a.n)||0) + (parseInt(btn.dataset.ebwDice)||0)); renderEncounterBalanceWizard(); });
     const alt = row.querySelector('[data-ebw-alt-ranged]');
     if (alt) alt.onchange = () => { a.altRanged = !!alt.checked; if (!a.altWeight) a.altWeight = 0.5; renderEncounterBalanceWizard(); };
