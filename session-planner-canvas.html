@@ -6753,7 +6753,7 @@ body.mobile-mode #sb-modal { display: none !important; }
 }
 
 </style>
-<!-- v1.3.23: HP policy selector preserves published HP by default and can switch to DMG table midpoint/high or published hit-dice max. -->
+<!-- v1.3.24: Encounter imports now fetch full Workshop rows and surface custom bonus/reaction/legendary/lair actions. -->
 </head>
 <body>
 
@@ -6790,7 +6790,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 61 / HP Policy — Encounter Wizard v1.3.23</span>
+  <span class="topbar-version">Stage 62 / Workshop Full Import — Encounter Wizard v1.3.24</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -16473,7 +16473,7 @@ async function doNpcSkinSearch(query, resultsEl, node, minCrStr, maxCrStr) {
     // Without a query, we still cap at 500 so we don't blow up the
     // panel for users with huge Workshops.
     const limit = hasFilter ? (query ? 100 : 500) : 30;
-    let url = 'rq_monsters?select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula,spells,spell_save_dc,spell_attack_bonus';
+    let url = 'rq_monsters?select=*';
     if (query) {
       url += '&name=ilike.' + encodeURIComponent('%' + query + '%');
     }
@@ -16577,8 +16577,7 @@ async function refreshNpcSkin(node) {
   const skin = node.fields && node.fields.skin;
   if (!skin || !skin.monster_id) return;
   try {
-    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(skin.monster_id) +
-      '&select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula,spells,spell_save_dc,spell_attack_bonus');
+    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(skin.monster_id) + '&select=*');
     if (!rows || !rows.length) {
       alert('Source monster not found in Workshop. It may have been deleted.');
       return;
@@ -16836,7 +16835,7 @@ async function doMonsterSearch(query, resultsEl, node) {
   try {
     const enc = encodeURIComponent('%' + query + '%');
     const rows = await sbFetch(
-      'rq_monsters?select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula,spells,spell_save_dc,spell_attack_bonus' +
+      'rq_monsters?select=*' +
       '&name=ilike.' + enc +
       '&order=name.asc&limit=30'
     );
@@ -17034,8 +17033,7 @@ async function refreshImportedMonster(node, idx) {
   const m = node.fields.monsters[idx];
   if (!m || !m.monster_id) return;
   try {
-    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(m.monster_id) +
-      '&select=id,name,monster_type,cr,hp,ac,size,actions,special_abilities,legendary,legendary_actions,lair_actions,abilities,saves,skills,senses,languages,speed,alignment,hp_formula,spells,spell_save_dc,spell_attack_bonus');
+    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(m.monster_id) + '&select=*');
     if (!rows || !rows.length) {
       alert('Source monster not found in Workshop. It may have been deleted.');
       return;
@@ -17335,6 +17333,34 @@ function renderMonsterGroupHtml(g, node) {
     </div>`;
 }
 
+
+function normalizeWorkshopActionList(list, label) {
+  if (!Array.isArray(list)) return [];
+  return list.map((a, i) => {
+    if (!a || typeof a !== 'object') return null;
+    const copy = Object.assign({}, a);
+    copy._encounterActionCategory = label || '';
+    copy._encounterSourceIndex = i;
+    return copy;
+  }).filter(Boolean);
+}
+
+function getMonsterRollActions(sn) {
+  if (!sn) return [];
+  const out = [];
+  const add = (list, label) => {
+    normalizeWorkshopActionList(list, label).forEach(a => out.push(a));
+  };
+  add(sn.actions, 'Action');
+  add(sn.bonus_actions, 'Bonus');
+  add(sn.reactions, 'Reaction');
+  add(sn.legendary_actions, 'Legendary');
+  add(sn.lair_actions, 'Lair');
+  add(sn.mythic_actions, 'Mythic');
+  add(sn.villain_actions, 'Villain');
+  return out;
+}
+
 function renderOneMonsterCard(m, idx, isSingleton) {
   const sn = m.snapshot || {};
   const stats = [
@@ -17342,7 +17368,7 @@ function renderOneMonsterCard(m, idx, isSingleton) {
     sn.hp ? 'HP ' + sn.hp : '',
     sn.ac ? 'AC ' + sn.ac : '',
   ].filter(Boolean).join(' · ');
-  const actions = (sn.actions || []).slice(0, 8);
+  const actions = getMonsterRollActions(sn).slice(0, 12);
   // Special abilities (Death Burst, Frightful Presence, etc.) live under
   // `special_abilities` (DB column) or `special` (SRD bundled shape).
   const specials = (sn.special_abilities || sn.special || []);
