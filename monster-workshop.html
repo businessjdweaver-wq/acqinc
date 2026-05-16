@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.27 · existing skin update fix</span>
+  <span class="topbar-version">v0.5.28 · existing skin update fix</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -2824,7 +2824,7 @@ function filterMonsters() {
 
 
 
-// ── HTML ESCAPE HELPERS (v0.5.27) ─────────────────────────────
+// ── HTML ESCAPE HELPERS (v0.5.28) ─────────────────────────────
 // Must exist in the main boot script before renderBrowserList() runs.
 // A later spell-attachment script also defines these, but browser boot
 // calls renderBrowserList(SRD_MONSTERS) before that later script executes.
@@ -4324,8 +4324,38 @@ function mergeSavedMonsterWithLivePayload(savedRow, livePayload) {
   });
 }
 
+
+function upsertCustomMonsterInMemory(monster) {
+  if (!monster || !monster.id) return null;
+  const wrapped = wrapRqMonsterRow(monster);
+  const idx = customMonsters.findIndex(m => String(m.id) === String(wrapped.id));
+  if (idx >= 0) {
+    customMonsters[idx] = { ...customMonsters[idx], ...wrapped };
+  } else {
+    customMonsters.unshift(wrapped);
+  }
+  return idx >= 0 ? customMonsters[idx] : customMonsters[0];
+}
+
+async function fetchSavedMonsterById(id) {
+  if (!id) return null;
+  const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?select=*&id=eq.${encodeURIComponent(id)}&limit=1`, {
+    headers: { ...sbHeaders(), 'Prefer': 'count=none' },
+    cache: 'no-store'
+  });
+  if (!res.ok) {
+    console.warn('[Workshop saveMonster] Could not refetch saved row:', res.status, await res.text());
+    return null;
+  }
+  const rows = await res.json();
+  return rows && rows[0] ? rows[0] : null;
+}
+
+// Debug hook for console troubleshooting. Kept intentionally tiny.
+window.collectMonsterFromEditor = collectFormData;
+
 function getWorkshopSchemaSQL() {
-  return `-- Monster Workshop v0.5.27 schema support.
+  return `-- Monster Workshop v0.5.28 schema support.
 -- Safe to run multiple times. These columns keep Workshop edits structured
 -- instead of hiding them in notes.
 
@@ -4522,10 +4552,20 @@ async function saveMonster() {
         };
       }
 
-      await loadCustomMonsters();
+      // Keep the browser's in-memory custom list synchronized immediately.
+      // Previously the PATCH succeeded, but reselecting another monster could load
+      // an older object still held in customMonsters. This made saves appear to
+      // vanish after switching monsters or refreshing the list.
+      upsertCustomMonsterInMemory(currentMonster);
 
-      const refreshed = customMonsters.find(m => String(m.id) === String(currentMonster?.id));
-      if (refreshed) currentMonster = mergeSavedMonsterWithLivePayload(refreshed, data);
+      const confirmedRow = await fetchSavedMonsterById(currentMonster?.id);
+      if (confirmedRow) {
+        currentMonster = mergeSavedMonsterWithLivePayload(confirmedRow, data);
+        upsertCustomMonsterInMemory(currentMonster);
+      }
+
+      try { await loadCustomMonsters(); } catch(e) { console.warn('[Workshop saveMonster] reload custom list failed:', e); }
+      upsertCustomMonsterInMemory(currentMonster);
 
       try { localStorage.setItem('rq_custom_monsters_dirty', Date.now().toString()); } catch(e) {}
 
@@ -4892,7 +4932,7 @@ async function loadCustomMonsters() {
     while (true) {
       const res = await fetch(
         `${SB_URL}/rest/v1/rq_monsters?select=*&order=name.asc&limit=${PAGE}&offset=${offset}`,
-        { headers: { ...sbHeaders(), 'Prefer': 'count=none' } }
+        { headers: { ...sbHeaders(), 'Prefer': 'count=none' }, cache: 'no-store' }
       );
 
       if (!res.ok) {
@@ -6709,7 +6749,7 @@ if (currentUser && currentUser.access_token) {
       <h3>🔧 Database Schema (one-time setup)</h3>
       <button class="ssm-close" onclick="closeSchemaModal()">✕</button>
     </div>
-    <pre id="spellSchemaPre">-- Monster Workshop v0.5.27 schema support.
+    <pre id="spellSchemaPre">-- Monster Workshop v0.5.28 schema support.
 -- Safe to run multiple times. These columns keep Workshop edits structured
 -- instead of hiding them in notes.
 
