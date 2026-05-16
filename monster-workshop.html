@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.26 · save hydration fix</span>
+  <span class="topbar-version">v0.5.27 · existing skin update fix</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -2824,7 +2824,7 @@ function filterMonsters() {
 
 
 
-// ── HTML ESCAPE HELPERS (v0.5.26) ─────────────────────────────
+// ── HTML ESCAPE HELPERS (v0.5.27) ─────────────────────────────
 // Must exist in the main boot script before renderBrowserList() runs.
 // A later spell-attachment script also defines these, but browser boot
 // calls renderBrowserList(SRD_MONSTERS) before that later script executes.
@@ -4325,7 +4325,7 @@ function mergeSavedMonsterWithLivePayload(savedRow, livePayload) {
 }
 
 function getWorkshopSchemaSQL() {
-  return `-- Monster Workshop v0.5.26 schema support.
+  return `-- Monster Workshop v0.5.27 schema support.
 -- Safe to run multiple times. These columns keep Workshop edits structured
 -- instead of hiding them in notes.
 
@@ -4369,9 +4369,27 @@ function explainSupabaseSaveError(errText) {
 }
 
 
+function isExistingSkinMonster(monster) {
+  const tags = Array.isArray(monster?.tags) ? monster.tags.map(t => String(t).toLowerCase()) : [];
+  const sourceDetail = String(monster?.source_detail || monster?.sourcebook || '').toLowerCase();
+  const base = String(monster?.base_monster_slug || '');
+
+  // A saved skin may still point back to a foundry-/DDB base slug. That
+  // reference must NOT make the row behave like an imported base monster.
+  // Existing skins should be patched in-place by “Save to Supabase.”
+  return (
+    tags.includes('skin') ||
+    sourceDetail.includes('skin') ||
+    Boolean(monster?.id && base && base !== String(monster?.slug || ''))
+  );
+}
+
 function isLikelyImportedBaseMonster(monster) {
   // Imported Foundry/DDB rows should remain pristine base-library rows.
-  // They often have base_monster_slug starting with foundry- or source_detail/sourcebook values.
+  // But an already-created skin is also stored in rq_monsters and may have
+  // base_monster_slug = foundry-...; that row must update in-place.
+  if (isExistingSkinMonster(monster)) return false;
+
   const slug = String(monster?.base_monster_slug || monster?.slug || '');
   const srcDetail = String(monster?.source_detail || monster?.sourcebook || '');
   return (
@@ -4450,9 +4468,10 @@ async function saveMonster() {
   console.log('[Workshop saveMonster] Saving payload:', data);
 
   // If the user edits the name of an imported/base monster, treat it as a new skin.
-  // This avoids overwriting the imported monster library row and restores the older
-  // skinning workflow where a renamed monster becomes its own custom row.
+  // Existing skins are excluded by isLikelyImportedBaseMonster() and must PATCH
+  // their own rq_monsters row when “Save to Supabase” is pressed.
   if (currentMonster?.id && isLikelyImportedBaseMonster(currentMonster) && data.name && data.name !== currentMonster.name) {
+    console.log('[Workshop saveMonster] Base monster renamed; creating a new skin instead of patching imported base row.');
     return await saveMonsterAsSkin();
   }
 
@@ -6690,7 +6709,7 @@ if (currentUser && currentUser.access_token) {
       <h3>🔧 Database Schema (one-time setup)</h3>
       <button class="ssm-close" onclick="closeSchemaModal()">✕</button>
     </div>
-    <pre id="spellSchemaPre">-- Monster Workshop v0.5.26 schema support.
+    <pre id="spellSchemaPre">-- Monster Workshop v0.5.27 schema support.
 -- Safe to run multiple times. These columns keep Workshop edits structured
 -- instead of hiding them in notes.
 
