@@ -17701,11 +17701,24 @@ function _ebwParseFieldsFromDescIntoAction(a) {
   return a;
 }
 function _ebwStripMechanicalLead(desc) {
+  // Remove any existing wizard-generated mechanical lead clauses before
+  // rebuilding them. This makes Parse & Revise idempotent: pressing the
+  // button twice should replace stale DC/damage/to-hit text, not append a
+  // second copy of the same mechanics.
   let text = String(desc || '').trim();
-  text = text.replace(/^\s*(?:Melee|Ranged|Melee or Ranged|Spell|Weapon|Melee Weapon|Ranged Weapon|Melee Spell|Ranged Spell)[^\.]*?Attack:[\s\S]*?\bdamage\.\s*/i, '');
-  text = text.replace(/^\s*Attack:\s*[\s\S]*?\bdamage\.\s*/i, '');
-  text = text.replace(/^\s*Hit\/?Fail:\s*[\s\S]*?\bdamage\.\s*/i, '');
-  text = text.replace(/^\s*DC\s*\d+\s*(?:STR|DEX|CON|INT|WIS|CHA|Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)[^\.]*?saving throw\.\s*/i, '');
+  let prev = '';
+  const peel = [
+    /^\s*(?:Melee|Ranged|Melee or Ranged|Spell|Weapon|Melee Weapon|Ranged Weapon|Melee Spell|Ranged Spell)[^\.]*?Attack:[^\.]*\.\s*/i,
+    /^\s*Attack:[^\.]*\.\s*/i,
+    /^\s*Hit\/?Fail:\s*[^\.]*damage\.\s*/i,
+    /^\s*Hit:\s*[^\.]*damage\.\s*/i,
+    /^\s*DC\s*\d+\s*(?:STR|DEX|CON|INT|WIS|CHA|Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)[^\.]*?saving throw\.\s*/i,
+    /^\s*If the target is a creature, it must succeed on a DC\s*\d+\s*(?:STR|DEX|CON|INT|WIS|CHA|Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)[^\.]*?saving throw\.\s*/i
+  ];
+  while (text && text !== prev) {
+    prev = text;
+    for (const re of peel) text = text.replace(re, '').trim();
+  }
   return text.trim();
 }
 function _ebwRevisedActionDesc(a) {
@@ -18024,6 +18037,8 @@ async function _ebwSearchMonsters() {
 
 function renderEncounterBalanceWizard() {
   if (!_ebwState) return;
+  const ebwBodyEl = document.querySelector('#enc-balance-modal .ebw-body');
+  const ebwScrollTop = ebwBodyEl ? ebwBodyEl.scrollTop : 0;
   const left = document.getElementById('ebwLeft'), mid = document.getElementById('ebwMiddle'), right = document.getElementById('ebwRight');
   if (!left || !mid || !right) return;
   const target = _ebwTargetDpr(_ebwState.targetCr);
@@ -18062,7 +18077,7 @@ function renderEncounterBalanceWizard() {
     <p class="ebw-help">Mark an action as <b>Alt ranged solo</b> when it is an either/or ranged option, such as an ogre choosing javelin instead of greatclub. The stat block keeps the ranged dice, but the action is excluded from the main DPR point-buy so it will not create an overspent budget. The dropdown shows its tactical/ranged output factor for reference.</p>
     ${_ebwRenderToolboxes()}
     ${_ebwState.actions.length ? _ebwState.actions.map((a, pos)=>_ebwRenderActionRow(a, pos)).join('') : '<p class="ebw-help">No damage formulas found on this snapshot. Add a blank action, apply a spell, or borrow an action from another monster.</p>'}`;
-  const sn = _ebwState.scaledPreview || {};
+  const sn = _ebwBuildSnapshot() || _ebwState.scaledPreview || {};
   right.innerHTML = `
     <h4>Preview & Export</h4>
     <div class="ebw-kpi-grid">
@@ -18074,6 +18089,7 @@ function renderEncounterBalanceWizard() {
     <p class="ebw-help"><b>Apply to This Instance</b> stores the adjusted stat block only on this encounter monster. <b>Clone in Encounter</b> adds a second copy using the current preview and allocation, so you can run two differently-scaled versions at once. <b>Save as Workshop Skin</b> creates a new rq_monsters row from this preview. Changing Target CR now re-syncs HP/AC immediately, and saving defensively corrects out-of-band HP.</p>
     <div class="ebw-field"><label>Current Actions Preview</label><textarea class="ebw-textarea" readonly>${escHtml((sn.actions||[]).map(a => (a.name||'Action') + ': ' + (a.damage || _ebwFirstDamageFormulaFromDesc(a.desc) || '—') + (a.desc ? '\n' + a.desc : '')).join('\n\n'))}</textarea></div>`;
   wireEncounterBalanceWizard();
+  if (ebwBodyEl) ebwBodyEl.scrollTop = ebwScrollTop;
 }
 function wireEncounterBalanceWizard() {
   const close = document.getElementById('ebwCloseBtn'); if (close) close.onclick = closeEncounterBalanceWizard;
@@ -18101,8 +18117,14 @@ function wireEncounterBalanceWizard() {
         else { a[k] = parseInt(el.value) || 0; a.damage = _ebwFormula(a.n,a.die,a.flat); }
       };
       el.oninput = () => { syncField(); };
-      el.onchange = () => { syncField(); renderEncounterBalanceWizard(); };
-      el.onblur = () => { syncField(); renderEncounterBalanceWizard(); };
+      el.onchange = () => {
+        syncField();
+        const k = el.dataset.ebwKey;
+        const quietKeys = ['name','desc','range','toHit','saveDc','damageType'];
+        if (!quietKeys.includes(k)) renderEncounterBalanceWizard();
+      };
+      // Do not re-render on blur. Rebuilding the modal while a user is
+      // selecting/editing textarea text caused focus loss and scroll-to-top.
     });
     row.querySelectorAll('[data-ebw-dice]').forEach(btn => btn.onclick = () => { a.n = Math.max(0, (parseInt(a.n)||0) + (parseInt(btn.dataset.ebwDice)||0)); renderEncounterBalanceWizard(); });
     const alt = row.querySelector('[data-ebw-alt-ranged]');
@@ -18149,8 +18171,8 @@ function _ebwBuildSnapshot() {
     if (desc && ((a.saveAbility && a.saveDc) || f)) desc = _ebwRevisedActionDesc(Object.assign({}, a, { desc }));
     const bits = [];
     if (a.toHit && !/attack/i.test(desc)) bits.push('Attack: ' + a.toHit + ' to hit' + (a.range ? ', range/reach ' + a.range : '') + '.');
-    if (a.saveAbility && a.saveDc && !/saving throw|DC\s*\d+/i.test(desc)) bits.push('DC ' + a.saveDc + ' ' + String(a.saveAbility).toUpperCase() + ' saving throw.');
-    if (f && !/\d+d\d+|Hit:/i.test(desc)) bits.push('Hit/Fail: ' + f + (a.damageType ? ' ' + a.damageType : '') + ' damage.');
+    if (a.saveAbility && a.saveDc && !/(saving throw|DC\s*\d+)/i.test(desc)) bits.push('DC ' + a.saveDc + ' ' + String(a.saveAbility).toUpperCase() + ' saving throw.');
+    if (f && !/(\d+d\d+|Hit:)/i.test(desc)) bits.push('Hit/Fail: ' + f + (a.damageType ? ' ' + a.damageType : '') + ' damage.');
     act.desc = [bits.join(' '), desc].filter(Boolean).join(' ');
     if (isNew) nextActions.push(act); else nextActions[a.i] = act;
   });
