@@ -6753,7 +6753,7 @@ body.mobile-mode #sb-modal { display: none !important; }
 }
 
 </style>
-<!-- v1.3.22: rider damage boxes, origin-preserving breath/special action capture, and clean player-facing action text. -->
+<!-- v1.3.23: HP policy selector preserves published HP by default and can switch to DMG table midpoint/high or published hit-dice max. -->
 </head>
 <body>
 
@@ -6790,7 +6790,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 61 / Rider Damage Boxes — Encounter Wizard v1.3.22</span>
+  <span class="topbar-version">Stage 61 / HP Policy — Encounter Wizard v1.3.23</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -17996,6 +17996,37 @@ function _ebwHpMidpointForCr(cr) {
   const t = CANVAS_CR_TABLE[String(cr)];
   return t ? Math.round((t.hpLo + t.hpHi) / 2) : null;
 }
+function _ebwHpHighForCr(cr) {
+  const t = CANVAS_CR_TABLE[String(cr)];
+  return t ? t.hpHi : null;
+}
+function _ebwMaxHpFromFormula(formula) {
+  const text = String(formula || '').replace(/\s+/g, '');
+  const m = text.match(/(\d+)d(\d+)([+\-]\d+)?/i);
+  if (!m) return null;
+  const n = parseInt(m[1]);
+  const die = parseInt(m[2]);
+  const flat = m[3] ? parseInt(m[3]) : 0;
+  const hp = n * die + flat;
+  return Number.isFinite(hp) && hp > 0 ? hp : null;
+}
+function _ebwHpForMode(sn, targetCr) {
+  const mode = (_ebwState && _ebwState.hpMode) || 'native';
+  const nativeHp = parseInt((_ebwState && _ebwState.sourceHp) || (sn && sn.hp));
+  const formula = (_ebwState && _ebwState.sourceHpFormula) || (sn && sn.hp_formula) || '';
+  const maxPublished = _ebwMaxHpFromFormula(formula);
+  if (mode === 'table-mid') return _ebwHpMidpointForCr(targetCr);
+  if (mode === 'table-high') return _ebwHpHighForCr(targetCr);
+  if (mode === 'published-max') return maxPublished || nativeHp || _ebwHpMidpointForCr(targetCr);
+  return nativeHp || _ebwHpMidpointForCr(targetCr);
+}
+function _ebwHpModeLabel() {
+  const mode = (_ebwState && _ebwState.hpMode) || 'native';
+  if (mode === 'table-mid') return 'DMG table midpoint';
+  if (mode === 'table-high') return 'DMG table high';
+  if (mode === 'published-max') return 'Published hit-dice max';
+  return 'Published/current HP';
+}
 function _ebwHpLooksUnscaledForTarget(sn, targetCr) {
   const t = CANVAS_CR_TABLE[String(targetCr)];
   if (!sn || !t) return false;
@@ -18009,8 +18040,8 @@ function _ebwSyncDefenseToTarget(sn) {
   if (!sn || !t) return sn;
   const oldCr = String(sn.cr || _ebwState.baseCr || targetCr);
   const oldT = CANVAS_CR_TABLE[oldCr] || t;
-  const hpMid = _ebwHpMidpointForCr(targetCr);
-  if (hpMid != null && _ebwHpLooksUnscaledForTarget(sn, targetCr)) sn.hp = hpMid;
+  const hpByMode = _ebwHpForMode(sn, targetCr);
+  if (hpByMode != null) sn.hp = hpByMode;
   if (sn.ac == null || sn.ac === '') sn.ac = t.ac;
   else {
     const acDelta = (parseInt(sn.ac) || oldT.ac) - oldT.ac;
@@ -18060,6 +18091,9 @@ function openEncounterBalanceWizard(node, idx) {
     baseCr: String(m._scaledFromCr || sn.cr || '1'),
     name: m.nameOverride ? _ebwNormalizeVariantName(m.nameOverride) : _ebwDefaultVariantName(sn.name || 'Monster'),
     sourceName: _ebwNormalizeVariantName(sn.name || 'Monster'),
+    sourceHp: parseInt(sn.hp) || '',
+    sourceHpFormula: sn.hp_formula || sn.hit_dice || sn.hitDice || '',
+    hpMode: 'native',
     actions: _ebwExtractActions(sn),
     multiattack: _ebwFindMultiattack(sn),
     scaledPreview: sn,
@@ -18211,6 +18245,12 @@ function renderEncounterBalanceWizard() {
       <div class="ebw-field"><label>Target CR</label><select class="ebw-select" id="ebwTargetCr">${EBW_CR_OPTIONS.map(c=>`<option value="${c}" ${c===String(_ebwState.targetCr)?'selected':''}>CR ${c}</option>`).join('')}</select></div>
       <button class="ebw-btn" id="ebwAutoScaleBtn" type="button">Auto-Scale Baseline</button>
     </div>
+    <div class="ebw-field"><label>HP Policy</label><select class="ebw-select" id="ebwHpMode">
+      <option value="native" ${(_ebwState.hpMode||'native')==='native'?'selected':''}>Preserve published/current HP${_ebwState.sourceHp ? ' (' + escHtml(String(_ebwState.sourceHp)) + ')' : ''}</option>
+      <option value="published-max" ${_ebwState.hpMode==='published-max'?'selected':''}>Max published hit dice${_ebwMaxHpFromFormula(_ebwState.sourceHpFormula) ? ' (' + escHtml(String(_ebwMaxHpFromFormula(_ebwState.sourceHpFormula))) + ')' : ''}</option>
+      <option value="table-mid" ${_ebwState.hpMode==='table-mid'?'selected':''}>DMG table midpoint${_ebwHpMidpointForCr(_ebwState.targetCr) ? ' (' + escHtml(String(_ebwHpMidpointForCr(_ebwState.targetCr))) + ')' : ''}</option>
+      <option value="table-high" ${_ebwState.hpMode==='table-high'?'selected':''}>DMG table high${_ebwHpHighForCr(_ebwState.targetCr) ? ' (' + escHtml(String(_ebwHpHighForCr(_ebwState.targetCr))) + ')' : ''}</option>
+    </select></div>
     <div class="ebw-field"><label>Raw Multiattack / Routine Text</label><textarea class="ebw-textarea" readonly>${escHtml(_ebwState.multiattack)}</textarea></div>
     <p class="ebw-help">Use the raw Multiattack text as the authority. The budget helper does not assume the parser knows the intended routine; it gives you transparent DPR math and lets you allocate damage manually.</p>`;
   mid.innerHTML = `
@@ -18231,12 +18271,12 @@ function renderEncounterBalanceWizard() {
   right.innerHTML = `
     <h4>Preview & Export</h4>
     <div class="ebw-kpi-grid">
-      <div class="ebw-kpi"><span>Preview HP</span><b>${escHtml(sn.hp || '?')}</b></div>
+      <div class="ebw-kpi"><span>Preview HP</span><b>${escHtml(sn.hp || '?')}</b><span>${escHtml(_ebwHpModeLabel())}</span></div>
       <div class="ebw-kpi"><span>Preview AC</span><b>${escHtml(sn.ac || '?')}</b></div>
       <div class="ebw-kpi"><span>Preview CR</span><b>${escHtml(sn.cr || '?')}</b></div>
       <div class="ebw-kpi"><span>Action Count</span><b>${(sn.actions||[]).length}</b></div>
     </div>
-    <p class="ebw-help"><b>Apply to This Instance</b> stores the adjusted stat block only on this encounter monster. <b>Clone in Encounter</b> adds a second copy using the current preview and allocation, so you can run two differently-scaled versions at once. <b>Save as Workshop Skin</b> creates a new rq_monsters row from this preview. Changing Target CR now re-syncs HP/AC immediately, and saving defensively corrects out-of-band HP.</p>
+    <p class="ebw-help"><b>Apply to This Instance</b> stores the adjusted stat block only on this encounter monster. <b>Clone in Encounter</b> adds a second copy using the current preview and allocation, so you can run two differently-scaled versions at once. <b>Save as Workshop Skin</b> creates a new rq_monsters row from this preview. HP now follows the selected HP Policy: preserve the published/current value by default, choose a DMG table value, or max the monster's published hit dice when an HP formula is available.</p>
     <div class="ebw-field"><label>Current Actions Preview</label><textarea class="ebw-textarea" readonly>${escHtml((sn.actions||[]).map(a => (a.name||'Action') + ': ' + (a.damage || _ebwFirstDamageFormulaFromDesc(a.desc) || '—') + (a.desc ? '\n' + a.desc : '')).join('\n\n'))}</textarea></div>`;
   wireEncounterBalanceWizard();
   if (ebwBodyEl) ebwBodyEl.scrollTop = ebwScrollTop;
@@ -18245,6 +18285,7 @@ function wireEncounterBalanceWizard() {
   const close = document.getElementById('ebwCloseBtn'); if (close) close.onclick = closeEncounterBalanceWizard;
   const name = document.getElementById('ebwName'); if (name) name.oninput = () => { if (_ebwState) _ebwState.name = name.value; };
   const cr = document.getElementById('ebwTargetCr'); if (cr) cr.onchange = () => { _ebwState.targetCr = cr.value; _ebwApplyTargetScale(); renderEncounterBalanceWizard(); };
+  const hpMode = document.getElementById('ebwHpMode'); if (hpMode) hpMode.onchange = () => { _ebwState.hpMode = hpMode.value || 'native'; renderEncounterBalanceWizard(); };
   const auto = document.getElementById('ebwAutoScaleBtn'); if (auto) auto.onclick = () => { _ebwApplyTargetScale(); renderEncounterBalanceWizard(); };
   const addBlank = document.getElementById('ebwAddBlankAction'); if (addBlank) addBlank.onclick = () => { _ebwState.actions.push(_ebwNewAction()); renderEncounterBalanceWizard(); };
   const spIn = document.getElementById('ebwSpellSearch'); if (spIn) { spIn.oninput = () => { _ebwState.spellQuery = spIn.value; }; spIn.onkeydown = e => { if (e.key === 'Enter') _ebwSearchSpells(); }; }
