@@ -6772,7 +6772,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 60 / DC Revise Focus — Encounter Wizard v1.3.15</span>
+  <span class="topbar-version">Stage 61 / Parse Idempotent — Encounter Wizard v1.3.17</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -17701,23 +17701,33 @@ function _ebwParseFieldsFromDescIntoAction(a) {
   return a;
 }
 function _ebwStripMechanicalLead(desc) {
-  // Remove any existing wizard-generated mechanical lead clauses before
-  // rebuilding them. This makes Parse & Revise idempotent: pressing the
-  // button twice should replace stale DC/damage/to-hit text, not append a
-  // second copy of the same mechanics.
-  let text = String(desc || '').trim();
-  let prev = '';
-  const peel = [
-    /^\s*(?:Melee|Ranged|Melee or Ranged|Spell|Weapon|Melee Weapon|Ranged Weapon|Melee Spell|Ranged Spell)[^\.]*?Attack:[^\.]*\.\s*/i,
-    /^\s*Attack:[^\.]*\.\s*/i,
-    /^\s*Hit\/?Fail:\s*[^\.]*damage\.\s*/i,
-    /^\s*Hit:\s*[^\.]*damage\.\s*/i,
-    /^\s*DC\s*\d+\s*(?:STR|DEX|CON|INT|WIS|CHA|Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)[^\.]*?saving throw\.\s*/i,
-    /^\s*If the target is a creature, it must succeed on a DC\s*\d+\s*(?:STR|DEX|CON|INT|WIS|CHA|Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)[^\.]*?saving throw\.\s*/i
-  ];
-  while (text && text !== prev) {
-    prev = text;
-    for (const re of peel) text = text.replace(re, '').trim();
+  // Strip wizard-generated mechanical clauses from the front of the text.
+  // This must be aggressive and idempotent because older builds appended
+  // repeated "Attack" / "Hit" / "DC" clauses. Whatever remains is treated
+  // as flavor/rider text and preserved after the rebuilt mechanics.
+  let text = String(desc || '').replace(/\s+/g, ' ').trim();
+  let changed = true;
+  const cleanLead = () => {
+    text = text
+      .replace(/^\s*[,;:–—-]+\s*/g, '')
+      .replace(/^\s*(?:one target|one creature|a target|the target)\s*\.\s*/i, '')
+      .replace(/^\s*,\s*(?:one target|one creature|a target|the target)\s*\.\s*/i, '')
+      .trim();
+  };
+  while (changed && text) {
+    const before = text;
+    cleanLead();
+    // Attack header sentence: "Melee Weapon Attack: +4 to hit, reach 5 ft., one target."
+    text = text.replace(/^\s*(?:(?:Melee|Ranged|Melee or Ranged)\s+)?(?:(?:Weapon|Spell)\s+)?Attack:\s*[^.]*\.\s*/i, '').trim();
+    text = text.replace(/^\s*(?:Melee|Ranged|Melee or Ranged)\s+(?:Weapon|Spell)\s+Attack:\s*[^.]*\.\s*/i, '').trim();
+    // Hit / fail damage sentence, including older malformed tails like ", one target."
+    text = text.replace(/^\s*Hit\/?Fail:\s*.*?\bdamage\s*(?:[,;]\s*(?:one target|one creature|a target|the target))?\s*\.\s*/i, '').trim();
+    text = text.replace(/^\s*Hit:\s*.*?\bdamage\s*(?:[,;]\s*(?:one target|one creature|a target|the target))?\s*\.\s*/i, '').trim();
+    // Saving throw sentence in either compact or full generated form.
+    text = text.replace(/^\s*DC\s*\d+\s*(?:STR|DEX|CON|INT|WIS|CHA|Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)[^.]*?saving throw\s*\.\s*/i, '').trim();
+    text = text.replace(/^\s*If the target is a creature,\s*it must succeed on a DC\s*\d+\s*(?:STR|DEX|CON|INT|WIS|CHA|Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)[^.]*?saving throw\s*\.\s*/i, '').trim();
+    cleanLead();
+    changed = text !== before;
   }
   return text.trim();
 }
@@ -18166,14 +18176,10 @@ function _ebwBuildSnapshot() {
     act._ebwBurstWeight = Math.max(0, Math.min(6, parseFloat(a.burstWeight == null ? Math.max(1, _ebwUsageWeight(a)) : a.burstWeight) || 0));
     const f = _ebwFormula(a.n, a.die, a.flat);
     act.damage = f;
-    let desc = String(a.desc || act.desc || '').trim();
-    // Keep saved/exported text aligned with the current structured fields when the text has stale DC or damage values.
-    if (desc && ((a.saveAbility && a.saveDc) || f)) desc = _ebwRevisedActionDesc(Object.assign({}, a, { desc }));
-    const bits = [];
-    if (a.toHit && !/attack/i.test(desc)) bits.push('Attack: ' + a.toHit + ' to hit' + (a.range ? ', range/reach ' + a.range : '') + '.');
-    if (a.saveAbility && a.saveDc && !/(saving throw|DC\s*\d+)/i.test(desc)) bits.push('DC ' + a.saveDc + ' ' + String(a.saveAbility).toUpperCase() + ' saving throw.');
-    if (f && !/(\d+d\d+|Hit:)/i.test(desc)) bits.push('Hit/Fail: ' + f + (a.damageType ? ' ' + a.damageType : '') + ' damage.');
-    act.desc = [bits.join(' '), desc].filter(Boolean).join(' ');
+    // Always export the same idempotently rebuilt text shown by Parse & Revise.
+    // Do not prepend fallback bits here; that was the source of duplicated clauses
+    // in the preview/export pane after repeated parsing/saving.
+    act.desc = _ebwRevisedActionDesc(Object.assign({}, a, { desc: String(a.desc || act.desc || '').trim() }));
     if (isNew) nextActions.push(act); else nextActions[a.i] = act;
   });
   sn.actions = nextActions;
