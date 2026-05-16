@@ -6753,7 +6753,7 @@ body.mobile-mode #sb-modal { display: none !important; }
 }
 
 </style>
-<!-- v1.3.21: rider damage boxes, version bump, and clean player-facing action text. -->
+<!-- v1.3.22: rider damage boxes, origin-preserving breath/special action capture, and clean player-facing action text. -->
 </head>
 <body>
 
@@ -6790,7 +6790,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 61 / Rider Damage Boxes — Encounter Wizard v1.3.21</span>
+  <span class="topbar-version">Stage 61 / Rider Damage Boxes — Encounter Wizard v1.3.22</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -17689,43 +17689,66 @@ function _ebwFormula(n, die, flat) {
   if (n <= 0) return flat ? String(flat) : '';
   return n + 'd' + die + (flat ? (flat > 0 ? '+' : '') + flat : '');
 }
+function _ebwActionHasDamageOrSave(a) {
+  if (!a) return false;
+  const name = String(a.name || '');
+  const desc = String(a.desc || a.description || '');
+  if (/multiattack/i.test(name)) return false;
+  if (a.damage || a.damages || a.damageParts || a._ebwDamageParts || a.damage_parts) return true;
+  if (_ebwParseDamagePartsFromText(desc).length) return true;
+  return /\b(?:hit:|damage|recharge|breath|saving throw|save)\b/i.test(desc) && !/^\s*$/.test(desc);
+}
 function _ebwExtractActions(sn) {
-  return (Array.isArray(sn.actions) ? sn.actions : []).map((a, i) => {
-    const rawDamage = a.damage || a.damages || a.damageParts || '';
-    const descParts = _ebwParseDamagePartsFromText(a.desc || '');
-    const storedParts = Array.isArray(a._ebwDamageParts) ? a._ebwDamageParts : (Array.isArray(a.damage_parts) ? a.damage_parts : []);
-    const explicitRiders = Array.isArray(a._ebwRiders) ? a._ebwRiders : (Array.isArray(a.riders) ? a.riders : []);
-    const rawParts = _ebwParseDamagePartsFromText(rawDamage);
-    const parts = storedParts.length ? storedParts : (descParts.length ? descParts : rawParts);
-    const main = parts[0] || rawParts[0] || _ebwParseDamagePartsFromText(_ebwFirstDamageFormulaFromDesc(a.desc))[0] || null;
-    const damage = main ? (main.formula || _ebwFormula(main.n, main.die, main.flat)) : '';
-    const p = _ebwDamageParts(damage);
-    const riders = (explicitRiders.length ? explicitRiders : parts.slice(1)).map(r => {
-      const rp = _ebwDamageParts(r.formula || _ebwFormula(r.n, r.die, r.flat));
-      return { formula:_ebwFormula(rp.n, rp.die, rp.flat), n:rp.n, die:rp.die, flat:rp.flat, type:(r.type || r.damageType || '').toLowerCase(), avg:_ebwAvgFormula(_ebwFormula(rp.n, rp.die, rp.flat)) };
-    }).filter(r => r.formula);
-    return {
-      i,
-      name:a.name || ('Action '+(i+1)),
-      damage,
-      n:p.n,
-      die:p.die,
-      flat:p.flat,
-      riders,
-      avg:_ebwAvgFormula(damage) + riders.reduce((sum,r)=>sum+_ebwAvgFormula(r.formula),0),
-      desc:a.desc || '',
-      range:a.range || a.reach || _ebwRangeFromDesc(a.desc) || '',
-      toHit:a.toHit || a.to_hit || '',
-      saveAbility:a.saveAbility || a.save_ability || _ebwSaveFromDesc(a.desc).ability || '',
-      saveDc:a.saveDc || a.save_dc || _ebwSaveFromDesc(a.desc).dc || '',
-      damageType:a.dmgType || a.damage_type || (main && main.type) || _ebwDamageTypeFromDesc(a.desc) || '',
-      source:a._ebwSource || '',
-      altRanged: !!(a._ebwAltRanged || a.altRanged || a.single_alt_ranged),
-      altWeight: Math.max(0.05, Math.min(1, parseFloat(a._ebwAltWeight || a.altWeight || 0.5) || 0.5)),
-      usageWeight: Math.max(0, Math.min(3, parseFloat(a._ebwUsageWeight || a.usageWeight || 1) || 1)),
-      burstWeight: Math.max(0, Math.min(6, parseFloat(a._ebwBurstWeight || a.burstWeight || Math.max(1, parseFloat(a._ebwUsageWeight || a.usageWeight || 1) || 1)) || 1))
-    };
-  }).filter(x => x.damage || x.desc || x.name);
+  const rows = [];
+  const buckets = [
+    { key:'actions', label:'action', list:Array.isArray(sn.actions) ? sn.actions : [] },
+    { key:'special_abilities', label:'special', list:Array.isArray(sn.special_abilities) ? sn.special_abilities : (Array.isArray(sn.special) ? sn.special : []) },
+    { key:'legendary_actions', label:'legendary', list:Array.isArray(sn.legendary_actions) ? sn.legendary_actions : [] },
+    { key:'lair_actions', label:'lair', list:Array.isArray(sn.lair_actions) ? sn.lair_actions : [] }
+  ];
+  buckets.forEach(bucket => {
+    bucket.list.forEach((a, i) => {
+      if (!_ebwActionHasDamageOrSave(a)) return;
+      const rawDamage = a.damage || a.damages || a.damageParts || '';
+      const descParts = _ebwParseDamagePartsFromText(a.desc || a.description || '');
+      const storedParts = Array.isArray(a._ebwDamageParts) ? a._ebwDamageParts : (Array.isArray(a.damage_parts) ? a.damage_parts : []);
+      const explicitRiders = Array.isArray(a._ebwRiders) ? a._ebwRiders : (Array.isArray(a.riders) ? a.riders : []);
+      const rawParts = _ebwParseDamagePartsFromText(rawDamage);
+      const parts = storedParts.length ? storedParts : (descParts.length ? descParts : rawParts);
+      const main = parts[0] || rawParts[0] || _ebwParseDamagePartsFromText(_ebwFirstDamageFormulaFromDesc(a.desc || a.description))[0] || null;
+      const damage = main ? (main.formula || _ebwFormula(main.n, main.die, main.flat)) : '';
+      const p = _ebwDamageParts(damage);
+      const riders = (explicitRiders.length ? explicitRiders : parts.slice(1)).map(r => {
+        const rp = _ebwDamageParts(r.formula || _ebwFormula(r.n, r.die, r.flat));
+        return { formula:_ebwFormula(rp.n, rp.die, rp.flat), n:rp.n, die:rp.die, flat:rp.flat, type:(r.type || r.damageType || '').toLowerCase(), avg:_ebwAvgFormula(_ebwFormula(rp.n, rp.die, rp.flat)) };
+      }).filter(r => r.formula);
+      rows.push({
+        i,
+        _originList:bucket.key,
+        _originIndex:i,
+        _originLabel:bucket.label,
+        name:a.name || ('Action '+(i+1)),
+        damage,
+        n:p.n,
+        die:p.die,
+        flat:p.flat,
+        riders,
+        avg:_ebwAvgFormula(damage) + riders.reduce((sum,r)=>sum+_ebwAvgFormula(r.formula),0),
+        desc:a.desc || a.description || '',
+        range:a.range || a.reach || _ebwRangeFromDesc(a.desc || a.description) || '',
+        toHit:a.toHit || a.to_hit || '',
+        saveAbility:a.saveAbility || a.save_ability || _ebwSaveFromDesc(a.desc || a.description).ability || '',
+        saveDc:a.saveDc || a.save_dc || _ebwSaveFromDesc(a.desc || a.description).dc || '',
+        damageType:a.dmgType || a.damage_type || (main && main.type) || _ebwDamageTypeFromDesc(a.desc || a.description) || '',
+        source:a._ebwSource || (bucket.key === 'actions' ? '' : bucket.label),
+        altRanged: !!(a._ebwAltRanged || a.altRanged || a.single_alt_ranged),
+        altWeight: Math.max(0.05, Math.min(1, parseFloat(a._ebwAltWeight || a.altWeight || 0.5) || 0.5)),
+        usageWeight: Math.max(0, Math.min(3, parseFloat(a._ebwUsageWeight || a.usageWeight || 1) || 1)),
+        burstWeight: Math.max(0, Math.min(6, parseFloat(a._ebwBurstWeight || a.burstWeight || Math.max(1, parseFloat(a._ebwUsageWeight || a.usageWeight || 1) || 1)) || 1))
+      });
+    });
+  });
+  return rows;
 }
 function _ebwRangeFromDesc(desc) {
   const m = String(desc || '').match(/(?:range|reach)\s+([^,.]+(?:ft\.?|feet))/i);
@@ -17744,7 +17767,7 @@ function _ebwNewAction(seed) {
   return Object.assign({
     i:'new-' + Date.now() + '-' + Math.random().toString(36).slice(2,7),
     name:'New Action', damage:'1d6', n:p.n || 1, die:p.die || 6, flat:p.flat || 0,
-    desc:'', range:'', toHit:'', saveAbility:'', saveDc:'', damageType:'', source:'custom', riders:[],
+    desc:'', range:'', toHit:'', saveAbility:'', saveDc:'', damageType:'', source:'custom', riders:[], _originList:'actions', _originIndex:null, _originLabel:'action',
     altRanged:false, altWeight:0.5, usageWeight:1, burstWeight:1
   }, seed || {});
 }
@@ -18299,10 +18322,21 @@ function _ebwBuildSnapshot() {
   sn.name = _ebwNormalizeVariantName(_ebwState.name || sn.name || 'Encounter Variant');
   _ebwSyncDefenseToTarget(sn);
   if (!Array.isArray(sn.actions)) sn.actions = [];
-  const nextActions = sn.actions.slice();
+  if (!Array.isArray(sn.special_abilities)) sn.special_abilities = Array.isArray(sn.special) ? sn.special.slice() : [];
+  if (!Array.isArray(sn.legendary_actions)) sn.legendary_actions = [];
+  if (!Array.isArray(sn.lair_actions)) sn.lair_actions = [];
+  const nextLists = {
+    actions: sn.actions.slice(),
+    special_abilities: sn.special_abilities.slice(),
+    legendary_actions: sn.legendary_actions.slice(),
+    lair_actions: sn.lair_actions.slice()
+  };
   _ebwState.actions.forEach(a => {
-    const isNew = typeof a.i !== 'number';
-    const act = isNew ? {} : (nextActions[a.i] || {});
+    const listKey = nextLists[a._originList] ? a._originList : 'actions';
+    const nextList = nextLists[listKey];
+    const originIndex = Number.isInteger(a._originIndex) ? a._originIndex : (Number.isInteger(a.i) && listKey === 'actions' ? a.i : null);
+    const isNew = originIndex == null || originIndex < 0;
+    const act = isNew ? {} : (nextList[originIndex] || {});
     act.name = a.name || act.name || 'Action';
     if (a.range) act.range = a.range; else delete act.range;
     if (a.toHit) act.toHit = a.toHit; else delete act.toHit;
@@ -18327,9 +18361,12 @@ function _ebwBuildSnapshot() {
     // Do not prepend fallback bits here; that was the source of duplicated clauses
     // in the preview/export pane after repeated parsing/saving.
     act.desc = _ebwRevisedActionDesc(Object.assign({}, a, { desc: String(a.desc || act.desc || '').trim() }));
-    if (isNew) nextActions.push(act); else nextActions[a.i] = act;
+    if (isNew) nextList.push(act); else nextList[originIndex] = act;
   });
-  sn.actions = nextActions;
+  sn.actions = nextLists.actions;
+  sn.special_abilities = nextLists.special_abilities;
+  sn.legendary_actions = nextLists.legendary_actions;
+  sn.lair_actions = nextLists.lair_actions;
   return sn;
 }
 function _ebwCommit(mode, closeAfter = false) {
