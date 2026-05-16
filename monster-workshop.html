@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.23 · skin persistence + full actions</span>
+  <span class="topbar-version">v0.5.24 · save hydration fix</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -4231,19 +4231,24 @@ function collectFormData() {
 
 // ── SUPABASE ──
 function wrapRqMonsterRow(r) {
+  const fallback = parseWorkshopExtendedFields(r?.notes);
+  const merged = { ...(r || {}) };
+  if (!Array.isArray(merged.damage_resistances) || !merged.damage_resistances.length) merged.damage_resistances = fallback.damage_resistances || [];
+  if (!Array.isArray(merged.bonus_actions) || !merged.bonus_actions.length) merged.bonus_actions = fallback.bonus_actions || [];
+  if (!Array.isArray(merged.reactions) || !merged.reactions.length) merged.reactions = fallback.reactions || [];
   return {
-    ...r,
-    slug: r.slug || ('custom-' + r.id),
-    type: r.monster_type || r.tags?.[0] || 'custom',
+    ...merged,
+    slug: merged.slug || ('custom-' + merged.id),
+    type: merged.monster_type || merged.tags?.[0] || 'custom',
     source: 'custom',
-    actions: r.actions || [],
-    special_abilities: r.special_abilities || [],
-    damage_resistances: r.damage_resistances || [],
-    bonus_actions: r.bonus_actions || [],
-    reactions: r.reactions || [],
-    villain_actions: r.villain_actions || [],
-    spells: r.spells || [],
-    special: r.special_abilities || []
+    actions: merged.actions || [],
+    special_abilities: merged.special_abilities || [],
+    damage_resistances: merged.damage_resistances || [],
+    bonus_actions: merged.bonus_actions || [],
+    reactions: merged.reactions || [],
+    villain_actions: merged.villain_actions || [],
+    spells: merged.spells || [],
+    special: merged.special_abilities || []
   };
 }
 
@@ -4268,15 +4273,61 @@ function stripIdentityForNewSkin(data) {
   return clean;
 }
 
+const WORKSHOP_EXTENDED_FIELDS_MARKER = '[Workshop extended fields JSON]';
+
+function parseWorkshopExtendedFields(notes) {
+  const text = String(notes || '');
+  const idx = text.indexOf(WORKSHOP_EXTENDED_FIELDS_MARKER);
+  if (idx === -1) return {};
+  const jsonStart = text.indexOf('{', idx);
+  if (jsonStart === -1) return {};
+  try {
+    return JSON.parse(text.slice(jsonStart).trim());
+  } catch(e) {
+    console.warn('[Workshop] Could not parse extended fields fallback JSON:', e);
+    return {};
+  }
+}
+
+function mergeSavedMonsterWithLivePayload(savedRow, livePayload) {
+  // PostgREST can return a row that omits newly-added columns when the deployed
+  // rq_monsters schema is behind this Workshop version. Keep the live form values
+  // in memory so pressing Save never appears to wipe unsaved feature/title/detail
+  // edits or the damage resistance field.
+  const wrapped = savedRow ? wrapRqMonsterRow(savedRow) : {};
+  return wrapRqMonsterRow({
+    ...wrapped,
+    ...livePayload,
+    id: savedRow?.id ?? currentMonster?.id ?? livePayload?.id,
+    slug: savedRow?.slug || currentMonster?.slug || livePayload?.slug,
+    created_at: savedRow?.created_at || currentMonster?.created_at,
+    updated_at: savedRow?.updated_at || new Date().toISOString()
+  });
+}
+
 function stripColumnsForLegacyRqMonsters(data) {
   const clean = { ...(data || {}) };
-  // Older rq_monsters deployments may not yet have these columns. Keep the
-  // user-visible data in notes rather than failing the entire save.
+  // Older rq_monsters deployments may not yet have these columns. Store a full
+  // JSON fallback in notes, then rehydrate it in wrapRqMonsterRow on reload.
+  const extended = {
+    damage_resistances: clean.damage_resistances || [],
+    bonus_actions: clean.bonus_actions || [],
+    reactions: clean.reactions || []
+  };
   const legacyBits = [];
-  if (Array.isArray(clean.damage_resistances) && clean.damage_resistances.length) legacyBits.push('Damage Resistances: ' + clean.damage_resistances.join(', '));
-  if (Array.isArray(clean.bonus_actions) && clean.bonus_actions.length) legacyBits.push('Bonus Actions: ' + clean.bonus_actions.map(a => a.name).join(', '));
-  if (Array.isArray(clean.reactions) && clean.reactions.length) legacyBits.push('Reactions: ' + clean.reactions.map(a => a.name).join(', '));
-  if (legacyBits.length) clean.notes = [clean.notes || '', '[Workshop extended fields fallback]', ...legacyBits].filter(Boolean).join('\n');
+  if (Array.isArray(extended.damage_resistances) && extended.damage_resistances.length) legacyBits.push('Damage Resistances: ' + extended.damage_resistances.join(', '));
+  if (Array.isArray(extended.bonus_actions) && extended.bonus_actions.length) legacyBits.push('Bonus Actions: ' + extended.bonus_actions.map(a => a.name).join(', '));
+  if (Array.isArray(extended.reactions) && extended.reactions.length) legacyBits.push('Reactions: ' + extended.reactions.map(a => a.name).join(', '));
+  if (legacyBits.length || extended.bonus_actions.length || extended.reactions.length) {
+    const baseNotes = String(clean.notes || '').split(WORKSHOP_EXTENDED_FIELDS_MARKER)[0].trim();
+    clean.notes = [
+      baseNotes,
+      '[Workshop extended fields fallback]',
+      ...legacyBits,
+      WORKSHOP_EXTENDED_FIELDS_MARKER,
+      JSON.stringify(extended)
+    ].filter(Boolean).join('\n');
+  }
   delete clean.damage_resistances;
   delete clean.bonus_actions;
   delete clean.reactions;
@@ -4334,7 +4385,7 @@ async function saveMonsterAsSkin() {
         if (retry.ok) {
           const retryRows = await retry.json();
           const savedRow = retryRows && retryRows[0] ? retryRows[0] : null;
-          if (savedRow) currentMonster = wrapRqMonsterRow(savedRow);
+          if (savedRow) currentMonster = mergeSavedMonsterWithLivePayload(savedRow, data);
           isEditing = true;
           await loadCustomMonsters();
           filterMonsters();
@@ -4350,13 +4401,13 @@ async function saveMonsterAsSkin() {
 
     const rows = await res.json();
     const savedRow = rows && rows[0] ? rows[0] : null;
-    if (savedRow) currentMonster = wrapRqMonsterRow(savedRow);
+    if (savedRow) currentMonster = mergeSavedMonsterWithLivePayload(savedRow, data);
 
     isEditing = true;
     await loadCustomMonsters();
 
     const refreshed = customMonsters.find(m => String(m.id) === String(currentMonster?.id));
-    if (refreshed) currentMonster = refreshed;
+    if (refreshed) currentMonster = mergeSavedMonsterWithLivePayload(refreshed, data);
 
     try { localStorage.setItem('rq_custom_monsters_dirty', Date.now().toString()); } catch(e) {}
 
@@ -4425,7 +4476,7 @@ async function saveMonster() {
 
     if (res.ok) {
       if (savedRow) {
-        currentMonster = wrapRqMonsterRow(savedRow);
+        currentMonster = mergeSavedMonsterWithLivePayload(savedRow, data);
       } else {
         currentMonster = {
           ...(currentMonster || {}),
@@ -4437,7 +4488,7 @@ async function saveMonster() {
       await loadCustomMonsters();
 
       const refreshed = customMonsters.find(m => String(m.id) === String(currentMonster?.id));
-      if (refreshed) currentMonster = refreshed;
+      if (refreshed) currentMonster = mergeSavedMonsterWithLivePayload(refreshed, data);
 
       try { localStorage.setItem('rq_custom_monsters_dirty', Date.now().toString()); } catch(e) {}
 
@@ -4471,7 +4522,7 @@ async function saveMonster() {
         if (retry.ok) {
           const rows = await retry.json();
           const retryRow = rows && rows[0] ? rows[0] : null;
-          currentMonster = retryRow ? wrapRqMonsterRow(retryRow) : { ...(currentMonster || {}), ...legacyData };
+          currentMonster = retryRow ? mergeSavedMonsterWithLivePayload(retryRow, data) : { ...(currentMonster || {}), ...data };
           await loadCustomMonsters();
           try { localStorage.setItem('rq_custom_monsters_dirty', Date.now().toString()); } catch(e) {}
           filterMonsters();
