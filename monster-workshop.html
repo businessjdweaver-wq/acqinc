@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.29 · existing skin update fix</span>
+  <span class="topbar-version">v0.5.30 · existing skin update fix</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -2824,7 +2824,7 @@ function filterMonsters() {
 
 
 
-// ── HTML ESCAPE HELPERS (v0.5.29) ─────────────────────────────
+// ── HTML ESCAPE HELPERS (v0.5.30) ─────────────────────────────
 // Must exist in the main boot script before renderBrowserList() runs.
 // A later spell-attachment script also defines these, but browser boot
 // calls renderBrowserList(SRD_MONSTERS) before that later script executes.
@@ -4415,7 +4415,7 @@ window.collectMonsterFromEditor = collectFormData;
 window.dumpWorkshopEditor = dumpWorkshopEditor;
 
 function getWorkshopSchemaSQL() {
-  return `-- Monster Workshop v0.5.29 schema support.
+  return `-- Monster Workshop v0.5.30 schema support.
 -- Safe to run multiple times. These columns keep Workshop edits structured
 -- instead of hiding them in notes.
 
@@ -4552,10 +4552,70 @@ async function saveMonsterAsSkin() {
 }
 
 
+
+function buildWorkshopStructuredPatch(rawPayload) {
+  const p = rawPayload || collectFormData();
+  const actionList = list => Array.isArray(list)
+    ? list.map(a => ({ ...(a || {}), toHit: cleanToHitValue(a?.toHit) }))
+    : [];
+  return {
+    actions: actionList(p.actions),
+    bonus_actions: actionList(p.bonus_actions),
+    reactions: actionList(p.reactions),
+    legendary_actions: actionList(p.legendary_actions),
+    lair_actions: actionList(p.lair_actions),
+    mythic_actions: actionList(p.mythic_actions),
+    villain_actions: actionList(p.villain_actions),
+    special_abilities: Array.isArray(p.special_abilities) ? p.special_abilities : [],
+    damage_resistances: Array.isArray(p.damage_resistances) ? p.damage_resistances : [],
+    damage_immunities: Array.isArray(p.damage_immunities) ? p.damage_immunities : [],
+    damage_vulnerabilities: Array.isArray(p.damage_vulnerabilities) ? p.damage_vulnerabilities : [],
+    condition_immunities: Array.isArray(p.condition_immunities) ? p.condition_immunities : []
+  };
+}
+
+async function forcePatchWorkshopStructuredFields(monsterId, rawPayload) {
+  if (!monsterId) return null;
+  const patch = buildWorkshopStructuredPatch(rawPayload);
+  console.log('[Workshop saveMonster] Force-patching structured fields:', {
+    id: monsterId,
+    actions: patch.actions.map(a => a && a.name),
+    bonus_actions: patch.bonus_actions.map(a => a && a.name),
+    reactions: patch.reactions.map(a => a && a.name),
+    special_abilities: patch.special_abilities.map(a => a && a.name),
+    damage_resistances: patch.damage_resistances
+  });
+  const res = await fetch(`${SB_URL}/rest/v1/rq_monsters?id=eq.${encodeURIComponent(monsterId)}`, {
+    method: 'PATCH',
+    headers: {
+      ...sbHeaders(),
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    },
+    body: JSON.stringify(patch),
+    cache: 'no-store'
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    console.warn('[Workshop saveMonster] Structured force-patch failed:', err, patch);
+    throw new Error(explainSupabaseSaveError(err));
+  }
+  const rows = await res.json();
+  const row = rows && rows[0] ? rows[0] : null;
+  console.log('[Workshop saveMonster] Structured force-patch returned:', row ? {
+    id: row.id,
+    actions: Array.isArray(row.actions) ? row.actions.map(a => a && a.name) : row.actions,
+    special_abilities: Array.isArray(row.special_abilities) ? row.special_abilities.map(a => a && a.name) : row.special_abilities,
+    damage_resistances: row.damage_resistances
+  } : row);
+  return row;
+}
+
 async function saveMonster() {
   if (!isEditing) { showToast('Duplicate the monster first to edit and save it', true); return; }
 
-  const data = sanitizeMonsterForSupabase(collectFormData());
+  const rawData = collectFormData();
+  const data = sanitizeMonsterForSupabase(rawData);
   console.log('[Workshop saveMonster] Saving payload:', data);
   console.log('[Workshop saveMonster] Collected names:', { actions: data.actions?.map(a=>a.name), special_abilities: data.special_abilities?.map(a=>a.name), bonus_actions: data.bonus_actions?.map(a=>a.name), reactions: data.reactions?.map(a=>a.name), cr: data.cr, hp: data.hp, damage_resistances: data.damage_resistances });
 
@@ -4604,6 +4664,21 @@ async function saveMonster() {
     }
 
     if (res.ok) {
+      // v0.5.30: PATCH the structured Workshop arrays explicitly after the
+      // general save. New skins already proved INSERT handles these fields;
+      // this makes existing-skin updates use the same first-class columns
+      // instead of relying on any older/narrow payload path.
+      if (currentMonster?.id) {
+        try {
+          const forcedRow = await forcePatchWorkshopStructuredFields(currentMonster.id, rawData);
+          if (forcedRow) savedRow = forcedRow;
+        } catch(forceErr) {
+          showToast(forceErr.message || String(forceErr), true);
+          console.error('[Workshop saveMonster] Structured force-patch error:', forceErr);
+          return;
+        }
+      }
+
       if (savedRow) {
         currentMonster = mergeSavedMonsterWithLivePayload(savedRow, data);
       } else {
@@ -6811,7 +6886,7 @@ if (currentUser && currentUser.access_token) {
       <h3>🔧 Database Schema (one-time setup)</h3>
       <button class="ssm-close" onclick="closeSchemaModal()">✕</button>
     </div>
-    <pre id="spellSchemaPre">-- Monster Workshop v0.5.29 schema support.
+    <pre id="spellSchemaPre">-- Monster Workshop v0.5.30 schema support.
 -- Safe to run multiple times. These columns keep Workshop edits structured
 -- instead of hiding them in notes.
 
