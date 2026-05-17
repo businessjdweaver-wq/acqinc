@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Session Planner — Canvas — Node Groups Marquee Append v1.2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="session-planner-canvas-v1.3.27.css">
+<!-- v1.3.27: Split monolith into external CSS and JavaScript files for faster maintenance; retains v1.3.26 Workshop action-refresh behavior. -->
+</head>
+<body>
+
+<!-- LOGIN OVERLAY (shown until authenticated) -->
+<div id="rqAuthOverlay">
+  <div class="auth-card">
+    <h2>Relentless Quest</h2>
+    <div class="auth-sub">Session Planner — Canvas — Sign In</div>
+    <label for="rqAuthEmail">Email</label>
+    <input id="rqAuthEmail" type="email" autocomplete="username" autofocus>
+    <label for="rqAuthPass">Password</label>
+    <input id="rqAuthPass" type="password" autocomplete="current-password">
+    <button class="auth-btn" id="rqAuthBtn" type="button">Sign In</button>
+    <div class="auth-err" id="rqAuthErr"></div>
+  </div>
+</div>
+
+<!-- SESSION PICKER OVERLAY (campaigns → arcs → sessions) -->
+<div id="session-picker">
+  <div class="sp-card">
+    <div class="sp-card-header">
+      <span class="sp-card-title">Choose a Session</span>
+      <button class="sp-card-close" id="spCloseBtn" onclick="closeSessionPicker()" title="Close">✕</button>
+    </div>
+    <div class="sp-card-body" id="spPickerBody">
+      <div class="sp-empty">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── TOPBAR ── -->
+<div class="topbar">
+  <span class="topbar-brand">Relentless Quest</span>
+  <span class="topbar-sep">›</span>
+  <span class="topbar-title">Session Planner — Canvas</span>
+  <span class="topbar-sep">›</span>
+  <span class="topbar-version">Stage 63 / Split Files — Encounter Wizard v1.3.27</span>
+  <span class="topbar-sep">·</span>
+  <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
+  <div class="topbar-actions">
+    <button class="btn" onclick="openTypeChooserFromButton(event)" title="Add node — opens type chooser">+ Add Node</button>
+    <button class="btn btn-ghost" onclick="openSessionPicker()" title="Choose / create session">📚 Sessions</button>
+    <div id="search-host" title="Search nodes (Cmd+K / Ctrl+K)">
+      <input type="text" id="searchInput" placeholder="Search nodes…" autocomplete="off" spellcheck="false">
+      <button class="search-clear-btn" id="searchInputClear" type="button" tabindex="-1" title="Clear search (Esc)">✕</button>
+      <div id="search-results"></div>
+    </div>
+    <button id="btnFocus" onclick="enterFocusMode()" disabled title="Focus mode — tile selected nodes for play (Z)">🔍 Focus</button>
+    <button id="mobile-mode-btn" onclick="toggleMobileMode()" title="Switch to mobile-friendly read/edit mode">📱</button>
+    <button class="btn" id="btnSaveNow" onclick="saveCurrentSession()" title="Save canvas to current session">💾 Save</button>
+    <span id="canvas-saved-status" class="idle" title="Save status">Idle</span>
+    <div id="topbar-overflow">
+      <button class="btn btn-ghost" id="btnOverflow" onclick="toggleOverflowMenu(event)" title="More actions">⋯ More</button>
+      <div id="overflow-menu" class="overflow-menu">
+        <button class="overflow-item" onclick="openPartyModal(); hideOverflowMenu()">
+          <span class="overflow-item-icon">👥</span> Party Setup
+        </button>
+        <button class="overflow-item" id="btnWrapSession" onclick="openWrapSessionModal(); hideOverflowMenu()">
+          <span class="overflow-item-icon">📜</span> Wrap Session
+        </button>
+        <button class="overflow-item" id="btnUndo" onclick="restoreLastDeleted(); hideOverflowMenu()" disabled>
+          <span class="overflow-item-icon">↺</span> Undo Delete
+        </button>
+        <div class="overflow-divider"></div>
+        <button class="overflow-item" onclick="frameSelection(); hideOverflowMenu()">
+          <span class="overflow-item-icon">⌗</span> Frame Selection (F)
+        </button>
+        <button class="overflow-item" onclick="openTemplateModal(); hideOverflowMenu()">
+          <span class="overflow-item-icon">📋</span> Node Templates
+        </button>
+        <button class="overflow-item" onclick="openCopyToSessionModal(); hideOverflowMenu()">
+          <span class="overflow-item-icon">📤</span> Copy Nodes to Session…
+        </button>
+        <button class="overflow-item" onclick="resetView(); hideOverflowMenu()">
+          <span class="overflow-item-icon">⌖</span> Reset View
+        </button>
+        <div class="overflow-divider"></div>
+        <a class="overflow-item" href="session-planner.html" style="text-decoration:none;">
+          <span class="overflow-item-icon">↩</span> Classic Planner
+        </a>
+        <button class="overflow-item" id="btnLogout" onclick="rqLogout()">
+          <span class="overflow-item-icon">⎋</span> Logout
+        </button>
+        <div class="overflow-divider"></div>
+        <div class="overflow-item-status" title="Beyond20 dice roller status — green when the browser extension is detected">
+          <span id="b20-status"><span class="b20-dot"></span><span class="b20-label">Beyond20?</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Format banner removed in 4c — canvas is the only format going forward. -->
+
+<!-- ── CAMPAIGN FRAME (left strip, screen-fixed) ── -->
+<div id="campaign-frame">
+  <div id="campaign-frame-title">Campaign</div>
+  <div id="campaign-frame-list">
+    <!-- Frame cards + collections injected by renderCampaignFrame() -->
+  </div>
+  <div id="campaign-frame-footer">
+    <button id="frame-add-collection-btn" onclick="addEmptyCollection()" title="Create a new empty collection">+ Coll.</button>
+    <button id="frame-manage-btn" onclick="openCollectionManagerModal()" title="Manage collections — rename, reorder, delete, move members">⚙ Manage</button>
+  </div>
+</div>
+
+<!-- ── ARC FRAME (top strip, screen-fixed) ── -->
+<div id="arc-frame">
+  <div id="arc-frame-title">Arc</div>
+  <div id="arc-frame-list">
+    <!-- Arc cards + collections injected by renderArcFrame() -->
+  </div>
+  <div id="arc-frame-footer">
+    <button onclick="addEmptyArcCollection()" title="Create a new empty arc collection">+ Coll.</button>
+    <button onclick="openArcCollectionManagerModal()" title="Manage arc collections">⚙ Manage</button>
+  </div>
+</div>
+
+<!-- ── CANVAS GROUP BAR (Stage 57) ── -->
+<div id="canvas-group-bar">
+  <span class="groupbar-label">Canvas Groups</span>
+  <button id="canvas-group-create" type="button" title="Create a named group from the currently selected canvas nodes or active marquee">+ Group</button>
+  <button id="canvas-group-append" type="button" title="Append the current selection or active marquee to the selected group">Append</button>
+  <button id="canvas-group-prev" type="button" title="Frame the previous group">←</button>
+  <select id="canvas-group-select" title="Choose a node group to frame">
+    <option value="">No groups yet</option>
+  </select>
+  <button id="canvas-group-next" type="button" title="Frame the next group">→</button>
+  <span id="canvas-group-status">Select canvas nodes, then create a group.</span>
+</div>
+
+<!-- Cross-scope edges (canvas ↔ frame) draw in screen coordinates,
+     not canvas coordinates, so they stay aligned when the canvas pans
+     or zooms. Lives outside #canvas-content. -->
+<svg id="cross-scope-svg" style="position:absolute; top:44px; left:0; right:0; bottom:0; pointer-events:none; z-index:6; overflow:visible;"></svg>
+
+<!-- ── MOBILE OVERLAY (Stage 31) ──
+     Three screens: session picker, node list, single-node view.
+     Toggled via #mobile-mode-btn in the topbar OR auto-activated on
+     viewports ≤ 768px. Reuses node-rendering and field-commit pathways
+     from the desktop UI so editing/autosave Just Works. -->
+<div id="mobile-overlay">
+  <div id="mobile-topbar">
+    <button class="mt-back" id="mob-back-btn" type="button" title="Back">←</button>
+    <span class="mt-title" id="mob-title">Session</span>
+    <span class="mt-counter" id="mob-counter"></span>
+    <span class="mt-status" id="mob-status">·</span>
+    <button class="mt-leave" id="mob-leave-btn" type="button" title="Switch to desktop view"><span class="mt-leave-icon">🖥</span><span class="mt-leave-text">desktop</span></button>
+  </div>
+  <div id="mobile-group-nav" class="hidden">
+    <button id="mob-canvas-group-prev" type="button" title="Previous group">←</button>
+    <select id="mob-canvas-group-select" title="Choose a node group"></select>
+    <button id="mob-canvas-group-next" type="button" title="Next group">→</button>
+  </div>
+  <div id="mobile-screen">
+    <div class="mob-screen-pad" id="mob-screen-content">
+      <!-- Rendered by renderMobileScreen() -->
+    </div>
+  </div>
+</div>
+
+<!-- ── WRAP-SESSION MODAL ── -->
+<div id="wrap-modal">
+  <div id="wrap-modal-card">
+    <div id="wrap-modal-head">
+      <h3>Wrap Session — Promote Nodes</h3>
+      <button id="wrap-modal-close" onclick="closeWrapSessionModal()">✕</button>
+    </div>
+    <div id="wrap-modal-blurb">
+      Decide which nodes from this session should persist beyond it. <b>Campaign</b>-scoped nodes appear in the left frame on every session in this campaign. <b>Session</b> means the node stays on this canvas only. (Arc scope coming in a follow-up stage.)
+    </div>
+    <div id="wrap-modal-list">
+      <!-- Rows injected by renderWrapSessionList() -->
+    </div>
+    <div id="wrap-modal-foot">
+      <button onclick="closeWrapSessionModal()">Cancel</button>
+      <button class="primary" onclick="applyWrapSessionPromotions()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── COLLECTION MANAGER MODAL ── -->
+<div id="cm-modal">
+  <div id="cm-modal-card">
+    <div id="cm-modal-head">
+      <h3>Manage Collections</h3>
+      <button id="cm-modal-close" onclick="closeCollectionManagerModal()">✕</button>
+    </div>
+    <div id="cm-modal-blurb">
+      Rename, delete, or shuffle members between collections. Deleted collections release their members back to the uncollected pool.
+    </div>
+    <div id="cm-modal-list">
+      <!-- Panels injected by renderCollectionManagerList() -->
+    </div>
+    <div id="cm-modal-foot">
+      <button onclick="closeCollectionManagerModal()">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── NODE-GROUP TEMPLATES MODAL ── -->
+<div id="tpl-modal">
+  <div id="tpl-modal-card">
+    <div id="tpl-modal-head">
+      <h3 id="tpl-modal-title">Node Group Templates</h3>
+      <button id="tpl-modal-close" onclick="closeTemplateModal()">✕</button>
+    </div>
+    <div id="tpl-modal-blurb">
+      Save selected nodes (with their interior edges) as a reusable group, then stamp them onto any session in this campaign. Edges to nodes outside the selection are dropped on save.
+    </div>
+    <div id="tpl-modal-list">
+      <!-- Rows injected by renderTemplateModalList() -->
+    </div>
+    <div id="tpl-modal-foot">
+      <button id="tpl-save-current-btn" onclick="saveSelectionAsTemplate()" style="display:none;">+ Save current selection as template</button>
+      <button onclick="closeTemplateModal()">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── COPY NODES TO SESSION MODAL (Stage 39) ──
+     Picks a destination session and clones all session-scope nodes from
+     the current session into it. Edges between session-scope nodes go
+     too. Cross-scope edges are dropped (their non-session endpoint is
+     shared between sessions and shouldn't be duplicated). Fresh IDs
+     ensure later edits to the destination don't affect the source. -->
+<div id="copy-modal">
+  <div class="tpl-modal-card-style" id="copy-modal-card">
+    <div class="tpl-modal-head-style">
+      <h3>Copy Nodes to Another Session</h3>
+      <button class="tpl-modal-close-style" onclick="closeCopyToSessionModal()">✕</button>
+    </div>
+    <div class="tpl-modal-blurb-style">
+      Duplicate every node (and the edges between them) from the current session into another session. Fresh IDs are generated, so editing or deleting the copies later won't touch the originals. Cross-scope edges (campaign / arc connections) are dropped.
+    </div>
+    <div id="copy-modal-source"></div>
+    <div id="copy-modal-newrow">
+      <button class="copy-modal-newrow-toggle" id="copyModalNewToggle" type="button">
+        <span class="csr-new-icon">＋</span>
+        <span>Create a new session…</span>
+      </button>
+      <div class="copy-modal-newrow-form" id="copyModalNewForm" hidden>
+        <input type="text"
+               id="copyModalNewTitle"
+               class="copy-modal-newrow-input"
+               placeholder="New session title"
+               maxlength="120"
+               spellcheck="false"
+               autocorrect="off"
+               autocapitalize="off"
+               autocomplete="off"
+               data-gramm="false"
+               data-gramm_editor="false"
+               data-enable-grammarly="false"
+               data-lt-active="false">
+        <button class="copy-modal-newrow-cancel" id="copyModalNewCancel" type="button">Cancel</button>
+        <button class="copy-modal-newrow-create" id="copyModalNewCreate" type="button">Create</button>
+      </div>
+    </div>
+    <div id="copy-modal-list">
+      <!-- Rows injected by renderCopyToSessionList() -->
+    </div>
+    <div id="copy-modal-options">
+      <label class="copy-modal-checkbox">
+        <input type="checkbox" id="copy-modal-replace">
+        <span>Replace existing nodes in the destination (otherwise: append)</span>
+      </label>
+    </div>
+    <div class="tpl-modal-foot-style">
+      <button onclick="closeCopyToSessionModal()">Cancel</button>
+      <button id="copy-modal-confirm" onclick="confirmCopyToSession()" disabled>Copy →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── STATBLOCK READOUT MODAL ── -->
+<!-- Read-only quick reference for a monster from the Workshop. Opened
+     from the 📖 button on encounter monster group/singleton headers. -->
+<div id="sb-modal">
+  <div id="sb-modal-card">
+    <div id="sb-modal-head">
+      <h3 id="sb-modal-title">Statblock</h3>
+      <button id="sb-modal-close" onclick="closeStatblockModal()">✕</button>
+    </div>
+    <div id="sb-modal-body">
+      <!-- Rendered by renderStatblockModal() -->
+    </div>
+  </div>
+</div>
+
+<!-- ── TABLE CELL OVERFLOW POPOVER (Stage 35) ──
+     Floating bubble that shows the full content of a focused table cell
+     whenever the rendered text overflows the cell's visible width.
+     Positioned by JS just above (or below, if no room above) the focused
+     input. Read-only — actual editing still happens in the cell input. -->
+<div id="table-cell-popover" role="tooltip" aria-hidden="true"></div>
+
+<!-- ── PARTY SETUP MODAL ── -->
+<div id="party-modal">
+  <div id="party-modal-card">
+    <div id="party-modal-head">
+      <h3 id="party-modal-title">Party Setup</h3>
+      <button id="party-modal-close" onclick="closePartyModal()">✕</button>
+    </div>
+    <div id="party-modal-blurb">
+      Configure the player characters for this campaign. The encounter difficulty math uses each character's level to compute XP thresholds (easy / medium / hard / deadly).
+      <span id="party-modal-override-blurb" style="display:none;">
+        <br><b>Override mode:</b> these characters override the campaign default for this encounter only.
+      </span>
+    </div>
+    <div id="party-modal-list">
+      <!-- Rows injected by renderPartyModalList() -->
+    </div>
+    <div id="party-modal-foot">
+      <button onclick="addPartyChar()">+ Add character</button>
+      <button id="party-modal-clear-override" onclick="clearPartyOverride()" style="display:none;">Use Campaign Default</button>
+      <button onclick="closePartyModal()">Cancel</button>
+      <button class="primary" onclick="savePartyModal()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── FOCUS MODE OVERLAY ── -->
+<!-- ── SEARCH MODAL (Cmd+K / Ctrl+K) ── -->
+<div id="search-modal">
+  <div id="search-modal-inner">
+    <div id="search-modal-input-wrap">
+      <input type="text" id="searchModalInput" placeholder="Search nodes across this campaign…" autocomplete="off" spellcheck="false">
+      <button class="search-clear-btn" id="searchModalInputClear" type="button" tabindex="-1" title="Clear search (Esc)">✕</button>
+    </div>
+    <div id="search-modal-results"></div>
+    <div id="search-modal-foot">
+      <span><kbd>↑</kbd> <kbd>↓</kbd> navigate &nbsp;·&nbsp; <kbd>Enter</kbd> expand &nbsp;·&nbsp; <kbd>Esc</kbd> close</span>
+    </div>
+  </div>
+</div>
+
+<div id="focus-overlay">
+  <div id="focus-overlay-head">
+    <span id="focus-overlay-title">Focus Mode</span>
+    <span id="focus-overlay-meta"></span>
+    <button id="focus-overlay-close" onclick="exitFocusMode()" title="Exit focus mode (Esc)">✕ Exit</button>
+  </div>
+  <div id="focus-overlay-grid">
+    <!-- Tiles injected by enterFocusMode() -->
+  </div>
+</div>
+
+<!-- ── CANVAS ── -->
+<div id="canvas-wrap">
+  <svg id="canvas-grid"></svg>
+  <div id="canvas-content">
+    <svg id="canvas-svg" width="1" height="1">
+      <defs>
+        <!-- Single arrowhead marker. orient="auto-start-reverse" makes SVG flip
+             it automatically when used as marker-start (vs marker-end). -->
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--gold)"/>
+        </marker>
+      </defs>
+    </svg>
+    <!-- Nodes live here, injected by JS -->
+  </div>
+
+
+  <div id="marquee"></div>
+  <div id="empty-hint">
+    <div class="empty-headline">Empty Canvas</div>
+    <div class="empty-body">
+      Use the typed palette above to add a node,<br>
+      or middle-click here for a type chooser.
+    </div>
+  </div>
+  <div id="zoom-hud">100%</div>
+  <div id="help-hud" class="collapsed">
+    <button id="help-hud-toggle" type="button" onclick="toggleHelpHud()" title="Show or hide keyboard shortcuts"><span id="help-hud-toggle-text"></span></button>
+    <div id="help-hud-body">
+    <b>Pan</b>: right-click drag &nbsp;·&nbsp; <kbd>Space</kbd>+drag<br>
+    <b>Zoom</b>: scroll wheel<br>
+    <b>Frame view</b>: <kbd>F</kbd> (selection or all)<br>
+    <b>Focus mode</b>: <kbd>Z</kbd> on a selection (or 🔍 button on a node) — Shift+click frame cards to add them<br>
+    <b>New node</b>: topbar palette &nbsp;·&nbsp; middle-click for type chooser<br>
+    <b>Edit node</b>: click the node body<br>
+    <b>Move node</b>: drag the header<br>
+    <b>Connect</b>: click an anchor, then click another<br>
+    <b>Direction</b>: click the arrow pill or middle-click the line<br>
+    <b>Label edge</b>: double-click the line<br>
+    <b>Select multiple</b>: drag on empty canvas; hold <kbd>Shift</kbd> on release to add to selection; groups can use selection or the active marquee<br>
+    <b>Delete</b>: <kbd>Del</kbd> on selected node(s) or connector<br>
+    <b>Saving</b>: autosaved 600ms after each change<br>
+    <b>Search</b>: topbar input or <kbd>Cmd</kbd>/<kbd>Ctrl</kbd>+<kbd>K</kbd><br>
+    <b>Roll adv/dis</b>: <kbd>Shift</kbd>=advantage, <kbd>Alt</kbd>=disadvantage<br>
+    <b>Undo delete</b>: <kbd>Cmd</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd> — restores the most recently deleted node
+    </div>
+  </div>
+</div>
+
+<!-- (Right-click context menu removed in Stage 3a++ — right-click is now pan.) -->
+
+<!-- Middle-click type chooser — populated and positioned at click time -->
+<div id="type-chooser" role="menu"></div>
+
+<!-- Edge label autocomplete — a single floating dropdown that's positioned
+     and populated per-edit. -->
+<div id="edge-label-autocomplete" class="edge-label-autocomplete"></div>
+
+
+<!-- ── NAME FORGE MODAL ── -->
+<div id="name-forge-modal" role="dialog" aria-label="Name Forge">
+  <div id="name-forge-card">
+    <div id="name-forge-head">
+      <h3>⚒ Name Forge</h3>
+      <button id="name-forge-close" type="button" onclick="closeNameForge()" title="Close">✕</button>
+    </div>
+    <div id="name-forge-body">
+      <div class="name-forge-panel">
+        <h4>Inputs</h4>
+        <div class="name-forge-field full">
+          <label for="nf-seeds">Seed Words</label>
+          <input id="nf-seeds" type="text" placeholder="moon, failure, memory" spellcheck="false" autocomplete="off">
+        </div>
+        <div class="name-forge-grid">
+          <div class="name-forge-field">
+            <label for="nf-style">Flavor / Style</label>
+            <select id="nf-style">
+              <option>Mixed</option><option>Latin</option><option>Greek</option><option>Norse</option><option>Welsh</option><option>Sanskrit</option><option>Japanese-inspired</option><option>Hebrew-inspired</option>
+            </select>
+          </div>
+          <div class="name-forge-field">
+            <label for="nf-type">Name Type</label>
+            <select id="nf-type">
+              <option>person</option><option>place</option><option>tavern</option><option>artifact</option><option>monster</option><option>faction</option>
+            </select>
+          </div>
+          <div class="name-forge-field">
+            <label for="nf-tone">Tone</label>
+            <select id="nf-tone">
+              <option>subtle</option><option>ominous</option><option>whimsical</option><option>high fantasy</option><option>ancient</option><option>scholarly</option>
+            </select>
+          </div>
+          <div class="name-forge-field">
+            <label for="nf-count">Results</label>
+            <input id="nf-count" type="number" min="3" max="24" value="10">
+          </div>
+        </div>
+        <div class="name-forge-source-note">
+          Translation lookup first translates each seed into the selected language, then expands that target-language form through open dictionary/translation sources before forging names. No Google Translate scraping.
+        </div>
+        <div class="name-forge-actions">
+          <button type="button" onclick="fetchNameForgeRoots()">Fetch Translations</button>
+          <button type="button" onclick="generateNameForgeResults()">Regenerate</button>
+          <button type="button" onclick="clearNameForgeInputs()">Clear</button>
+        </div>
+        <div id="name-forge-root-status"></div>
+        <div class="name-forge-field full">
+          <label>Translation / Root Chips</label>
+          <div id="name-forge-root-chips"><span class="name-forge-empty">Fetch translations or add seed words.</span></div>
+        </div>
+        <div class="name-forge-field full">
+          <label for="nf-pasted">Manual Fallback Corpus</label>
+          <textarea id="nf-pasted" placeholder="Optional: paste dictionary entries, synonyms, roots, or your own notes. The forge will extract additional fragments from this text."></textarea>
+        </div>
+        <div id="name-forge-scratch">
+          <h4>Scratch List</h4>
+          <div id="name-forge-scratch-list"><span class="name-forge-empty">No saved names yet.</span></div>
+        </div>
+        <div id="name-forge-collections">
+          <h4>Name Collections</h4>
+          <div class="name-forge-collection-row">
+            <select id="nf-collection-select" aria-label="Name collection"></select>
+            <button type="button" onclick="saveCurrentNameForgeResultToCollection()">Save Result</button>
+          </div>
+          <div class="name-forge-collection-row">
+            <input id="nf-new-collection-title" type="text" placeholder="New collection theme, e.g. Clara Oram nobles">
+            <button type="button" onclick="createNameForgeCollectionFromInput()">Create</button>
+          </div>
+          <div id="name-forge-collection-names"><span class="name-forge-empty">No collection loaded yet.</span></div>
+        </div>
+      </div>
+      <div class="name-forge-panel">
+        <h4>Generated Names</h4>
+        <div id="name-forge-results"><div class="name-forge-empty">Enter seeds and click Regenerate.</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── SIDE PANEL EDITOR ── -->
+<div id="side-panel" role="dialog" aria-label="Edit node">
+  <div class="sp-header">
+    <button class="sp-close" onclick="closeSidePanel()" title="Close (Esc)">✕</button>
+    <span class="sp-saved" id="spSaved" title="Save status">Saved</span>
+    <span class="sp-icon"   id="spIcon">◆</span>
+    <div style="display:flex; flex-direction:column; flex:1; gap:2px; min-width:0;">
+      <span class="sp-typebadge" id="spTypeBadge">Type</span>
+      <input class="sp-title-input" id="spTitle" type="text" placeholder="Title…"
+             spellcheck="false"
+             autocorrect="off"
+             autocapitalize="off"
+             autocomplete="off"
+             data-gramm="false"
+             data-gramm_editor="false"
+             data-enable-grammarly="false"
+             data-lt-active="false">
+      <button class="sp-name-forge-title-btn" id="spNameForgeTitleBtn" type="button" style="display:none;">⚒ Name Forge</button>
+      <div class="sp-scope-row">
+        <button class="sp-scope-pill" id="spScopePill" onclick="openScopeMenu(event)" title="Change scope and collection">
+          <span class="sp-scope-label" id="spScopeLabel">Session</span>
+          <span class="sp-scope-coll"  id="spScopeColl"></span>
+          <span class="sp-scope-caret">▾</span>
+        </button>
+        <div class="sp-scope-menu" id="spScopeMenu" style="display:none;"></div>
+      </div>
+    </div>
+  </div>
+  <div class="sp-body" id="spBody"><!-- form rendered per-type --></div>
+  <div class="sp-footer">
+    <button class="sp-btn sp-btn-save"     onclick="saveAndCloseOpenNode()">💾 Save &amp; Close</button>
+    <button class="sp-btn sp-btn-save-alt" onclick="saveOpenNode()">💾 Save</button>
+    <button class="sp-btn sp-btn-delete"   onclick="deleteOpenNode()">⌫ Delete Node</button>
+  </div>
+</div>
+
+<script src="session-planner-canvas-v1.3.27.js"></script>
+
+
+<!-- ENCOUNTER BALANCE WIZARD (Stage 59 / DPR Flat Balance) -->
+<div id="enc-balance-modal" aria-hidden="true">
+  <div class="ebw-head">
+    <div>
+      <div class="ebw-title">Encounter Balance Wizard</div>
+      <div class="ebw-sub" id="ebwSubtitle">Encounter-local CR scaling, DPR budget, cloning, and Workshop skin export</div>
+    </div>
+    <button class="ebw-close" type="button" id="ebwCloseBtn" title="Close">✕</button>
+  </div>
+  <div class="ebw-body">
+    <section class="ebw-panel" id="ebwLeft"></section>
+    <section class="ebw-panel" id="ebwMiddle"></section>
+    <section class="ebw-panel" id="ebwRight"></section>
+  </div>
+  <div class="ebw-foot">
+    <button class="ebw-btn ghost" type="button" id="ebwCloneBtn">Clone in Encounter</button>
+    <button class="ebw-btn ghost" type="button" id="ebwSaveWorkshopBtn">Save as Workshop Skin</button>
+    <button class="ebw-btn ghost" type="button" id="ebwParseReviseBtn">Parse & Revise Text</button>
+    <button class="ebw-btn" type="button" id="ebwSaveInstanceBtn">Save</button>
+    <button class="ebw-btn" type="button" id="ebwSaveCloseBtn">Save & Close</button>
+  </div>
+</div>
+
+</body>
+</html>
