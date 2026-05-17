@@ -1701,14 +1701,16 @@ body {
   text-transform: uppercase;
 }
 
-/* v0.5.33 — AOE DPR threat panel */
-.aoe-threat-box{background:rgba(184,134,11,0.08);border:1px solid rgba(184,134,11,0.28);border-radius:6px;padding:12px;margin-top:10px}
-.aoe-threat-title{font-family:"Cinzel",serif;font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-pale);margin-bottom:8px}
-.aoe-threat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-.aoe-threat-stat{background:rgba(0,0,0,0.25);padding:8px;border-radius:4px;border:1px solid rgba(184,134,11,0.18)}
-.aoe-threat-label{font-family:"Cinzel",serif;font-size:.42rem;letter-spacing:.1em;text-transform:uppercase;color:var(--steel-pale)}
-.aoe-threat-value{font-family:"JetBrains Mono",monospace;font-size:.82rem;color:var(--gold-pale);margin-top:2px}
-
+/* v0.5.34 — AOE / bloodied DPR threat panel */
+.dpr-threat-box{background:rgba(184,134,11,0.08);border:1px solid rgba(184,134,11,0.28);border-radius:6px;padding:12px;margin:12px 0 16px;}
+.dpr-threat-title{font-family:'Cinzel',serif;font-size:.62rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-pale);margin-bottom:8px;}
+.dpr-threat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;}
+.dpr-threat-stat{background:rgba(0,0,0,0.25);border:1px solid rgba(184,134,11,0.18);border-radius:4px;padding:8px;}
+.dpr-threat-label{font-family:'Cinzel',serif;font-size:.42rem;letter-spacing:.1em;text-transform:uppercase;color:var(--steel-pale);}
+.dpr-threat-value{font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--gold-pale);margin-top:2px;}
+.dpr-threat-note{font-size:.75rem;color:var(--bone);margin-top:8px;line-height:1.45;}
+.dpr-threat-warn{color:#e8703a;font-weight:600;}
+@media(max-width:900px){.dpr-threat-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
 </style>
 </head>
 <body>
@@ -1718,6 +1720,7 @@ body {
   <div style="background:var(--steel-dark,#1a1a22);border:1px solid var(--ember-pale,#c8420a);border-radius:8px;padding:32px 36px;max-width:380px;width:90%;box-shadow:0 8px 40px rgba(0,0,0,0.5)">
     <h2 style="font-family:'Cinzel',serif;color:var(--ember-pale,#c8420a);margin:0 0 6px 0;font-size:1.2em;letter-spacing:0.04em">⚒ Monster Workshop</h2>
     <div style="font-size:.78em;color:var(--steel-light,#888);margin-bottom:18px;letter-spacing:0.04em">Sign in to author and publish monsters</div>
+    <form id="login-form" onsubmit="event.preventDefault(); doLogin();">
     <div style="margin-bottom:10px">
       <label style="display:block;font-size:.78em;color:var(--steel-light,#888);margin-bottom:4px">Email</label>
       <input type="email" id="login-email" autocomplete="email" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.3);border:1px solid var(--steel-light,#888);border-radius:4px;color:#fff;font-family:inherit;font-size:.9em;box-sizing:border-box">
@@ -1727,10 +1730,11 @@ body {
       <input type="password" id="login-password" autocomplete="current-password" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.3);border:1px solid var(--steel-light,#888);border-radius:4px;color:#fff;font-family:inherit;font-size:.9em;box-sizing:border-box">
     </div>
     <div style="display:flex;gap:8px;margin-bottom:10px">
-      <button class="btn btn-gold" style="flex:1" onclick="doLogin()">Log In</button>
-      <button class="btn btn-ghost" onclick="doRegister()">Register</button>
+      <button class="btn btn-gold" style="flex:1" type="submit">Log In</button>
+      <button class="btn btn-ghost" type="button" onclick="doRegister()">Register</button>
     </div>
     <div id="login-status" style="font-size:.78em;color:var(--steel-light,#888);min-height:1.2em;text-align:center"></div>
+    </form>
   </div>
 </div>
 
@@ -1740,7 +1744,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.32 · owner-aware save fix</span>
+  <span class="topbar-version">v0.5.34 · bloodied AOE DPR + login fix</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -3233,11 +3237,97 @@ function renderEditor(m) {
       </div>
     </div>
 
+    <!-- DPR / AOE THREAT PREVIEW -->
+    ${renderDprThreatPanel(m)}
+
     <!-- SIMPLIFIED CARD PREVIEW -->
     <div id="simplifiedPreview">
       ${renderSimplifiedCard(m)}
     </div>
   `;
+}
+
+
+function getActionSaveHalfFlag(a) {
+  const text = String((a && (a.saveResult || a.save_result || a.desc)) || '').toLowerCase();
+  return /half/.test(text) || /save[^.]{0,80}half/.test(text);
+}
+function inferAoeExpectedTargets(action, mon) {
+  const explicit = parseFloat(action?.expectedTargets);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const desc = String((action?.desc || '') + ' ' + (action?.reach || '') + ' ' + (action?.range || '') + ' ' + (action?.name || '')).toLowerCase();
+  if (/each creature|all creatures|cone|cylinder|sphere|radius|cube|line|within/.test(desc)) {
+    return String(mon?.size || '').toLowerCase().includes('gargantuan') ? 4 : 3;
+  }
+  return 1;
+}
+function inferAoeMaxTargets(action, expectedTargets) {
+  const explicit = parseFloat(action?.maxTargets);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const desc = String((action?.desc || '') + ' ' + (action?.reach || '') + ' ' + (action?.range || '')).toLowerCase();
+  if (/each creature|all creatures|cone|cylinder|sphere|radius|cube|line|within/.test(desc)) return Math.max(expectedTargets, 5);
+  return expectedTargets;
+}
+function actionPrimaryAverage(action) {
+  return averageDamageFormulaValue(action?.damage || '') + averageDamageFormulaValue(action?.extra || '');
+}
+function actionBloodiedAverage(action) {
+  const bd = action?.bloodiedDamage || action?.reducedDamage || '';
+  const b = averageDamageFormulaValue(bd);
+  if (b > 0) return b + averageDamageFormulaValue(action?.extra || '');
+  return actionPrimaryAverage(action);
+}
+function saveAdjustedDamage(avg, saveForHalf) {
+  // Heuristic: 60% fail, 40% success. If save-for-half, successful saves still take half.
+  return saveForHalf ? (avg * 0.6 + avg * 0.5 * 0.4) : (avg * 0.6);
+}
+function estimateDprThreat(mon) {
+  const actions = [
+    ...((mon && mon.actions) || []),
+    ...((mon && mon.bonus_actions) || []),
+    ...((mon && mon.reactions) || []),
+    ...((mon && mon.legendary_actions) || []),
+    ...((mon && mon.lair_actions) || [])
+  ];
+  let single = 0, early = 0, bloodied = 0, burst = 0;
+  const rows = [];
+  actions.forEach(a => {
+    const primaryAvg = actionPrimaryAverage(a);
+    if (!primaryAvg) return;
+    const bloodiedAvg = actionBloodiedAverage(a);
+    const isSave = !!(a.saveDc || a.saveDC || a.save_dc);
+    const saveForHalf = isSave && getActionSaveHalfFlag(a);
+    const targets = inferAoeExpectedTargets(a, mon);
+    const maxTargets = inferAoeMaxTargets(a, targets);
+    const perEarly = isSave ? saveAdjustedDamage(primaryAvg, saveForHalf) : primaryAvg;
+    const perBloodied = isSave ? saveAdjustedDamage(bloodiedAvg, saveForHalf) : bloodiedAvg;
+    single += primaryAvg;
+    early += perEarly * targets;
+    bloodied += perBloodied * targets;
+    burst = Math.max(burst, primaryAvg * maxTargets);
+    rows.push({ name:a.name || 'Action', primaryAvg, bloodiedAvg, targets, maxTargets, saveForHalf });
+  });
+  return { single, early: Math.max(single, early), bloodied: Math.max(0, bloodied), burst: Math.max(single, burst), rows };
+}
+function renderDprThreatPanel(mon) {
+  const d = estimateDprThreat(mon || {});
+  if (!d.rows.length) return '';
+  const severe = d.burst >= 150;
+  const high = d.burst >= 90;
+  const bloodiedDiff = Math.abs(d.early - d.bloodied) >= 5;
+  return `<div class="dpr-threat-box">
+    <div class="dpr-threat-title">DPR / AOE Threat Assessment</div>
+    <div class="dpr-threat-grid">
+      <div class="dpr-threat-stat"><div class="dpr-threat-label">Single Target</div><div class="dpr-threat-value">${d.single.toFixed(1)}</div></div>
+      <div class="dpr-threat-stat"><div class="dpr-threat-label">AOE / Early</div><div class="dpr-threat-value">${d.early.toFixed(1)}</div></div>
+      <div class="dpr-threat-stat"><div class="dpr-threat-label">Bloodied Output</div><div class="dpr-threat-value">${d.bloodied.toFixed(1)}</div></div>
+      <div class="dpr-threat-stat"><div class="dpr-threat-label">Max Burst</div><div class="dpr-threat-value">${d.burst.toFixed(1)}</div></div>
+    </div>
+    <div class="dpr-threat-note">
+      ${severe ? '<span class="dpr-threat-warn">Severe multi-target burst risk.</span> ' : high ? '<span class="dpr-threat-warn">High multi-target burst risk.</span> ' : ''}
+      ${bloodiedDiff ? 'This monster has threshold-aware damage; early-fight and bloodied outputs are intentionally shown separately.' : 'No bloodied damage drop detected from structured fields.'}
+    </div>
+  </div>`;
 }
 
 function renderActionCard(a, editable) {
@@ -3272,6 +3362,12 @@ function renderActionCard(a, editable) {
       </select></div>
       <div class="field"><span class="field-label">Save Result</span><input class="field-input" data-field="saveResult" type="text" value="${attrEsc(a.saveResult||a.save_result||'')}" placeholder="half damage on success" ${ro}></div>
       <div class="field"><span class="field-label">Duration</span><input class="field-input" data-field="duration" type="text" value="${attrEsc(a.duration||'')}" placeholder="1 minute; end of next turn" ${ro}></div>
+    </div>
+    <div class="field-row-4" style="margin-bottom:6px;">
+      <div class="field"><span class="field-label">Bloodied Damage</span><input class="field-input" data-field="bloodiedDamage" type="text" value="${attrEsc(a.bloodiedDamage||a.reducedDamage||'')}" placeholder="3d12" ${ro}></div>
+      <div class="field"><span class="field-label">Damage Threshold</span><input class="field-input" data-field="damageThreshold" type="text" value="${attrEsc(a.damageThreshold||'≤ 50% HP')}" placeholder="≤ 50% HP" ${ro}></div>
+      <div class="field"><span class="field-label">Expected Targets</span><input class="field-input" data-field="expectedTargets" type="number" min="1" max="12" value="${attrEsc(a.expectedTargets||'')}" placeholder="AOE avg" ${ro}></div>
+      <div class="field"><span class="field-label">Max Targets</span><input class="field-input" data-field="maxTargets" type="number" min="1" max="12" value="${attrEsc(a.maxTargets||'')}" placeholder="burst cap" ${ro}></div>
     </div>
     <textarea class="field-textarea" data-field="desc" style="min-height:56px;" ${ro} placeholder="Rules text, riders, conditions, targeting, and VTT-visible description…">${escapeHtml(a.desc||'')}</textarea>
   </div>`;
@@ -4227,6 +4323,11 @@ function readActionCard(card) {
     saveResult: val('saveResult', 11),
     save_result: val('saveResult', 11),
     duration: val('duration', 12),
+    bloodiedDamage: cleanFoundryFormula(val('bloodiedDamage', 13)),
+    reducedDamage: cleanFoundryFormula(val('bloodiedDamage', 13)),
+    damageThreshold: val('damageThreshold', 14),
+    expectedTargets: val('expectedTargets', 15),
+    maxTargets: val('maxTargets', 16),
     desc: val('desc', fields.length - 1)
   };
 
@@ -4235,6 +4336,7 @@ function readActionCard(card) {
   action.damageType = action.dmgType;
   action.riderDamage = action.extra;
   action.riderType = action.extraType;
+  action.damageThresholdPct = /50/.test(action.damageThreshold || '') ? 50 : '';
 
   return action;
 }
@@ -4628,7 +4730,12 @@ function buildWorkshopStructuredPatch(rawPayload) {
         saveDc: a?.saveDc ?? a?.saveDC ?? a?.save_dc ?? '',
         save_dc: a?.saveDc ?? a?.saveDC ?? a?.save_dc ?? '',
         damageType: a?.dmgType ?? a?.damageType ?? '',
-        dmgType: a?.dmgType ?? a?.damageType ?? ''
+        dmgType: a?.dmgType ?? a?.damageType ?? '',
+        bloodiedDamage: cleanFoundryFormula(a?.bloodiedDamage || a?.reducedDamage || ''),
+        reducedDamage: cleanFoundryFormula(a?.bloodiedDamage || a?.reducedDamage || ''),
+        damageThreshold: a?.damageThreshold || '',
+        expectedTargets: a?.expectedTargets || '',
+        maxTargets: a?.maxTargets || ''
       }))
     : [];
   return {
@@ -6484,7 +6591,6 @@ function rollDamageResult(formula, label, resultElId) {
   }
 }
 <\/script>
-<script>document.addEventListener('click',()=>{});</script>
 </body>
 </html>`);
   pw.document.close();
@@ -7762,47 +7868,5 @@ window.addEventListener('load', () => {
 });
 </script>
 
-<script>document.addEventListener('click',()=>{});</script>
 </body>
 </html>
-
-// v0.5.33 — AOE DPR threat estimation
-function estimateAOEDpr(mon){
-  const actions=[...(mon.actions||[]),...(mon.legendary_actions||[])];
-  let single=0, aoe=0, burst=0;
-  for(const a of actions){
-    const dmg=(a.damage||'').match(/(\d+)d(\d+)(?:\s*\+\s*(\d+))?/i);
-    if(!dmg) continue;
-    const dice=+dmg[1], sides=+dmg[2], flat=+(dmg[3]||0);
-    const avg=(dice*((sides+1)/2))+flat;
-    const isSave=!!(a.saveDc||a.save_dc);
-    const desc=((a.desc||'')+' '+(a.name||'')).toLowerCase();
-    const isAOE=/cone|radius|cylinder|sphere|cube|line|each creature|all creatures|within/i.test(desc);
-    single+=avg;
-    if(isAOE||isSave){
-      const expectedTargets=(mon.size||'').toLowerCase().includes('gargantuan')?4:3;
-      const expected=avg*0.6 + avg*0.5*0.4;
-      aoe += expected*expectedTargets;
-      burst += avg*Math.max(expectedTargets,5);
-    }
-  }
-  return {
-    single:Math.round(single),
-    aoe:Math.round(Math.max(single,aoe)),
-    burst:Math.round(Math.max(single,burst))
-  };
-}
-
-function renderAOEThreat(mon){
-  const d=estimateAOEDpr(mon);
-  return `
-  <div class="aoe-threat-box">
-    <div class="aoe-threat-title">AOE Threat Assessment</div>
-    <div class="aoe-threat-grid">
-      <div class="aoe-threat-stat"><div class="aoe-threat-label">Single Target DPR</div><div class="aoe-threat-value">${d.single}</div></div>
-      <div class="aoe-threat-stat"><div class="aoe-threat-label">AOE Adjusted DPR</div><div class="aoe-threat-value">${d.aoe}</div></div>
-      <div class="aoe-threat-stat"><div class="aoe-threat-label">Max Party Burst</div><div class="aoe-threat-value">${d.burst}</div></div>
-      <div class="aoe-threat-stat"><div class="aoe-threat-label">Threat</div><div class="aoe-threat-value">${d.burst>150?'SEVERE':d.burst>90?'HIGH':'MODERATE'}</div></div>
-    </div>
-  </div>`;
-}
