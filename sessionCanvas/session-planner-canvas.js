@@ -9741,7 +9741,8 @@ function recomputeMonsterLetters(node) {
 
 
 // v1.3.31 — Bloodied/swarmlike damage support.
-// v1.3.32 — Encounter Balance Wizard no longer treats alternate/bloodied damage text as rider damage.
+// v1.3.34 — Rebased rider threshold fix onto full Encounter Balance Wizard UI; create/import/spell/borrow tools restored.
+// v1.3.33 — Encounter Balance Wizard filters bloodied/threshold damage out of rider damage.
 // v1.3.25 — Workshop action hydration/normalization.
 // Workshop rows may carry mechanics in several first-class columns. Encounter
 // nodes store a local snapshot, so add/refresh must hydrate the full row and
@@ -10605,14 +10606,15 @@ function _ebwParseDamagePartsFromText(text) {
   const out = [];
   const seen = new Set();
   const classifyRelation = (matchIndex, prevEnd) => {
-    const before = raw.slice(Math.max(0, prevEnd == null ? matchIndex - 80 : prevEnd), matchIndex).toLowerCase();
-    const after = raw.slice(matchIndex, Math.min(raw.length, matchIndex + 120)).toLowerCase();
+    const before = raw.slice(Math.max(0, prevEnd == null ? matchIndex - 120 : prevEnd), matchIndex).toLowerCase();
+    const after = raw.slice(matchIndex, Math.min(raw.length, matchIndex + 220)).toLowerCase();
+    const thresholdRe = /half hit points|half hp|half its hit points|half or fewer|bloodied|fewer hit points|reduced|half its maximum hit points|half maximum hp/i;
+    // Threshold / bloodied alternates must win over a nearby "plus" token.
+    // Corrupted earlier wizard text can look like: "plus 20 (3d12) ... If ... half hit points".
+    // That is still a mutually-exclusive bloodied value, not additive rider damage.
+    if (thresholdRe.test(after) || (/\bor\b[^.]{0,80}$/.test(before) && thresholdRe.test(after))) return 'bloodied';
+    if (/\bor\b[^.]{0,45}$/.test(before) || /^.{0,80}\bif\b/.test(after)) return 'alternate';
     if (/\bplus\b|\badditional\b|\balso\b/.test(before)) return 'rider';
-    if (/\bor\b[^.]{0,45}$/.test(before) || /^.{0,80}\bif\b/.test(after)) {
-      if (/half hit points|half hp|half its hit points|half or fewer|bloodied|fewer hit points|reduced/i.test(after)) return 'bloodied';
-      return 'alternate';
-    }
-    if (/half hit points|half hp|half its hit points|half or fewer|bloodied|fewer hit points|reduced/i.test(after)) return 'bloodied';
     return out.length ? 'rider' : 'primary';
   };
   const addPart = (formula, type, label, relation, matchIndex) => {
@@ -10696,7 +10698,19 @@ function _ebwExtractActions(sn) {
       const main = parts[0] || rawParts[0] || _ebwParseDamagePartsFromText(_ebwFirstDamageFormulaFromDesc(a.desc || a.description))[0] || null;
       const damage = main ? (main.formula || _ebwFormula(main.n, main.die, main.flat)) : '';
       const p = _ebwDamageParts(damage);
-      const riderSource = explicitRiders.length ? explicitRiders : parts.slice(1).filter(r => {
+      const thresholdPartForRiderFilter = parts.slice(1).find(p => /bloodied|alternate|threshold/i.test(String(p.relation || '')));
+      const bloodiedFormula = a.bloodiedDamage || a.bloodied_damage || a.reducedDamage || a.reduced_damage || a.damage_bloodied || a.halfHpDamage || (thresholdPartForRiderFilter && (thresholdPartForRiderFilter.formula || _ebwFormula(thresholdPartForRiderFilter.n, thresholdPartForRiderFilter.die, thresholdPartForRiderFilter.flat))) || '';
+      const isBloodiedLikeRider = (r) => {
+        const rel = String(r && r.relation || '').toLowerCase();
+        const fRaw = r && (r.formula || _ebwFormula(r.n, r.die, r.flat));
+        const f = _ebwFormula(_ebwDamageParts(fRaw).n, _ebwDamageParts(fRaw).die, _ebwDamageParts(fRaw).flat);
+        const bf = bloodiedFormula ? _ebwFormula(_ebwDamageParts(bloodiedFormula).n, _ebwDamageParts(bloodiedFormula).die, _ebwDamageParts(bloodiedFormula).flat) : '';
+        if (rel === 'bloodied' || rel === 'alternate' || rel === 'threshold') return true;
+        if (bf && f && f === bf) return true;
+        return false;
+      };
+      const riderSource = (explicitRiders.length ? explicitRiders : parts.slice(1)).filter(r => {
+        if (isBloodiedLikeRider(r)) return false;
         const rel = String(r.relation || '').toLowerCase();
         // Do not treat mutually-exclusive or bloodied/threshold damage clauses as riders.
         return !rel || rel === 'rider' || rel === 'plus' || rel === 'additional';
@@ -11171,6 +11185,7 @@ function _ebwRenderActionRow(a, pos) {
         <div class="ebw-action-desc-row"><textarea class="ebw-textarea ebw-mini" data-ebw-key="desc" placeholder="Flavor text, rider, save effects, recharge notes…">${escHtml(a.desc || '')}</textarea></div>
       </div>`;
 }
+// v1.3.34: Full wizard toolboxes retained after threshold-rider parser rebase.
 function _ebwRenderToolboxes() {
   const spells = (_ebwState.spellResults || []).map(sp => `
     <div class="ebw-result">
