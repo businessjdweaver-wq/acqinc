@@ -9296,7 +9296,7 @@ async function refreshNpcSkin(node) {
   const skin = node.fields && node.fields.skin;
   if (!skin || !skin.monster_id) return;
   try {
-    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(skin.monster_id) + '&select=*');
+    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(skin.monster_id) + '&select=*', { headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } });
     if (!rows || !rows.length) {
       alert('Source monster not found in Workshop. It may have been deleted.');
       return;
@@ -9374,24 +9374,32 @@ async function openStatblockReadout(monsterId, fallbackName) {
     renderStatblockBody(normalizeWorkshopMonsterSnapshot(cached), bodyEl, titleEl);
   }
   try {
-    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(monsterId) + '&select=*', { cache: 'no-store' });
+    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(monsterId) + '&select=*', { cache: 'no-store', headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } });
     if (!rows || !rows.length) {
       bodyEl.innerHTML = '<div class="sb-error">Monster not found in your Workshop. It may have been deleted, or RLS is blocking access.</div>';
       return;
     }
     const row = normalizeWorkshopMonsterSnapshot(rows[0]);
     console.log('[Workshop → Canvas] statblock fresh row', { id: monsterId, name: row.name, actions: (row.actions||[]).map(a => ({ name:a.name, damage:a.damage, saveDC:a.saveDC, saveAbility:a.saveAbility })) });
-    // Stash on every imported instance with this id so future opens are instant
+    // Stash on every imported instance with this id AND replace the encounter snapshot.
+    // v1.3.28: the statblock/book readout is also a live Workshop refresh path; otherwise
+    // the modal can show fresh Workshop data while the encounter card continues to render
+    // an old local snapshot.
     state.nodes.forEach(n => {
       if (n.type !== 'encounter') return;
+      let touched = false;
       const list = (n.fields && n.fields.monsters) || [];
       list.forEach(m => {
         if (String(m.monster_id) === String(monsterId)) {
+          m.snapshot = row;
           m._fullStatblock = row;
+          touched = true;
         }
       });
+      if (touched) refreshNodeFace(n);
     });
     renderStatblockBody(row, bodyEl, titleEl);
+    markDirty();
   } catch (e) {
     bodyEl.innerHTML = '<div class="sb-error">Fetch failed: ' + escHtml(e.message) + '</div>';
   }
@@ -9481,11 +9489,14 @@ function renderStatblockBody(row, bodyEl, titleEl) {
       const dmg  = mech.damage ? '  ·  ' + mech.damage + (mech.damageType ? ' ' + mech.damageType : '') : '';
       const hit  = (mech.toHit != null && mech.toHit !== '') ? '  ·  to-hit ' + mech.toHit : '';
       const save = (mech.saveDC || mech.saveAbility) ? '  ·  DC ' + (mech.saveDC || '?') + ' ' + (mech.saveAbility || '') + ' save' : '';
+      const descDice = String(desc || '').match(/\d+d\d+(?:\s*[+\-]\s*\d+)?/g) || [];
+      const mismatch = mech.damage && descDice.length && !descDice.map(x => x.replace(/\s+/g,'')).includes(String(mech.damage).replace(/\s+/g,''));
+      const mechLine = (dmg || hit || save) ? `<div style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:var(--steel-pale);margin-top:2px;">${escHtml(hit + save + dmg).trim()}${mismatch ? ' <span style="color:var(--gold-pale);">↯ structured damage differs from prose</span>' : ''}</div>` : '';
       return `
         <div class="sb-feature">
           <span class="sb-feature-name">${escHtml(name)}.</span>
           ${desc ? ' ' + escHtml(desc) : ''}
-          ${(dmg || hit || save) ? `<div style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:var(--steel-pale);margin-top:2px;">${escHtml(hit + save + dmg).trim()}</div>` : ''}
+          ${mechLine}
         </div>
       `;
     }).join('');
@@ -9765,7 +9776,7 @@ async function hydrateWorkshopMonsterSnapshot(rowOrId) {
   const id = (rowOrId && rowOrId.id) || rowOrId;
   if (!id) return normalizeWorkshopMonsterSnapshot(rowOrId || {});
   try {
-    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(id) + '&select=*', { cache: 'no-store' });
+    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(id) + '&select=*', { cache: 'no-store', headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } });
     if (rows && rows.length) {
       console.log('[Workshop → Canvas] hydrated full row', {
         id: rows[0].id,
@@ -9854,18 +9865,37 @@ async function refreshImportedMonster(node, idx) {
   const m = node.fields.monsters[idx];
   if (!m || !m.monster_id) return;
   try {
-    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(m.monster_id) + '&select=*', { cache: 'no-store' });
+    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(m.monster_id) + '&select=*', { cache: 'no-store', headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } });
     if (!rows || !rows.length) {
       alert('Source monster not found in Workshop. It may have been deleted.');
       return;
     }
-    m.snapshot = normalizeWorkshopMonsterSnapshot(rows[0]);
-    delete m._fullStatblock;
-    console.log('[Workshop → Canvas] refreshed encounter monster', { id: m.monster_id, name: m.snapshot.name, actions: (m.snapshot.actions||[]).map(a => ({ name:a.name, damage:a.damage, saveDC:a.saveDC, saveAbility:a.saveAbility })) });
+    const fresh = normalizeWorkshopMonsterSnapshot(rows[0]);
+    const targetId = String(m.monster_id);
+    // v1.3.28: refresh every encounter instance using this Workshop row, not just
+    // the clicked array index. Duplicate/sibling instances otherwise keep stale
+    // actions and can be used by group/card renderers.
+    state.nodes.forEach(n => {
+      if (n.type !== 'encounter') return;
+      const list = (n.fields && n.fields.monsters) || [];
+      list.forEach(mm => {
+        if (String(mm.monster_id) === targetId) {
+          mm.snapshot = fresh;
+          delete mm._fullStatblock;
+        }
+      });
+      refreshNodeFace(n);
+    });
+    console.log('[Workshop → Canvas] refreshed encounter monster everywhere', {
+      id: targetId,
+      name: fresh.name,
+      actions: (fresh.actions||[]).map(a => ({ name:a.name, damage:a.damage, descDamage:(String(a.desc||'').match(/\d+d\d+(?:\s*[+\-]\s*\d+)?/g)||[]) })),
+      bonus_actions: (fresh.bonus_actions||[]).map(a => a.name),
+      reactions: (fresh.reactions||[]).map(a => a.name)
+    });
     if (sidePanel.classList.contains('open') && openNodeId === node.id) {
       renderSidePanelBody(node, BLOCK_TYPES.encounter);
     }
-    refreshNodeFace(node);
     redrawEdges();
     markDirty();
   } catch (e) {
@@ -16785,3 +16815,38 @@ function focusDeepLinkedNode(nodeId) {
 
 wireCanvasGroupBar();
 boot();
+
+
+// v1.3.28 — Canvas/Workshop action handoff diagnostics.
+// Usage in console: await rqDebugWorkshopHandoff('Cloud of Alkanax') or pass a UUID.
+window.rqDebugWorkshopHandoff = async function rqDebugWorkshopHandoff(idOrName) {
+  const needle = String(idOrName || '').trim();
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(needle);
+  const path = isUuid
+    ? 'rq_monsters?id=eq.' + encodeURIComponent(needle) + '&select=*'
+    : 'rq_monsters?name=ilike.' + encodeURIComponent('%' + needle + '%') + '&select=*&order=created_at.desc&limit=10';
+  const rows = await sbFetch(path, { cache: 'no-store', headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } });
+  const db = (rows || []).map(normalizeWorkshopMonsterSnapshot);
+  const encounters = [];
+  state.nodes.forEach(n => {
+    if (n.type !== 'encounter') return;
+    const list = (n.fields && n.fields.monsters) || [];
+    list.forEach((m, idx) => {
+      const sn = m.snapshot || {};
+      if ((needle && JSON.stringify(sn).toLowerCase().includes(needle.toLowerCase())) || (db.some(r => String(r.id) === String(m.monster_id)))) {
+        encounters.push({
+          nodeId: n.id,
+          nodeTitle: n.title,
+          idx,
+          monster_id: m.monster_id,
+          snapshotName: sn.name,
+          snapshotActions: (sn.actions || []).map(a => ({ name:a.name, damage:a.damage, saveDC:a.saveDC || a.saveDc || a.save_dc, descDice:(String(a.desc||'').match(/\d+d\d+(?:\s*[+\-]\s*\d+)?/g)||[]) })),
+          fullStatblockActions: (m._fullStatblock && m._fullStatblock.actions || []).map(a => ({ name:a.name, damage:a.damage }))
+        });
+      }
+    });
+  });
+  console.log('[rqDebugWorkshopHandoff] DB rows', db.map(r => ({ id:r.id, name:r.name, cr:r.cr, hp:r.hp, actions:(r.actions||[]).map(a => ({ name:a.name, damage:a.damage, saveDC:a.saveDC || a.saveDc || a.save_dc, descDice:(String(a.desc||'').match(/\d+d\d+(?:\s*[+\-]\s*\d+)?/g)||[]) })) })));
+  console.log('[rqDebugWorkshopHandoff] Encounter snapshots', encounters);
+  return { db, encounters };
+};
