@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.31 · live action save fix</span>
+  <span class="topbar-version">v0.5.32 · owner-aware save fix</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -4442,7 +4442,7 @@ window.collectMonsterFromEditor = collectFormData;
 window.dumpWorkshopEditor = dumpWorkshopEditor;
 
 function getWorkshopSchemaSQL() {
-  return `-- Monster Workshop v0.5.31 schema support.
+  return `-- Monster Workshop v0.5.32 schema support.
 -- Safe to run multiple times. These columns keep Workshop edits structured
 -- instead of hiding them in notes.
 
@@ -4515,13 +4515,40 @@ function isLikelyImportedBaseMonster(monster) {
   );
 }
 
+
+function getWorkshopAuthUserId() {
+  return uid() || currentUser?.user?.id || currentUser?.id || null;
+}
+
+function attachWorkshopOwner(payload) {
+  const owner = getWorkshopAuthUserId();
+  if (owner && payload && !payload.user_id) payload.user_id = owner;
+  return payload;
+}
+
+function workshopOwnerSaveMessage(monsterId) {
+  const owner = getWorkshopAuthUserId();
+  return [
+    'Supabase accepted the request, but updated 0 rows. This usually means RLS blocked the update because this monster row is not owned by the logged-in user.',
+    'monster id: ' + (monsterId || '(missing)'),
+    'current auth user: ' + (owner || '(not logged in / no JWT)'),
+    'Fix existing rows with SQL: update public.rq_monsters set user_id = \'YOUR_AUTH_USER_ID\' where id = \'" + monsterId + "\';'
+  ].join(' ');
+}
+
+async function fetchCurrentAuthUserFromJwt() {
+  await refreshSession(false);
+  const owner = getWorkshopAuthUserId();
+  return owner;
+}
+
 async function saveMonsterAsSkin() {
   if (!currentMonster) {
     showToast('Select a monster first.', true);
     return;
   }
 
-  const data = stripIdentityForNewSkin(collectFormData());
+  const data = attachWorkshopOwner(stripIdentityForNewSkin(collectFormData()));
 
   if (!data.name || data.name === currentMonster.name) {
     const proposed = prompt('Name for this skinned monster:', data.name ? data.name + ' Skin' : 'New Skinned Monster');
@@ -4532,7 +4559,7 @@ async function saveMonsterAsSkin() {
   }
 
   console.log('[Workshop saveMonsterAsSkin] Creating skin payload:', data);
-  console.log('[Workshop saveMonsterAsSkin] Collected names:', { actions: data.actions?.map(a=>a.name), special_abilities: data.special_abilities?.map(a=>a.name), bonus_actions: data.bonus_actions?.map(a=>a.name), reactions: data.reactions?.map(a=>a.name), cr: data.cr, hp: data.hp, damage_resistances: data.damage_resistances });
+  console.log('[Workshop saveMonsterAsSkin] Collected names:', { actions: data.actions?.map(a=>a.name), special_abilities: data.special_abilities?.map(a=>a.name), bonus_actions: data.bonus_actions?.map(a=>a.name), reactions: data.reactions?.map(a=>a.name), cr: data.cr, hp: data.hp, damage_resistances: data.damage_resistances, user_id: data.user_id, auth_user: getWorkshopAuthUserId() });
 
   try {
     const res = await fetch(`${SB_URL}/rest/v1/rq_monsters`, {
@@ -4613,7 +4640,7 @@ function buildWorkshopStructuredPatch(rawPayload) {
 
 async function forcePatchWorkshopStructuredFields(monsterId, rawPayload) {
   if (!monsterId) return null;
-  const patch = buildWorkshopStructuredPatch(rawPayload);
+  const patch = attachWorkshopOwner(buildWorkshopStructuredPatch(rawPayload));
   console.log('[Workshop saveMonster] Force-patching structured fields:', {
     id: monsterId,
     actions: patch.actions.map(a => a && a.name),
@@ -4641,10 +4668,15 @@ async function forcePatchWorkshopStructuredFields(monsterId, rawPayload) {
   const row = rows && rows[0] ? rows[0] : null;
   console.log('[Workshop saveMonster] Structured force-patch returned:', row ? {
     id: row.id,
+    cr: row.cr,
+    user_id: row.user_id,
     actions: Array.isArray(row.actions) ? row.actions.map(a => a && a.name) : row.actions,
     special_abilities: Array.isArray(row.special_abilities) ? row.special_abilities.map(a => a && a.name) : row.special_abilities,
     damage_resistances: row.damage_resistances
   } : row);
+  if (!row) {
+    throw new Error(workshopOwnerSaveMessage(monsterId));
+  }
   return row;
 }
 
@@ -4667,9 +4699,9 @@ async function saveMonster() {
   if (!isEditing) { showToast('Duplicate the monster first to edit and save it', true); return; }
 
   const rawData = collectFormData();
-  const data = sanitizeMonsterForSupabase(rawData);
+  const data = attachWorkshopOwner(sanitizeMonsterForSupabase(rawData));
   console.log('[Workshop saveMonster] Saving payload:', data);
-  console.log('[Workshop saveMonster] Collected names:', { actions: data.actions?.map(a=>a.name), special_abilities: data.special_abilities?.map(a=>a.name), bonus_actions: data.bonus_actions?.map(a=>a.name), reactions: data.reactions?.map(a=>a.name), cr: data.cr, hp: data.hp, damage_resistances: data.damage_resistances });
+  console.log('[Workshop saveMonster] Collected names:', { actions: data.actions?.map(a=>a.name), special_abilities: data.special_abilities?.map(a=>a.name), bonus_actions: data.bonus_actions?.map(a=>a.name), reactions: data.reactions?.map(a=>a.name), cr: data.cr, hp: data.hp, damage_resistances: data.damage_resistances, user_id: data.user_id, auth_user: getWorkshopAuthUserId() });
 
   // If the user edits the name of an imported/base monster, treat it as a new skin.
   // Existing skins are excluded by isLikelyImportedBaseMonster() and must PATCH
@@ -4697,6 +4729,9 @@ async function saveMonster() {
       if (res.ok) {
         const rows = await res.json();
         savedRow = rows && rows[0] ? rows[0] : null;
+        if (!savedRow) {
+          throw new Error(workshopOwnerSaveMessage(currentMonster.id));
+        }
       }
     } else {
       res = await fetch(`${SB_URL}/rest/v1/rq_monsters`, {
