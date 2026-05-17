@@ -9741,6 +9741,7 @@ function recomputeMonsterLetters(node) {
 
 
 // v1.3.31 — Bloodied/swarmlike damage support.
+// v1.3.32 — Encounter Balance Wizard no longer treats alternate/bloodied damage text as rider damage.
 // v1.3.25 — Workshop action hydration/normalization.
 // Workshop rows may carry mechanics in several first-class columns. Encounter
 // nodes store a local snapshot, so add/refresh must hydrate the full row and
@@ -10592,36 +10593,60 @@ function _ebwDamageParts(formula) {
 }
 
 function _ebwParseDamagePartsFromText(text) {
-  // Parse official-style damage clauses, including flat bonuses and typed riders:
-  //   Hit: 18 (2d10 + 7) piercing damage plus 5 (1d10) lightning damage.
-  // Returns ordered parts so the first part stays as the main editable damage and
-  // subsequent parts are preserved as always-on rider damage for DPR/export.
+  // Parse official-style damage clauses, including flat bonuses and typed riders.
+  // v1.3.32: distinguish true additive riders ("plus 1d10 lightning") from
+  // alternate/threshold damage clauses ("or 3d12 if the swarm has half HP").
+  // Returns ordered parts. Each part may include relation:
+  //   primary   = first/main damage clause
+  //   rider     = always-on additional damage, should count in DPR
+  //   alternate = mutually exclusive damage option, should NOT count as rider
+  //   bloodied  = threshold/reduced damage option, should NOT count as rider
   const raw = String(text || '').replace(/\s+/g, ' ').trim();
   const out = [];
   const seen = new Set();
-  const addPart = (formula, type, label) => {
+  const classifyRelation = (matchIndex, prevEnd) => {
+    const before = raw.slice(Math.max(0, prevEnd == null ? matchIndex - 80 : prevEnd), matchIndex).toLowerCase();
+    const after = raw.slice(matchIndex, Math.min(raw.length, matchIndex + 120)).toLowerCase();
+    if (/\bplus\b|\badditional\b|\balso\b/.test(before)) return 'rider';
+    if (/\bor\b[^.]{0,45}$/.test(before) || /^.{0,80}\bif\b/.test(after)) {
+      if (/half hit points|half hp|half its hit points|half or fewer|bloodied|fewer hit points|reduced/i.test(after)) return 'bloodied';
+      return 'alternate';
+    }
+    if (/half hit points|half hp|half its hit points|half or fewer|bloodied|fewer hit points|reduced/i.test(after)) return 'bloodied';
+    return out.length ? 'rider' : 'primary';
+  };
+  const addPart = (formula, type, label, relation, matchIndex) => {
     const p = _ebwDamageParts(formula);
     if (!p.valid) return;
     const f = _ebwFormula(p.n, p.die, p.flat);
-    const key = f + '|' + String(type || '').toLowerCase() + '|' + out.length;
+    const rel = relation || (out.length ? 'rider' : 'primary');
+    const key = f + '|' + String(type || '').toLowerCase() + '|' + rel;
     if (seen.has(key)) return;
     seen.add(key);
-    out.push({ formula:f, n:p.n, die:p.die, flat:p.flat, type:String(type || '').toLowerCase(), label:label || '', avg:_ebwAvgFormula(f) });
+    out.push({ formula:f, n:p.n, die:p.die, flat:p.flat, type:String(type || '').toLowerCase(), label:label || '', relation:rel, avg:_ebwAvgFormula(f), matchIndex:matchIndex ?? -1 });
   };
-  // Parenthesized dice + following damage type is the most reliable WOTC pattern.
   let m;
-  const parenRe = /(?:\d+\s*)?\(\s*(\d+d\d+(?:\s*[+\-]\s*\d+)?)\s*\)\s*([a-z]+)\s+damage/gi;
-  while ((m = parenRe.exec(raw))) addPart(m[1], m[2]);
-  // Fallback for generated/custom text without the average: "2d8+4 slashing damage".
-  if (!out.length) {
-    const bareRe = /(\d+d\d+(?:\s*[+\-]\s*\d+)?)\s*([a-z]+)?\s+damage/gi;
-    while ((m = bareRe.exec(raw))) addPart(m[1], m[2] || '');
+  let lastEnd = 0;
+  const parenRe = /(?:\b\d+\s*)?\(\s*(\d+d\d+(?:\s*[+\-]\s*\d+)?)\s*\)\s*([a-z]+)\s+damage/gi;
+  while ((m = parenRe.exec(raw))) {
+    const rel = classifyRelation(m.index, lastEnd);
+    addPart(m[1], m[2], '', rel, m.index);
+    lastEnd = parenRe.lastIndex;
   }
-  // Final fallback for bare formula fields.
+  if (!out.length) {
+    lastEnd = 0;
+    const bareRe = /(\d+d\d+(?:\s*[+\-]\s*\d+)?)\s*([a-z]+)?\s+damage/gi;
+    while ((m = bareRe.exec(raw))) {
+      const rel = classifyRelation(m.index, lastEnd);
+      addPart(m[1], m[2] || '', '', rel, m.index);
+      lastEnd = bareRe.lastIndex;
+    }
+  }
   if (!out.length) {
     const p = _ebwDamageParts(raw);
-    if (p.valid) addPart(_ebwFormula(p.n, p.die, p.flat), '');
+    if (p.valid) addPart(_ebwFormula(p.n, p.die, p.flat), '', '', 'primary', 0);
   }
+  if (out.length && out[0].relation !== 'primary') out[0].relation = 'primary';
   return out;
 }
 function _ebwRiderAverage(a) {
@@ -10671,7 +10696,12 @@ function _ebwExtractActions(sn) {
       const main = parts[0] || rawParts[0] || _ebwParseDamagePartsFromText(_ebwFirstDamageFormulaFromDesc(a.desc || a.description))[0] || null;
       const damage = main ? (main.formula || _ebwFormula(main.n, main.die, main.flat)) : '';
       const p = _ebwDamageParts(damage);
-      const riders = (explicitRiders.length ? explicitRiders : parts.slice(1)).map(r => {
+      const riderSource = explicitRiders.length ? explicitRiders : parts.slice(1).filter(r => {
+        const rel = String(r.relation || '').toLowerCase();
+        // Do not treat mutually-exclusive or bloodied/threshold damage clauses as riders.
+        return !rel || rel === 'rider' || rel === 'plus' || rel === 'additional';
+      });
+      const riders = riderSource.map(r => {
         const rp = _ebwDamageParts(r.formula || _ebwFormula(r.n, r.die, r.flat));
         return { formula:_ebwFormula(rp.n, rp.die, rp.flat), n:rp.n, die:rp.die, flat:rp.flat, type:(r.type || r.damageType || '').toLowerCase(), avg:_ebwAvgFormula(_ebwFormula(rp.n, rp.die, rp.flat)) };
       }).filter(r => r.formula);
@@ -10748,7 +10778,18 @@ function _ebwParseFieldsFromDescIntoAction(a) {
     const p = _ebwDamageParts(dmg);
     if (p.valid) { a.n = p.n; a.die = p.die; a.flat = p.flat; a.damage = dmg; }
   }
-  if (parts.length > 1 && (!Array.isArray(a.riders) || !a.riders.length)) a.riders = parts.slice(1);
+  if (parts.length > 1 && (!Array.isArray(a.riders) || !a.riders.length)) {
+    a.riders = parts.slice(1).filter(p => {
+      const rel = String(p.relation || '').toLowerCase();
+      return !rel || rel === 'rider' || rel === 'plus' || rel === 'additional';
+    });
+    const thresholdPart = parts.slice(1).find(p => /bloodied|alternate/i.test(String(p.relation || '')));
+    if (thresholdPart && !a.bloodiedDamage) {
+      a.bloodiedDamage = thresholdPart.formula || _ebwFormula(thresholdPart.n, thresholdPart.die, thresholdPart.flat);
+      a.bloodiedDamageType = thresholdPart.type || a.damageType || a.dmgType || '';
+      a.damageThreshold = a.damageThreshold || 0.5;
+    }
+  }
   const save = _ebwSaveFromDesc(desc);
   if (save.ability && !a.saveAbility) a.saveAbility = save.ability;
   if (save.dc && !a.saveDc) a.saveDc = save.dc;
