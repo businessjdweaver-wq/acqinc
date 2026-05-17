@@ -58,15 +58,20 @@ async function rqRefreshToken() {
 async function sbFetch(path, opts = {}) {
   const auth = rqGetAuth();
   const token = auth && auth.access_token ? auth.access_token : SB_KEY;
+  // v1.3.29: preserve Supabase auth headers even when callers pass opts.headers
+  // for cache-control. Previously `...opts` came after `headers`, so a call such
+  // as sbFetch(path, { headers: { 'Cache-Control': 'no-cache' } }) replaced the
+  // entire header object and dropped `apikey`, causing 401 errors.
+  const { headers: extraHeaders = {}, prefer, ...fetchOpts } = opts || {};
   const doFetch = (tok) => fetch(SB_URL + '/rest/v1/' + path, {
+    ...fetchOpts,
     headers: {
       'apikey': SB_KEY,
       'Authorization': 'Bearer ' + tok,
       'Content-Type': 'application/json',
-      'Prefer': opts.prefer || 'return=representation',
-      ...(opts.headers || {})
-    },
-    ...opts
+      'Prefer': prefer || 'return=representation',
+      ...extraHeaders
+    }
   });
   let res = await doFetch(token);
   if (res.status === 401 && auth && auth.refresh_token) {
