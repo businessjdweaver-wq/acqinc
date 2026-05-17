@@ -6753,7 +6753,7 @@ body.mobile-mode #sb-modal { display: none !important; }
 }
 
 </style>
-<!-- v1.3.24: Encounter imports now fetch full Workshop rows and surface custom bonus/reaction/legendary/lair actions. -->
+<!-- v1.3.25: Encounter imports now fetch full Workshop rows and surface custom bonus/reaction/legendary/lair actions. -->
 </head>
 <body>
 
@@ -6790,7 +6790,7 @@ body.mobile-mode #sb-modal { display: none !important; }
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Session Planner — Canvas</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">Stage 62 / Workshop Full Import — Encounter Wizard v1.3.24</span>
+  <span class="topbar-version">Stage 62 / Workshop Full Import — Encounter Wizard v1.3.25</span>
   <span class="topbar-sep">·</span>
   <span class="topbar-session" id="topbarSession" title="Current session">No session loaded</span>
   <div class="topbar-actions">
@@ -16987,7 +16987,80 @@ function recomputeMonsterLetters(node) {
   });
 }
 
-function addMonsterToEncounter(node, row) {
+
+// v1.3.25 — Workshop action hydration/normalization.
+// Workshop rows may carry mechanics in several first-class columns. Encounter
+// nodes store a local snapshot, so add/refresh must hydrate the full row and
+// normalize array-shaped fields before rendering. This prevents CR/HP from
+// updating while actions remain stuck on an older, narrow snapshot.
+function normalizeWorkshopMonsterSnapshot(row) {
+  const r = { ...(row || {}) };
+  const arr = (v) => Array.isArray(v) ? v : [];
+  r.actions = arr(r.actions);
+  r.bonus_actions = arr(r.bonus_actions);
+  r.reactions = arr(r.reactions);
+  r.legendary_actions = arr(r.legendary_actions);
+  r.lair_actions = arr(r.lair_actions);
+  r.mythic_actions = arr(r.mythic_actions);
+  r.villain_actions = arr(r.villain_actions);
+  r.special_abilities = arr(r.special_abilities || r.special);
+  r.special = r.special_abilities;
+  r.damage_resistances = Array.isArray(r.damage_resistances)
+    ? r.damage_resistances
+    : (typeof r.damage_resistances === 'string'
+        ? r.damage_resistances.replace(/^\s*\[|\]\s*$/g,'').split(',').map(x => x.trim().replace(/^"|"$/g,'')).filter(Boolean)
+        : []);
+  return r;
+}
+
+async function hydrateWorkshopMonsterSnapshot(rowOrId) {
+  const id = (rowOrId && rowOrId.id) || rowOrId;
+  if (!id) return normalizeWorkshopMonsterSnapshot(rowOrId || {});
+  try {
+    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(id) + '&select=*', { cache: 'no-store' });
+    if (rows && rows.length) {
+      console.log('[Workshop → Canvas] hydrated full row', {
+        id: rows[0].id,
+        name: rows[0].name,
+        actions: Array.isArray(rows[0].actions) ? rows[0].actions.map(a => a && a.name) : rows[0].actions,
+        bonus_actions: Array.isArray(rows[0].bonus_actions) ? rows[0].bonus_actions.map(a => a && a.name) : rows[0].bonus_actions,
+        reactions: Array.isArray(rows[0].reactions) ? rows[0].reactions.map(a => a && a.name) : rows[0].reactions,
+        special_abilities: Array.isArray(rows[0].special_abilities) ? rows[0].special_abilities.map(a => a && a.name) : rows[0].special_abilities
+      });
+      return normalizeWorkshopMonsterSnapshot(rows[0]);
+    }
+  } catch (e) {
+    console.warn('[Workshop → Canvas] full-row hydration failed; using search row snapshot', e);
+  }
+  return normalizeWorkshopMonsterSnapshot(rowOrId || {});
+}
+
+function getWorkshopRenderableActions(sn) {
+  const out = [];
+  const add = (list, label, prefix) => {
+    if (!Array.isArray(list)) return;
+    list.forEach((a, i) => {
+      if (!a) return;
+      // Mutate the source action with lightweight metadata instead of cloning;
+      // override edits must write back to the real snapshot action object.
+      a._workshopActionKind = label;
+      a._workshopActionSourceIndex = i;
+      a._workshopActionPrefix = prefix;
+      out.push(a);
+    });
+  };
+  add(sn && sn.actions, '', '');
+  add(sn && sn.bonus_actions, 'Bonus', 'BA: ');
+  add(sn && sn.reactions, 'Reaction', 'R: ');
+  add(sn && sn.legendary_actions, 'Legendary', 'LA: ');
+  add(sn && sn.lair_actions, 'Lair', 'Lair: ');
+  add(sn && sn.mythic_actions, 'Mythic', 'Mythic: ');
+  add(sn && sn.villain_actions, 'Villain', 'VA: ');
+  return out;
+}
+
+async function addMonsterToEncounter(node, row) {
+  row = await hydrateWorkshopMonsterSnapshot(row);
   node.fields = node.fields || {};
   if (!Array.isArray(node.fields.monsters)) node.fields.monsters = [];
   // Push without a pre-assigned letter — recomputeMonsterLetters will
@@ -17038,7 +17111,7 @@ async function refreshImportedMonster(node, idx) {
       alert('Source monster not found in Workshop. It may have been deleted.');
       return;
     }
-    m.snapshot = rows[0];
+    m.snapshot = normalizeWorkshopMonsterSnapshot(rows[0]);
     if (sidePanel.classList.contains('open') && openNodeId === node.id) {
       renderSidePanelBody(node, BLOCK_TYPES.encounter);
     }
@@ -17498,7 +17571,7 @@ function renderOverrideEditor(m, monIdx) {
   const sn = m.snapshot || {};
   const list = editing.kind === 'trigger'
     ? (sn.special_abilities || sn.special || [])
-    : (sn.actions || []);
+    : getWorkshopRenderableActions(sn);
   const a = list[editing.i];
   if (!a) return '';
   const ov = a._override || {};
@@ -19368,7 +19441,8 @@ function renderActionButton(a, monIdx, actIdx, opts) {
   if (!isAttack && !isSave) return '';   // truly passive — no roll button
   const cls = (isSave && !isAttack) ? 'node-mon-roll-btn save' : 'node-mon-roll-btn';
   // Append range if known and not already in the name (helps DM situate the AoE)
-  const rangeChip = (m.range && !m.name.includes('ft')) ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
+  const displayActionName = (a._workshopActionPrefix || '') + m.name;
+  const rangeChip = (m.range && !displayActionName.includes('ft')) ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
   const hasOverride = !!(a._override && Object.keys(a._override).some(k => a._override[k] !== '' && a._override[k] != null && a._override[k] !== false));
   const overrideClasses = [
     hasOverride ? 'has-override' : '',
@@ -19381,8 +19455,8 @@ function renderActionButton(a, monIdx, actIdx, opts) {
     : '';
   return `<span class="node-mon-roll-wrap${overrideClasses ? ' ' + overrideClasses : ''}">
     <button class="${cls}" data-mon-roll="${monIdx}-${actIdx}" type="button"
-            title="Roll ${escAttr(m.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
-            <span class="roll-icon">🎲</span>${escHtml(m.name)}${rangeChip}
+            title="Roll ${escAttr(displayActionName)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
+            <span class="roll-icon">🎲</span>${escHtml(displayActionName)}${rangeChip}
     </button>
     ${nameGhost}
     <button class="node-mon-edit-btn" data-mon-edit="${monIdx}-${actIdx}-action" type="button"
@@ -19993,7 +20067,7 @@ function wireMonsterRollClicks(nodeEl, node) {
       const [monIdx, actIdx] = btn.dataset.monRoll.split('-').map(n => parseInt(n));
       const m = monsters[monIdx];
       if (!m) return;
-      const a = (m.snapshot.actions || [])[actIdx];
+      const a = getWorkshopRenderableActions(m.snapshot || {})[actIdx];
       if (!a) return;
       dispatchMonsterRoll(m, a, _advFromEvent(e), node);
     });
@@ -20068,7 +20142,7 @@ function wireMonsterRollClicks(nodeEl, node) {
     const { kind, i } = m._editingAction;
     const list = kind === 'trigger'
       ? (m.snapshot.special_abilities || m.snapshot.special || [])
-      : (m.snapshot.actions || []);
+      : getWorkshopRenderableActions(m.snapshot || {});
     const a = list[i];
     if (!a) return;
 
@@ -21015,7 +21089,7 @@ function renderNpcOverrideEditor(skin) {
   const sn = skin.snapshot || {};
   const list = editing.kind === 'trigger'
     ? (sn.special_abilities || sn.special || [])
-    : (sn.actions || []);
+    : getWorkshopRenderableActions(sn);
   const a = list[editing.i];
   if (!a) return '';
   const ov = a._override || {};
@@ -21119,8 +21193,8 @@ function renderNpcActionButton(a, actIdx, opts) {
   const cls = (isSave && !isAttack) ? 'node-mon-roll-btn save' : 'node-mon-roll-btn';
   return `<span class="node-mon-roll-wrap${overrideClasses ? ' ' + overrideClasses : ''}">
     <button class="${cls}" data-npc-roll="${actIdx}" type="button"
-            title="Roll ${escAttr(m.name)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
-            <span class="roll-icon">🎲</span>${escHtml(m.name)}${rangeChip}
+            title="Roll ${escAttr(displayActionName)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
+            <span class="roll-icon">🎲</span>${escHtml(displayActionName)}${rangeChip}
     </button>
     ${nameGhost}
     <button class="node-mon-edit-btn" data-npc-edit="${actIdx}-action" type="button"
