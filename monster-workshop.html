@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.28 · existing skin update fix</span>
+  <span class="topbar-version">v0.5.29 · existing skin update fix</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -2824,7 +2824,7 @@ function filterMonsters() {
 
 
 
-// ── HTML ESCAPE HELPERS (v0.5.28) ─────────────────────────────
+// ── HTML ESCAPE HELPERS (v0.5.29) ─────────────────────────────
 // Must exist in the main boot script before renderBrowserList() runs.
 // A later spell-attachment script also defines these, but browser boot
 // calls renderBrowserList(SRD_MONSTERS) before that later script executes.
@@ -2910,6 +2910,30 @@ function attrEsc(s) {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+
+function asArrayField(v) {
+  if (Array.isArray(v)) return v;
+  if (v == null || v === '') return [];
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (!t) return [];
+    if ((t.startsWith('[') && t.endsWith(']')) || (t.startsWith('{') && t.endsWith('}'))) {
+      try {
+        const parsed = JSON.parse(t);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch(e) {}
+    }
+    return t.split(',').map(x => x.trim()).filter(Boolean);
+  }
+  return [];
+}
+function monsterTraitsOf(m) {
+  return asArrayField(m?.special_abilities).length ? asArrayField(m.special_abilities) : asArrayField(m?.special);
+}
+function actionListOf(m, key) {
+  return asArrayField(m?.[key]);
 }
 
 function renderEditor(m) {
@@ -3028,15 +3052,15 @@ function renderEditor(m) {
         <div class="field-row-3">
           <div class="field">
             <span class="field-label">Damage Resistances</span>
-            <input class="field-input" id="f_dmg_res" type="text" value="${(m.damage_resistances||[]).join(', ')}" placeholder="cold, fire; bludgeoning from nonmagical attacks" ${ro}>
+            <input class="field-input" id="f_dmg_res" type="text" value="${asArrayField(m.damage_resistances).join(', ')}" placeholder="cold, fire; bludgeoning from nonmagical attacks" ${ro}>
           </div>
           <div class="field">
             <span class="field-label">Damage Immunities</span>
-            <input class="field-input" id="f_dmg_imm" type="text" value="${(m.damage_immunities||[]).join(', ')}" placeholder="fire, poison" ${ro}>
+            <input class="field-input" id="f_dmg_imm" type="text" value="${asArrayField(m.damage_immunities).join(', ')}" placeholder="fire, poison" ${ro}>
           </div>
           <div class="field">
             <span class="field-label">Condition Immunities</span>
-            <input class="field-input" id="f_cond_imm" type="text" value="${(m.condition_immunities||[]).join(', ')}" placeholder="charmed, frightened" ${ro}>
+            <input class="field-input" id="f_cond_imm" type="text" value="${asArrayField(m.condition_immunities).join(', ')}" placeholder="charmed, frightened" ${ro}>
           </div>
         </div>
         <div class="field-row-2">
@@ -3052,7 +3076,7 @@ function renderEditor(m) {
         <div class="field">
           <span class="field-label">Special Abilities / Traits</span>
           <div id="specialAbilitiesContainer">
-            ${(m.special||[]).map((s,i)=>`
+            ${monsterTraitsOf(m).map((s,i)=>`
               <div class="action-card" style="margin-bottom:6px;">
                 <div class="action-card-header">
                   <input class="action-name-input" type="text" value="${s.name}" placeholder="Ability name" ${ro}>
@@ -3073,7 +3097,7 @@ function renderEditor(m) {
       </div>
       <div class="section-body">
         <div id="actionsContainer">
-          ${(m.actions||[]).map((a,i) => renderActionCard(a, !readonly)).join('')}
+          ${actionListOf(m,'actions').map((a,i) => renderActionCard(a, !readonly)).join('')}
         </div>
         ${!readonly ? `<button class="btn btn-ghost btn-sm" onclick="addAction()">+ Add Action</button>` : ''}
       </div>
@@ -3087,7 +3111,7 @@ function renderEditor(m) {
       </div>
       <div class="section-body">
         <div id="bonusActionsContainer">
-          ${(m.bonus_actions||[]).map((a,i) => renderActionCard(a, !readonly)).join('')}
+          ${actionListOf(m,'bonus_actions').map((a,i) => renderActionCard(a, !readonly)).join('')}
         </div>
         ${!readonly ? `<button class="btn btn-ghost btn-sm" onclick="addBonusAction()">+ Add Bonus Action</button>` : ''}
       </div>
@@ -3101,7 +3125,7 @@ function renderEditor(m) {
       </div>
       <div class="section-body">
         <div id="reactionsContainer">
-          ${(m.reactions||[]).map((a,i) => renderActionCard(a, !readonly)).join('')}
+          ${actionListOf(m,'reactions').map((a,i) => renderActionCard(a, !readonly)).join('')}
         </div>
         ${!readonly ? `<button class="btn btn-ghost btn-sm" onclick="addReaction()">+ Add Reaction</button>` : ''}
       </div>
@@ -4351,11 +4375,47 @@ async function fetchSavedMonsterById(id) {
   return rows && rows[0] ? rows[0] : null;
 }
 
-// Debug hook for console troubleshooting. Kept intentionally tiny.
+function dumpWorkshopEditor() {
+  const payload = collectFormData();
+  const visibleCards = [...document.querySelectorAll('#editorBody .action-card')].map(card => ({
+    section: card.closest('.section')?.querySelector('.section-title')?.textContent?.trim() || '(unknown)',
+    name: card.querySelector('[data-field="name"], .action-name-input')?.value || '',
+    type: card.querySelector('[data-field="type"]')?.value || '',
+    desc: (card.querySelector('[data-field="desc"], textarea')?.value || '').slice(0, 120)
+  }));
+  const byContainer = id => [...document.querySelectorAll(`#${id} .action-card`)].map(card => card.querySelector('[data-field="name"], .action-name-input')?.value || '');
+  const report = {
+    f_cr: document.getElementById('f_cr')?.value,
+    f_hp: document.getElementById('f_hp')?.value,
+    f_dmg_res: document.getElementById('f_dmg_res')?.value,
+    visibleCards,
+    containers: {
+      actions: byContainer('actionsContainer'),
+      special_abilities: byContainer('specialAbilitiesContainer'),
+      bonus_actions: byContainer('bonusActionsContainer'),
+      reactions: byContainer('reactionsContainer'),
+      legendary_actions: byContainer('legendaryActionsContainer'),
+      lair_actions: byContainer('lairActionsContainer')
+    },
+    payload
+  };
+  console.log('[Workshop editor dump]', report);
+  console.table({
+    cr: report.f_cr,
+    hp: report.f_hp,
+    damage_resistances: report.f_dmg_res,
+    payload_actions: payload.actions?.map(a=>a.name).join(' | '),
+    payload_special: payload.special_abilities?.map(a=>a.name).join(' | ')
+  });
+  return report;
+}
+
+// Debug hooks for console troubleshooting. Kept intentionally tiny.
 window.collectMonsterFromEditor = collectFormData;
+window.dumpWorkshopEditor = dumpWorkshopEditor;
 
 function getWorkshopSchemaSQL() {
-  return `-- Monster Workshop v0.5.28 schema support.
+  return `-- Monster Workshop v0.5.29 schema support.
 -- Safe to run multiple times. These columns keep Workshop edits structured
 -- instead of hiding them in notes.
 
@@ -4445,6 +4505,7 @@ async function saveMonsterAsSkin() {
   }
 
   console.log('[Workshop saveMonsterAsSkin] Creating skin payload:', data);
+  console.log('[Workshop saveMonsterAsSkin] Collected names:', { actions: data.actions?.map(a=>a.name), special_abilities: data.special_abilities?.map(a=>a.name), bonus_actions: data.bonus_actions?.map(a=>a.name), reactions: data.reactions?.map(a=>a.name), cr: data.cr, hp: data.hp, damage_resistances: data.damage_resistances });
 
   try {
     const res = await fetch(`${SB_URL}/rest/v1/rq_monsters`, {
@@ -4496,6 +4557,7 @@ async function saveMonster() {
 
   const data = sanitizeMonsterForSupabase(collectFormData());
   console.log('[Workshop saveMonster] Saving payload:', data);
+  console.log('[Workshop saveMonster] Collected names:', { actions: data.actions?.map(a=>a.name), special_abilities: data.special_abilities?.map(a=>a.name), bonus_actions: data.bonus_actions?.map(a=>a.name), reactions: data.reactions?.map(a=>a.name), cr: data.cr, hp: data.hp, damage_resistances: data.damage_resistances });
 
   // If the user edits the name of an imported/base monster, treat it as a new skin.
   // Existing skins are excluded by isLikelyImportedBaseMonster() and must PATCH
@@ -6749,7 +6811,7 @@ if (currentUser && currentUser.access_token) {
       <h3>🔧 Database Schema (one-time setup)</h3>
       <button class="ssm-close" onclick="closeSchemaModal()">✕</button>
     </div>
-    <pre id="spellSchemaPre">-- Monster Workshop v0.5.28 schema support.
+    <pre id="spellSchemaPre">-- Monster Workshop v0.5.29 schema support.
 -- Safe to run multiple times. These columns keep Workshop edits structured
 -- instead of hiding them in notes.
 
