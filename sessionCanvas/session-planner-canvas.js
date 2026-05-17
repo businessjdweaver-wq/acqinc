@@ -1,3 +1,4 @@
+// v1.3.35 — action override bloodied persistence fix.
 // v1.3.34 — corrected package cache refs; full wizard UI rebase retained.
 // ── SUPABASE CONFIG ──
 const SB_URL  = 'https://burtvenqfzextswpjziw.supabase.co';
@@ -12338,16 +12339,27 @@ function resolveAbilityMechanics(a) {
 }
 
 
+// v1.3.35 — per-instance override editor: bloodied/swarm damage overrides
+// must be read from action._override first. The v1.3.31 display/roll path
+// was checking only source action fields, so Apply could persist normal
+// damage overrides while leaving the bloodied chip stuck on the original
+// Workshop value.
 function actionBloodiedDamage(a) {
   if (!a || typeof a !== 'object') return '';
-  return a.bloodiedDamage || a.bloodied_damage || a.reducedDamage || a.reduced_damage || a.damage_bloodied || a.halfHpDamage || '';
+  const ov = a._override || {};
+  return ov.bloodiedDamage || ov.bloodied_damage || ov.reducedDamage || ov.reduced_damage || ov.damage_bloodied || ov.halfHpDamage ||
+         a.bloodiedDamage || a.bloodied_damage || a.reducedDamage || a.reduced_damage || a.damage_bloodied || a.halfHpDamage || '';
 }
 function actionBloodiedDamageType(a) {
   if (!a || typeof a !== 'object') return '';
-  return a.bloodiedDamageType || a.bloodied_damage_type || a.reducedDamageType || a.reduced_damage_type || a.damageType || a.dmgType || a.damage_type || '';
+  const ov = a._override || {};
+  return ov.bloodiedDamageType || ov.bloodied_damage_type || ov.reducedDamageType || ov.reduced_damage_type || ov.damageType || ov.dmgType || ov.damage_type ||
+         a.bloodiedDamageType || a.bloodied_damage_type || a.reducedDamageType || a.reduced_damage_type || a.damageType || a.dmgType || a.damage_type || '';
 }
 function actionDamageThreshold(a) {
-  const raw = (a && (a.damageThreshold ?? a.damage_threshold ?? a.bloodiedThreshold ?? a.bloodied_threshold ?? a.hpThreshold ?? a.hp_threshold)) ?? 0.5;
+  const ov = (a && a._override) || {};
+  const raw = (ov.damageThreshold ?? ov.damage_threshold ?? ov.bloodiedThreshold ?? ov.bloodied_threshold ?? ov.hpThreshold ?? ov.hp_threshold ??
+               (a && (a.damageThreshold ?? a.damage_threshold ?? a.bloodiedThreshold ?? a.bloodied_threshold ?? a.hpThreshold ?? a.hp_threshold))) ?? 0.5;
   if (typeof raw === 'string') {
     const t = raw.trim();
     if (t.endsWith('%')) {
@@ -12410,7 +12422,8 @@ function renderActionButton(a, monIdx, actIdx, opts) {
   const displayActionName = (a._workshopActionPrefix || '') + m.name;
   const rangeChip = (m.range && !displayActionName.includes('ft')) ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
   const baseChip = m.damage ? `${escHtml(m.damage)}${m.damageType ? ' ' + escHtml(m.damageType) : ''}` : '';
-  const bloodChip = m._bloodiedDamage ? `${escHtml(m._bloodiedDamage)}${m.damageType ? ' ' + escHtml(m.damageType) : ''}` : '';
+  const bloodType = m._bloodiedDamage ? (actionBloodiedDamageType(a) || m.damageType || '') : '';
+  const bloodChip = m._bloodiedDamage ? `${escHtml(m._bloodiedDamage)}${bloodType ? ' ' + escHtml(bloodType) : ''}` : '';
   const mechChip = m._bloodiedDamage
     ? ` <span class="node-mon-damage-chip ${m._bloodiedActive ? 'bloodied-active' : 'bloodied-pending'}">${m._bloodiedActive ? '🩸 ' : ''}${baseChip || 'damage'} → ${bloodChip} ${escHtml(m._bloodiedLabel || 'bloodied')}</span>`
     : (m.damage ? ` <span class="node-mon-damage-chip">(${baseChip})</span>` : '');
@@ -13153,6 +13166,14 @@ function wireMonsterRollClicks(nodeEl, node) {
             const n = parseInt(next.saveDC);
             if (!isNaN(n)) next.saveDC = n;
           }
+          // v1.3.35: keep bloodied aliases synchronized so older render/roll
+          // helpers and saved encounter snapshots all see the same override.
+          if (next.bloodiedDamage) next.bloodied_damage = next.bloodiedDamage;
+          if (next.damageThreshold) next.damage_threshold = next.damageThreshold;
+          // v1.3.35: keep bloodied aliases synchronized so older render/roll
+          // helpers and saved encounter snapshots all see the same override.
+          if (next.bloodiedDamage) next.bloodied_damage = next.bloodiedDamage;
+          if (next.damageThreshold) next.damage_threshold = next.damageThreshold;
           // Stage 36: if name override matches the source name verbatim,
           // it's not really an override — drop the key so the action
           // displays cleanly without a "ghost" source-name reminder.
