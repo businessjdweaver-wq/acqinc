@@ -6753,7 +6753,7 @@ body.mobile-mode #sb-modal { display: none !important; }
 }
 
 </style>
-<!-- v1.3.25: Encounter imports now fetch full Workshop rows and surface custom bonus/reaction/legendary/lair actions. -->
+<!-- v1.3.26: Encounter refresh/readout now invalidates stale Workshop caches and normalizes action aliases from updated skins. -->
 </head>
 <body>
 
@@ -16650,16 +16650,18 @@ async function openStatblockReadout(monsterId, fallbackName) {
     });
   });
   if (cached) {
-    renderStatblockBody(cached, bodyEl, titleEl);
-    return;
+    // Show something immediately, but do NOT trust the cache after Workshop edits.
+    // Continue to fetch the current row below and replace the body when it returns.
+    renderStatblockBody(normalizeWorkshopMonsterSnapshot(cached), bodyEl, titleEl);
   }
   try {
-    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(monsterId) + '&select=*');
+    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(monsterId) + '&select=*', { cache: 'no-store' });
     if (!rows || !rows.length) {
       bodyEl.innerHTML = '<div class="sb-error">Monster not found in your Workshop. It may have been deleted, or RLS is blocking access.</div>';
       return;
     }
-    const row = rows[0];
+    const row = normalizeWorkshopMonsterSnapshot(rows[0]);
+    console.log('[Workshop → Canvas] statblock fresh row', { id: monsterId, name: row.name, actions: (row.actions||[]).map(a => ({ name:a.name, damage:a.damage, saveDC:a.saveDC, saveAbility:a.saveAbility })) });
     // Stash on every imported instance with this id so future opens are instant
     state.nodes.forEach(n => {
       if (n.type !== 'encounter') return;
@@ -16753,11 +16755,13 @@ function renderStatblockBody(row, bodyEl, titleEl) {
   const renderFeatureList = (arr, sectionTitle) => {
     if (!Array.isArray(arr) || !arr.length) return '';
     const rows = arr.map(f => {
-      const name = f.name || f.title || '';
-      const desc = f.desc || f.description || f.text || '';
-      const dmg  = f.damage ? '  ·  ' + f.damage + (f.damageType ? ' ' + f.damageType : '') : '';
-      const hit  = (f.toHit != null && f.toHit !== '') ? '  ·  to-hit ' + f.toHit : '';
-      const save = (f.saveDC || f.saveAbility) ? '  ·  DC ' + (f.saveDC || '?') + ' ' + (f.saveAbility || '') + ' save' : '';
+      const norm = normalizeWorkshopActionFieldAliases(f) || f;
+      const mech = (typeof resolveAbilityMechanics === 'function') ? resolveAbilityMechanics(norm) : norm;
+      const name = norm.name || norm.title || '';
+      const desc = norm.desc || norm.description || norm.text || '';
+      const dmg  = mech.damage ? '  ·  ' + mech.damage + (mech.damageType ? ' ' + mech.damageType : '') : '';
+      const hit  = (mech.toHit != null && mech.toHit !== '') ? '  ·  to-hit ' + mech.toHit : '';
+      const save = (mech.saveDC || mech.saveAbility) ? '  ·  DC ' + (mech.saveDC || '?') + ' ' + (mech.saveAbility || '') + ' save' : '';
       return `
         <div class="sb-feature">
           <span class="sb-feature-name">${escHtml(name)}.</span>
@@ -16993,17 +16997,42 @@ function recomputeMonsterLetters(node) {
 // nodes store a local snapshot, so add/refresh must hydrate the full row and
 // normalize array-shaped fields before rendering. This prevents CR/HP from
 // updating while actions remain stuck on an older, narrow snapshot.
+function normalizeWorkshopActionFieldAliases(action) {
+  if (!action || typeof action !== 'object') return action;
+  const a = { ...action };
+  // Workshop has evolved through camelCase, snake_case, and short field names.
+  // Normalize all aliases so Canvas card buttons, override editor, and readout
+  // all consume the same values after an existing skin is updated.
+  if (a.saveDC == null || a.saveDC === '') a.saveDC = a.saveDc ?? a.save_dc ?? a.dc ?? '';
+  if (a.saveDc == null || a.saveDc === '') a.saveDc = a.saveDC ?? a.save_dc ?? a.dc ?? '';
+  if (a.save_dc == null || a.save_dc === '') a.save_dc = a.saveDC ?? a.saveDc ?? a.dc ?? '';
+  if (a.saveAbility == null || a.saveAbility === '') a.saveAbility = a.save_ability ?? a.save ?? '';
+  if (a.save_ability == null || a.save_ability === '') a.save_ability = a.saveAbility ?? a.save ?? '';
+  if (a.saveResult == null || a.saveResult === '') a.saveResult = a.save_result ?? '';
+  if (a.save_result == null || a.save_result === '') a.save_result = a.saveResult ?? '';
+  if (a.damageType == null || a.damageType === '') a.damageType = a.dmgType ?? a.damage_type ?? '';
+  if (a.dmgType == null || a.dmgType === '') a.dmgType = a.damageType ?? a.damage_type ?? '';
+  if (a.extraType == null || a.extraType === '') a.extraType = a.extra_type ?? a.riderType ?? a.rider_type ?? '';
+  if (a.extra_type == null || a.extra_type === '') a.extra_type = a.extraType ?? a.riderType ?? a.rider_type ?? '';
+  if (a.extra == null || a.extra === '') a.extra = a.riderDamage ?? a.rider_damage ?? '';
+  if (a.range == null || a.range === '') a.range = a.reach ?? a.area ?? '';
+  return a;
+}
+
+function normalizeWorkshopActionArray(list) {
+  return Array.isArray(list) ? list.map(normalizeWorkshopActionFieldAliases).filter(Boolean) : [];
+}
+
 function normalizeWorkshopMonsterSnapshot(row) {
   const r = { ...(row || {}) };
-  const arr = (v) => Array.isArray(v) ? v : [];
-  r.actions = arr(r.actions);
-  r.bonus_actions = arr(r.bonus_actions);
-  r.reactions = arr(r.reactions);
-  r.legendary_actions = arr(r.legendary_actions);
-  r.lair_actions = arr(r.lair_actions);
-  r.mythic_actions = arr(r.mythic_actions);
-  r.villain_actions = arr(r.villain_actions);
-  r.special_abilities = arr(r.special_abilities || r.special);
+  r.actions = normalizeWorkshopActionArray(r.actions);
+  r.bonus_actions = normalizeWorkshopActionArray(r.bonus_actions);
+  r.reactions = normalizeWorkshopActionArray(r.reactions);
+  r.legendary_actions = normalizeWorkshopActionArray(r.legendary_actions);
+  r.lair_actions = normalizeWorkshopActionArray(r.lair_actions);
+  r.mythic_actions = normalizeWorkshopActionArray(r.mythic_actions);
+  r.villain_actions = normalizeWorkshopActionArray(r.villain_actions);
+  r.special_abilities = normalizeWorkshopActionArray(r.special_abilities || r.special);
   r.special = r.special_abilities;
   r.damage_resistances = Array.isArray(r.damage_resistances)
     ? r.damage_resistances
@@ -17106,12 +17135,14 @@ async function refreshImportedMonster(node, idx) {
   const m = node.fields.monsters[idx];
   if (!m || !m.monster_id) return;
   try {
-    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(m.monster_id) + '&select=*');
+    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(m.monster_id) + '&select=*', { cache: 'no-store' });
     if (!rows || !rows.length) {
       alert('Source monster not found in Workshop. It may have been deleted.');
       return;
     }
     m.snapshot = normalizeWorkshopMonsterSnapshot(rows[0]);
+    delete m._fullStatblock;
+    console.log('[Workshop → Canvas] refreshed encounter monster', { id: m.monster_id, name: m.snapshot.name, actions: (m.snapshot.actions||[]).map(a => ({ name:a.name, damage:a.damage, saveDC:a.saveDC, saveAbility:a.saveAbility })) });
     if (sidePanel.classList.contains('open') && openNodeId === node.id) {
       renderSidePanelBody(node, BLOCK_TYPES.encounter);
     }
