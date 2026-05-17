@@ -9376,7 +9376,7 @@ async function openStatblockReadout(monsterId, fallbackName) {
   if (cached) {
     // Show something immediately, but do NOT trust the cache after Workshop edits.
     // Continue to fetch the current row below and replace the body when it returns.
-    renderStatblockBody(normalizeWorkshopMonsterSnapshot(cached), bodyEl, titleEl);
+    renderStatblockBody(mergeWorkshopRowWithEncounterSnapshot(cached, monsterId), bodyEl, titleEl);
   }
   try {
     const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(monsterId) + '&select=*', { cache: 'no-store', headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } });
@@ -9384,7 +9384,7 @@ async function openStatblockReadout(monsterId, fallbackName) {
       bodyEl.innerHTML = '<div class="sb-error">Monster not found in your Workshop. It may have been deleted, or RLS is blocking access.</div>';
       return;
     }
-    const row = normalizeWorkshopMonsterSnapshot(rows[0]);
+    const row = mergeWorkshopRowWithEncounterSnapshot(rows[0], monsterId);
     console.log('[Workshop → Canvas] statblock fresh row', { id: monsterId, name: row.name, actions: (row.actions||[]).map(a => ({ name:a.name, damage:a.damage, saveDC:a.saveDC, saveAbility:a.saveAbility })) });
     // Stash on every imported instance with this id AND replace the encounter snapshot.
     // v1.3.28: the statblock/book readout is also a live Workshop refresh path; otherwise
@@ -9418,6 +9418,19 @@ function closeStatblockModal() {
 // Render the statblock body. Tolerant of missing fields — different
 // monster sources (SRD bundle, custom Workshop) populate different
 // columns. Anything absent is silently skipped.
+function formatStructuredMechanicsLine(action) {
+  const norm = normalizeWorkshopActionFieldAliases(action) || action || {};
+  const mech = (typeof resolveAbilityMechanics === 'function') ? resolveAbilityMechanics(norm) : norm;
+  const parts = [];
+  if (mech.toHit !== undefined && mech.toHit !== null && mech.toHit !== '') parts.push('to hit ' + mech.toHit);
+  if (mech.saveDC || mech.saveAbility) parts.push('DC ' + (mech.saveDC || '?') + ' ' + (mech.saveAbility || '') + ' save');
+  if (mech.damage) parts.push('damage ' + mech.damage + (mech.damageType ? ' ' + mech.damageType : ''));
+  if (mech.extra) parts.push('rider ' + mech.extra + (mech.extraType ? ' ' + mech.extraType : ''));
+  if (mech.range) parts.push('range/area ' + mech.range);
+  if (mech.duration) parts.push('duration ' + mech.duration);
+  return parts.join(' · ');
+}
+
 function renderStatblockBody(row, bodyEl, titleEl) {
   if (titleEl) titleEl.textContent = row.name || 'Statblock';
   const meta = [
@@ -9491,12 +9504,10 @@ function renderStatblockBody(row, bodyEl, titleEl) {
       const mech = (typeof resolveAbilityMechanics === 'function') ? resolveAbilityMechanics(norm) : norm;
       const name = norm.name || norm.title || '';
       const desc = norm.desc || norm.description || norm.text || '';
-      const dmg  = mech.damage ? '  ·  ' + mech.damage + (mech.damageType ? ' ' + mech.damageType : '') : '';
-      const hit  = (mech.toHit != null && mech.toHit !== '') ? '  ·  to-hit ' + mech.toHit : '';
-      const save = (mech.saveDC || mech.saveAbility) ? '  ·  DC ' + (mech.saveDC || '?') + ' ' + (mech.saveAbility || '') + ' save' : '';
+      const structured = formatStructuredMechanicsLine(norm);
       const descDice = String(desc || '').match(/\d+d\d+(?:\s*[+\-]\s*\d+)?/g) || [];
       const mismatch = mech.damage && descDice.length && !descDice.map(x => x.replace(/\s+/g,'')).includes(String(mech.damage).replace(/\s+/g,''));
-      const mechLine = (dmg || hit || save) ? `<div style="font-family:'JetBrains Mono',monospace;font-size:0.7rem;color:var(--steel-pale);margin-top:2px;">${escHtml(hit + save + dmg).trim()}${mismatch ? ' <span style="color:var(--gold-pale);">↯ structured damage differs from prose</span>' : ''}</div>` : '';
+      const mechLine = structured ? `<div style="font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:var(--gold-pale);margin:3px 0 2px;">Structured: ${escHtml(structured)}${mismatch ? ' <span style="color:var(--ember-pale);">↯ prose may be stale</span>' : ''}</div>` : '';
       return `
         <div class="sb-feature">
           <span class="sb-feature-name">${escHtml(name)}.</span>
@@ -9775,6 +9786,39 @@ function normalizeWorkshopMonsterSnapshot(row) {
         ? r.damage_resistances.replace(/^\s*\[|\]\s*$/g,'').split(',').map(x => x.trim().replace(/^"|"$/g,'')).filter(Boolean)
         : []);
   return r;
+}
+
+function findEncounterSnapshotForMonsterId(monsterId) {
+  if (!monsterId || !state || !Array.isArray(state.nodes)) return null;
+  let best = null;
+  state.nodes.forEach(n => {
+    if (best || n.type !== 'encounter') return;
+    const list = (n.fields && n.fields.monsters) || [];
+    list.forEach(m => {
+      if (best) return;
+      if (String(m.monster_id) === String(monsterId) && m.snapshot) {
+        best = normalizeWorkshopMonsterSnapshot(m.snapshot);
+      }
+    });
+  });
+  return best;
+}
+
+function mergeWorkshopRowWithEncounterSnapshot(row, monsterId) {
+  const fresh = normalizeWorkshopMonsterSnapshot(row || {});
+  const snap = findEncounterSnapshotForMonsterId(monsterId || fresh.id);
+  if (!snap) return fresh;
+  const categories = ['actions','bonus_actions','reactions','legendary_actions','lair_actions','mythic_actions','villain_actions','special_abilities'];
+  categories.forEach(k => {
+    const freshArr = Array.isArray(fresh[k]) ? fresh[k] : [];
+    const snapArr = Array.isArray(snap[k]) ? snap[k] : [];
+    // v1.3.30: an older cached/readout shape can have empty full-statblock
+    // arrays while the encounter snapshot already has the hydrated Workshop
+    // action payload. Empty should not beat populated.
+    if (!freshArr.length && snapArr.length) fresh[k] = snapArr;
+  });
+  if ((!fresh.special || !fresh.special.length) && fresh.special_abilities) fresh.special = fresh.special_abilities;
+  return fresh;
 }
 
 async function hydrateWorkshopMonsterSnapshot(rowOrId) {
@@ -10196,10 +10240,15 @@ function normalizeWorkshopActionList(list, label) {
   if (!Array.isArray(list)) return [];
   return list.map((a, i) => {
     if (!a || typeof a !== 'object') return null;
-    const copy = Object.assign({}, a);
-    copy._encounterActionCategory = label || '';
-    copy._encounterSourceIndex = i;
-    return copy;
+    // v1.3.30: keep the original action object instead of cloning. Override
+    // edits and refreshed Workshop fields must remain attached to the snapshot
+    // that gets saved with the encounter. Also normalize saveDc/save_dc,
+    // dmgType/damageType, etc. before render/roll code reads it.
+    const norm = normalizeWorkshopActionFieldAliases(a) || a;
+    Object.assign(a, norm);
+    a._encounterActionCategory = label || '';
+    a._encounterSourceIndex = i;
+    return a;
   }).filter(Boolean);
 }
 
@@ -10220,7 +10269,7 @@ function getMonsterRollActions(sn) {
 }
 
 function renderOneMonsterCard(m, idx, isSingleton) {
-  const sn = m.snapshot || {};
+  const sn = normalizeWorkshopMonsterSnapshot(m.snapshot || {});
   const stats = [
     sn.cr ? 'CR ' + sn.cr : '',
     sn.hp ? 'HP ' + sn.hp : '',
@@ -12228,6 +12277,7 @@ function renderActionButton(a, monIdx, actIdx, opts) {
   // Append range if known and not already in the name (helps DM situate the AoE)
   const displayActionName = (a._workshopActionPrefix || '') + m.name;
   const rangeChip = (m.range && !displayActionName.includes('ft')) ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
+  const mechChip = m.damage ? ` <span style="opacity:0.72;font-size:0.75em;">(${escHtml(m.damage)}${m.damageType ? ' ' + escHtml(m.damageType) : ''})</span>` : '';
   const hasOverride = !!(a._override && Object.keys(a._override).some(k => a._override[k] !== '' && a._override[k] != null && a._override[k] !== false));
   const overrideClasses = [
     hasOverride ? 'has-override' : '',
@@ -12241,7 +12291,7 @@ function renderActionButton(a, monIdx, actIdx, opts) {
   return `<span class="node-mon-roll-wrap${overrideClasses ? ' ' + overrideClasses : ''}">
     <button class="${cls}" data-mon-roll="${monIdx}-${actIdx}" type="button"
             title="Roll ${escAttr(displayActionName)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
-            <span class="roll-icon">🎲</span>${escHtml(displayActionName)}${rangeChip}
+            <span class="roll-icon">🎲</span>${escHtml(displayActionName)}${rangeChip}${mechChip}
     </button>
     ${nameGhost}
     <button class="node-mon-edit-btn" data-mon-edit="${monIdx}-${actIdx}-action" type="button"
@@ -13979,7 +14029,7 @@ function renderNpcActionButton(a, actIdx, opts) {
   return `<span class="node-mon-roll-wrap${overrideClasses ? ' ' + overrideClasses : ''}">
     <button class="${cls}" data-npc-roll="${actIdx}" type="button"
             title="Roll ${escAttr(displayActionName)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
-            <span class="roll-icon">🎲</span>${escHtml(displayActionName)}${rangeChip}
+            <span class="roll-icon">🎲</span>${escHtml(displayActionName)}${rangeChip}${mechChip}
     </button>
     ${nameGhost}
     <button class="node-mon-edit-btn" data-npc-edit="${actIdx}-action" type="button"
