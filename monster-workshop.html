@@ -1731,7 +1731,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Monster Workshop</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.5.30 · existing skin update fix</span>
+  <span class="topbar-version">v0.5.31 · live action save fix</span>
   <div class="topbar-actions">
     <button class="btn btn-ghost btn-sm" onclick="openFoundryImport()">🔮 Import from Foundry</button>
     <button class="btn btn-ghost btn-sm" onclick="exportJSON()">⬇ Export JSON</button>
@@ -4189,28 +4189,45 @@ function parseSavesSkills(str) {
 }
 
 function readActionCard(card) {
-  const q = fld => card.querySelector(`[data-field="${fld}"]`);
-  const val = fld => (q(fld)?.value || '').trim();
-  return {
-    name: val('name'),
-    type: val('type') || 'special',
-    toHit: cleanToHitValue(val('toHit')),
-    reach: val('reach'),
-    range: val('reach'),
-    recharge: val('recharge'),
-    damage: cleanFoundryFormula(val('damage')),
-    dmgType: val('dmgType'),
-    extra: cleanFoundryFormula(val('extra')),
-    extraType: val('extraType'),
-    saveDc: val('saveDc'),
-    save_dc: val('saveDc'),
-    saveAbility: val('saveAbility'),
-    save_ability: val('saveAbility'),
-    saveResult: val('saveResult'),
-    save_result: val('saveResult'),
-    duration: val('duration'),
-    desc: val('desc')
+  // v0.5.31 — Save from the live DOM, not from any cached action object.
+  // Some older cards or library-added cards may lack a data-field attribute,
+  // so each value has a positional fallback matching renderActionCard().
+  const fields = [...card.querySelectorAll('input, select, textarea')];
+  const byField = fld => card.querySelector(`[data-field="${fld}"]`);
+  const raw = el => (el && 'value' in el ? String(el.value || '') : '').trim();
+  const val = (fld, fallbackIndex = -1) => {
+    const el = byField(fld) || (fallbackIndex >= 0 ? fields[fallbackIndex] : null);
+    return raw(el);
   };
+
+  const action = {
+    name: val('name', 0),
+    type: val('type', 1) || card.dataset.actionType || 'special',
+    toHit: cleanToHitValue(val('toHit', 2)),
+    reach: val('reach', 3),
+    range: val('reach', 3),
+    recharge: val('recharge', 4),
+    damage: cleanFoundryFormula(val('damage', 5)),
+    dmgType: val('dmgType', 6),
+    extra: cleanFoundryFormula(val('extra', 7)),
+    extraType: val('extraType', 8),
+    saveDc: val('saveDc', 9),
+    save_dc: val('saveDc', 9),
+    saveAbility: val('saveAbility', 10),
+    save_ability: val('saveAbility', 10),
+    saveResult: val('saveResult', 11),
+    save_result: val('saveResult', 11),
+    duration: val('duration', 12),
+    desc: val('desc', fields.length - 1)
+  };
+
+  // Keep common alternate names for downstream consumers.
+  action.saveDC = action.saveDc;
+  action.damageType = action.dmgType;
+  action.riderDamage = action.extra;
+  action.riderType = action.extraType;
+
+  return action;
 }
 
 function collectFormData() {
@@ -4222,11 +4239,15 @@ function collectFormData() {
     abilities[ab] = [score, modFromScore(score)];
   });
 
-  const actions = [...document.querySelectorAll('#actionsContainer .action-card')].map(readActionCard);
-  const bonusActions = [...document.querySelectorAll('#bonusActionsContainer .action-card')].map(readActionCard);
-  const reactions = [...document.querySelectorAll('#reactionsContainer .action-card')].map(readActionCard);
-  const legActions = [...document.querySelectorAll('#legendaryActionsContainer .action-card')].map(readActionCard);
-  const lairActions = [...document.querySelectorAll('#lairActionsContainer .action-card')].map(readActionCard);
+  const collectActionList = id => [...document.querySelectorAll(`#${id} .action-card`)]
+    .map(readActionCard)
+    .filter(a => a.name || a.desc || a.damage || a.toHit || a.saveDc);
+
+  const actions = collectActionList('actionsContainer');
+  const bonusActions = collectActionList('bonusActionsContainer');
+  const reactions = collectActionList('reactionsContainer');
+  const legActions = collectActionList('legendaryActionsContainer');
+  const lairActions = collectActionList('lairActionsContainer');
 
   const special = [...document.querySelectorAll('#specialAbilitiesContainer .action-card')].map(card => {
     const inputs = card.querySelectorAll('input');
@@ -4377,12 +4398,18 @@ async function fetchSavedMonsterById(id) {
 
 function dumpWorkshopEditor() {
   const payload = collectFormData();
-  const visibleCards = [...document.querySelectorAll('#editorBody .action-card')].map(card => ({
-    section: card.closest('.section')?.querySelector('.section-title')?.textContent?.trim() || '(unknown)',
-    name: card.querySelector('[data-field="name"], .action-name-input')?.value || '',
-    type: card.querySelector('[data-field="type"]')?.value || '',
-    desc: (card.querySelector('[data-field="desc"], textarea')?.value || '').slice(0, 120)
-  }));
+  const visibleCards = [...document.querySelectorAll('#editorBody .action-card')].map(card => {
+    const live = readActionCard(card);
+    return {
+      section: card.closest('.section')?.querySelector('.section-title')?.textContent?.trim() || '(unknown)',
+      name: live.name,
+      type: live.type,
+      damage: live.damage,
+      dmgType: live.dmgType,
+      saveDc: live.saveDc,
+      desc: (live.desc || '').slice(0, 120)
+    };
+  });
   const byContainer = id => [...document.querySelectorAll(`#${id} .action-card`)].map(card => card.querySelector('[data-field="name"], .action-name-input')?.value || '');
   const report = {
     f_cr: document.getElementById('f_cr')?.value,
@@ -4415,7 +4442,7 @@ window.collectMonsterFromEditor = collectFormData;
 window.dumpWorkshopEditor = dumpWorkshopEditor;
 
 function getWorkshopSchemaSQL() {
-  return `-- Monster Workshop v0.5.30 schema support.
+  return `-- Monster Workshop v0.5.31 schema support.
 -- Safe to run multiple times. These columns keep Workshop edits structured
 -- instead of hiding them in notes.
 
@@ -4556,7 +4583,17 @@ async function saveMonsterAsSkin() {
 function buildWorkshopStructuredPatch(rawPayload) {
   const p = rawPayload || collectFormData();
   const actionList = list => Array.isArray(list)
-    ? list.map(a => ({ ...(a || {}), toHit: cleanToHitValue(a?.toHit) }))
+    ? list.map(a => ({
+        ...(a || {}),
+        toHit: cleanToHitValue(a?.toHit),
+        damage: cleanFoundryFormula(a?.damage || ''),
+        extra: cleanFoundryFormula(a?.extra || ''),
+        saveDC: a?.saveDc ?? a?.saveDC ?? a?.save_dc ?? '',
+        saveDc: a?.saveDc ?? a?.saveDC ?? a?.save_dc ?? '',
+        save_dc: a?.saveDc ?? a?.saveDC ?? a?.save_dc ?? '',
+        damageType: a?.dmgType ?? a?.damageType ?? '',
+        dmgType: a?.dmgType ?? a?.damageType ?? ''
+      }))
     : [];
   return {
     actions: actionList(p.actions),
@@ -4609,6 +4646,21 @@ async function forcePatchWorkshopStructuredFields(monsterId, rawPayload) {
     damage_resistances: row.damage_resistances
   } : row);
   return row;
+}
+
+
+async function verifyWorkshopSavePersisted(monsterId, expectedPayload) {
+  const row = await fetchSavedMonsterById(monsterId);
+  const expectedNames = (expectedPayload.actions || []).map(a => a.name).join('|');
+  const actualNames = (row?.actions || []).map(a => a.name).join('|');
+  const expectedSig = JSON.stringify((expectedPayload.actions || []).map(a => ({ name:a.name, damage:a.damage, saveDc:a.saveDc, dmgType:a.dmgType })));
+  const actualSig = JSON.stringify((row?.actions || []).map(a => ({ name:a.name, damage:a.damage, saveDc:a.saveDc, dmgType:a.dmgType })));
+  const ok = expectedNames === actualNames && expectedSig === actualSig;
+  console.log('[Workshop saveMonster] Persist verification:', { ok, expectedNames, actualNames, expectedSig, actualSig, row });
+  if (!ok) {
+    console.warn('[Workshop saveMonster] DB row does not match live editor payload after save.', { expectedPayload, row });
+  }
+  return { ok, row };
 }
 
 async function saveMonster() {
@@ -4664,7 +4716,7 @@ async function saveMonster() {
     }
 
     if (res.ok) {
-      // v0.5.30: PATCH the structured Workshop arrays explicitly after the
+      // v0.5.31: PATCH the structured Workshop arrays explicitly after the
       // general save. New skins already proved INSERT handles these fields;
       // this makes existing-skin updates use the same first-class columns
       // instead of relying on any older/narrow payload path.
@@ -4695,7 +4747,8 @@ async function saveMonster() {
       // vanish after switching monsters or refreshing the list.
       upsertCustomMonsterInMemory(currentMonster);
 
-      const confirmedRow = await fetchSavedMonsterById(currentMonster?.id);
+      const verified = await verifyWorkshopSavePersisted(currentMonster?.id, rawData);
+      const confirmedRow = verified.row || await fetchSavedMonsterById(currentMonster?.id);
       if (confirmedRow) {
         currentMonster = mergeSavedMonsterWithLivePayload(confirmedRow, data);
         upsertCustomMonsterInMemory(currentMonster);
@@ -6886,7 +6939,7 @@ if (currentUser && currentUser.access_token) {
       <h3>🔧 Database Schema (one-time setup)</h3>
       <button class="ssm-close" onclick="closeSchemaModal()">✕</button>
     </div>
-    <pre id="spellSchemaPre">-- Monster Workshop v0.5.30 schema support.
+    <pre id="spellSchemaPre">-- Monster Workshop v0.5.31 schema support.
 -- Safe to run multiple times. These columns keep Workshop edits structured
 -- instead of hiding them in notes.
 
