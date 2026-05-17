@@ -9425,6 +9425,8 @@ function formatStructuredMechanicsLine(action) {
   if (mech.toHit !== undefined && mech.toHit !== null && mech.toHit !== '') parts.push('to hit ' + mech.toHit);
   if (mech.saveDC || mech.saveAbility) parts.push('DC ' + (mech.saveDC || '?') + ' ' + (mech.saveAbility || '') + ' save');
   if (mech.damage) parts.push('damage ' + mech.damage + (mech.damageType ? ' ' + mech.damageType : ''));
+  const bd = actionBloodiedDamage(norm);
+  if (bd) parts.push(actionBloodiedLabel(norm) + ' damage ' + bd + (actionBloodiedDamageType(norm) ? ' ' + actionBloodiedDamageType(norm) : ''));
   if (mech.extra) parts.push('rider ' + mech.extra + (mech.extraType ? ' ' + mech.extraType : ''));
   if (mech.range) parts.push('range/area ' + mech.range);
   if (mech.duration) parts.push('duration ' + mech.duration);
@@ -9738,6 +9740,7 @@ function recomputeMonsterLetters(node) {
 }
 
 
+// v1.3.31 — Bloodied/swarmlike damage support.
 // v1.3.25 — Workshop action hydration/normalization.
 // Workshop rows may carry mechanics in several first-class columns. Encounter
 // nodes store a local snapshot, so add/refresh must hydrate the full row and
@@ -9758,6 +9761,11 @@ function normalizeWorkshopActionFieldAliases(action) {
   if (a.save_result == null || a.save_result === '') a.save_result = a.saveResult ?? '';
   if (a.damageType == null || a.damageType === '') a.damageType = a.dmgType ?? a.damage_type ?? '';
   if (a.dmgType == null || a.dmgType === '') a.dmgType = a.damageType ?? a.damage_type ?? '';
+  // v1.3.31 — Bloodied / swarm damage aliases from Monster Workshop.
+  if (a.bloodiedDamage == null || a.bloodiedDamage === '') a.bloodiedDamage = a.bloodied_damage ?? a.reducedDamage ?? a.reduced_damage ?? a.damage_bloodied ?? a.halfHpDamage ?? '';
+  if (a.bloodied_damage == null || a.bloodied_damage === '') a.bloodied_damage = a.bloodiedDamage ?? a.reducedDamage ?? a.reduced_damage ?? a.damage_bloodied ?? a.halfHpDamage ?? '';
+  if (a.bloodiedDamageType == null || a.bloodiedDamageType === '') a.bloodiedDamageType = a.bloodied_damage_type ?? a.reducedDamageType ?? a.reduced_damage_type ?? a.damageType ?? a.dmgType ?? '';
+  if (a.damageThreshold == null || a.damageThreshold === '') a.damageThreshold = a.damage_threshold ?? a.bloodiedThreshold ?? a.bloodied_threshold ?? a.hpThreshold ?? a.hp_threshold ?? '0.5';
   if (a.extraType == null || a.extraType === '') a.extraType = a.extra_type ?? a.riderType ?? a.rider_type ?? '';
   if (a.extra_type == null || a.extra_type === '') a.extra_type = a.extraType ?? a.riderType ?? a.rider_type ?? '';
   if (a.extra == null || a.extra === '') a.extra = a.riderDamage ?? a.rider_damage ?? '';
@@ -10379,11 +10387,11 @@ function renderOneMonsterCard(m, idx, isSingleton) {
           : '';
         const actionsHtml = actions.length
           ? `<div class="node-mon-actions">
-              ${actions.map((a, ai) => renderActionButton(a, idx, ai, { showHidden })).join('')}
+              ${actions.map((a, ai) => renderActionButton(a, idx, ai, { showHidden, monster: m })).join('')}
               ${pill}
             </div>`
           : (pill ? `<div class="node-mon-actions">${pill}</div>` : '<div class="node-mon-stats" style="opacity:0.6;">No rollable actions on this stat block.</div>');
-        return actionsHtml + renderTriggerButtons(specials, idx, { showHidden }) + renderSpellButtons(m.snapshot, idx);
+        return actionsHtml + renderTriggerButtons(specials, idx, { showHidden, monster: m }) + renderSpellButtons(m.snapshot, idx);
       })()}
       ${renderOverrideEditor(m, idx)}
       <div class="node-mon-peek ${peekOpen ? 'open' : ''}" data-peek-body="${idx}">
@@ -10447,6 +10455,12 @@ function renderOverrideEditor(m, monIdx) {
         <label>Damage Type
           <input type="text" data-ov-key="damageType"  value="${escAttr(ov.damageType || '')}"  ${ph(r.damageType)}>
         </label>
+        <label>Bloodied Damage <span class="ov-hint">(e.g. swarm half-HP dice)</span>
+          <input type="text" data-ov-key="bloodiedDamage" value="${escAttr(ov.bloodiedDamage || '')}" ${ph(a.bloodiedDamage || a.bloodied_damage)}>
+        </label>
+        <label>Bloodied Threshold <span class="ov-hint">(default .5)</span>
+          <input type="text" data-ov-key="damageThreshold" value="${escAttr(ov.damageThreshold || '')}" ${ph(a.damageThreshold || a.damage_threshold || '0.5')}>
+        </label>
         <label>Extra Damage <span class="ov-hint">(rider — e.g. "1d6")</span>
           <input type="text" data-ov-key="extra"       value="${escAttr(ov.extra || '')}"       ${ph(r.extra)}>
         </label>
@@ -10483,8 +10497,13 @@ function renderMonsterHpBar(m, idx) {
   const maxHp = parseInt(sn.hp) || 0;
   const curHp = (typeof m.hp_current === 'number') ? m.hp_current : maxHp;
   const hasPrev = (typeof m._hpPrev === 'number') && m._hpPrev !== curHp;
+  const hasBloodiedActions = getWorkshopRenderableActions(sn).some(a => actionBloodiedDamage(a));
+  const isBloodied = maxHp > 0 && curHp <= maxHp * 0.5;
+  const bloodiedBadge = hasBloodiedActions
+    ? `<span class="hpbar-bloodied ${isBloodied ? 'active' : ''}" title="This stat block has HP-threshold damage actions">${isBloodied ? '🩸 Bloodied' : 'Bloodied at ≤50%'}</span>`
+    : '';
   return `
-    <div class="node-mon-hpbar" data-hpbar="${idx}">
+    <div class="node-mon-hpbar ${isBloodied && hasBloodiedActions ? 'is-bloodied' : ''}" data-hpbar="${idx}">
       <span class="hpbar-label">HP</span>
       <input type="text" inputmode="numeric"
              class="hpbar-input"
@@ -10496,6 +10515,7 @@ function renderMonsterHpBar(m, idx) {
         <button class="hpbar-tick" data-hp-tick="${idx},-1" type="button" title="−1 HP">▾</button>
       </span>
       <span class="hpbar-max">/ ${maxHp}</span>
+      ${bloodiedBadge}
       <button class="hpbar-undo ${hasPrev ? '' : 'hidden'}"
               data-hp-undo="${idx}" type="button"
               title="${hasPrev ? 'Undo last HP change (back to ' + m._hpPrev + ')' : 'No previous HP value to revert to'}"
@@ -12260,9 +12280,64 @@ function resolveAbilityMechanics(a) {
   };
 }
 
+
+function actionBloodiedDamage(a) {
+  if (!a || typeof a !== 'object') return '';
+  return a.bloodiedDamage || a.bloodied_damage || a.reducedDamage || a.reduced_damage || a.damage_bloodied || a.halfHpDamage || '';
+}
+function actionBloodiedDamageType(a) {
+  if (!a || typeof a !== 'object') return '';
+  return a.bloodiedDamageType || a.bloodied_damage_type || a.reducedDamageType || a.reduced_damage_type || a.damageType || a.dmgType || a.damage_type || '';
+}
+function actionDamageThreshold(a) {
+  const raw = (a && (a.damageThreshold ?? a.damage_threshold ?? a.bloodiedThreshold ?? a.bloodied_threshold ?? a.hpThreshold ?? a.hp_threshold)) ?? 0.5;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (t.endsWith('%')) {
+      const n = parseFloat(t);
+      return Number.isFinite(n) ? Math.max(0, Math.min(1, n / 100)) : 0.5;
+    }
+    const n = parseFloat(t);
+    if (Number.isFinite(n)) return n > 1 ? Math.max(0, Math.min(1, n / 100)) : Math.max(0, Math.min(1, n));
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) ? (n > 1 ? Math.max(0, Math.min(1, n / 100)) : Math.max(0, Math.min(1, n))) : 0.5;
+}
+function monsterIsAtActionThreshold(imported, action) {
+  if (!imported) return false;
+  const sn = imported.snapshot || {};
+  const maxHp = parseInt(sn.hp) || 0;
+  if (!maxHp) return false;
+  const curHp = (typeof imported.hp_current === 'number') ? imported.hp_current : maxHp;
+  return curHp <= maxHp * actionDamageThreshold(action);
+}
+function actionBloodiedLabel(action) {
+  const threshold = Math.round(actionDamageThreshold(action) * 100);
+  return threshold === 50 ? 'bloodied' : `≤${threshold}% HP`;
+}
+function resolveAbilityMechanicsForMonster(action, imported) {
+  const r = resolveAbilityMechanics(action);
+  const bd = actionBloodiedDamage(action);
+  if (bd && monsterIsAtActionThreshold(imported, action)) {
+    return {
+      ...r,
+      damage: bd,
+      damageType: actionBloodiedDamageType(action) || r.damageType,
+      _bloodiedActive: true,
+      _baseDamage: r.damage,
+      _bloodiedDamage: bd,
+      _bloodiedLabel: actionBloodiedLabel(action)
+    };
+  }
+  if (bd) {
+    return { ...r, _bloodiedDamage: bd, _bloodiedLabel: actionBloodiedLabel(action) };
+  }
+  return r;
+}
+
 function renderActionButton(a, monIdx, actIdx, opts) {
   if (!a || !a.name) return '';
-  const m = resolveAbilityMechanics(a);
+  const m = resolveAbilityMechanicsForMonster(a, opts && opts.monster);
   // Stage 36: hidden actions (e.g. a re-skinned Ankheg that doesn't bite)
   // disappear from the action row entirely. The instance's "+ N hidden"
   // pill (when m._showHidden is set) re-reveals them in greyed form so
@@ -12277,7 +12352,11 @@ function renderActionButton(a, monIdx, actIdx, opts) {
   // Append range if known and not already in the name (helps DM situate the AoE)
   const displayActionName = (a._workshopActionPrefix || '') + m.name;
   const rangeChip = (m.range && !displayActionName.includes('ft')) ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>` : '';
-  const mechChip = m.damage ? ` <span style="opacity:0.72;font-size:0.75em;">(${escHtml(m.damage)}${m.damageType ? ' ' + escHtml(m.damageType) : ''})</span>` : '';
+  const baseChip = m.damage ? `${escHtml(m.damage)}${m.damageType ? ' ' + escHtml(m.damageType) : ''}` : '';
+  const bloodChip = m._bloodiedDamage ? `${escHtml(m._bloodiedDamage)}${m.damageType ? ' ' + escHtml(m.damageType) : ''}` : '';
+  const mechChip = m._bloodiedDamage
+    ? ` <span class="node-mon-damage-chip ${m._bloodiedActive ? 'bloodied-active' : 'bloodied-pending'}">${m._bloodiedActive ? '🩸 ' : ''}${baseChip || 'damage'} → ${bloodChip} ${escHtml(m._bloodiedLabel || 'bloodied')}</span>`
+    : (m.damage ? ` <span class="node-mon-damage-chip">(${baseChip})</span>` : '');
   const hasOverride = !!(a._override && Object.keys(a._override).some(k => a._override[k] !== '' && a._override[k] != null && a._override[k] !== false));
   const overrideClasses = [
     hasOverride ? 'has-override' : '',
@@ -12310,7 +12389,7 @@ function renderTriggerButtons(specials, monIdx, opts) {
   const items = [];
   specials.forEach((s, sIdx) => {
     if (!s || !s.name) return;
-    const m = resolveAbilityMechanics(s);
+    const m = resolveAbilityMechanicsForMonster(s, opts && opts.monster);
     if (m.hidden && !showHidden) return;
     const isSave = !!(m.saveDC || m.damage);
     if (!isSave) return;
@@ -14057,6 +14136,7 @@ function renderNpcHpBar(skin) {
         <button class="hpbar-tick" data-npc-hp-tick="-1" type="button" title="−1 HP">▾</button>
       </span>
       <span class="hpbar-max">/ ${maxHp}</span>
+      ${bloodiedBadge}
       <button class="hpbar-undo ${hasPrev ? '' : 'hidden'}"
               data-npc-hp-undo="1" type="button"
               title="${hasPrev ? 'Undo last HP change (back to ' + skin._hpPrev + ')' : 'No previous HP value to revert to'}"
@@ -14636,7 +14716,7 @@ function dispatchMonsterRoll(imported, action, advantage, dispatchNode) {
   const ac = sn.ac || '';
   const hp = sn.hp || '';
 
-  const resolved = resolveAbilityMechanics(action);
+  const resolved = resolveAbilityMechanicsForMonster(action, imported);
 console.log("OVERRIDE:", action._override);
 console.log("RESOLVED:", resolved);
   // Order: dice card first (the mechanically important part), then the
