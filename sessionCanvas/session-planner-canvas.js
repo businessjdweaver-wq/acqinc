@@ -1,3 +1,4 @@
+// v1.3.34 — corrected package cache refs; full wizard UI rebase retained.
 // ── SUPABASE CONFIG ──
 const SB_URL  = 'https://burtvenqfzextswpjziw.supabase.co';
 const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1cnR2ZW5xZnpleHRzd3Bqeml3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyNTkxMzEsImV4cCI6MjA5MDgzNTEzMX0.M9krIdktkO1wMeKYMm_HoR_tEykewbRUVHdjerg1XIo';
