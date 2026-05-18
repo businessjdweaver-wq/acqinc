@@ -17308,3 +17308,194 @@ function rqSafeRenderNodeFace(node) {
   setTimeout(cleanNpcActionTooltips, 250);
 })();
 
+
+
+// v1.3.47 — NPC combat parity helpers.
+// Gives NPC nodes with attached monster statblocks encounter-like HP controls, HP-state tags,
+// and makes linked/team-up calculations able to count NPC monster skins.
+function rqParseNumberLoose(v) {
+  const n = Number(String(v ?? '').replace(/[^\d.-]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+function rqNpcHpStateLabel(currentHp, maxHp) {
+  const hp = Number(currentHp);
+  const max = Number(maxHp);
+  if (!Number.isFinite(hp) || !Number.isFinite(max) || max <= 0) return '';
+  const pct = hp / max;
+  if (pct <= 0.25) return 'Rough';
+  if (pct <= 0.5) return 'Bloodied';
+  if (hp <= 5 && max <= 20) return 'Last Leg';
+  return '';
+}
+function rqNpcHpStateClass(label) {
+  return label === 'Last Leg' ? 'last-leg' : label === 'Rough' ? 'rough' : label === 'Bloodied' ? 'bloodied' : '';
+}
+function rqNpcHpStateBadge(currentHp, maxHp) {
+  const label = rqNpcHpStateLabel(currentHp, maxHp);
+  if (!label) return '';
+  return `<span class="mon-hp-state-badge ${rqNpcHpStateClass(label)}" title="HP state">${label}</span>`;
+}
+function rqGetNpcSkinData(node) {
+  const d = node?.data || node || {};
+  return d.monsterSkin || d.npcMonsterSkin || d.skin || d.statblock || d.monster || d.attachedMonster || null;
+}
+function rqGetNpcSkinHp(node) {
+  const skin = rqGetNpcSkinData(node) || {};
+  const d = node?.data || node || {};
+  const max = Number(
+    skin.maxHP ?? skin.maxHp ?? skin.hpMax ?? skin.max_hp ??
+    skin.hp ?? d.npcMaxHP ?? d.maxHP ?? d.hpMax ?? d.hp
+  ) || 0;
+  const cur = Number(
+    skin.currentHP ?? skin.currentHp ?? skin.hpCurrent ?? skin.current_hp ??
+    d.npcCurrentHP ?? d.currentHP ?? d.hpCurrent ?? max
+  ) || max || 0;
+  return { current: cur, max };
+}
+function rqSetNpcSkinHpByNodeId(nodeId, nextHp) {
+  try {
+    const node = (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(nodeId));
+    if (!node) return;
+    const skin = rqGetNpcSkinData(node);
+    if (!skin) return;
+    const hp = rqGetNpcSkinHp(node);
+    const clamped = Math.max(0, Math.min(Number(nextHp) || 0, hp.max || Number(nextHp) || 0));
+    skin.currentHP = clamped;
+    skin.currentHp = clamped;
+    skin.hpCurrent = clamped;
+    node.data = node.data || {};
+    node.data.npcCurrentHP = clamped;
+    refreshNodeFace(node);
+    if (typeof scheduleSave === 'function') scheduleSave();
+    else if (typeof saveNow === 'function') saveNow();
+  } catch (err) {
+    console.error('[rqSetNpcSkinHpByNodeId] failed', nodeId, nextHp, err);
+  }
+}
+function rqAdjustNpcSkinHpByNodeId(nodeId, delta) {
+  const node = (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(nodeId));
+  if (!node) return;
+  const hp = rqGetNpcSkinHp(node);
+  rqSetNpcSkinHpByNodeId(nodeId, hp.current + Number(delta || 0));
+}
+function rqNpcMonsterCountsForTeamup() {
+  try {
+    const arr = (typeof nodes !== 'undefined' ? nodes : []);
+    return arr
+      .filter(n => (n.type === 'npc' || n.kind === 'npc') && rqGetNpcSkinData(n))
+      .map(n => {
+        const skin = rqGetNpcSkinData(n);
+        const hp = rqGetNpcSkinHp(n);
+        return {
+          nodeId: n.id,
+          name: skin.name || skin.displayName || n.title || n.name || 'NPC Monster',
+          cr: skin.cr ?? skin.challenge_rating ?? skin.challengeRating ?? '0',
+          hp: hp.max,
+          currentHP: hp.current,
+          ac: skin.ac ?? skin.armor_class ?? '',
+          sourceNodeType: 'npc'
+        };
+      });
+  } catch (err) {
+    console.error('[rqNpcMonsterCountsForTeamup] failed', err);
+    return [];
+  }
+}
+window.rqNpcMonsterCountsForTeamup = rqNpcMonsterCountsForTeamup;
+
+
+
+// v1.3.47 — DOM enhancer for NPC nodes with attached monster statblocks.
+// Adds encounter-like HP controls and HP-state tags without disrupting existing action buttons.
+(function(){
+  function getNodeIdFromCard(card){
+    return card?.dataset?.nodeId || card?.getAttribute?.('data-id') || card?.id?.replace(/^node-/, '') || '';
+  }
+  function nodeForCard(card){
+    const id = getNodeIdFromCard(card);
+    const arr = (typeof nodes !== 'undefined' ? nodes : []);
+    return arr.find(n => String(n.id) === String(id)) || null;
+  }
+  function enhanceNpcCombatFaces(){
+    document.querySelectorAll('.node, .canvas-node, .rq-node').forEach(card => {
+      const node = nodeForCard(card);
+      if (!node || !(node.type === 'npc' || node.kind === 'npc')) return;
+      const skin = rqGetNpcSkinData(node);
+      if (!skin) return;
+      const statsLine = [...card.querySelectorAll('*')].find(el => /STATS:\s*/i.test(el.textContent || '') && /HP\s+\d+/i.test(el.textContent || ''));
+      if (!statsLine) return;
+      let hpWrap = card.querySelector('.npc-combat-hp-wrap');
+      const hp = rqGetNpcSkinHp(node);
+      if (!hpWrap) {
+        hpWrap = document.createElement('div');
+        hpWrap.className = 'npc-combat-hp-wrap';
+        hpWrap.innerHTML = `
+          <span class="npc-combat-hp-label">HP</span>
+          <input class="npc-combat-hp-input" type="number" value="${hp.current}" min="0" max="${hp.max}" data-node-id="${node.id}">
+          <button type="button" class="npc-combat-hp-step" data-delta="-1" data-node-id="${node.id}">−</button>
+          <button type="button" class="npc-combat-hp-step" data-delta="1" data-node-id="${node.id}">+</button>
+          <span class="npc-combat-hp-max">/ ${hp.max}</span>
+          <span class="npc-combat-hp-state">${rqNpcHpStateBadge(hp.current, hp.max)}</span>
+        `;
+        statsLine.insertAdjacentElement('afterend', hpWrap);
+      } else {
+        const input = hpWrap.querySelector('.npc-combat-hp-input');
+        if (input && document.activeElement !== input) input.value = hp.current;
+        const max = hpWrap.querySelector('.npc-combat-hp-max');
+        if (max) max.textContent = `/ ${hp.max}`;
+        const state = hpWrap.querySelector('.npc-combat-hp-state');
+        if (state) state.innerHTML = rqNpcHpStateBadge(hp.current, hp.max);
+      }
+    });
+  }
+  document.addEventListener('input', e => {
+    if (e.target?.matches?.('.npc-combat-hp-input')) {
+      rqSetNpcSkinHpByNodeId(e.target.dataset.nodeId, e.target.value);
+    }
+  }, true);
+  document.addEventListener('click', e => {
+    const btn = e.target?.closest?.('.npc-combat-hp-step');
+    if (btn) rqAdjustNpcSkinHpByNodeId(btn.dataset.nodeId, Number(btn.dataset.delta || 0));
+  }, true);
+  const mo = new MutationObserver(() => {
+    clearTimeout(window.__rqNpcCombatEnhanceT);
+    window.__rqNpcCombatEnhanceT = setTimeout(enhanceNpcCombatFaces, 120);
+  });
+  if (document.body) mo.observe(document.body, { childList:true, subtree:true });
+  window.rqEnhanceNpcCombatFaces = enhanceNpcCombatFaces;
+  setTimeout(enhanceNpcCombatFaces, 200);
+  setTimeout(enhanceNpcCombatFaces, 800);
+})();
+
+
+
+// v1.3.47 — include NPC statblock skins in linked/team-up encounter monster pools where possible.
+(function(){
+  function mergeNpcSkins(list) {
+    const base = Array.isArray(list) ? list.slice() : [];
+    const existingNodeIds = new Set(base.map(x => String(x.nodeId || x.id || x.sourceNodeId || '')));
+    for (const m of rqNpcMonsterCountsForTeamup()) {
+      if (!existingNodeIds.has(String(m.nodeId))) base.push(m);
+    }
+    return base;
+  }
+  window.rqMergeNpcSkinsIntoMonsterList = mergeNpcSkins;
+  const names = [
+    'getLinkedEncounterMonsters',
+    'collectLinkedEncounterMonsters',
+    'getTeamupMonsters',
+    'collectTeamupMonsters',
+    'getEncounterTeamMonsters'
+  ];
+  for (const name of names) {
+    const fn = window[name];
+    if (typeof fn === 'function' && !fn.__rqNpcParityWrapped) {
+      const wrapped = function(...args) {
+        return mergeNpcSkins(fn.apply(this, args));
+      };
+      wrapped.__rqNpcParityWrapped = true;
+      window[name] = wrapped;
+    }
+  }
+})();
+
