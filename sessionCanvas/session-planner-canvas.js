@@ -17290,3 +17290,21 @@ function rqSafeRenderNodeFace(node) {
   }
 }
 
+
+
+// v1.3.46 — clean accidental function-source native tooltips on NPC action controls.
+(function(){
+  function cleanNpcActionTooltips(){
+    document.querySelectorAll('[title]').forEach(el => {
+      const t = el.getAttribute('title') || '';
+      if (/function\s+displayActionName\s*\(/.test(t)) {
+        const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+        const label = txt.replace(/^🎲\s*/, '').split('[')[0].trim() || 'Action';
+        el.setAttribute('title', label.startsWith('Roll ') ? label : 'Roll ' + label);
+      }
+    });
+  }
+  document.addEventListener('mouseover', cleanNpcActionTooltips, true);
+  setTimeout(cleanNpcActionTooltips, 250);
+})();
+
