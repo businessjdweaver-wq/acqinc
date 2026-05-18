@@ -86,7 +86,7 @@ function rqNpcCombatHpHtml(node) {
     <input class="npc-combat-hp-input" type="number" value="${hp.current}" min="0" max="${hp.max}" data-node-id="${id}">
     <button type="button" class="npc-combat-hp-step" data-delta="-1" data-node-id="${id}">−</button>
     <button type="button" class="npc-combat-hp-step" data-delta="1" data-node-id="${id}">+</button>
-    <span class="npc-combat-hp-max">/ ${hp.max}</span>
+    <span class="npc-combat-hp-max">/ ${hp.max}</span>\n    <button type="button" class="npc-combat-hp-undo" data-node-id="${id}" title="Undo previous HP change">↶</button>
     <span class="npc-combat-hp-state">${rqNpcHpStateBadge(hp.current, hp.max)}</span>
   </div>`;
 }
@@ -17603,4 +17603,130 @@ function rqPassiveFeatureChips(specials, idx, opts) {
     return '';
   }
 }
+
+
+
+// v1.3.51 — NPC HP control parity with encounter monster HP controls.
+window.__rqNpcHpUndoStack = window.__rqNpcHpUndoStack || [];
+
+function rqPushNpcHpUndo(nodeId, previousHp) {
+  window.__rqNpcHpUndoStack.push({ nodeId: String(nodeId), previousHp: Number(previousHp) || 0, ts: Date.now() });
+  if (window.__rqNpcHpUndoStack.length > 50) window.__rqNpcHpUndoStack.shift();
+}
+
+function rqUndoNpcHpChange(nodeId) {
+  const id = String(nodeId);
+  for (let i = window.__rqNpcHpUndoStack.length - 1; i >= 0; i--) {
+    const item = window.__rqNpcHpUndoStack[i];
+    if (String(item.nodeId) !== id) continue;
+    window.__rqNpcHpUndoStack.splice(i, 1);
+    rqSetNpcSkinHpByNodeId(id, item.previousHp, { skipUndo: true });
+    return true;
+  }
+  return false;
+}
+
+// Extend existing setter, preserving original behavior but adding optional undo suppression.
+if (typeof rqSetNpcSkinHpByNodeId === 'function' && !rqSetNpcSkinHpByNodeId.__rqV151Wrapped) {
+  const __rqOldSetNpcSkinHpByNodeId = rqSetNpcSkinHpByNodeId;
+  rqSetNpcSkinHpByNodeId = function(nodeId, nextHp, opts) {
+    try {
+      if (!(opts && opts.skipUndo)) {
+        const node = (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(nodeId));
+        if (node) {
+          const hp = rqGetNpcSkinHp(node);
+          rqPushNpcHpUndo(nodeId, hp.current);
+        }
+      }
+    } catch (_) {}
+    return __rqOldSetNpcSkinHpByNodeId(nodeId, nextHp);
+  };
+  rqSetNpcSkinHpByNodeId.__rqV151Wrapped = true;
+}
+
+function rqApplyNpcHpInputValue(input, nodeId) {
+  const raw = String(input.value || '').trim();
+  const node = (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(nodeId));
+  if (!node) return;
+  const hp = rqGetNpcSkinHp(node);
+  if (/^[+-]\s*\d+/.test(raw)) {
+    rqSetNpcSkinHpByNodeId(nodeId, hp.current + Number(raw.replace(/\s+/g, '')));
+  } else {
+    rqSetNpcSkinHpByNodeId(nodeId, Number(raw || 0));
+  }
+}
+
+function rqWireNpcHpParityControls(root) {
+  (root || document).querySelectorAll('.npc-combat-hp-input').forEach(input => {
+    if (input.__rqNpcHpParityWired) return;
+    input.__rqNpcHpParityWired = true;
+
+    input.addEventListener('focus', () => {
+      try { input.select(); } catch (_) {}
+    });
+    input.addEventListener('click', () => {
+      try { input.select(); } catch (_) {}
+    });
+    input.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      e.stopPropagation();
+      rqApplyNpcHpInputValue(input, input.dataset.nodeId);
+    });
+    input.addEventListener('change', e => {
+      e.stopPropagation();
+      rqApplyNpcHpInputValue(input, input.dataset.nodeId);
+    });
+  });
+
+  (root || document).querySelectorAll('.npc-combat-hp-step').forEach(btn => {
+    if (btn.__rqNpcHpParityWired) return;
+    btn.__rqNpcHpParityWired = true;
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      rqAdjustNpcSkinHpByNodeId(btn.dataset.nodeId, Number(btn.dataset.delta || 0));
+    });
+  });
+
+  (root || document).querySelectorAll('.npc-combat-hp-undo').forEach(btn => {
+    if (btn.__rqNpcHpParityWired) return;
+    btn.__rqNpcHpParityWired = true;
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      rqUndoNpcHpChange(btn.dataset.nodeId);
+    });
+  });
+}
+
+// Patch generated NPC HP control HTML after render if the undo button is missing.
+(function(){
+  function enhance(){
+    document.querySelectorAll('.npc-combat-hp-wrap').forEach(wrap => {
+      const id = wrap.dataset.nodeId || wrap.querySelector('[data-node-id]')?.dataset.nodeId || '';
+      if (!id) return;
+      if (!wrap.querySelector('.npc-combat-hp-undo')) {
+        const undo = document.createElement('button');
+        undo.type = 'button';
+        undo.className = 'npc-combat-hp-undo';
+        undo.dataset.nodeId = id;
+        undo.title = 'Undo previous HP change';
+        undo.textContent = '↶';
+        const max = wrap.querySelector('.npc-combat-hp-max');
+        (max || wrap).insertAdjacentElement(max ? 'afterend' : 'beforeend', undo);
+      }
+    });
+    rqWireNpcHpParityControls(document);
+  }
+
+  const mo = new MutationObserver(() => {
+    clearTimeout(window.__rqNpcHpParityTimer);
+    window.__rqNpcHpParityTimer = setTimeout(enhance, 80);
+  });
+  if (document.body) mo.observe(document.body, { childList:true, subtree:true });
+  document.addEventListener('DOMContentLoaded', enhance);
+  setTimeout(enhance, 150);
+  setTimeout(enhance, 700);
+})();
 
