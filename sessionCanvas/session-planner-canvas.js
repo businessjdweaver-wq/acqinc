@@ -1,10 +1,8 @@
 
-// v1.3.36 — Universal encounter HP-state badges.
-// Applies HP state labels to all encounter monsters, independent of bloodied-damage mechanics.
-// Priority: Last Leg at <= 5 HP; Rough at <= 25%; Bloodied at <= 50%; no badge above 50%.
+// v1.3.38 — deterministic HP-state badge helpers for encounter monster headers.
 function rqMonsterHpStateLabel(mon) {
   try {
-    const hpRaw = mon?.currentHP ?? mon?.currentHp ?? mon?.hpCurrent ?? mon?.hp ?? mon?.current_hp;
+    const hpRaw = mon?.currentHP ?? mon?.currentHp ?? mon?.hpCurrent ?? mon?.current_hp ?? mon?.hp;
     const maxRaw = mon?.maxHP ?? mon?.maxHp ?? mon?.hpMax ?? mon?.max_hp ?? mon?.hp;
     const hp = Number(hpRaw);
     const max = Number(maxRaw);
@@ -14,9 +12,7 @@ function rqMonsterHpStateLabel(mon) {
     if (pct <= 0.25) return 'Rough';
     if (pct <= 0.5) return 'Bloodied';
     return '';
-  } catch (_) {
-    return '';
-  }
+  } catch (_) { return ''; }
 }
 function rqMonsterHpStateClass(label) {
   if (label === 'Last Leg') return 'last-leg';
@@ -27,9 +23,11 @@ function rqMonsterHpStateClass(label) {
 function rqMonsterHpStateBadge(mon) {
   const label = rqMonsterHpStateLabel(mon);
   if (!label) return '';
-  const cls = rqMonsterHpStateClass(label);
-  return `<span class="mon-hp-state-badge ${cls}" title="HP state">${label}</span>`;
+  return `<span class="mon-hp-state-badge ${rqMonsterHpStateClass(label)}" title="HP state">${label}</span>`;
 }
+
+
+
 
 // v1.3.35 — action override bloodied persistence fix.
 // v1.3.34 — corrected package cache refs; full wizard UI rebase retained.
@@ -17098,7 +17096,9 @@ window.rqDebugWorkshopHandoff = async function rqDebugWorkshopHandoff(idOrName) 
 };
 
 
-// v1.3.36 fallback DOM enhancer for encounter monster HP-state badges.
+
+
+// v1.3.38 — fallback only for header HP rows; never insert into peek/detail/horde panels.
 (function(){
   function readNum(v){
     const n = Number(String(v ?? '').replace(/[^\d.-]/g,''));
@@ -17115,138 +17115,58 @@ window.rqDebugWorkshopHandoff = async function rqDebugWorkshopHandoff(idOrName) 
   function clsFor(label){
     return label === 'Last Leg' ? 'last-leg' : label === 'Rough' ? 'rough' : label === 'Bloodied' ? 'bloodied' : '';
   }
-  window.rqRefreshHpStateBadges = function rqRefreshHpStateBadges(){
-    document.querySelectorAll('.enc-monster-row, .node-monster-row, .encounter-monster, .node-mon').forEach(row => {
-      const old = row.querySelector('.mon-hp-state-badge');
-      if (old) old.remove();
-      const hpInput = row.querySelector('input[type="number"], input.mon-hp-current, .mon-hp-current');
-      let hp = readNum(hpInput?.value ?? hpInput?.textContent);
-      let max = NaN;
-      const text = row.textContent || '';
-      const slash = text.match(/(\d+)\s*\/\s*(\d+)/);
-      if (slash) {
-        if (!Number.isFinite(hp)) hp = Number(slash[1]);
-        max = Number(slash[2]);
-      }
-      const maxInput = row.querySelector('.mon-hp-max, [data-hp-max], input[data-hp-max]');
-      if (maxInput) max = readNum(maxInput.dataset.hpMax ?? maxInput.value ?? maxInput.textContent);
-      const label = labelFor(hp, max);
-      if (!label) return;
-      const anchor = row.querySelector('.mon-hp-line, .node-mon-hp, .hp-row, .monster-hp, input[type="number"]') || row;
-      const span = document.createElement('span');
-      span.className = 'mon-hp-state-badge ' + clsFor(label);
-      span.textContent = label;
-      span.title = 'HP state';
-      anchor.insertAdjacentElement(anchor.matches('input') ? 'afterend' : 'beforeend', span);
-    });
-  };
-  const mo = new MutationObserver(() => {
-    clearTimeout(window.__rqHpBadgeTimer);
-    window.__rqHpBadgeTimer = setTimeout(window.rqRefreshHpStateBadges, 80);
-  });
-  if (document.body) {
-    mo.observe(document.body, {childList:true, subtree:true, characterData:true});
-    setTimeout(window.rqRefreshHpStateBadges, 250);
-  } else {
-    document.addEventListener('DOMContentLoaded', () => {
-      mo.observe(document.body, {childList:true, subtree:true, characterData:true});
-      setTimeout(window.rqRefreshHpStateBadges, 250);
-    });
+  function isDetailArea(el){
+    return !!el?.closest?.('.peek, .expanded, .horde, .rsb, .override, .ability-grid, .roll-panel, .save-panel');
   }
-  document.addEventListener('input', e => {
-    if (e.target && (e.target.matches('input[type="number"]') || /hp/i.test(e.target.className || ''))) {
-      setTimeout(window.rqRefreshHpStateBadges, 20);
+  function findHeaderHpAnchor(row){
+    const inputs = [...row.querySelectorAll('input[type="number"], input')].filter(i => !isDetailArea(i));
+    for (const input of inputs) {
+      const wrap = input.closest('label, div, span') || input.parentElement;
+      const t = (wrap?.textContent || '') + ' ' + (input.className || '') + ' ' + (input.id || '');
+      if (/hp/i.test(t) || /\d+\s*\/\s*\d+/.test(t)) return wrap || input;
     }
-  }, true);
-})();
-
-
-
-// v1.3.37 — HP-state badges belong beside the HP readout only, not in peek/roll subpanels.
-(function(){
-  function readNum(v){
-    const n = Number(String(v ?? '').replace(/[^\d.-]/g,''));
-    return Number.isFinite(n) ? n : NaN;
+    // Fallback: search shallow direct children only; never inside open detail panels.
+    const shallow = [...row.querySelectorAll(':scope > * , :scope > * > *')].find(el => {
+      if (isDetailArea(el)) return false;
+      return /HP\s*\d+|\/\s*\d+/.test(el.textContent || '');
+    });
+    return shallow || null;
   }
-  function labelFor(hp, max){
-    if (!Number.isFinite(hp) || !Number.isFinite(max) || max <= 0) return '';
-    if (hp <= 5) return 'Last Leg';
-    const pct = hp / max;
-    if (pct <= 0.25) return 'Rough';
-    if (pct <= 0.5) return 'Bloodied';
-    return '';
-  }
-  function clsFor(label){
-    return label === 'Last Leg' ? 'last-leg' : label === 'Rough' ? 'rough' : label === 'Bloodied' ? 'bloodied' : '';
-  }
-  function monsterRows(){
-    return [...document.querySelectorAll('.enc-monster-row, .node-monster-row, .encounter-monster, .node-mon')]
-      .filter(row => /HP/i.test(row.textContent || '') && row.querySelector('input[type="number"], input'));
-  }
-  function hpAnchorFor(row){
-    // Prefer the compact HP line / header row. Avoid expanded peek panels, horde-save rows, and ability grids.
-    const preferred = [
-      '.mon-hp-line',
-      '.node-mon-hp',
-      '.monster-hp',
-      '.hp-row',
-      '.enc-monster-hp',
-      '.node-monster-hp',
-      '[data-hp-line]',
-      '[data-mon-hp]'
-    ];
-    for (const sel of preferred) {
-      const el = row.querySelector(sel);
-      if (el && !el.closest('.peek, .expanded, .horde, .rsb, .override')) return el;
-    }
-    const inputs = [...row.querySelectorAll('input[type="number"], input')];
-    const hpInput = inputs.find(inp => {
-      const near = (inp.closest('label, div, span')?.textContent || '') + ' ' + (inp.getAttribute('aria-label') || '') + ' ' + (inp.className || '');
-      return /hp/i.test(near) || /\s\/\s*\d+/.test(inp.parentElement?.textContent || '');
-    }) || inputs[0];
-    if (!hpInput) return null;
-    const container = hpInput.closest('.hp-control, .hp-wrap, .mon-hp, .node-mon-hp, label, div') || hpInput.parentElement;
-    if (container && !container.closest('.peek, .expanded, .horde, .rsb, .override')) return container;
-    return hpInput;
-  }
-  function hpValuesFor(row, anchor){
-    const text = (anchor?.textContent || '') + ' ' + (row.textContent || '');
+  function hpValues(row, anchor){
     let hp = NaN, max = NaN;
-    const input = anchor?.querySelector?.('input[type="number"], input') || row.querySelector('input[type="number"], input');
+    const input = anchor?.querySelector?.('input[type="number"], input') || (anchor?.matches?.('input') ? anchor : null);
     if (input) hp = readNum(input.value);
+    const text = (anchor?.textContent || '') + ' ' + (row.textContent || '');
     const slash = text.match(/(\d+)\s*\/\s*(\d+)/);
     if (slash) {
       if (!Number.isFinite(hp)) hp = Number(slash[1]);
       max = Number(slash[2]);
     }
-    const maxNode = row.querySelector('.mon-hp-max, [data-hp-max], input[data-hp-max]');
-    if (maxNode) max = readNum(maxNode.dataset.hpMax ?? maxNode.value ?? maxNode.textContent);
     return { hp, max };
   }
   window.rqRefreshHpStateBadges = function rqRefreshHpStateBadges(){
-    // Remove all generated HP badges first, including misplaced v1.3.36 badges.
     document.querySelectorAll('.mon-hp-state-badge').forEach(b => b.remove());
-    for (const row of monsterRows()) {
-      const anchor = hpAnchorFor(row);
+    const rows = [...document.querySelectorAll('.enc-monster-row, .node-monster-row, .encounter-monster, .node-mon')]
+      .filter(r => !isDetailArea(r) && /HP/i.test(r.textContent || ''));
+    for (const row of rows) {
+      const anchor = findHeaderHpAnchor(row);
       if (!anchor) continue;
-      const { hp, max } = hpValuesFor(row, anchor);
+      const { hp, max } = hpValues(row, anchor);
       const label = labelFor(hp, max);
       if (!label) continue;
       const span = document.createElement('span');
       span.className = 'mon-hp-state-badge ' + clsFor(label);
       span.textContent = label;
       span.title = 'HP state';
-      // Place immediately after the HP current/max readout container.
-      if (anchor.matches && anchor.matches('input')) anchor.insertAdjacentElement('afterend', span);
-      else anchor.appendChild(span);
+      anchor.appendChild(span);
     }
   };
   document.addEventListener('input', e => {
-    if (e.target && (e.target.matches('input[type="number"]') || /hp/i.test(e.target.className || '') || /hp/i.test(e.target.id || ''))) {
+    if (e.target && /hp|number/i.test((e.target.className || '') + ' ' + (e.target.type || '') + ' ' + (e.target.id || ''))) {
       setTimeout(window.rqRefreshHpStateBadges, 20);
     }
   }, true);
   setTimeout(window.rqRefreshHpStateBadges, 100);
-  setTimeout(window.rqRefreshHpStateBadges, 500);
+  setTimeout(window.rqRefreshHpStateBadges, 400);
 })();
 
