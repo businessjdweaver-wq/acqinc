@@ -1,4 +1,122 @@
 
+// v1.3.49 — direct NPC combat controls + team-up parity.
+function rqEscapeHtmlLite(v) {
+  if (typeof escapeHtml === 'function') return escapeHtml(v);
+  if (typeof escHtml === 'function') return escHtml(v);
+  return String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function rqIsNpcNode(node) {
+  return !!node && (node.type === 'npc' || node.kind === 'npc' || node.nodeType === 'npc' || /npc/i.test(String(node.type || node.kind || '')));
+}
+function rqGetNpcSkinData(node) {
+  const d = node?.data || node || {};
+  return d.monsterSkin || d.npcMonsterSkin || d.skin || d.statblock || d.monster || d.attachedMonster ||
+         d.npc?.monsterSkin || d.npc?.statblock || d.npc?.monster || null;
+}
+function rqNpcSkinName(node) {
+  const s = rqGetNpcSkinData(node) || {};
+  return s.displayName || s.name || s.title || node?.title || node?.name || 'NPC Statblock';
+}
+function rqGetNpcSkinHp(node) {
+  const skin = rqGetNpcSkinData(node) || {};
+  const d = node?.data || node || {};
+  const max = Number(
+    skin.maxHP ?? skin.maxHp ?? skin.hpMax ?? skin.max_hp ??
+    d.npcMaxHP ?? d.maxHP ?? d.maxHp ?? d.hpMax ??
+    skin.hp ?? d.hp ?? 0
+  ) || 0;
+  const cur = Number(
+    skin.currentHP ?? skin.currentHp ?? skin.hpCurrent ?? skin.current_hp ??
+    d.npcCurrentHP ?? d.currentHP ?? d.currentHp ?? d.hpCurrent ??
+    max
+  ) || max || 0;
+  return { current: cur, max };
+}
+function rqNpcHpStateLabel(currentHp, maxHp) {
+  const hp = Number(currentHp), max = Number(maxHp);
+  if (!Number.isFinite(hp) || !Number.isFinite(max) || max <= 0) return '';
+  const pct = hp / max;
+  if (pct <= 0.25) return 'Rough';
+  if (pct <= 0.5) return 'Bloodied';
+  if (hp <= 5 && max <= 20) return 'Last Leg';
+  return '';
+}
+function rqNpcHpStateClass(label) {
+  return label === 'Last Leg' ? 'last-leg' : label === 'Rough' ? 'rough' : label === 'Bloodied' ? 'bloodied' : '';
+}
+function rqNpcHpStateBadge(currentHp, maxHp) {
+  const label = rqNpcHpStateLabel(currentHp, maxHp);
+  return label ? `<span class="mon-hp-state-badge ${rqNpcHpStateClass(label)}" title="HP state">${rqEscapeHtmlLite(label)}</span>` : '';
+}
+function rqSetNpcSkinHpByNodeId(nodeId, nextHp) {
+  const arr = (typeof nodes !== 'undefined' ? nodes : []);
+  const node = arr.find(n => String(n.id) === String(nodeId));
+  if (!node) return;
+  const skin = rqGetNpcSkinData(node);
+  if (!skin) return;
+  const hp = rqGetNpcSkinHp(node);
+  const clamped = Math.max(0, Math.min(Number(nextHp) || 0, hp.max || Number(nextHp) || 0));
+  skin.currentHP = clamped;
+  skin.currentHp = clamped;
+  skin.hpCurrent = clamped;
+  node.data = node.data || {};
+  node.data.npcCurrentHP = clamped;
+  node.data.currentHP = node.data.currentHP ?? clamped;
+  try { refreshNodeFace(node); } catch (e) { console.warn('[rqSetNpcSkinHpByNodeId] refresh failed', e); }
+  if (typeof scheduleSave === 'function') scheduleSave();
+  else if (typeof saveNow === 'function') saveNow();
+}
+function rqAdjustNpcSkinHpByNodeId(nodeId, delta) {
+  const node = (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(nodeId));
+  if (!node) return;
+  const hp = rqGetNpcSkinHp(node);
+  rqSetNpcSkinHpByNodeId(nodeId, hp.current + Number(delta || 0));
+}
+function rqNpcCombatHpHtml(node) {
+  const skin = rqGetNpcSkinData(node);
+  if (!skin) return '';
+  const hp = rqGetNpcSkinHp(node);
+  const id = rqEscapeHtmlLite(node?.id ?? '');
+  return `<div class="npc-combat-hp-wrap" data-node-id="${id}">
+    <span class="npc-combat-hp-label">HP</span>
+    <input class="npc-combat-hp-input" type="number" value="${hp.current}" min="0" max="${hp.max}" data-node-id="${id}">
+    <button type="button" class="npc-combat-hp-step" data-delta="-1" data-node-id="${id}">−</button>
+    <button type="button" class="npc-combat-hp-step" data-delta="1" data-node-id="${id}">+</button>
+    <span class="npc-combat-hp-max">/ ${hp.max}</span>
+    <span class="npc-combat-hp-state">${rqNpcHpStateBadge(hp.current, hp.max)}</span>
+  </div>`;
+}
+function rqNpcMonsterCountsForTeamup() {
+  try {
+    return (typeof nodes !== 'undefined' ? nodes : [])
+      .filter(n => rqIsNpcNode(n) && rqGetNpcSkinData(n))
+      .map(n => {
+        const skin = rqGetNpcSkinData(n);
+        const hp = rqGetNpcSkinHp(n);
+        return {
+          id: `npc-${n.id}`,
+          nodeId: n.id,
+          sourceNodeId: n.id,
+          name: rqNpcSkinName(n),
+          cr: skin.cr ?? skin.challenge_rating ?? skin.challengeRating ?? '0',
+          hp: hp.max,
+          currentHP: hp.current,
+          maxHP: hp.max,
+          ac: skin.ac ?? skin.armor_class ?? '',
+          actions: skin.actions || [],
+          special_abilities: skin.special_abilities || skin.special || [],
+          sourceNodeType: 'npc',
+          _fromNpcSkin: true
+        };
+      });
+  } catch (err) {
+    console.error('[rqNpcMonsterCountsForTeamup] failed', err);
+    return [];
+  }
+}
+window.rqNpcMonsterCountsForTeamup = rqNpcMonsterCountsForTeamup;
+
+
 // v1.3.42 — safe NPC HP state badge helper.
 function rqNpcHpStateBadge(currentHp, maxHp) {
   try {
@@ -14059,6 +14177,8 @@ function wireMonsterRollClicks(nodeEl, node) {
 // uses NPC-prefixed data attributes so click handlers don't collide with
 // encounter handlers when both kinds of nodes are present.
 function renderNpcSkinFaceHtml(node) {
+  const __npcCombatHpHtml_v149 = rqNpcCombatHpHtml(node);
+
   if (node.type !== 'npc') return '';
   const skin = node.fields && node.fields.skin;
   if (!skin || !skin.snapshot) return '';
@@ -14073,7 +14193,7 @@ function renderNpcSkinFaceHtml(node) {
   const isDeact = !!skin.deactivated;
   const actions  = (sn.actions || []);
   const specials = (sn.special_abilities || sn.special || []);
-  return `
+  return `${__npcCombatHpHtml_v149}
     <div class="node-npc-peek-wrap">
       <span class="node-npc-skin-chip">stats: <b>${escHtml(sn.name || '?')}</b> · ${escHtml(stats)}</span>
       <div class="node-mon ${isDead ? 'dead' : ''} ${isDeact ? 'deactivated' : ''} singleton" data-npc-card="1" style="margin-top:6px;">
@@ -17310,223 +17430,84 @@ function rqSafeRenderNodeFace(node) {
 
 
 
-// v1.3.47 — NPC combat parity helpers.
-// Gives NPC nodes with attached monster statblocks encounter-like HP controls, HP-state tags,
-// and makes linked/team-up calculations able to count NPC monster skins.
-function rqParseNumberLoose(v) {
-  const n = Number(String(v ?? '').replace(/[^\d.-]/g, ''));
-  return Number.isFinite(n) ? n : 0;
-}
-function rqNpcHpStateLabel(currentHp, maxHp) {
-  const hp = Number(currentHp);
-  const max = Number(maxHp);
-  if (!Number.isFinite(hp) || !Number.isFinite(max) || max <= 0) return '';
-  const pct = hp / max;
-  if (pct <= 0.25) return 'Rough';
-  if (pct <= 0.5) return 'Bloodied';
-  if (hp <= 5 && max <= 20) return 'Last Leg';
-  return '';
-}
-function rqNpcHpStateClass(label) {
-  return label === 'Last Leg' ? 'last-leg' : label === 'Rough' ? 'rough' : label === 'Bloodied' ? 'bloodied' : '';
-}
-function rqNpcHpStateBadge(currentHp, maxHp) {
-  const label = rqNpcHpStateLabel(currentHp, maxHp);
-  if (!label) return '';
-  return `<span class="mon-hp-state-badge ${rqNpcHpStateClass(label)}" title="HP state">${label}</span>`;
-}
-function rqGetNpcSkinData(node) {
-  const d = node?.data || node || {};
-  return d.monsterSkin || d.npcMonsterSkin || d.skin || d.statblock || d.monster || d.attachedMonster || null;
-}
-function rqGetNpcSkinHp(node) {
-  const skin = rqGetNpcSkinData(node) || {};
-  const d = node?.data || node || {};
-  const max = Number(
-    skin.maxHP ?? skin.maxHp ?? skin.hpMax ?? skin.max_hp ??
-    skin.hp ?? d.npcMaxHP ?? d.maxHP ?? d.hpMax ?? d.hp
-  ) || 0;
-  const cur = Number(
-    skin.currentHP ?? skin.currentHp ?? skin.hpCurrent ?? skin.current_hp ??
-    d.npcCurrentHP ?? d.currentHP ?? d.hpCurrent ?? max
-  ) || max || 0;
-  return { current: cur, max };
-}
-function rqSetNpcSkinHpByNodeId(nodeId, nextHp) {
-  try {
-    const node = (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(nodeId));
-    if (!node) return;
-    const skin = rqGetNpcSkinData(node);
-    if (!skin) return;
-    const hp = rqGetNpcSkinHp(node);
-    const clamped = Math.max(0, Math.min(Number(nextHp) || 0, hp.max || Number(nextHp) || 0));
-    skin.currentHP = clamped;
-    skin.currentHp = clamped;
-    skin.hpCurrent = clamped;
-    node.data = node.data || {};
-    node.data.npcCurrentHP = clamped;
-    refreshNodeFace(node);
-    if (typeof scheduleSave === 'function') scheduleSave();
-    else if (typeof saveNow === 'function') saveNow();
-  } catch (err) {
-    console.error('[rqSetNpcSkinHpByNodeId] failed', nodeId, nextHp, err);
-  }
-}
-function rqAdjustNpcSkinHpByNodeId(nodeId, delta) {
-  const node = (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(nodeId));
-  if (!node) return;
-  const hp = rqGetNpcSkinHp(node);
-  rqSetNpcSkinHpByNodeId(nodeId, hp.current + Number(delta || 0));
-}
-function rqNpcMonsterCountsForTeamup() {
-  try {
-    const arr = (typeof nodes !== 'undefined' ? nodes : []);
-    return arr
-      .filter(n => (n.type === 'npc' || n.kind === 'npc') && rqGetNpcSkinData(n))
-      .map(n => {
-        const skin = rqGetNpcSkinData(n);
-        const hp = rqGetNpcSkinHp(n);
-        return {
-          nodeId: n.id,
-          name: skin.name || skin.displayName || n.title || n.name || 'NPC Monster',
-          cr: skin.cr ?? skin.challenge_rating ?? skin.challengeRating ?? '0',
-          hp: hp.max,
-          currentHP: hp.current,
-          ac: skin.ac ?? skin.armor_class ?? '',
-          sourceNodeType: 'npc'
-        };
-      });
-  } catch (err) {
-    console.error('[rqNpcMonsterCountsForTeamup] failed', err);
-    return [];
-  }
-}
-window.rqNpcMonsterCountsForTeamup = rqNpcMonsterCountsForTeamup;
 
 
 
 
-// v1.3.48 — robust NPC combat enhancer attachment.
+
+
+
+
+
+// v1.3.49 — fallback NPC combat HP enhancer.
 (function(){
-  function rqFindNpcCards(){
-    return [...document.querySelectorAll('.node, .canvas-node, .rq-node, .card')].filter(el => {
-      const txt = (el.textContent || '');
-      return /STATS:\s*/i.test(txt) && /CR\s+\d+/i.test(txt);
-    });
+  function cardCandidates(){
+    return [...document.querySelectorAll('.node, .canvas-node, .rq-node, [data-node-id], [data-id]')]
+      .filter(el => /STATS:\s*/i.test(el.textContent || '') && /HP\s+\d+/i.test(el.textContent || ''));
   }
-
-  function rqResolveNodeForCard(card){
-    const txt = (card.textContent || '');
+  function resolveNode(card){
+    const txt = card.textContent || '';
     const arr = (typeof nodes !== 'undefined' ? nodes : []);
-
-    for (const n of arr){
-      if (!(n?.type === 'npc' || n?.kind === 'npc')) continue;
-      const skin = rqGetNpcSkinData(n);
-      if (!skin) continue;
-      const nm = String(skin.name || skin.displayName || '').trim();
-      if (nm && txt.includes(nm)) return n;
+    return arr.find(n => rqIsNpcNode(n) && rqGetNpcSkinData(n) && txt.includes(rqNpcSkinName(n)));
+  }
+  function apply(){
+    for (const card of cardCandidates()) {
+      if (card.querySelector('.npc-combat-hp-wrap')) continue;
+      const node = resolveNode(card);
+      if (!node) continue;
+      const statsLine = [...card.querySelectorAll('*')].find(el => /STATS:\s*/i.test(el.textContent || '') && /HP\s+\d+/i.test(el.textContent || ''));
+      if (!statsLine) continue;
+      statsLine.insertAdjacentHTML('afterend', rqNpcCombatHpHtml(node));
     }
-
-    return null;
   }
-
-  function rqApplyNpcCombatEnhancements(){
-    rqFindNpcCards().forEach(card => {
-      if (card.querySelector('.npc-combat-hp-wrap')) return;
-
-      const node = rqResolveNodeForCard(card);
-      if (!node) return;
-
-      const skin = rqGetNpcSkinData(node);
-      if (!skin) return;
-
-      const hp = rqGetNpcSkinHp(node);
-
-      const statsLine = [...card.querySelectorAll('*')].find(el => {
-        const t = el.textContent || '';
-        return /STATS:\s*/i.test(t) && /HP\s+\d+/i.test(t);
-      });
-
-      if (!statsLine) return;
-
-      const wrap = document.createElement('div');
-      wrap.className = 'npc-combat-hp-wrap';
-      wrap.innerHTML = `
-        <span class="npc-combat-hp-label">HP</span>
-        <input class="npc-combat-hp-input" type="number" value="${hp.current}" min="0" max="${hp.max}">
-        <button type="button" class="npc-combat-hp-step" data-delta="-1">−</button>
-        <button type="button" class="npc-combat-hp-step" data-delta="1">+</button>
-        <span class="npc-combat-hp-max">/ ${hp.max}</span>
-        <span class="npc-combat-hp-state">${rqNpcHpStateBadge(hp.current, hp.max)}</span>
-      `;
-
-      statsLine.insertAdjacentElement('afterend', wrap);
-
-      const input = wrap.querySelector('.npc-combat-hp-input');
-
-      input.addEventListener('change', () => {
-        rqSetNpcSkinHpByNodeId(node.id, Number(input.value || 0));
-        const next = rqGetNpcSkinHp(node);
-        wrap.querySelector('.npc-combat-hp-state').innerHTML =
-          rqNpcHpStateBadge(next.current, next.max);
-      });
-
-      wrap.querySelectorAll('.npc-combat-hp-step').forEach(btn => {
-        btn.addEventListener('click', () => {
-          rqAdjustNpcSkinHpByNodeId(node.id, Number(btn.dataset.delta || 0));
-          const next = rqGetNpcSkinHp(node);
-          input.value = next.current;
-          wrap.querySelector('.npc-combat-hp-state').innerHTML =
-            rqNpcHpStateBadge(next.current, next.max);
-        });
-      });
-    });
-  }
-
-  window.rqApplyNpcCombatEnhancements = rqApplyNpcCombatEnhancements;
-
+  document.addEventListener('input', e => {
+    if (e.target?.matches?.('.npc-combat-hp-input')) {
+      rqSetNpcSkinHpByNodeId(e.target.dataset.nodeId, e.target.value);
+    }
+  }, true);
+  document.addEventListener('click', e => {
+    const btn = e.target?.closest?.('.npc-combat-hp-step');
+    if (btn) rqAdjustNpcSkinHpByNodeId(btn.dataset.nodeId, Number(btn.dataset.delta || 0));
+  }, true);
+  window.rqApplyNpcCombatEnhancements = apply;
   const mo = new MutationObserver(() => {
-    clearTimeout(window.__rqNpcCombatEnhancerTick);
-    window.__rqNpcCombatEnhancerTick =
-      setTimeout(rqApplyNpcCombatEnhancements, 100);
+    clearTimeout(window.__rqNpcHpEnhanceT);
+    window.__rqNpcHpEnhanceT = setTimeout(apply, 100);
   });
-
-  if (document.body){
-    mo.observe(document.body, { childList:true, subtree:true });
-  }
-
-  setTimeout(rqApplyNpcCombatEnhancements, 250);
-  setTimeout(rqApplyNpcCombatEnhancements, 1000);
+  if (document.body) mo.observe(document.body, {childList:true, subtree:true});
+  setTimeout(apply, 150);
+  setTimeout(apply, 700);
 })();
 
 
 
-
-// v1.3.47 — include NPC statblock skins in linked/team-up encounter monster pools where possible.
-(function(){
-  function mergeNpcSkins(list) {
-    const base = Array.isArray(list) ? list.slice() : [];
-    const existingNodeIds = new Set(base.map(x => String(x.nodeId || x.id || x.sourceNodeId || '')));
-    for (const m of rqNpcMonsterCountsForTeamup()) {
-      if (!existingNodeIds.has(String(m.nodeId))) base.push(m);
-    }
-    return base;
+// v1.3.49 — NPC team-up integration helpers.
+function rqMergeNpcSkinsIntoMonsterList(list) {
+  const base = Array.isArray(list) ? list.slice() : [];
+  const seen = new Set(base.map(x => String(x.nodeId || x.sourceNodeId || x.id || '')));
+  for (const m of rqNpcMonsterCountsForTeamup()) {
+    if (!seen.has(String(m.nodeId))) base.push(m);
   }
-  window.rqMergeNpcSkinsIntoMonsterList = mergeNpcSkins;
+  return base;
+}
+window.rqMergeNpcSkinsIntoMonsterList = rqMergeNpcSkinsIntoMonsterList;
+(function(){
   const names = [
     'getLinkedEncounterMonsters',
     'collectLinkedEncounterMonsters',
     'getTeamupMonsters',
     'collectTeamupMonsters',
-    'getEncounterTeamMonsters'
+    'getEncounterTeamMonsters',
+    'getConnectedEncounterMonsters',
+    'collectConnectedEncounterMonsters'
   ];
   for (const name of names) {
     const fn = window[name];
-    if (typeof fn === 'function' && !fn.__rqNpcParityWrapped) {
+    if (typeof fn === 'function' && !fn.__rqNpcTeamupWrapped) {
       const wrapped = function(...args) {
-        return mergeNpcSkins(fn.apply(this, args));
+        return rqMergeNpcSkinsIntoMonsterList(fn.apply(this, args));
       };
-      wrapped.__rqNpcParityWrapped = true;
+      wrapped.__rqNpcTeamupWrapped = true;
       window[name] = wrapped;
     }
   }
