@@ -17656,7 +17656,7 @@ function rqApplyNpcHpInputValue(input, nodeId) {
   }
 }
 
-function rqWireNpcHpParityControls(root) {
+function rqWireNpcHpParityControls(root) { if (window.__rqNpcHpDelegatedControls_v152) return;
   (root || document).querySelectorAll('.npc-combat-hp-input').forEach(input => {
     if (input.__rqNpcHpParityWired) return;
     input.__rqNpcHpParityWired = true;
@@ -17728,5 +17728,121 @@ function rqWireNpcHpParityControls(root) {
   document.addEventListener('DOMContentLoaded', enhance);
   setTimeout(enhance, 150);
   setTimeout(enhance, 700);
+})();
+
+
+
+// v1.3.52 — NPC HP controls now use encounter-style delegated behavior.
+// This survives node-face refreshes and prevents canvas drag/select handlers from stealing clicks.
+(function(){
+  if (window.__rqNpcHpDelegatedControls_v152) return;
+  window.__rqNpcHpDelegatedControls_v152 = true;
+
+  function rqFindNpcNodeForControl(el) {
+    const id = el?.dataset?.nodeId || el?.closest?.('.npc-combat-hp-wrap')?.dataset?.nodeId;
+    if (!id) return null;
+    return (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(id)) || null;
+  }
+
+  function rqCommitNpcHpInput(input) {
+    const node = rqFindNpcNodeForControl(input);
+    if (!node) return;
+    const raw = String(input.value || '').trim();
+    const hp = rqGetNpcSkinHp(node);
+    let next = hp.current;
+
+    if (/^[+-]\s*\d+/.test(raw)) {
+      next = hp.current + Number(raw.replace(/\s+/g, ''));
+    } else if (raw !== '') {
+      next = Number(raw);
+    }
+
+    rqSetNpcSkinHpByNodeId(node.id, next);
+  }
+
+  function rqUpdateNpcHpWrapDisplay(wrap, node) {
+    if (!wrap || !node) return;
+    const hp = rqGetNpcSkinHp(node);
+    const input = wrap.querySelector('.npc-combat-hp-input');
+    if (input && document.activeElement !== input) input.value = hp.current;
+    const max = wrap.querySelector('.npc-combat-hp-max');
+    if (max) max.textContent = `/ ${hp.max}`;
+    const state = wrap.querySelector('.npc-combat-hp-state');
+    if (state) state.innerHTML = rqNpcHpStateBadge(hp.current, hp.max);
+  }
+
+  document.addEventListener('mousedown', e => {
+    if (e.target.closest?.('.npc-combat-hp-wrap')) {
+      e.stopPropagation();
+    }
+  }, true);
+
+  document.addEventListener('click', e => {
+    const input = e.target.closest?.('.npc-combat-hp-input');
+    if (input) {
+      e.stopPropagation();
+      setTimeout(() => {
+        try { input.select(); } catch (_) {}
+      }, 0);
+      return;
+    }
+
+    const step = e.target.closest?.('.npc-combat-hp-step');
+    if (step) {
+      e.preventDefault();
+      e.stopPropagation();
+      const node = rqFindNpcNodeForControl(step);
+      if (!node) return;
+      const delta = Number(step.dataset.delta || 0);
+      rqAdjustNpcSkinHpByNodeId(node.id, delta);
+      setTimeout(() => rqUpdateNpcHpWrapDisplay(step.closest('.npc-combat-hp-wrap'), node), 0);
+      return;
+    }
+
+    const undo = e.target.closest?.('.npc-combat-hp-undo');
+    if (undo) {
+      e.preventDefault();
+      e.stopPropagation();
+      const node = rqFindNpcNodeForControl(undo);
+      if (!node) return;
+      rqUndoNpcHpChange(node.id);
+      setTimeout(() => rqUpdateNpcHpWrapDisplay(undo.closest('.npc-combat-hp-wrap'), node), 0);
+    }
+  }, true);
+
+  document.addEventListener('focusin', e => {
+    const input = e.target.closest?.('.npc-combat-hp-input');
+    if (!input) return;
+    setTimeout(() => {
+      try { input.select(); } catch (_) {}
+    }, 0);
+  }, true);
+
+  document.addEventListener('keydown', e => {
+    const input = e.target.closest?.('.npc-combat-hp-input');
+    if (!input) return;
+
+    e.stopPropagation();
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      rqCommitNpcHpInput(input);
+      input.blur();
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      const node = rqFindNpcNodeForControl(input);
+      if (node) input.value = rqGetNpcSkinHp(node).current;
+      input.blur();
+    }
+  }, true);
+
+  document.addEventListener('change', e => {
+    const input = e.target.closest?.('.npc-combat-hp-input');
+    if (!input) return;
+    e.stopPropagation();
+    rqCommitNpcHpInput(input);
+  }, true);
 })();
 
