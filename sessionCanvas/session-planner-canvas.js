@@ -14319,49 +14319,64 @@ function renderNpcOverrideEditor(skin) {
 }
 
 // NPCs use the same action button look but with NPC-prefixed data attributes.
-function renderNpcActionButton(action, override, idx) {
-  // v1.3.43 — NPC action label render fix.
-  // Never interpolate the displayActionName function object itself into button HTML.
-  try {
-    action = action || {};
-    override = override || {};
-    const escFn = (typeof escapeHtml === 'function')
-      ? escapeHtml
-      : (s) => String(s ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+function renderNpcActionButton(a, actIdx, opts) {
+  // v1.3.44 — keep label as a string; preserve original button markup and click handlers.
+  const __npcActionDisplayLabel_v144 = String((typeof window.displayActionName === 'function' ? window.displayActionName(a, actIdx) : ((actIdx && (actIdx.displayName || actIdx.name)) || (a && (a.displayName || a.name)) || 'Action')) || 'Action');
 
-    const hidden = !!(override.hidden || override.hide || action.hidden);
-    if (hidden) return '';
+  // v1.3.41 — NPC skin deserialization guard: missing mechanic chip must not abort canvas load.
+  let mechChip = '';
 
-    const label = String(
-      (typeof window.displayActionName === 'function'
-        ? window.displayActionName(action, override)
-        : (override.displayName || override.name || action.displayName || action.name || action.title || 'Action'))
-      || 'Action'
-    );
+  if (!a || !a.name) return '';
 
-    const range = override.range || override.reach || action.range || action.reach || '';
-    const dmg = override.damage || override.damageDice || action.damage || action.damageDice || action.formula || '';
-    const dmgType = override.dmgType || override.damageType || action.dmgType || action.damageType || '';
-    const dc = override.saveDc || override.saveDC || override.save_dc || action.saveDc || action.saveDC || action.save_dc || '';
-    const save = override.saveAbility || override.save_ability || action.saveAbility || action.save_ability || '';
-    const toHit = override.toHit || override.attackBonus || action.toHit || action.attackBonus || '';
+  const m = resolveAbilityMechanics(a);
+  const showHidden = !!(opts && opts.showHidden);
+  if (m.hidden && !showHidden) return '';
 
-    const bits = [];
-    if (range) bits.push(String(range));
-    if (toHit) bits.push(String(toHit));
-    if (dc) bits.push(`DC ${dc}${save ? ' ' + save : ''}`);
-    if (dmg) bits.push(`${dmg}${dmgType ? ' ' + dmgType : ''}`);
+  const isAttack = !!(m.toHit || m.toHit === 0);
+  const isSave   = !!(m.saveDC || m.damage);
+  const isRollable = !!(isAttack || isSave);
 
-    const mechChip = bits.length
-      ? `<span class="npc-action-mech-chip">${escFn(bits.join(' · '))}</span>`
-      : '';
+  const rangeChip = (m.range && !m.name.includes('ft'))
+    ? ` <span style="opacity:0.7;font-size:0.75em;">[${escHtml(m.range)}]</span>`
+    : '';
 
-    const actionIndex = Number.isFinite(Number(idx)) ? Number(idx) : 0;
-    return `<button type="button" class="npc-action-btn" data-npc-action="${actionIndex}" title="${escFn(label)}">🎲 ${escFn(label)}${mechChip}</button>`;
-  } catch (err) {
-    console.error('[renderNpcActionButton] failed; using fallback action button', action, override, err);
-    return `<button type="button" class="npc-action-btn">🎲 Action</button>`;
+  const hasOverride = !!(
+    a._override &&
+    Object.keys(a._override).some(k => a._override[k] !== '' && a._override[k] != null && a._override[k] !== false)
+  );
+
+  const overrideClasses = [
+    hasOverride ? 'has-override' : '',
+    m.hidden    ? 'is-hidden'    : '',
+  ].filter(Boolean).join(' ');
+
+  const nameGhost = (a._override && a._override.name && a._override.name !== a.name)
+    ? `<span class="node-mon-roll-source" title="Source action name">${escHtml(a.name)}</span>`
+    : '';
+
+  if (!isRollable) {
+    const desc = escAttr(m.desc || a.desc || a.description || a.text || '');
+    return `<span class="node-mon-roll-wrap passive${overrideClasses ? ' ' + overrideClasses : ''}">
+      <button class="node-mon-roll-btn passive" type="button"
+              title="${desc || escAttr(m.name)}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
+        <span class="roll-icon">ⓘ</span>${escHtml(m.name)}
+      </button>
+      ${nameGhost}
+      <button class="node-mon-edit-btn" data-npc-edit="${actIdx}-action" type="button"
+              title="Override action values">✎</button>
+    </span>`;
   }
+
+  const cls = (isSave && !isAttack) ? 'node-mon-roll-btn save' : 'node-mon-roll-btn';
+  return `<span class="node-mon-roll-wrap${overrideClasses ? ' ' + overrideClasses : ''}">
+    <button class="${cls}" data-npc-roll="${actIdx}" type="button"
+            title="Roll ${escAttr(displayActionName)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
+            <span class="roll-icon">🎲</span>${escHtml(displayActionName)}${rangeChip}${(typeof mechChip !== "undefined" ? mechChip : "")}
+    </button>
+    ${nameGhost}
+    <button class="node-mon-edit-btn" data-npc-edit="${actIdx}-action" type="button"
+            title="Override action values">✎</button>
+  </span>`;
 }
 
 // NPC HP bar mirrors the encounter monster HP affordance, but stores
