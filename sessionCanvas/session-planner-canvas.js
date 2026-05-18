@@ -1,4 +1,25 @@
 
+// v1.3.42 — safe NPC HP state badge helper.
+function rqNpcHpStateBadge(currentHp, maxHp) {
+  try {
+    const hp = Number(currentHp);
+    const max = Number(maxHp);
+    if (!Number.isFinite(hp) || !Number.isFinite(max) || max <= 0) return '';
+    let label = '';
+    const pct = hp / max;
+    if (pct <= 0.25) label = 'Rough';
+    else if (pct <= 0.5) label = 'Bloodied';
+    else if (hp <= 5 && max <= 20) label = 'Last Leg';
+    if (!label) return '';
+    const cls = label === 'Last Leg' ? 'last-leg' : label === 'Rough' ? 'rough' : 'bloodied';
+    return `<span class="mon-hp-state-badge ${cls}" title="HP state">${label}</span>`;
+  } catch (_) {
+    return '';
+  }
+}
+window.rqNpcHpStateBadge = rqNpcHpStateBadge;
+
+
 // v1.3.41 — defensive mechanic-chip helper for NPC skin action buttons.
 function rqNpcMechanicChip(action) {
   try {
@@ -2517,7 +2538,7 @@ function stampTemplate(templateId) {
     el.dataset.scope  = 'session';
     el.style.left = node.x + 'px';
     el.style.top  = node.y + 'px';
-    el.innerHTML = renderNodeFace(node);
+    el.innerHTML = (typeof rqSafeRenderNodeFace === 'function' ? rqSafeRenderNodeFace(node) : renderNodeFace(node));
     if (node.collapsed) el.classList.add('collapsed');
     content.appendChild(el);
     node.el = el;
@@ -3468,7 +3489,7 @@ function deserializeCanvas(data) {
     el.dataset.scope  = scope;
     el.style.left = nd.x + 'px';
     el.style.top  = nd.y + 'px';
-    el.innerHTML = renderNodeFace(node);
+    el.innerHTML = (typeof rqSafeRenderNodeFace === 'function' ? rqSafeRenderNodeFace(node) : renderNodeFace(node));
     content.appendChild(el);
     node.el = el;
     // Sync collapsed class from data
@@ -6393,7 +6414,7 @@ function restoreLastDeleted() {
   el.dataset.scope  = node.scope;
   el.style.left = node.x + 'px';
   el.style.top  = node.y + 'px';
-  el.innerHTML = renderNodeFace(node);
+  el.innerHTML = (typeof rqSafeRenderNodeFace === 'function' ? rqSafeRenderNodeFace(node) : renderNodeFace(node));
   if (node.collapsed) el.classList.add('collapsed');
   content.appendChild(el);
   node.el = el;
@@ -10677,7 +10698,7 @@ function renderMonsterHpBar(m, idx) {
         <button class="hpbar-tick" data-hp-tick="${idx},-1" type="button" title="−1 HP">▾</button>
       </span>
       <span class="hpbar-max">/ ${maxHp}</span>
-      ${bloodiedBadge}
+      ${(typeof bloodiedBadge !== "undefined" ? bloodiedBadge : "")}
       <button class="hpbar-undo ${hasPrev ? '' : 'hidden'}"
               data-hp-undo="${idx}" type="button"
               title="${hasPrev ? 'Undo last HP change (back to ' + m._hpPrev + ')' : 'No previous HP value to revert to'}"
@@ -14358,6 +14379,9 @@ function renderNpcActionButton(a, actIdx, opts) {
 // NPC HP bar mirrors the encounter monster HP affordance, but stores
 // state on node.fields.skin so the NPC's battle damage persists.
 function renderNpcHpBar(skin) {
+  // v1.3.42 — NPC HP bar deserialization guard: old bloodiedBadge variable may be absent.
+  let bloodiedBadge = '';
+
   const sn = skin.snapshot || {};
   const maxHp = parseInt(sn.hp) || 0;
   const curHp = (typeof skin.hp_current === 'number') ? skin.hp_current : maxHp;
@@ -14375,7 +14399,7 @@ function renderNpcHpBar(skin) {
         <button class="hpbar-tick" data-npc-hp-tick="-1" type="button" title="−1 HP">▾</button>
       </span>
       <span class="hpbar-max">/ ${maxHp}</span>
-      ${bloodiedBadge}
+      ${(typeof bloodiedBadge !== "undefined" ? bloodiedBadge : "")}
       <button class="hpbar-undo ${hasPrev ? '' : 'hidden'}"
               data-npc-hp-undo="1" type="button"
               title="${hasPrev ? 'Undo last HP change (back to ' + skin._hpPrev + ')' : 'No previous HP value to revert to'}"
@@ -16329,7 +16353,7 @@ function refreshNodeFace(node) {
   if (!node || !node.el) return;
   const wasConnecting = node.el.querySelector('.anchor.active');
   const activeKey = wasConnecting ? wasConnecting.dataset.anchor : null;
-  node.el.innerHTML = renderNodeFace(node);
+  node.el.innerHTML = (typeof rqSafeRenderNodeFace === 'function' ? rqSafeRenderNodeFace(node) : renderNodeFace(node));
   // Re-mark active anchor if a pending connection started from this node
   if (activeKey) {
     const a = node.el.querySelector(`.anchor[data-anchor="${activeKey}"]`);
@@ -16360,7 +16384,7 @@ function refreshNodeFace(node) {
       && mobileState.nodeOrder[mobileState.nodeIndex] === node.id) {
     const host = document.getElementById('mob-card-host');
     if (host) {
-      host.innerHTML = renderNodeFace(node);
+      host.innerHTML = (typeof rqSafeRenderNodeFace === 'function' ? rqSafeRenderNodeFace(node) : renderNodeFace(node));
       // Re-wire the mobile host so the freshly-rendered buttons fire.
       if (typeof wireMonsterRollClicks   === 'function') wireMonsterRollClicks(host, node);
       if (typeof wireTrapRollClicks       === 'function') wireTrapRollClicks(host, node);
@@ -16885,7 +16909,7 @@ function renderMobileNodeView(node) {
   // .node-body out, OR call the body-builders directly. For simplicity
   // and to keep all the existing wiring, we build the face into a host
   // div and let the standard wire-up functions attach to it.
-  const faceHtml = renderNodeFace(node);
+  const faceHtml = (typeof rqSafeRenderNodeFace === 'function' ? rqSafeRenderNodeFace(node) : renderNodeFace(node));
 
   return `
     <div class="mob-node-view">
@@ -17248,3 +17272,16 @@ if (typeof window.displayActionName !== 'function') {
     return 'Action';
   };
 }
+
+
+// v1.3.42 — safe node face renderer for deserialization.
+function rqSafeRenderNodeFace(node) {
+  try {
+    return renderNodeFace(node);
+  } catch (err) {
+    console.error('[rqSafeRenderNodeFace] Node face render failed; using fallback face so canvas load can continue.', node, err);
+    const title = (node && (node.title || node.name || node.type)) || 'Node';
+    return `<div class="node-face-error"><strong>${escapeHtml ? escapeHtml(title) : title}</strong><br><span>Render error; open/edit to repair.</span></div>`;
+  }
+}
+
