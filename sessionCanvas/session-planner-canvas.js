@@ -17160,3 +17160,93 @@ window.rqDebugWorkshopHandoff = async function rqDebugWorkshopHandoff(idOrName) 
   }, true);
 })();
 
+
+
+// v1.3.37 — HP-state badges belong beside the HP readout only, not in peek/roll subpanels.
+(function(){
+  function readNum(v){
+    const n = Number(String(v ?? '').replace(/[^\d.-]/g,''));
+    return Number.isFinite(n) ? n : NaN;
+  }
+  function labelFor(hp, max){
+    if (!Number.isFinite(hp) || !Number.isFinite(max) || max <= 0) return '';
+    if (hp <= 5) return 'Last Leg';
+    const pct = hp / max;
+    if (pct <= 0.25) return 'Rough';
+    if (pct <= 0.5) return 'Bloodied';
+    return '';
+  }
+  function clsFor(label){
+    return label === 'Last Leg' ? 'last-leg' : label === 'Rough' ? 'rough' : label === 'Bloodied' ? 'bloodied' : '';
+  }
+  function monsterRows(){
+    return [...document.querySelectorAll('.enc-monster-row, .node-monster-row, .encounter-monster, .node-mon')]
+      .filter(row => /HP/i.test(row.textContent || '') && row.querySelector('input[type="number"], input'));
+  }
+  function hpAnchorFor(row){
+    // Prefer the compact HP line / header row. Avoid expanded peek panels, horde-save rows, and ability grids.
+    const preferred = [
+      '.mon-hp-line',
+      '.node-mon-hp',
+      '.monster-hp',
+      '.hp-row',
+      '.enc-monster-hp',
+      '.node-monster-hp',
+      '[data-hp-line]',
+      '[data-mon-hp]'
+    ];
+    for (const sel of preferred) {
+      const el = row.querySelector(sel);
+      if (el && !el.closest('.peek, .expanded, .horde, .rsb, .override')) return el;
+    }
+    const inputs = [...row.querySelectorAll('input[type="number"], input')];
+    const hpInput = inputs.find(inp => {
+      const near = (inp.closest('label, div, span')?.textContent || '') + ' ' + (inp.getAttribute('aria-label') || '') + ' ' + (inp.className || '');
+      return /hp/i.test(near) || /\s\/\s*\d+/.test(inp.parentElement?.textContent || '');
+    }) || inputs[0];
+    if (!hpInput) return null;
+    const container = hpInput.closest('.hp-control, .hp-wrap, .mon-hp, .node-mon-hp, label, div') || hpInput.parentElement;
+    if (container && !container.closest('.peek, .expanded, .horde, .rsb, .override')) return container;
+    return hpInput;
+  }
+  function hpValuesFor(row, anchor){
+    const text = (anchor?.textContent || '') + ' ' + (row.textContent || '');
+    let hp = NaN, max = NaN;
+    const input = anchor?.querySelector?.('input[type="number"], input') || row.querySelector('input[type="number"], input');
+    if (input) hp = readNum(input.value);
+    const slash = text.match(/(\d+)\s*\/\s*(\d+)/);
+    if (slash) {
+      if (!Number.isFinite(hp)) hp = Number(slash[1]);
+      max = Number(slash[2]);
+    }
+    const maxNode = row.querySelector('.mon-hp-max, [data-hp-max], input[data-hp-max]');
+    if (maxNode) max = readNum(maxNode.dataset.hpMax ?? maxNode.value ?? maxNode.textContent);
+    return { hp, max };
+  }
+  window.rqRefreshHpStateBadges = function rqRefreshHpStateBadges(){
+    // Remove all generated HP badges first, including misplaced v1.3.36 badges.
+    document.querySelectorAll('.mon-hp-state-badge').forEach(b => b.remove());
+    for (const row of monsterRows()) {
+      const anchor = hpAnchorFor(row);
+      if (!anchor) continue;
+      const { hp, max } = hpValuesFor(row, anchor);
+      const label = labelFor(hp, max);
+      if (!label) continue;
+      const span = document.createElement('span');
+      span.className = 'mon-hp-state-badge ' + clsFor(label);
+      span.textContent = label;
+      span.title = 'HP state';
+      // Place immediately after the HP current/max readout container.
+      if (anchor.matches && anchor.matches('input')) anchor.insertAdjacentElement('afterend', span);
+      else anchor.appendChild(span);
+    }
+  };
+  document.addEventListener('input', e => {
+    if (e.target && (e.target.matches('input[type="number"]') || /hp/i.test(e.target.className || '') || /hp/i.test(e.target.id || ''))) {
+      setTimeout(window.rqRefreshHpStateBadges, 20);
+    }
+  }, true);
+  setTimeout(window.rqRefreshHpStateBadges, 100);
+  setTimeout(window.rqRefreshHpStateBadges, 500);
+})();
+
