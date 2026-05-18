@@ -1,4 +1,24 @@
 
+// v1.3.40 — NPC skin face save/close fix.
+// renderNpcActionButton expects displayActionName(); keep it global and defensive.
+function displayActionName(action, override) {
+  try {
+    if (override && typeof override === 'string' && override.trim()) return override.trim();
+    if (override && typeof override === 'object') {
+      const oName = override.displayName || override.name || override.title || override.actionName;
+      if (oName && String(oName).trim()) return String(oName).trim();
+    }
+    if (action && typeof action === 'object') {
+      const aName = action.displayName || action.name || action.title || action.actionName || action.label;
+      if (aName && String(aName).trim()) return String(aName).trim();
+    }
+    if (typeof action === 'string' && action.trim()) return action.trim();
+  } catch (_) {}
+  return 'Action';
+}
+window.displayActionName = displayActionName;
+
+
 // v1.3.39 — HP-state badges are computed from the visible HP input/readout.
 // Bands: <=25% Rough, <=50% Bloodied. Last Leg is only used when max HP is small enough
 // that an absolute <=5 HP state is meaningful without hiding the percentage state.
@@ -17185,3 +17205,23 @@ window.rqDebugWorkshopHandoff = async function rqDebugWorkshopHandoff(idOrName) 
 
 
 
+
+// v1.3.40 — make NPC action-name helper resilient after all scripts load.
+window.__rqNpcActionNameFix_v140 = true;
+if (typeof window.displayActionName !== 'function') {
+  window.displayActionName = function(action, override) {
+    try {
+      if (override && typeof override === 'string' && override.trim()) return override.trim();
+      if (override && typeof override === 'object') {
+        const oName = override.displayName || override.name || override.title || override.actionName;
+        if (oName && String(oName).trim()) return String(oName).trim();
+      }
+      if (action && typeof action === 'object') {
+        const aName = action.displayName || action.name || action.title || action.actionName || action.label;
+        if (aName && String(aName).trim()) return String(aName).trim();
+      }
+      if (typeof action === 'string' && action.trim()) return action.trim();
+    } catch (_) {}
+    return 'Action';
+  };
+}
