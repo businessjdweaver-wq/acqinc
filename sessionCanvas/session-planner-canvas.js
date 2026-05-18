@@ -14320,8 +14320,10 @@ function renderNpcOverrideEditor(skin) {
 
 // NPCs use the same action button look but with NPC-prefixed data attributes.
 function renderNpcActionButton(a, actIdx, opts) {
-  // v1.3.44 — keep label as a string; preserve original button markup and click handlers.
-  const __npcActionDisplayLabel_v144 = String((typeof window.displayActionName === 'function' ? window.displayActionName(a, actIdx) : ((actIdx && (actIdx.displayName || actIdx.name)) || (a && (a.displayName || a.name)) || 'Action')) || 'Action');
+  // v1.3.45 — evaluate action label once; never interpolate the helper function object.
+  const __npcActionLabel_v145 = String((typeof window.displayActionName === 'function'
+    ? window.displayActionName(a, actIdx)
+    : ((actIdx && (actIdx.displayName || actIdx.nameOverride || actIdx.name)) || (a && (a.displayName || a.name || a.title || a.actionName)) || 'Action')) || 'Action');
 
   // v1.3.41 — NPC skin deserialization guard: missing mechanic chip must not abort canvas load.
   let mechChip = '';
@@ -14371,7 +14373,7 @@ function renderNpcActionButton(a, actIdx, opts) {
   return `<span class="node-mon-roll-wrap${overrideClasses ? ' ' + overrideClasses : ''}">
     <button class="${cls}" data-npc-roll="${actIdx}" type="button"
             title="Roll ${escAttr(displayActionName)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
-            <span class="roll-icon">🎲</span>${escHtml(displayActionName)}${rangeChip}${(typeof mechChip !== "undefined" ? mechChip : "")}
+            <span class="roll-icon">🎲</span>${escHtml(__npcActionLabel_v145)}${rangeChip}${(typeof mechChip !== "undefined" ? mechChip : "")}
     </button>
     ${nameGhost}
     <button class="node-mon-edit-btn" data-npc-edit="${actIdx}-action" type="button"
