@@ -1,4 +1,24 @@
 
+// v1.3.41 — defensive mechanic-chip helper for NPC skin action buttons.
+function rqNpcMechanicChip(action) {
+  try {
+    const parts = [];
+    const type = action?.type || action?.mode || '';
+    const dc = action?.saveDc || action?.saveDC || action?.save_dc || '';
+    const save = action?.saveAbility || action?.save_ability || action?.ability || '';
+    const dmg = action?.damage || action?.formula || '';
+    const dmgType = action?.dmgType || action?.damageType || action?.typeDamage || '';
+    if (type && type !== 'attack') parts.push(String(type));
+    if (dc) parts.push(`DC ${dc}${save ? ' ' + save : ''}`);
+    if (dmg) parts.push(`${dmg}${dmgType ? ' ' + dmgType : ''}`);
+    return parts.length ? `<span class="npc-action-mech-chip">${parts.join(' · ')}</span>` : '';
+  } catch (_) {
+    return '';
+  }
+}
+window.rqNpcMechanicChip = rqNpcMechanicChip;
+
+
 // v1.3.40 — NPC skin face save/close fix.
 // renderNpcActionButton expects displayActionName(); keep it global and defensive.
 function displayActionName(action, override) {
@@ -12578,7 +12598,7 @@ function renderActionButton(a, monIdx, actIdx, opts) {
   return `<span class="node-mon-roll-wrap${overrideClasses ? ' ' + overrideClasses : ''}">
     <button class="${cls}" data-mon-roll="${monIdx}-${actIdx}" type="button"
             title="Roll ${escAttr(displayActionName)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
-            <span class="roll-icon">🎲</span>${escHtml(displayActionName)}${rangeChip}${mechChip}
+            <span class="roll-icon">🎲</span>${escHtml(displayActionName)}${rangeChip}${(typeof mechChip !== "undefined" ? mechChip : "")}
     </button>
     ${nameGhost}
     <button class="node-mon-edit-btn" data-mon-edit="${monIdx}-${actIdx}-action" type="button"
@@ -14279,6 +14299,9 @@ function renderNpcOverrideEditor(skin) {
 
 // NPCs use the same action button look but with NPC-prefixed data attributes.
 function renderNpcActionButton(a, actIdx, opts) {
+  // v1.3.41 — NPC skin deserialization guard: missing mechanic chip must not abort canvas load.
+  let mechChip = '';
+
   if (!a || !a.name) return '';
 
   const m = resolveAbilityMechanics(a);
@@ -14324,7 +14347,7 @@ function renderNpcActionButton(a, actIdx, opts) {
   return `<span class="node-mon-roll-wrap${overrideClasses ? ' ' + overrideClasses : ''}">
     <button class="${cls}" data-npc-roll="${actIdx}" type="button"
             title="Roll ${escAttr(displayActionName)}${isAttack ? ' (Shift = advantage, Alt = disadvantage)' : ''}${hasOverride ? ' — has override' : ''}${m.hidden ? ' — hidden, click ✎ to restore' : ''}">
-            <span class="roll-icon">🎲</span>${escHtml(displayActionName)}${rangeChip}${mechChip}
+            <span class="roll-icon">🎲</span>${escHtml(displayActionName)}${rangeChip}${(typeof mechChip !== "undefined" ? mechChip : "")}
     </button>
     ${nameGhost}
     <button class="node-mon-edit-btn" data-npc-edit="${actIdx}-action" type="button"
