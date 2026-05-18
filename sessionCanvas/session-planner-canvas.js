@@ -17405,67 +17405,100 @@ window.rqNpcMonsterCountsForTeamup = rqNpcMonsterCountsForTeamup;
 
 
 
-// v1.3.47 — DOM enhancer for NPC nodes with attached monster statblocks.
-// Adds encounter-like HP controls and HP-state tags without disrupting existing action buttons.
+
+// v1.3.48 — robust NPC combat enhancer attachment.
 (function(){
-  function getNodeIdFromCard(card){
-    return card?.dataset?.nodeId || card?.getAttribute?.('data-id') || card?.id?.replace(/^node-/, '') || '';
-  }
-  function nodeForCard(card){
-    const id = getNodeIdFromCard(card);
-    const arr = (typeof nodes !== 'undefined' ? nodes : []);
-    return arr.find(n => String(n.id) === String(id)) || null;
-  }
-  function enhanceNpcCombatFaces(){
-    document.querySelectorAll('.node, .canvas-node, .rq-node').forEach(card => {
-      const node = nodeForCard(card);
-      if (!node || !(node.type === 'npc' || node.kind === 'npc')) return;
-      const skin = rqGetNpcSkinData(node);
-      if (!skin) return;
-      const statsLine = [...card.querySelectorAll('*')].find(el => /STATS:\s*/i.test(el.textContent || '') && /HP\s+\d+/i.test(el.textContent || ''));
-      if (!statsLine) return;
-      let hpWrap = card.querySelector('.npc-combat-hp-wrap');
-      const hp = rqGetNpcSkinHp(node);
-      if (!hpWrap) {
-        hpWrap = document.createElement('div');
-        hpWrap.className = 'npc-combat-hp-wrap';
-        hpWrap.innerHTML = `
-          <span class="npc-combat-hp-label">HP</span>
-          <input class="npc-combat-hp-input" type="number" value="${hp.current}" min="0" max="${hp.max}" data-node-id="${node.id}">
-          <button type="button" class="npc-combat-hp-step" data-delta="-1" data-node-id="${node.id}">−</button>
-          <button type="button" class="npc-combat-hp-step" data-delta="1" data-node-id="${node.id}">+</button>
-          <span class="npc-combat-hp-max">/ ${hp.max}</span>
-          <span class="npc-combat-hp-state">${rqNpcHpStateBadge(hp.current, hp.max)}</span>
-        `;
-        statsLine.insertAdjacentElement('afterend', hpWrap);
-      } else {
-        const input = hpWrap.querySelector('.npc-combat-hp-input');
-        if (input && document.activeElement !== input) input.value = hp.current;
-        const max = hpWrap.querySelector('.npc-combat-hp-max');
-        if (max) max.textContent = `/ ${hp.max}`;
-        const state = hpWrap.querySelector('.npc-combat-hp-state');
-        if (state) state.innerHTML = rqNpcHpStateBadge(hp.current, hp.max);
-      }
+  function rqFindNpcCards(){
+    return [...document.querySelectorAll('.node, .canvas-node, .rq-node, .card')].filter(el => {
+      const txt = (el.textContent || '');
+      return /STATS:\s*/i.test(txt) && /CR\s+\d+/i.test(txt);
     });
   }
-  document.addEventListener('input', e => {
-    if (e.target?.matches?.('.npc-combat-hp-input')) {
-      rqSetNpcSkinHpByNodeId(e.target.dataset.nodeId, e.target.value);
+
+  function rqResolveNodeForCard(card){
+    const txt = (card.textContent || '');
+    const arr = (typeof nodes !== 'undefined' ? nodes : []);
+
+    for (const n of arr){
+      if (!(n?.type === 'npc' || n?.kind === 'npc')) continue;
+      const skin = rqGetNpcSkinData(n);
+      if (!skin) continue;
+      const nm = String(skin.name || skin.displayName || '').trim();
+      if (nm && txt.includes(nm)) return n;
     }
-  }, true);
-  document.addEventListener('click', e => {
-    const btn = e.target?.closest?.('.npc-combat-hp-step');
-    if (btn) rqAdjustNpcSkinHpByNodeId(btn.dataset.nodeId, Number(btn.dataset.delta || 0));
-  }, true);
+
+    return null;
+  }
+
+  function rqApplyNpcCombatEnhancements(){
+    rqFindNpcCards().forEach(card => {
+      if (card.querySelector('.npc-combat-hp-wrap')) return;
+
+      const node = rqResolveNodeForCard(card);
+      if (!node) return;
+
+      const skin = rqGetNpcSkinData(node);
+      if (!skin) return;
+
+      const hp = rqGetNpcSkinHp(node);
+
+      const statsLine = [...card.querySelectorAll('*')].find(el => {
+        const t = el.textContent || '';
+        return /STATS:\s*/i.test(t) && /HP\s+\d+/i.test(t);
+      });
+
+      if (!statsLine) return;
+
+      const wrap = document.createElement('div');
+      wrap.className = 'npc-combat-hp-wrap';
+      wrap.innerHTML = `
+        <span class="npc-combat-hp-label">HP</span>
+        <input class="npc-combat-hp-input" type="number" value="${hp.current}" min="0" max="${hp.max}">
+        <button type="button" class="npc-combat-hp-step" data-delta="-1">−</button>
+        <button type="button" class="npc-combat-hp-step" data-delta="1">+</button>
+        <span class="npc-combat-hp-max">/ ${hp.max}</span>
+        <span class="npc-combat-hp-state">${rqNpcHpStateBadge(hp.current, hp.max)}</span>
+      `;
+
+      statsLine.insertAdjacentElement('afterend', wrap);
+
+      const input = wrap.querySelector('.npc-combat-hp-input');
+
+      input.addEventListener('change', () => {
+        rqSetNpcSkinHpByNodeId(node.id, Number(input.value || 0));
+        const next = rqGetNpcSkinHp(node);
+        wrap.querySelector('.npc-combat-hp-state').innerHTML =
+          rqNpcHpStateBadge(next.current, next.max);
+      });
+
+      wrap.querySelectorAll('.npc-combat-hp-step').forEach(btn => {
+        btn.addEventListener('click', () => {
+          rqAdjustNpcSkinHpByNodeId(node.id, Number(btn.dataset.delta || 0));
+          const next = rqGetNpcSkinHp(node);
+          input.value = next.current;
+          wrap.querySelector('.npc-combat-hp-state').innerHTML =
+            rqNpcHpStateBadge(next.current, next.max);
+        });
+      });
+    });
+  }
+
+  window.rqApplyNpcCombatEnhancements = rqApplyNpcCombatEnhancements;
+
   const mo = new MutationObserver(() => {
-    clearTimeout(window.__rqNpcCombatEnhanceT);
-    window.__rqNpcCombatEnhanceT = setTimeout(enhanceNpcCombatFaces, 120);
+    clearTimeout(window.__rqNpcCombatEnhancerTick);
+    window.__rqNpcCombatEnhancerTick =
+      setTimeout(rqApplyNpcCombatEnhancements, 100);
   });
-  if (document.body) mo.observe(document.body, { childList:true, subtree:true });
-  window.rqEnhanceNpcCombatFaces = enhanceNpcCombatFaces;
-  setTimeout(enhanceNpcCombatFaces, 200);
-  setTimeout(enhanceNpcCombatFaces, 800);
+
+  if (document.body){
+    mo.observe(document.body, { childList:true, subtree:true });
+  }
+
+  setTimeout(rqApplyNpcCombatEnhancements, 250);
+  setTimeout(rqApplyNpcCombatEnhancements, 1000);
 })();
+
 
 
 
