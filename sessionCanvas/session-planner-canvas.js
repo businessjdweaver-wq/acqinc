@@ -1,3 +1,36 @@
+
+// v1.3.36 — Universal encounter HP-state badges.
+// Applies HP state labels to all encounter monsters, independent of bloodied-damage mechanics.
+// Priority: Last Leg at <= 5 HP; Rough at <= 25%; Bloodied at <= 50%; no badge above 50%.
+function rqMonsterHpStateLabel(mon) {
+  try {
+    const hpRaw = mon?.currentHP ?? mon?.currentHp ?? mon?.hpCurrent ?? mon?.hp ?? mon?.current_hp;
+    const maxRaw = mon?.maxHP ?? mon?.maxHp ?? mon?.hpMax ?? mon?.max_hp ?? mon?.hp;
+    const hp = Number(hpRaw);
+    const max = Number(maxRaw);
+    if (!Number.isFinite(hp) || !Number.isFinite(max) || max <= 0) return '';
+    if (hp <= 5) return 'Last Leg';
+    const pct = hp / max;
+    if (pct <= 0.25) return 'Rough';
+    if (pct <= 0.5) return 'Bloodied';
+    return '';
+  } catch (_) {
+    return '';
+  }
+}
+function rqMonsterHpStateClass(label) {
+  if (label === 'Last Leg') return 'last-leg';
+  if (label === 'Rough') return 'rough';
+  if (label === 'Bloodied') return 'bloodied';
+  return '';
+}
+function rqMonsterHpStateBadge(mon) {
+  const label = rqMonsterHpStateLabel(mon);
+  if (!label) return '';
+  const cls = rqMonsterHpStateClass(label);
+  return `<span class="mon-hp-state-badge ${cls}" title="HP state">${label}</span>`;
+}
+
 // v1.3.35 — action override bloodied persistence fix.
 // v1.3.34 — corrected package cache refs; full wizard UI rebase retained.
 // ── SUPABASE CONFIG ──
@@ -17063,3 +17096,67 @@ window.rqDebugWorkshopHandoff = async function rqDebugWorkshopHandoff(idOrName) 
   console.log('[rqDebugWorkshopHandoff] Encounter snapshots', encounters);
   return { db, encounters };
 };
+
+
+// v1.3.36 fallback DOM enhancer for encounter monster HP-state badges.
+(function(){
+  function readNum(v){
+    const n = Number(String(v ?? '').replace(/[^\d.-]/g,''));
+    return Number.isFinite(n) ? n : NaN;
+  }
+  function labelFor(hp, max){
+    if (!Number.isFinite(hp) || !Number.isFinite(max) || max <= 0) return '';
+    if (hp <= 5) return 'Last Leg';
+    const pct = hp / max;
+    if (pct <= 0.25) return 'Rough';
+    if (pct <= 0.5) return 'Bloodied';
+    return '';
+  }
+  function clsFor(label){
+    return label === 'Last Leg' ? 'last-leg' : label === 'Rough' ? 'rough' : label === 'Bloodied' ? 'bloodied' : '';
+  }
+  window.rqRefreshHpStateBadges = function rqRefreshHpStateBadges(){
+    document.querySelectorAll('.enc-monster-row, .node-monster-row, .encounter-monster, .node-mon').forEach(row => {
+      const old = row.querySelector('.mon-hp-state-badge');
+      if (old) old.remove();
+      const hpInput = row.querySelector('input[type="number"], input.mon-hp-current, .mon-hp-current');
+      let hp = readNum(hpInput?.value ?? hpInput?.textContent);
+      let max = NaN;
+      const text = row.textContent || '';
+      const slash = text.match(/(\d+)\s*\/\s*(\d+)/);
+      if (slash) {
+        if (!Number.isFinite(hp)) hp = Number(slash[1]);
+        max = Number(slash[2]);
+      }
+      const maxInput = row.querySelector('.mon-hp-max, [data-hp-max], input[data-hp-max]');
+      if (maxInput) max = readNum(maxInput.dataset.hpMax ?? maxInput.value ?? maxInput.textContent);
+      const label = labelFor(hp, max);
+      if (!label) return;
+      const anchor = row.querySelector('.mon-hp-line, .node-mon-hp, .hp-row, .monster-hp, input[type="number"]') || row;
+      const span = document.createElement('span');
+      span.className = 'mon-hp-state-badge ' + clsFor(label);
+      span.textContent = label;
+      span.title = 'HP state';
+      anchor.insertAdjacentElement(anchor.matches('input') ? 'afterend' : 'beforeend', span);
+    });
+  };
+  const mo = new MutationObserver(() => {
+    clearTimeout(window.__rqHpBadgeTimer);
+    window.__rqHpBadgeTimer = setTimeout(window.rqRefreshHpStateBadges, 80);
+  });
+  if (document.body) {
+    mo.observe(document.body, {childList:true, subtree:true, characterData:true});
+    setTimeout(window.rqRefreshHpStateBadges, 250);
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      mo.observe(document.body, {childList:true, subtree:true, characterData:true});
+      setTimeout(window.rqRefreshHpStateBadges, 250);
+    });
+  }
+  document.addEventListener('input', e => {
+    if (e.target && (e.target.matches('input[type="number"]') || /hp/i.test(e.target.className || ''))) {
+      setTimeout(window.rqRefreshHpStateBadges, 20);
+    }
+  }, true);
+})();
+
