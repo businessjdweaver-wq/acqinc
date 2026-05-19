@@ -18481,3 +18481,292 @@ function rqUpgradeNpcHpBars_v154() {
   };
 })();
 
+
+
+// v1.3.56 — NPC uses encounter monster instance/renderer.
+// This is intentionally not another parallel NPC HP implementation.
+// NPC statblocks are projected into node.fields.monsters[0], then rendered through
+// renderOneMonsterCard when available, using the same monster instance shape as encounter nodes.
+function rqNpcSkinFromNode_v156(node) {
+  const f = node?.fields || {};
+  const d = node?.data || {};
+  return f.skin || f.monsterSkin || f.npcMonsterSkin || f.statblock || f.monster || f.attachedMonster ||
+         d.skin || d.monsterSkin || d.npcMonsterSkin || d.statblock || d.monster || d.attachedMonster ||
+         d.npc?.monsterSkin || d.npc?.statblock || d.npc?.monster || null;
+}
+
+function rqNpcSkinToEncounterMonster_v156(node) {
+  const skin = rqNpcSkinFromNode_v156(node);
+  if (!skin) return null;
+
+  const snap = skin.snapshot || skin;
+  const maxHp = Number(
+    skin.hp_max ?? skin.maxHP ?? skin.maxHp ?? skin.hpMax ?? snap.maxHP ?? snap.hp ?? skin.hp ?? 0
+  ) || 0;
+  const curHp = Number(
+    skin.hp_current ?? skin.currentHP ?? skin.currentHp ?? skin.hpCurrent ??
+    node?.fields?.npcCurrentHP ?? node?.fields?.currentHP ?? maxHp
+  );
+  const hpCurrent = Number.isFinite(curHp) ? curHp : maxHp;
+
+  const instance = {
+    monster_id: skin.monster_id || skin.id || snap.id || `npc-skin-${node.id}`,
+    id: skin.instance_id || skin.instanceId || `npc-skin-${node.id}`,
+    nameOverride: skin.nameOverride || skin.displayName || node.title || snap.name || 'NPC',
+    mult: Number(skin.mult || 1),
+    hp_current: hpCurrent,
+    hp_max: maxHp,
+    actionOverrides: skin.actionOverrides || {},
+    hiddenActions: skin.hiddenActions || {},
+    snapshot: {
+      ...snap,
+      id: snap.id || skin.id || `npc-skin-${node.id}`,
+      name: snap.name || skin.name || skin.displayName || node.title || 'NPC',
+      cr: snap.cr ?? skin.cr ?? '0',
+      ac: snap.ac ?? skin.ac ?? '',
+      hp: maxHp,
+      maxHP: maxHp,
+      currentHP: hpCurrent,
+      actions: snap.actions || skin.actions || [],
+      bonus_actions: snap.bonus_actions || skin.bonus_actions || [],
+      reactions: snap.reactions || skin.reactions || [],
+      legendary_actions: snap.legendary_actions || skin.legendary_actions || [],
+      special_abilities: snap.special_abilities || snap.special || skin.special_abilities || skin.special || [],
+      spells: snap.spells || skin.spells || []
+    },
+    _fromNpcSkin: true,
+    _sourceNodeId: node.id
+  };
+
+  // Store the encounter-compatible shape on the NPC node so existing teamup/difficulty code can see it.
+  node.fields = node.fields || {};
+  node.fields.monsters = [instance];
+
+  return instance;
+}
+
+function rqSyncNpcEncounterMonsterBack_v156(node, inst) {
+  const skin = rqNpcSkinFromNode_v156(node);
+  if (!skin || !inst) return;
+  skin.hp_current = inst.hp_current;
+  skin.currentHP = inst.hp_current;
+  skin.currentHp = inst.hp_current;
+  skin.hpCurrent = inst.hp_current;
+  skin.hp_max = inst.hp_max || skin.hp_max || skin.hp || inst.snapshot?.hp;
+  skin.actionOverrides = inst.actionOverrides || skin.actionOverrides || {};
+  skin.hiddenActions = inst.hiddenActions || skin.hiddenActions || {};
+  node.fields = node.fields || {};
+  node.fields.npcCurrentHP = inst.hp_current;
+}
+
+function rqRenderNpcEncounterMonsterRows_v156(node) {
+  const inst = rqNpcSkinToEncounterMonster_v156(node);
+  if (!inst) return '';
+
+  // Preferred path: reuse the real encounter monster renderer. It already knows hpbar-input,
+  // data-peek-hp, data-hp-tick, undo, action buttons, hidden action overrides, and book/peek controls.
+  if (typeof renderOneMonsterCard === 'function') {
+    try {
+      const html = renderOneMonsterCard(inst, 0, {
+        node,
+        isNpcInset: true,
+        showHidden: false,
+        monster: inst
+      });
+      if (html) return `<div class="npc-encounter-monster-renderer" data-npc-node-id="${String(node.id)}">${html}</div>`;
+    } catch (err) {
+      console.warn('[v1.3.56] renderOneMonsterCard failed for NPC inset; using fallback encounter row.', err);
+    }
+  }
+
+  // Fallback uses the encounter row's exact hpbar/data convention so the same delegated HP code can be reused.
+  const sn = inst.snapshot || {};
+  const safe = (typeof escHtml === 'function') ? escHtml : (typeof escapeHtml === 'function' ? escapeHtml : (v => String(v ?? '')));
+  return `<div class="npc-encounter-monster-renderer" data-npc-node-id="${safe(node.id)}">
+    <div class="node-monster-row enc-monster-row npc-enc-monster-row" data-npc-enc-monster="0">
+      <div class="node-mon-main">
+        <button class="node-mon-book" data-npc-book="${safe(node.id)}" type="button" title="Open full stat block">📖</button>
+        <span class="node-mon-name">${safe(sn.name || inst.nameOverride || 'NPC')}</span>
+        <span class="node-mon-meta">CR ${safe(sn.cr ?? '0')} · HP ${safe(inst.hp_max)} · AC ${safe(sn.ac ?? '')}</span>
+      </div>
+      <div class="node-mon-hpbar" data-npc-hpbar-v156="${safe(node.id)}">
+        <span class="hpbar-label">HP</span>
+        <input type="text" inputmode="numeric" class="hpbar-input" data-npc-peek-hp-v156="${safe(node.id)}" value="${safe(inst.hp_current)}" title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
+        <span class="hpbar-ticks">
+          <button class="hpbar-tick" data-npc-hp-tick-v156="${safe(node.id)},1" type="button" title="+1 HP">▴</button>
+          <button class="hpbar-tick" data-npc-hp-tick-v156="${safe(node.id)},-1" type="button" title="−1 HP">▾</button>
+        </span>
+        <span class="hpbar-max">/ ${safe(inst.hp_max)}</span>
+        <button class="hpbar-undo hidden" data-npc-hp-undo-v156="${safe(node.id)}" type="button" title="No previous HP value to revert to" disabled>↶</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// Install NPC inset into the existing NPC face by replacing older npc-combat widgets.
+// This is only a bridge into the renderer; HP math below uses encounter-style state.
+(function(){
+  if (window.__rqNpcUsesEncounterRenderer_v156) return;
+  window.__rqNpcUsesEncounterRenderer_v156 = true;
+
+  window.__rqNpcHpUndo_v156 = window.__rqNpcHpUndo_v156 || [];
+
+  function allNodes(){
+    try { if (typeof state !== 'undefined' && state?.nodes?.values) return Array.from(state.nodes.values()); } catch (_) {}
+    return [];
+  }
+  function findNode(id){ return allNodes().find(n => String(n.id) === String(id)); }
+
+  function currentInst(node){
+    const inst = rqNpcSkinToEncounterMonster_v156(node);
+    return inst;
+  }
+
+  function setHp(node, next, opts){
+    const inst = currentInst(node);
+    if (!inst) return;
+    const before = Number(inst.hp_current || 0);
+    const max = Number(inst.hp_max || inst.snapshot?.hp || next || 0);
+    const val = Math.max(0, Math.min(Number(next) || 0, max));
+    if (!(opts && opts.skipUndo)) {
+      window.__rqNpcHpUndo_v156.push({ nodeId: String(node.id), hp: before });
+      if (window.__rqNpcHpUndo_v156.length > 60) window.__rqNpcHpUndo_v156.shift();
+    }
+    inst.hp_current = val;
+    inst.snapshot.currentHP = val;
+    rqSyncNpcEncounterMonsterBack_v156(node, inst);
+    try { refreshNodeFace(node); } catch (_) {}
+    if (typeof scheduleSave === 'function') scheduleSave();
+    else if (typeof saveNow === 'function') saveNow();
+  }
+
+  function applyInput(input){
+    const id = input.dataset.npcPeekHpV156;
+    const node = findNode(id);
+    if (!node) return;
+    const inst = currentInst(node);
+    const raw = String(input.value || '').trim();
+    let next = Number(inst.hp_current || 0);
+    if (/^[+-]\s*\d+/.test(raw)) next += Number(raw.replace(/\s+/g, ''));
+    else if (raw !== '') next = Number(raw);
+    setHp(node, next);
+  }
+
+  function undo(id){
+    const node = findNode(id);
+    if (!node) return;
+    for (let i = window.__rqNpcHpUndo_v156.length - 1; i >= 0; i--) {
+      const item = window.__rqNpcHpUndo_v156[i];
+      if (String(item.nodeId) !== String(id)) continue;
+      window.__rqNpcHpUndo_v156.splice(i, 1);
+      setHp(node, item.hp, { skipUndo: true });
+      return;
+    }
+  }
+
+  function enhance(){
+    allNodes().forEach(node => {
+      if (node.type !== 'npc' || !rqNpcSkinFromNode_v156(node)) return;
+      const card = document.querySelector(`[data-node-id="${CSS.escape(String(node.id))}"], #node-${CSS.escape(String(node.id))}`);
+      if (!card) return;
+      if (card.querySelector('.npc-encounter-monster-renderer')) return;
+
+      const old = card.querySelector('.npc-combat-hp-wrap, .npc-enc-monster-card');
+      const stats = [...card.querySelectorAll('*')].find(el => /STATS:\s*/i.test(el.textContent || ''));
+      const target = old || stats;
+      if (!target) return;
+
+      if (old) old.outerHTML = rqRenderNpcEncounterMonsterRows_v156(node);
+      else stats.insertAdjacentHTML('afterend', rqRenderNpcEncounterMonsterRows_v156(node));
+    });
+  }
+
+  document.addEventListener('mousedown', e => {
+    if (e.target.closest?.('[data-npc-hpbar-v156]')) e.stopPropagation();
+  }, true);
+
+  document.addEventListener('focusin', e => {
+    const input = e.target.closest?.('[data-npc-peek-hp-v156]');
+    if (!input) return;
+    setTimeout(() => { try { input.select(); } catch (_) {} }, 0);
+  }, true);
+
+  document.addEventListener('click', e => {
+    const input = e.target.closest?.('[data-npc-peek-hp-v156]');
+    if (input) {
+      e.stopPropagation();
+      setTimeout(() => { try { input.select(); } catch (_) {} }, 0);
+      return;
+    }
+
+    const tick = e.target.closest?.('[data-npc-hp-tick-v156]');
+    if (tick) {
+      e.preventDefault(); e.stopPropagation();
+      const [id, delta] = String(tick.dataset.npcHpTickV156 || '').split(',');
+      const node = findNode(id);
+      if (!node) return;
+      const inst = currentInst(node);
+      setHp(node, Number(inst.hp_current || 0) + Number(delta || 0));
+      return;
+    }
+
+    const undoBtn = e.target.closest?.('[data-npc-hp-undo-v156]');
+    if (undoBtn) {
+      e.preventDefault(); e.stopPropagation();
+      undo(undoBtn.dataset.npcHpUndoV156);
+    }
+  }, true);
+
+  document.addEventListener('keydown', e => {
+    const input = e.target.closest?.('[data-npc-peek-hp-v156]');
+    if (!input) return;
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      applyInput(input);
+      input.blur();
+    } else if (e.key === 'Escape') {
+      const node = findNode(input.dataset.npcPeekHpV156);
+      const inst = node && currentInst(node);
+      if (inst) input.value = inst.hp_current;
+      input.blur();
+    }
+  }, true);
+
+  document.addEventListener('change', e => {
+    const input = e.target.closest?.('[data-npc-peek-hp-v156]');
+    if (!input) return;
+    e.stopPropagation();
+    applyInput(input);
+  }, true);
+
+  const mo = new MutationObserver(() => {
+    clearTimeout(window.__rqNpcRendererEnhanceT_v156);
+    window.__rqNpcRendererEnhanceT_v156 = setTimeout(enhance, 80);
+  });
+  if (document.body) mo.observe(document.body, { childList:true, subtree:true });
+  setTimeout(enhance, 100);
+  setTimeout(enhance, 700);
+})();
+
+
+
+// v1.3.56 — encounter team-up allows NPC nodes that expose fields.monsters via rqNpcSkinToEncounterMonster_v156.
+(function(){
+  if (window.__rqNpcTeamupPatch_v156) return;
+  window.__rqNpcTeamupPatch_v156 = true;
+  if (typeof computeEncounterTeamupDifficulty === 'function') {
+    const oldCompute = computeEncounterTeamupDifficulty;
+    window.computeEncounterTeamupDifficulty = function(node) {
+      try {
+        if (typeof state !== 'undefined' && state?.nodes?.values) {
+          Array.from(state.nodes.values()).forEach(n => {
+            if (n && n.type === 'npc' && rqNpcSkinFromNode_v156(n)) rqNpcSkinToEncounterMonster_v156(n);
+          });
+        }
+      } catch (_) {}
+      return oldCompute.apply(this, arguments);
+    };
+  }
+})();
+
