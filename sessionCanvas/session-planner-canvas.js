@@ -1,94 +1,3 @@
-const escapeHtml = (typeof escHtml === 'function') ? escHtml : (v => String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])));
-
-// v1.3.59 — compatibility shims after NPC HP cleanup.
-// Existing renderNpcSkinFaceHtml still calls rqNpcCombatHpHtml; keep that function as a bridge
-// into the clean rq-npc-* inset instead of letting session deserialization fail.
-function rqSafeEscHtml_v159(v) {
-  if (typeof escHtml === 'function') return escHtml(v);
-  if (typeof escapeHtml === 'function') return escapeHtml(v);
-  return String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-}
-
-function rqNpcCombatHpHtml(node) {
-  try {
-    if (typeof rqNpcCleanRenderInset_v159 === 'function') return rqNpcCleanRenderInset_v159(node);
-    // Fallback if the clean renderer has not loaded yet.
-    const f = node?.fields || {};
-    const s = f.skin || f.monsterSkin || f.statblock || f.monster || null;
-    if (!s) return '';
-    const snap = s.snapshot || s;
-    const max = Number(s.hp_max ?? s.maxHP ?? s.hpMax ?? snap.hp ?? s.hp ?? 0) || 0;
-    const cur = Number(s.hp_current ?? s.currentHP ?? s.hpCurrent ?? f.npcCurrentHP ?? max) || max;
-    const id = rqSafeEscHtml_v159(node?.id ?? '');
-    return `<div class="rq-npc-monster-inset" data-rq-npc-node="${id}">
-      <div class="node-monster-row enc-monster-row">
-        <div class="node-monster-mainline">
-          <button type="button" class="node-mon-book rq-npc-book" data-rq-npc-book="${id}" title="Open full stat block">📖</button>
-          <span class="node-mon-name">${rqSafeEscHtml_v159(s.displayName || s.nameOverride || snap.name || node?.title || 'NPC Statblock')}</span>
-          <span class="node-mon-meta">CR ${rqSafeEscHtml_v159(s.cr ?? snap.cr ?? '0')} · HP ${max} · AC ${rqSafeEscHtml_v159(s.ac ?? snap.ac ?? '')}</span>
-        </div>
-        <div class="node-mon-hpbar rq-npc-clean-hpbar" data-rq-npc-hpbar="${id}">
-          <span class="hpbar-label">HP</span>
-          <input type="text" inputmode="numeric" class="hpbar-input rq-npc-clean-hp-input" data-rq-npc-hp-input="${id}" value="${cur}" title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
-          <span class="hpbar-ticks">
-            <button class="hpbar-tick rq-npc-clean-hp-tick" data-rq-npc-hp-tick="${id},1" type="button" title="+1 HP">▴</button>
-            <button class="hpbar-tick rq-npc-clean-hp-tick" data-rq-npc-hp-tick="${id},-1" type="button" title="−1 HP">▾</button>
-          </span>
-          <span class="hpbar-max">/ ${max}</span>
-          <button class="hpbar-undo rq-npc-clean-hp-undo hidden" data-rq-npc-hp-undo="${id}" type="button" title="No previous HP value to revert to" disabled>↶</button>
-        </div>
-      </div>
-    </div>`;
-  } catch (err) {
-    console.error('[rqNpcCombatHpHtml] failed', err);
-    return '';
-  }
-}
-window.rqNpcCombatHpHtml = rqNpcCombatHpHtml;
-
-
-// v1.3.59 — standalone clean NPC inset renderer used by compatibility shim.
-function rqNpcCleanRenderInset_v159(node) {
-  const f = node?.fields || {};
-  const d = node?.data || {};
-  const s = f.skin || f.monsterSkin || f.npcMonsterSkin || f.statblock || f.monster || f.attachedMonster ||
-            d.skin || d.monsterSkin || d.npcMonsterSkin || d.statblock || d.monster || d.attachedMonster ||
-            d.npc?.monsterSkin || d.npc?.statblock || d.npc?.monster || null;
-  if (!s) return '';
-  const snap = s.snapshot || s;
-  const max = Number(s.hp_max ?? s.maxHP ?? s.maxHp ?? s.hpMax ?? snap.maxHP ?? snap.hp ?? s.hp ?? 0) || 0;
-  const curRaw = Number(s.hp_current ?? s.currentHP ?? s.currentHp ?? s.hpCurrent ?? f.npcCurrentHP ?? f.currentHP ?? max);
-  const cur = Number.isFinite(curRaw) ? curRaw : max;
-  const nodeId = rqSafeEscHtml_v159(node?.id ?? '');
-  const actions = (snap.actions || s.actions || []).slice(0, 6);
-  const actionHtml = actions.map((a, i) => {
-    const label = rqSafeEscHtml_v159(a?.name || 'Action');
-    return `<button type="button" class="node-mon-action rq-npc-action" data-rq-npc-action="${nodeId},${i}" title="Roll ${label}">🎲 ${label}</button>`;
-  }).join('');
-  return `<div class="rq-npc-monster-inset" data-rq-npc-node="${nodeId}">
-    <div class="node-monster-row enc-monster-row">
-      <div class="node-monster-mainline">
-        <button type="button" class="node-mon-book rq-npc-book" data-rq-npc-book="${nodeId}" title="Open full stat block">📖</button>
-        <span class="node-mon-name">${rqSafeEscHtml_v159(s.displayName || s.nameOverride || snap.name || node?.title || 'NPC Statblock')}</span>
-        <span class="node-mon-meta">CR ${rqSafeEscHtml_v159(s.cr ?? snap.cr ?? '0')} · HP ${max} · AC ${rqSafeEscHtml_v159(s.ac ?? snap.ac ?? '')}</span>
-      </div>
-      <div class="node-mon-hpbar rq-npc-clean-hpbar" data-rq-npc-hpbar="${nodeId}">
-        <span class="hpbar-label">HP</span>
-        <input type="text" inputmode="numeric" class="hpbar-input rq-npc-clean-hp-input" data-rq-npc-hp-input="${nodeId}" value="${cur}" title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
-        <span class="hpbar-ticks">
-          <button class="hpbar-tick rq-npc-clean-hp-tick" data-rq-npc-hp-tick="${nodeId},1" type="button" title="+1 HP">▴</button>
-          <button class="hpbar-tick rq-npc-clean-hp-tick" data-rq-npc-hp-tick="${nodeId},-1" type="button" title="−1 HP">▾</button>
-        </span>
-        <span class="hpbar-max">/ ${max}</span>
-        <button class="hpbar-undo rq-npc-clean-hp-undo hidden" data-rq-npc-hp-undo="${nodeId}" type="button" title="No previous HP value to revert to" disabled>↶</button>
-      </div>
-      <div class="node-mon-actions">${actionHtml}</div>
-    </div>
-  </div>`;
-}
-window.rqNpcCleanRenderInset_v159 = rqNpcCleanRenderInset_v159;
-
-
 
 // v1.3.42 — safe NPC HP state badge helper.
 function rqNpcHpStateBadge(currentHp, maxHp) {
@@ -10665,7 +10574,7 @@ function renderOneMonsterCard(m, idx, isSingleton) {
               ${pill}
             </div>`
           : (pill ? `<div class="node-mon-actions">${pill}</div>` : '<div class="node-mon-stats" style="opacity:0.6;">No rollable actions on this stat block.</div>');
-        return actionsHtml + renderTriggerButtons(specials, idx, { showHidden, monster: m }) + rqPassiveFeatureChips(specials, idx, { showHidden, monster: m }) + renderSpellButtons(m.snapshot, idx);
+        return actionsHtml + renderTriggerButtons(specials, idx, { showHidden, monster: m }) + renderSpellButtons(m.snapshot, idx);
       })()}
       ${renderOverrideEditor(m, idx)}
       <div class="node-mon-peek ${peekOpen ? 'open' : ''}" data-peek-body="${idx}">
@@ -11845,19 +11754,6 @@ function _encounterXpStats(node) {
     totalXP += xp * mult;
     monsterCount += mult;
   });
-  if (node && node.type === 'npc') {
-    const skin = rqGetNpcSkinData(node);
-    if (skin && !skin.deactivated) {
-      const sn = skin.snapshot || skin;
-      const cr = sn.cr ? String(sn.cr) : null;
-      const xp = cr ? CR_XP[cr] : null;
-      if (xp != null) {
-        const mult = (typeof skin.mult === 'number' && skin.mult >= 1) ? skin.mult : 1;
-        totalXP += xp * mult;
-        monsterCount += mult;
-      }
-    }
-  }
   return { totalXP, monsterCount };
 }
 
@@ -11922,12 +11818,9 @@ function _getEncounterTeamupMembers(startNode) {
       const otherId = a === id ? b : a;
       if (seen.has(otherId)) return;
       const other = state.nodes.get(otherId);
-      if (!other) return;
-      const isEncounter = other.type === 'encounter';
-      const isNpcCombatant = other.type === 'npc' && !!rqGetNpcSkinData(other);
-      if (!isEncounter && !isNpcCombatant) return;
+      if (!other || other.type !== 'encounter') return;
       seen.add(otherId);
-      if (isEncounter) q.push(otherId);
+      q.push(otherId);
     });
   }
   return Array.from(seen).map(id => state.nodes.get(id)).filter(Boolean);
@@ -11936,41 +11829,20 @@ function _getEncounterTeamupMembers(startNode) {
 function computeEncounterTeamupDifficulty(node) {
   const members = _getEncounterTeamupMembers(node);
   if (members.length < 2) return null;
-
-  let partySource = members.find(n => n.type === 'encounter') || members[0];
-  let maxEncounterXP = -1;
+  let partySource = members[0];
+  let maxXP = -1;
   members.forEach(n => {
-    if (n.type !== 'encounter') return;
     const stats = _encounterXpStats(n);
-    if (stats.totalXP > maxEncounterXP) {
-      maxEncounterXP = stats.totalXP;
+    if (stats.totalXP > maxXP) {
+      maxXP = stats.totalXP;
       partySource = n;
     }
   });
-
   const party = _getEffectivePartyFor(partySource);
   const allMonsters = [];
   members.forEach(n => {
-    if (n.type === 'encounter') {
-      ((n.fields && n.fields.monsters) || []).forEach(m => allMonsters.push(m));
-    } else if (n.type === 'npc') {
-      const skin = rqGetNpcSkinData(n);
-      if (skin && !skin.deactivated) {
-        const sn = skin.snapshot || skin;
-        const hp = rqGetNpcSkinHp(n);
-        allMonsters.push({
-          monster_id: skin.monster_id || sn.id || ('npc-' + n.id),
-          nameOverride: n.title || sn.name || 'NPC',
-          hp_current: hp.current,
-          mult: (typeof skin.mult === 'number' && skin.mult >= 1) ? skin.mult : 1,
-          snapshot: sn,
-          _fromNpcSkin: true,
-          _sourceNodeId: n.id
-        });
-      }
-    }
+    ((n.fields && n.fields.monsters) || []).forEach(m => allMonsters.push(m));
   });
-
   const result = _computeEncounterDifficultyFromMonsters(allMonsters, party);
   if (!result || result.unconfigured || result.empty) return null;
   result.members = members;
@@ -14187,9 +14059,6 @@ function wireMonsterRollClicks(nodeEl, node) {
 // uses NPC-prefixed data attributes so click handlers don't collide with
 // encounter handlers when both kinds of nodes are present.
 function renderNpcSkinFaceHtml(node) {
-  const __npcCombatHpHtml_v150 = rqNpcCombatHpHtml(node);
-  const __npcCombatHpHtml_v149 = rqNpcCombatHpHtml(node);
-
   if (node.type !== 'npc') return '';
   const skin = node.fields && node.fields.skin;
   if (!skin || !skin.snapshot) return '';
@@ -14207,7 +14076,6 @@ function renderNpcSkinFaceHtml(node) {
   return `
     <div class="node-npc-peek-wrap">
       <span class="node-npc-skin-chip">stats: <b>${escHtml(sn.name || '?')}</b> · ${escHtml(stats)}</span>
-      ${__npcCombatHpHtml_v150}
       <div class="node-mon ${isDead ? 'dead' : ''} ${isDeact ? 'deactivated' : ''} singleton" data-npc-card="1" style="margin-top:6px;">
         <div class="node-mon-header">
           <span class="node-mon-name" style="flex:1;">${escHtml(node.title || 'NPC')}</span>
@@ -14643,34 +14511,7 @@ function wireNpcPeekClicks(nodeEl, node) {
     });
   });
 
-  
-  // v1.3.50 — NPC combat HP direct controls.
-  nodeEl.querySelectorAll('input.npc-combat-hp-input').forEach(input => {
-    input.addEventListener('mousedown', e => e.stopPropagation());
-    input.addEventListener('click', e => e.stopPropagation());
-    input.addEventListener('change', e => {
-      e.stopPropagation();
-      rqSetNpcSkinHpByNodeId(input.dataset.nodeId || node.id, input.value);
-    });
-    input.addEventListener('keydown', e => {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      e.stopPropagation();
-      const raw = String(input.value || '').trim();
-      const hp = rqGetNpcSkinHp(node);
-      if (/^[+-]\d+/.test(raw)) rqSetNpcSkinHpByNodeId(node.id, hp.current + Number(raw));
-      else rqSetNpcSkinHpByNodeId(node.id, Number(raw));
-    });
-  });
-  nodeEl.querySelectorAll('button.npc-combat-hp-step').forEach(btn => {
-    btn.addEventListener('mousedown', e => e.stopPropagation());
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      rqAdjustNpcSkinHpByNodeId(btn.dataset.nodeId || node.id, Number(btn.dataset.delta || 0));
-    });
-  });
-
-// Action attack / save-or-damage rolls
+  // Action attack / save-or-damage rolls
   nodeEl.querySelectorAll('button[data-npc-roll]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -17445,7 +17286,7 @@ function rqSafeRenderNodeFace(node) {
   } catch (err) {
     console.error('[rqSafeRenderNodeFace] Node face render failed; using fallback face so canvas load can continue.', node, err);
     const title = (node && (node.title || node.name || node.type)) || 'Node';
-    return `<div class="node-face-error"><strong>${(typeof escapeHtml === 'function' ? escapeHtml(title) : (typeof escHtml === 'function' ? escHtml(title) : String(title).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))))}</strong><br><span>Render error; open/edit to repair.</span></div>`;
+    return `<div class="node-face-error"><strong>${escapeHtml ? escapeHtml(title) : title}</strong><br><span>Render error; open/edit to repair.</span></div>`;
   }
 }
 
@@ -17469,349 +17310,225 @@ function rqSafeRenderNodeFace(node) {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// v1.3.50 — passive feature chips for monster cards (e.g., Spider Climb, Regeneration).
-function rqPassiveFeatureChips(specials, idx, opts) {
-  try {
-    const showHidden = !!(opts && opts.showHidden);
-    const items = (specials || []).filter(s => {
-      if (!s) return false;
-      if (s._override && s._override.hidden && !showHidden) return false;
-      const m = resolveAbilityMechanics ? resolveAbilityMechanics(s) : {};
-      return !(m && (m.toHit || m.saveDC || m.damage));
-    }).slice(0, 8);
-    if (!items.length) return '';
-    return `<div class="node-mon-triggers passive-features">
-      ${items.map((s, i) => `<button class="node-mon-trigger passive" data-mon-trigger="${idx},${i}" type="button" title="${escAttr(s.desc || s.name || 'Feature')}">ⓘ ${escHtml((s._override && (s._override.displayName || s._override.name)) || s.name || 'Feature')}</button>`).join('')}
-    </div>`;
-  } catch (_) {
-    return '';
-  }
+// v1.3.47 — NPC combat parity helpers.
+// Gives NPC nodes with attached monster statblocks encounter-like HP controls, HP-state tags,
+// and makes linked/team-up calculations able to count NPC monster skins.
+function rqParseNumberLoose(v) {
+  const n = Number(String(v ?? '').replace(/[^\d.-]/g, ''));
+  return Number.isFinite(n) ? n : 0;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// v1.3.58 — clean NPC monster inset + single HP implementation.
-// This deliberately avoids older npc-combat/npc-hpbar/npc-enc-hp class names so no legacy listener can fire.
-(function(){
-  if (window.__rqNpcMonsterClean_v158) return;
-  window.__rqNpcMonsterClean_v158 = true;
-
-  const undoStack = [];
-
-  function esc(v){
-    if (typeof escHtml === 'function') return escHtml(v);
-    if (typeof escapeHtml === 'function') return escapeHtml(v);
-    return String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-  }
-
-  function allNodes(){
-    try { if (typeof state !== 'undefined' && state?.nodes?.values) return Array.from(state.nodes.values()); } catch (_) {}
-    return [];
-  }
-
-  function findNode(id){
-    return allNodes().find(n => String(n.id) === String(id)) || null;
-  }
-
-  function isNpc(node){
-    return node && String(node.type || node.kind || '').toLowerCase() === 'npc';
-  }
-
-  function skin(node){
-    const f = node?.fields || {};
-    const d = node?.data || {};
-    return f.skin || f.monsterSkin || f.npcMonsterSkin || f.statblock || f.monster || f.attachedMonster ||
-           d.skin || d.monsterSkin || d.npcMonsterSkin || d.statblock || d.monster || d.attachedMonster ||
-           d.npc?.monsterSkin || d.npc?.statblock || d.npc?.monster || null;
-  }
-
-  function hp(node){
-    const s = skin(node) || {};
-    const snap = s.snapshot || s;
-    const max = Number(s.hp_max ?? s.maxHP ?? s.maxHp ?? s.hpMax ?? snap.maxHP ?? snap.hp ?? s.hp ?? 0) || 0;
-    const cur = Number(s.hp_current ?? s.currentHP ?? s.currentHp ?? s.hpCurrent ?? node?.fields?.npcCurrentHP ?? node?.fields?.currentHP ?? max);
-    return { current: Number.isFinite(cur) ? cur : max, max };
-  }
-
-  function hpBadge(cur, max){
-    cur = Number(cur); max = Number(max);
-    if (!Number.isFinite(cur) || !Number.isFinite(max) || max <= 0) return '';
-    const pct = cur / max;
-    let label = '';
-    if (pct <= 0.25) label = 'Rough';
-    else if (pct <= 0.5) label = 'Bloodied';
-    else if (cur <= 5 && max <= 20) label = 'Last Leg';
-    if (!label) return '';
-    const cls = label === 'Last Leg' ? 'last-leg' : label === 'Rough' ? 'rough' : 'bloodied';
-    return `<span class="mon-hp-state-badge ${cls}" title="HP state">${label}</span>`;
-  }
-
-  function writeHp(node, next, opts){
-    const s = skin(node);
-    if (!node || !s) return;
-    const before = hp(node);
-    const max = before.max || Number(next) || 0;
-    const val = Math.max(0, Math.min(Number(next) || 0, max));
-
-    if (!(opts && opts.skipUndo)) {
-      undoStack.push({ id: String(node.id), hp: before.current });
-      if (undoStack.length > 60) undoStack.shift();
-    }
-
-    s.hp_current = val;
-    s.currentHP = val;
-    s.currentHp = val;
-    s.hpCurrent = val;
-    if (s.snapshot) {
-      s.snapshot.currentHP = val;
-      s.snapshot.hp_current = val;
-    }
-    node.fields = node.fields || {};
-    node.fields.npcCurrentHP = val;
-    node.fields.currentHP = val;
-
-    try { refreshNodeFace(node); } catch (e) { refreshVisible(node.id); }
+function rqNpcHpStateLabel(currentHp, maxHp) {
+  const hp = Number(currentHp);
+  const max = Number(maxHp);
+  if (!Number.isFinite(hp) || !Number.isFinite(max) || max <= 0) return '';
+  const pct = hp / max;
+  if (pct <= 0.25) return 'Rough';
+  if (pct <= 0.5) return 'Bloodied';
+  if (hp <= 5 && max <= 20) return 'Last Leg';
+  return '';
+}
+function rqNpcHpStateClass(label) {
+  return label === 'Last Leg' ? 'last-leg' : label === 'Rough' ? 'rough' : label === 'Bloodied' ? 'bloodied' : '';
+}
+function rqNpcHpStateBadge(currentHp, maxHp) {
+  const label = rqNpcHpStateLabel(currentHp, maxHp);
+  if (!label) return '';
+  return `<span class="mon-hp-state-badge ${rqNpcHpStateClass(label)}" title="HP state">${label}</span>`;
+}
+function rqGetNpcSkinData(node) {
+  const d = node?.data || node || {};
+  return d.monsterSkin || d.npcMonsterSkin || d.skin || d.statblock || d.monster || d.attachedMonster || null;
+}
+function rqGetNpcSkinHp(node) {
+  const skin = rqGetNpcSkinData(node) || {};
+  const d = node?.data || node || {};
+  const max = Number(
+    skin.maxHP ?? skin.maxHp ?? skin.hpMax ?? skin.max_hp ??
+    skin.hp ?? d.npcMaxHP ?? d.maxHP ?? d.hpMax ?? d.hp
+  ) || 0;
+  const cur = Number(
+    skin.currentHP ?? skin.currentHp ?? skin.hpCurrent ?? skin.current_hp ??
+    d.npcCurrentHP ?? d.currentHP ?? d.hpCurrent ?? max
+  ) || max || 0;
+  return { current: cur, max };
+}
+function rqSetNpcSkinHpByNodeId(nodeId, nextHp) {
+  try {
+    const node = (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(nodeId));
+    if (!node) return;
+    const skin = rqGetNpcSkinData(node);
+    if (!skin) return;
+    const hp = rqGetNpcSkinHp(node);
+    const clamped = Math.max(0, Math.min(Number(nextHp) || 0, hp.max || Number(nextHp) || 0));
+    skin.currentHP = clamped;
+    skin.currentHp = clamped;
+    skin.hpCurrent = clamped;
+    node.data = node.data || {};
+    node.data.npcCurrentHP = clamped;
+    refreshNodeFace(node);
     if (typeof scheduleSave === 'function') scheduleSave();
     else if (typeof saveNow === 'function') saveNow();
-    setTimeout(() => refreshVisible(node.id), 20);
+  } catch (err) {
+    console.error('[rqSetNpcSkinHpByNodeId] failed', nodeId, nextHp, err);
   }
-
-  function parseCommand(raw, current){
-    const s = String(raw ?? '').trim();
-    if (!s) return current;
-    if (/^[+-]\s*\d+/.test(s)) return current + Number(s.replace(/\s+/g, ''));
-    return Number(s);
+}
+function rqAdjustNpcSkinHpByNodeId(nodeId, delta) {
+  const node = (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(nodeId));
+  if (!node) return;
+  const hp = rqGetNpcSkinHp(node);
+  rqSetNpcSkinHpByNodeId(nodeId, hp.current + Number(delta || 0));
+}
+function rqNpcMonsterCountsForTeamup() {
+  try {
+    const arr = (typeof nodes !== 'undefined' ? nodes : []);
+    return arr
+      .filter(n => (n.type === 'npc' || n.kind === 'npc') && rqGetNpcSkinData(n))
+      .map(n => {
+        const skin = rqGetNpcSkinData(n);
+        const hp = rqGetNpcSkinHp(n);
+        return {
+          nodeId: n.id,
+          name: skin.name || skin.displayName || n.title || n.name || 'NPC Monster',
+          cr: skin.cr ?? skin.challenge_rating ?? skin.challengeRating ?? '0',
+          hp: hp.max,
+          currentHP: hp.current,
+          ac: skin.ac ?? skin.armor_class ?? '',
+          sourceNodeType: 'npc'
+        };
+      });
+  } catch (err) {
+    console.error('[rqNpcMonsterCountsForTeamup] failed', err);
+    return [];
   }
+}
+window.rqNpcMonsterCountsForTeamup = rqNpcMonsterCountsForTeamup;
 
-  function renderInset(node){
-    const s = skin(node);
-    if (!s) return '';
-    const snap = s.snapshot || s;
-    const h = hp(node);
-    const nodeId = esc(node.id);
-    const name = esc(s.displayName || s.nameOverride || snap.name || node.title || 'NPC Statblock');
-    const cr = esc(s.cr ?? snap.cr ?? '0');
-    const ac = esc(s.ac ?? snap.ac ?? '');
-    const actions = (snap.actions || s.actions || []).slice(0, 6);
 
-    const actionHtml = actions.map((a, i) => {
-      const label = esc(a?.name || 'Action');
-      return `<button type="button" class="node-mon-action rq-npc-action" data-rq-npc-action="${nodeId},${i}" title="Roll ${label}">🎲 ${label}</button>`;
-    }).join('');
 
-    return `<div class="rq-npc-monster-inset" data-rq-npc-node="${nodeId}">
-      <div class="node-monster-row enc-monster-row">
-        <div class="node-monster-mainline">
-          <button type="button" class="node-mon-book rq-npc-book" data-rq-npc-book="${nodeId}" title="Open full stat block">📖</button>
-          <span class="node-mon-name">${name}</span>
-          <span class="node-mon-meta">CR ${cr} · HP ${h.max} · AC ${ac}</span>
-        </div>
-        <div class="node-mon-hpbar rq-npc-clean-hpbar" data-rq-npc-hpbar="${nodeId}">
-          <span class="hpbar-label">HP</span>
-          <input type="text" inputmode="numeric" class="hpbar-input rq-npc-clean-hp-input" data-rq-npc-hp-input="${nodeId}" value="${h.current}" title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
-          <span class="hpbar-ticks">
-            <button class="hpbar-tick rq-npc-clean-hp-tick" data-rq-npc-hp-tick="${nodeId},1" type="button" title="+1 HP">▴</button>
-            <button class="hpbar-tick rq-npc-clean-hp-tick" data-rq-npc-hp-tick="${nodeId},-1" type="button" title="−1 HP">▾</button>
-          </span>
-          <span class="hpbar-max">/ ${h.max}</span>
-          ${hpBadge(h.current, h.max)}
-          <button class="hpbar-undo rq-npc-clean-hp-undo ${undoStack.some(x => String(x.id) === String(node.id)) ? '' : 'hidden'}" data-rq-npc-hp-undo="${nodeId}" type="button" title="Undo previous HP value" ${undoStack.some(x => String(x.id) === String(node.id)) ? '' : 'disabled'}>↶</button>
-        </div>
-        <div class="node-mon-actions">${actionHtml}</div>
-      </div>
-    </div>`;
-  }
 
-  function refreshVisible(nodeId){
-    const node = findNode(nodeId);
-    if (!node) return;
-    const h = hp(node);
-    document.querySelectorAll(`[data-rq-npc-hpbar="${CSS.escape(String(nodeId))}"]`).forEach(bar => {
-      const input = bar.querySelector('[data-rq-npc-hp-input]');
-      if (input && document.activeElement !== input) input.value = h.current;
-      const max = bar.querySelector('.hpbar-max');
-      if (max) max.textContent = `/ ${h.max}`;
+// v1.3.48 — robust NPC combat enhancer attachment.
+(function(){
+  function rqFindNpcCards(){
+    return [...document.querySelectorAll('.node, .canvas-node, .rq-node, .card')].filter(el => {
+      const txt = (el.textContent || '');
+      return /STATS:\s*/i.test(txt) && /CR\s+\d+/i.test(txt);
     });
   }
 
-  function install(){
-    allNodes().forEach(node => {
-      if (!isNpc(node) || !skin(node)) return;
-      const card = document.querySelector(`[data-node-id="${CSS.escape(String(node.id))}"], #node-${CSS.escape(String(node.id))}`);
-      if (!card) return;
-      const existingClean = card.querySelector('.rq-npc-monster-inset');
-      if (existingClean) return;
+  function rqResolveNodeForCard(card){
+    const txt = (card.textContent || '');
+    const arr = (typeof nodes !== 'undefined' ? nodes : []);
 
-      // Remove all old NPC HP/monster inset variants so their handlers have no targets.
-      card.querySelectorAll('.npc-combat-hp-wrap, .npc-enc-monster-card, .npc-encounter-monster-renderer').forEach(el => el.remove());
+    for (const n of arr){
+      if (!(n?.type === 'npc' || n?.kind === 'npc')) continue;
+      const skin = rqGetNpcSkinData(n);
+      if (!skin) continue;
+      const nm = String(skin.name || skin.displayName || '').trim();
+      if (nm && txt.includes(nm)) return n;
+    }
 
-      const stats = [...card.querySelectorAll('*')].find(el => /STATS:\s*/i.test(el.textContent || ''));
-      if (stats) stats.insertAdjacentHTML('afterend', renderInset(node));
+    return null;
+  }
+
+  function rqApplyNpcCombatEnhancements(){
+    rqFindNpcCards().forEach(card => {
+      if (card.querySelector('.npc-combat-hp-wrap')) return;
+
+      const node = rqResolveNodeForCard(card);
+      if (!node) return;
+
+      const skin = rqGetNpcSkinData(node);
+      if (!skin) return;
+
+      const hp = rqGetNpcSkinHp(node);
+
+      const statsLine = [...card.querySelectorAll('*')].find(el => {
+        const t = el.textContent || '';
+        return /STATS:\s*/i.test(t) && /HP\s+\d+/i.test(t);
+      });
+
+      if (!statsLine) return;
+
+      const wrap = document.createElement('div');
+      wrap.className = 'npc-combat-hp-wrap';
+      wrap.innerHTML = `
+        <span class="npc-combat-hp-label">HP</span>
+        <input class="npc-combat-hp-input" type="number" value="${hp.current}" min="0" max="${hp.max}">
+        <button type="button" class="npc-combat-hp-step" data-delta="-1">−</button>
+        <button type="button" class="npc-combat-hp-step" data-delta="1">+</button>
+        <span class="npc-combat-hp-max">/ ${hp.max}</span>
+        <span class="npc-combat-hp-state">${rqNpcHpStateBadge(hp.current, hp.max)}</span>
+      `;
+
+      statsLine.insertAdjacentElement('afterend', wrap);
+
+      const input = wrap.querySelector('.npc-combat-hp-input');
+
+      input.addEventListener('change', () => {
+        rqSetNpcSkinHpByNodeId(node.id, Number(input.value || 0));
+        const next = rqGetNpcSkinHp(node);
+        wrap.querySelector('.npc-combat-hp-state').innerHTML =
+          rqNpcHpStateBadge(next.current, next.max);
+      });
+
+      wrap.querySelectorAll('.npc-combat-hp-step').forEach(btn => {
+        btn.addEventListener('click', () => {
+          rqAdjustNpcSkinHpByNodeId(node.id, Number(btn.dataset.delta || 0));
+          const next = rqGetNpcSkinHp(node);
+          input.value = next.current;
+          wrap.querySelector('.npc-combat-hp-state').innerHTML =
+            rqNpcHpStateBadge(next.current, next.max);
+        });
+      });
     });
   }
 
-  function getIdFromInput(input){ return input?.dataset?.rqNpcHpInput || ''; }
-
-  document.addEventListener('mousedown', e => {
-    if (e.target.closest?.('.rq-npc-monster-inset')) e.stopPropagation();
-  }, true);
-
-  document.addEventListener('click', e => {
-    const input = e.target.closest?.('[data-rq-npc-hp-input]');
-    if (input) {
-      e.preventDefault();
-      e.stopPropagation();
-      setTimeout(() => { try { input.focus(); input.select(); } catch(_){} }, 0);
-      return;
-    }
-
-    const tick = e.target.closest?.('[data-rq-npc-hp-tick]');
-    if (tick) {
-      e.preventDefault();
-      e.stopPropagation();
-      const [id, delta] = String(tick.dataset.rqNpcHpTick || '').split(',');
-      const node = findNode(id);
-      if (!node) return;
-      const h = hp(node);
-      writeHp(node, h.current + Number(delta || 0));
-      return;
-    }
-
-    const undo = e.target.closest?.('[data-rq-npc-hp-undo]');
-    if (undo) {
-      e.preventDefault();
-      e.stopPropagation();
-      const id = undo.dataset.rqNpcHpUndo;
-      const node = findNode(id);
-      if (!node) return;
-      for (let i = undoStack.length - 1; i >= 0; i--) {
-        if (String(undoStack[i].id) !== String(id)) continue;
-        const prev = undoStack.splice(i, 1)[0].hp;
-        writeHp(node, prev, { skipUndo: true });
-        return;
-      }
-    }
-
-    const book = e.target.closest?.('[data-rq-npc-book]');
-    if (book) {
-      e.preventDefault();
-      e.stopPropagation();
-      const node = findNode(book.dataset.rqNpcBook);
-      const s = node && skin(node);
-      if (s && typeof openMonsterStatblockModal === 'function') openMonsterStatblockModal(s.snapshot || s);
-      else if (s && typeof showMonsterStatblock === 'function') showMonsterStatblock(s.snapshot || s);
-    }
-  }, true);
-
-  document.addEventListener('focusin', e => {
-    const input = e.target.closest?.('[data-rq-npc-hp-input]');
-    if (!input) return;
-    setTimeout(() => { try { input.select(); } catch(_){} }, 0);
-  }, true);
-
-  document.addEventListener('keydown', e => {
-    const input = e.target.closest?.('[data-rq-npc-hp-input]');
-    if (!input) return;
-    e.stopPropagation();
-
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const node = findNode(getIdFromInput(input));
-      if (!node) return;
-      const h = hp(node);
-      writeHp(node, parseCommand(input.value, h.current));
-      input.blur();
-    }
-
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      const node = findNode(getIdFromInput(input));
-      if (node) input.value = hp(node).current;
-      input.blur();
-    }
-  }, true);
-
-  document.addEventListener('change', e => {
-    const input = e.target.closest?.('[data-rq-npc-hp-input]');
-    if (!input) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const node = findNode(getIdFromInput(input));
-    if (!node) return;
-    const h = hp(node);
-    writeHp(node, parseCommand(input.value, h.current));
-  }, true);
+  window.rqApplyNpcCombatEnhancements = rqApplyNpcCombatEnhancements;
 
   const mo = new MutationObserver(() => {
-    clearTimeout(window.__rqNpcCleanInstallT);
-    window.__rqNpcCleanInstallT = setTimeout(install, 80);
+    clearTimeout(window.__rqNpcCombatEnhancerTick);
+    window.__rqNpcCombatEnhancerTick =
+      setTimeout(rqApplyNpcCombatEnhancements, 100);
   });
-  if (document.body) mo.observe(document.body, { childList:true, subtree:true });
-  setTimeout(install, 100);
-  setTimeout(install, 700);
 
-  window.rqNpcCleanDebug_v158 = function(id){
-    const node = findNode(id);
-    return { node, skin: skin(node), hp: hp(node), undoStack };
-  };
+  if (document.body){
+    mo.observe(document.body, { childList:true, subtree:true });
+  }
+
+  setTimeout(rqApplyNpcCombatEnhancements, 250);
+  setTimeout(rqApplyNpcCombatEnhancements, 1000);
+})();
+
+
+
+
+// v1.3.47 — include NPC statblock skins in linked/team-up encounter monster pools where possible.
+(function(){
+  function mergeNpcSkins(list) {
+    const base = Array.isArray(list) ? list.slice() : [];
+    const existingNodeIds = new Set(base.map(x => String(x.nodeId || x.id || x.sourceNodeId || '')));
+    for (const m of rqNpcMonsterCountsForTeamup()) {
+      if (!existingNodeIds.has(String(m.nodeId))) base.push(m);
+    }
+    return base;
+  }
+  window.rqMergeNpcSkinsIntoMonsterList = mergeNpcSkins;
+  const names = [
+    'getLinkedEncounterMonsters',
+    'collectLinkedEncounterMonsters',
+    'getTeamupMonsters',
+    'collectTeamupMonsters',
+    'getEncounterTeamMonsters'
+  ];
+  for (const name of names) {
+    const fn = window[name];
+    if (typeof fn === 'function' && !fn.__rqNpcParityWrapped) {
+      const wrapped = function(...args) {
+        return mergeNpcSkins(fn.apply(this, args));
+      };
+      wrapped.__rqNpcParityWrapped = true;
+      window[name] = wrapped;
+    }
+  }
 })();
 
