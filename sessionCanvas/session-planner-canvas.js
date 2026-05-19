@@ -17532,3 +17532,40 @@ window.rqNpcMonsterCountsForTeamup = rqNpcMonsterCountsForTeamup;
   }
 })();
 
+
+
+// v1.3.49 — keep connector paths behind node cards even when renderer sets inline styles.
+(function(){
+  if (window.__rqEdgeBehindNodes_v149) return;
+  window.__rqEdgeBehindNodes_v149 = true;
+
+  function applyEdgeZOrder(){
+    document.querySelectorAll('.edge-layer,.edges-layer,.canvas-edge-layer,#edgeLayer,#edgesLayer,svg.edges,svg.edge-layer,svg.canvas-edges,.rq-edge-layer')
+      .forEach(el => {
+        el.style.zIndex = '1';
+        el.style.pointerEvents = el.tagName && el.tagName.toLowerCase() === 'svg' ? 'none' : el.style.pointerEvents;
+      });
+
+    document.querySelectorAll('.node,.canvas-node,.rq-node,.node-card,.canvas-card,[data-node-id]')
+      .forEach(el => {
+        if (getComputedStyle(el).position === 'static') el.style.position = 'absolute';
+        el.style.zIndex = Math.max(Number(el.style.zIndex || 0), 5);
+      });
+
+    document.querySelectorAll('.edge-handle,.edge-label,.edge-endpoint,.connector-handle,.node-link-handle,[data-edge-handle],[data-connector-handle]')
+      .forEach(el => {
+        el.style.zIndex = Math.max(Number(el.style.zIndex || 0), 8);
+        el.style.pointerEvents = 'auto';
+      });
+  }
+
+  const mo = new MutationObserver(() => {
+    clearTimeout(window.__rqEdgeZTimer_v149);
+    window.__rqEdgeZTimer_v149 = setTimeout(applyEdgeZOrder, 80);
+  });
+
+  if (document.body) mo.observe(document.body, { childList:true, subtree:true, attributes:true, attributeFilter:['style','class'] });
+  setTimeout(applyEdgeZOrder, 100);
+  setTimeout(applyEdgeZOrder, 600);
+})();
+
