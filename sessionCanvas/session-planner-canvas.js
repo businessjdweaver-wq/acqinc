@@ -18251,3 +18251,233 @@ function rqUpgradeNpcHpBars_v154() {
   setTimeout(rqUpgradeNpcHpBars_v154, 600);
 })();
 
+
+
+// v1.3.55 — authoritative NPC HP arithmetic parity.
+// Mirrors encounter HPBar behavior: input value is a command. If it begins with + or -,
+// apply it as a delta to the current stored HP; otherwise set absolute HP.
+// This handler also prevents older NPC HP handlers from double-firing.
+(function(){
+  if (window.__rqNpcHpArithmeticParity_v155) return;
+  window.__rqNpcHpArithmeticParity_v155 = true;
+
+  function allNodesV155(){
+    try {
+      if (typeof state !== 'undefined' && state?.nodes?.values) return Array.from(state.nodes.values());
+    } catch (_) {}
+    try {
+      if (typeof nodes !== 'undefined' && Array.isArray(nodes)) return nodes;
+    } catch (_) {}
+    return [];
+  }
+
+  function findNodeV155(id){
+    id = String(id || '');
+    return allNodesV155().find(n => String(n.id) === id) || null;
+  }
+
+  function skinV155(node){
+    if (!node) return null;
+    const f = node.fields || {};
+    const d = node.data || {};
+    return f.skin || f.monsterSkin || f.npcMonsterSkin || f.statblock || f.monster || f.attachedMonster ||
+           d.skin || d.monsterSkin || d.npcMonsterSkin || d.statblock || d.monster || d.attachedMonster ||
+           d.npc?.monsterSkin || d.npc?.statblock || d.npc?.monster || null;
+  }
+
+  function hpV155(node){
+    const skin = skinV155(node) || {};
+    const f = node?.fields || {};
+    const d = node?.data || {};
+    const sn = skin.snapshot || skin;
+    const max = Number(
+      skin.hp_max ?? skin.maxHP ?? skin.maxHp ?? skin.hpMax ?? skin.max_hp ??
+      f.npcMaxHP ?? d.npcMaxHP ?? f.maxHP ?? d.maxHP ?? f.hpMax ?? d.hpMax ??
+      sn.hp ?? skin.hp ?? f.hp ?? d.hp ?? 0
+    ) || 0;
+    const cur = Number(
+      skin.hp_current ?? skin.currentHP ?? skin.currentHp ?? skin.hpCurrent ?? skin.current_hp ??
+      f.npcCurrentHP ?? d.npcCurrentHP ?? f.currentHP ?? d.currentHP ?? f.hpCurrent ?? d.hpCurrent ??
+      max
+    );
+    return { current: Number.isFinite(cur) ? cur : max, max };
+  }
+
+  function writeHpV155(node, next, opts){
+    const skin = skinV155(node);
+    if (!node || !skin) return;
+    const before = hpV155(node);
+    const max = before.max || Number(next) || 0;
+    const clamped = Math.max(0, Math.min(Number(next) || 0, max));
+
+    if (!(opts && opts.skipUndo)) {
+      window.__rqNpcHpUndoStack_v154 = window.__rqNpcHpUndoStack_v154 || [];
+      window.__rqNpcHpUndoStack_v154.push({ nodeId: String(node.id), hp: before.current });
+      if (window.__rqNpcHpUndoStack_v154.length > 60) window.__rqNpcHpUndoStack_v154.shift();
+    }
+
+    skin.hp_current = clamped;
+    skin.currentHP = clamped;
+    skin.currentHp = clamped;
+    skin.hpCurrent = clamped;
+
+    node.fields = node.fields || {};
+    node.fields.npcCurrentHP = clamped;
+    node.fields.currentHP = clamped;
+
+    try { refreshNodeFace(node); }
+    catch (err) { console.warn('[v1.3.55 NPC HP] refresh failed', err); }
+
+    if (typeof scheduleSave === 'function') scheduleSave();
+    else if (typeof saveNow === 'function') saveNow();
+
+    setTimeout(() => refreshBarsV155(node.id), 25);
+  }
+
+  function parseCommandV155(raw, current){
+    const s = String(raw ?? '').trim();
+    if (s === '') return current;
+    if (/^[+-]\s*\d+/.test(s)) return current + Number(s.replace(/\s+/g, ''));
+    return Number(s);
+  }
+
+  function refreshBarsV155(nodeId){
+    const node = findNodeV155(nodeId);
+    if (!node) return;
+    const hp = hpV155(node);
+    const selector = `.npc-node-hpbar[data-npc-hpbar="${CSS.escape(String(nodeId))}"], .npc-combat-hp-wrap[data-node-id="${CSS.escape(String(nodeId))}"]`;
+    document.querySelectorAll(selector).forEach(bar => {
+      const input = bar.querySelector('.npc-hpbar-input, .npc-combat-hp-input');
+      if (input && document.activeElement !== input) input.value = hp.current;
+      const max = bar.querySelector('.hpbar-max, .npc-combat-hp-max');
+      if (max) max.textContent = `/ ${hp.max}`;
+      const state = bar.querySelector('.npc-combat-hp-state, .mon-hp-state-badge, .hpbar-bloodied');
+      const badge = (typeof rqNpcHpStateBadge === 'function') ? rqNpcHpStateBadge(hp.current, hp.max) : '';
+      if (state) {
+        if (state.classList.contains('npc-combat-hp-state')) state.innerHTML = badge;
+        else state.outerHTML = badge || '<span class="hpbar-bloodied hidden"></span>';
+      }
+      const undo = bar.querySelector('.npc-hpbar-undo, .npc-combat-hp-undo');
+      if (undo) {
+        const stack = window.__rqNpcHpUndoStack_v154 || [];
+        const canUndo = stack.some(x => String(x.nodeId) === String(nodeId));
+        undo.classList.toggle('hidden', !canUndo);
+        undo.disabled = !canUndo;
+        undo.title = canUndo ? 'Undo previous HP value' : 'No previous HP value to revert to';
+      }
+    });
+  }
+
+  function nodeIdFromElV155(el){
+    return el?.dataset?.npcPeekHp ||
+           el?.dataset?.nodeId ||
+           el?.closest?.('.npc-node-hpbar')?.dataset?.npcHpbar ||
+           el?.closest?.('.npc-combat-hp-wrap')?.dataset?.nodeId ||
+           '';
+  }
+
+  function applyInputV155(input){
+    const nodeId = nodeIdFromElV155(input);
+    const node = findNodeV155(nodeId);
+    if (!node) return;
+    const hp = hpV155(node);
+    const next = parseCommandV155(input.value, hp.current);
+    writeHpV155(node, next);
+  }
+
+  function undoV155(nodeId){
+    const node = findNodeV155(nodeId);
+    if (!node) return;
+    const stack = window.__rqNpcHpUndoStack_v154 || [];
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const item = stack[i];
+      if (String(item.nodeId) !== String(nodeId)) continue;
+      stack.splice(i, 1);
+      writeHpV155(node, item.hp, { skipUndo: true });
+      return;
+    }
+    refreshBarsV155(nodeId);
+  }
+
+  // Capture-phase listeners run before older NPC listeners and stop them.
+  document.addEventListener('mousedown', e => {
+    if (e.target.closest?.('.npc-node-hpbar, .npc-combat-hp-wrap')) e.stopPropagation();
+  }, true);
+
+  document.addEventListener('click', e => {
+    const input = e.target.closest?.('.npc-hpbar-input, .npc-combat-hp-input');
+    if (input) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      setTimeout(() => { try { input.focus(); input.select(); } catch (_) {} }, 0);
+      return;
+    }
+
+    const tick = e.target.closest?.('.npc-hpbar-tick, .npc-combat-hp-step');
+    if (tick) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      let nodeId = nodeIdFromElV155(tick);
+      let delta = Number(tick.dataset.delta || 0);
+      if (tick.dataset.npcHpTick) {
+        const parts = String(tick.dataset.npcHpTick).split(',');
+        nodeId = parts[0];
+        delta = Number(parts[1] || 0);
+      }
+      const node = findNodeV155(nodeId);
+      if (!node) return;
+      const hp = hpV155(node);
+      writeHpV155(node, hp.current + delta);
+      return;
+    }
+
+    const undo = e.target.closest?.('.npc-hpbar-undo, .npc-combat-hp-undo');
+    if (undo) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      undoV155(nodeIdFromElV155(undo) || undo.dataset.npcHpUndo);
+    }
+  }, true);
+
+  document.addEventListener('focusin', e => {
+    const input = e.target.closest?.('.npc-hpbar-input, .npc-combat-hp-input');
+    if (!input) return;
+    setTimeout(() => { try { input.select(); } catch (_) {} }, 0);
+  }, true);
+
+  document.addEventListener('keydown', e => {
+    const input = e.target.closest?.('.npc-hpbar-input, .npc-combat-hp-input');
+    if (!input) return;
+
+    // The HP field owns key handling while focused.
+    e.stopImmediatePropagation();
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      applyInputV155(input);
+      input.blur();
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      const node = findNodeV155(nodeIdFromElV155(input));
+      if (node) input.value = hpV155(node).current;
+      input.blur();
+    }
+  }, true);
+
+  document.addEventListener('change', e => {
+    const input = e.target.closest?.('.npc-hpbar-input, .npc-combat-hp-input');
+    if (!input) return;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    applyInputV155(input);
+  }, true);
+
+  window.rqNpcHpDebug_v155 = function(nodeId){
+    const node = findNodeV155(nodeId);
+    return { node, skin: skinV155(node), hp: hpV155(node), stack: window.__rqNpcHpUndoStack_v154 };
+  };
+})();
+

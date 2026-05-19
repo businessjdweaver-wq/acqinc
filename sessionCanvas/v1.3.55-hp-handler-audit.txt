@@ -1,0 +1,387 @@
+--- data-peek-hp ---
+-ov-action="cancel" type="button">Cancel</button>
+        <button data-ov-action="apply" type="button">Apply</button>
+      </div>
+    </div>`;
+}
+
+// Always-visible HP bar — sits between the monster's header (letter/
+// flavor/name/peek-toggle) and its action buttons. Pulled out of the
+// peek body in Stage 29 so HP is one click away during play.
+//
+// Input accepts:
+//   • plain number      → set absolute HP (e.g. "12" → hp_current = 12)
+//   • "+N" / "-N"       → apply delta from current  (e.g. "-6" → -6 from current)
+//   • clicking ▴ / ▾    → ±1 tick (replicates the native number-input arrows
+//                          which we lose by going `type="text"` for delta support)
+// On any commit (Enter or blur) we stash the prior value into m._hpPrev
+// so the inline ↶ undo button can revert. Undo TOGGLES — clicking it
+// swaps current ↔ previous, so repeated clicks bounce between the two.
+function renderMonsterHpBar(m, idx) {
+  const sn = m.snapshot || {};
+  const maxHp = parseInt(sn.hp) || 0;
+  const curHp = (typeof m.hp_current === 'number') ? m.hp_current : maxHp;
+  const hasPrev = (typeof m._hpPrev === 'number') && m._hpPrev !== curHp;
+  const hasBloodiedActions = getWorkshopRenderableActions(sn).some(a => actionBloodiedDamage(a));
+  const isBloodied = maxHp > 0 && curHp <= maxHp * 0.5;
+  const bloodiedBadge = hasBloodiedActions
+    ? `<span class="hpbar-bloodied ${isBloodied ? 'active' : ''}" title="This stat block has HP-threshold damage actions">${isBloodied ? '🩸 Bloodied' : 'Bloodied at ≤50%'}</span>`
+    : '';
+  return `
+    <div class="node-mon-hpbar ${isBloodied && hasBloodiedActions ? 'is-bloodied' : ''}" data-hpbar="${idx}">
+      <span class="hpbar-label">HP</span>
+      <input type="text" inputmode="numeric"
+             class="hpbar-input"
+             data-peek-hp="${idx}"
+             value="${curHp}"
+             title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
+      <span class="hpbar-ticks">
+        <button class="hpbar-tick" data-hp-tick="${idx},1"  type="button" title="+1 HP">▴</button>
+        <button class="hpbar-tick" data-hp-tick="${idx},-1" type="button" title="−1 HP">▾</button>
+      </span>
+      <span class="hpbar-max">/ ${maxHp}</span>
+      ${(typeof bloodiedBadge !== "undefined" ? bloodiedBadge : "")}
+      <button class="hpbar-undo ${hasPrev ? '' : 'hidden'}"
+              data-hp-undo="${idx}" type="button"
+              title="${hasPrev ? 'Undo last HP change (back to ' + m._hpPrev + ')' : 'No previous HP value to revert to'}"
+              ${hasPrev ? '' : 'disabled'}>↶</button>
+    </div>
+  `;
+}
+
+// Body of the peek expansion: multiplier, ability grid, save row, horde row.
+// (HP moved out of the peek to its own always-visible bar in Stage 29 —
+// see renderMonsterHpBar. Multiplier stays here because it's a wave-count
+// concept tied to the statblock, not a per-instance fight value.)
+function renderMonsterPeekBody(m, idx) {
+  const mult = (typeof m.mult === 'number' && m.mult >= 1) ? m.mult : 1;
+  return `
+    <div class="node-mon-hpmult">
+      <span style="margin-left:auto;">
+        × <span class="mult-stepper ${mult > 1 ? 'active' : ''}" data-peek-mult-wrap="${idx}">
+          <button class="mult-btn" data-peek-mult-delta="${idx},-1" type="button">−</button>
+          <span class="mult-num">${mult}</span>
+          <button class="mult-btn" data-peek-mult-delta="${idx},1" type="button">+</button>
+        </span>
+      </span>
+    </div>
+    ${renderAbilityGrid(m, idx)}
+    ${renderSaveRow(m, idx)}
+    ${renderHordeRow(m, idx)}
+  `;
+}
+
+// Compute mod from a score. Workshop stores ability as either number or
+// [score, '+0']-style pair (per the v0.4.2 schema dump). Be tolerant.
+function _scoreOf(p) { if (Array.isArray(p)) return parseInt(p[0]) || 10; if (typeof p === 'number') return p; return parseInt(p) || 10; }
+function _modOf(score) { return Math.floor((score - 10) / 2); }
+// Compose the display name used in roll dispatches. Mirrors what the
+// action-rol
+
+--- data-hp-tick ---
+etter/
+// flavor/name/peek-toggle) and its action buttons. Pulled out of the
+// peek body in Stage 29 so HP is one click away during play.
+//
+// Input accepts:
+//   • plain number      → set absolute HP (e.g. "12" → hp_current = 12)
+//   • "+N" / "-N"       → apply delta from current  (e.g. "-6" → -6 from current)
+//   • clicking ▴ / ▾    → ±1 tick (replicates the native number-input arrows
+//                          which we lose by going `type="text"` for delta support)
+// On any commit (Enter or blur) we stash the prior value into m._hpPrev
+// so the inline ↶ undo button can revert. Undo TOGGLES — clicking it
+// swaps current ↔ previous, so repeated clicks bounce between the two.
+function renderMonsterHpBar(m, idx) {
+  const sn = m.snapshot || {};
+  const maxHp = parseInt(sn.hp) || 0;
+  const curHp = (typeof m.hp_current === 'number') ? m.hp_current : maxHp;
+  const hasPrev = (typeof m._hpPrev === 'number') && m._hpPrev !== curHp;
+  const hasBloodiedActions = getWorkshopRenderableActions(sn).some(a => actionBloodiedDamage(a));
+  const isBloodied = maxHp > 0 && curHp <= maxHp * 0.5;
+  const bloodiedBadge = hasBloodiedActions
+    ? `<span class="hpbar-bloodied ${isBloodied ? 'active' : ''}" title="This stat block has HP-threshold damage actions">${isBloodied ? '🩸 Bloodied' : 'Bloodied at ≤50%'}</span>`
+    : '';
+  return `
+    <div class="node-mon-hpbar ${isBloodied && hasBloodiedActions ? 'is-bloodied' : ''}" data-hpbar="${idx}">
+      <span class="hpbar-label">HP</span>
+      <input type="text" inputmode="numeric"
+             class="hpbar-input"
+             data-peek-hp="${idx}"
+             value="${curHp}"
+             title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
+      <span class="hpbar-ticks">
+        <button class="hpbar-tick" data-hp-tick="${idx},1"  type="button" title="+1 HP">▴</button>
+        <button class="hpbar-tick" data-hp-tick="${idx},-1" type="button" title="−1 HP">▾</button>
+      </span>
+      <span class="hpbar-max">/ ${maxHp}</span>
+      ${(typeof bloodiedBadge !== "undefined" ? bloodiedBadge : "")}
+      <button class="hpbar-undo ${hasPrev ? '' : 'hidden'}"
+              data-hp-undo="${idx}" type="button"
+              title="${hasPrev ? 'Undo last HP change (back to ' + m._hpPrev + ')' : 'No previous HP value to revert to'}"
+              ${hasPrev ? '' : 'disabled'}>↶</button>
+    </div>
+  `;
+}
+
+// Body of the peek expansion: multiplier, ability grid, save row, horde row.
+// (HP moved out of the peek to its own always-visible bar in Stage 29 —
+// see renderMonsterHpBar. Multiplier stays here because it's a wave-count
+// concept tied to the statblock, not a per-instance fight value.)
+function renderMonsterPeekBody(m, idx) {
+  const mult = (typeof m.mult === 'number' && m.mult >= 1) ? m.mult : 1;
+  return `
+    <div class="node-mon-hpmult">
+      <span style="margin-left:auto;">
+        × <span class="mult-stepper ${mult > 1 ? 'active' : ''}" data-peek-mult-wrap="${idx}">
+          <button class="mult-btn" data-peek-mult-delta="${idx},-1" type="button">−</button>
+          <span class="mult-num">${mult}</span>
+          <button class="mult-btn" data-peek-mult-delta="${idx},1" type="button">+</button>
+        </span>
+      </span>
+    </div>
+    ${renderAbilityGrid(m, idx)}
+    ${renderSaveRow(m, idx)}
+    ${renderHordeRow(m, idx)}
+  `;
+}
+
+// Compute mod from a score. Workshop stores ability as either number or
+// [score, '+0']-style pair (per the v0.4.2 schema dump). Be tolerant.
+function _scoreOf(p) { if (Array.isArray(p)) return parseInt(p[0]) || 10; if (typeof p === 'number') return p; return parseInt(p) || 10; }
+function _modOf(score) { return Math.floor((score - 10) / 2); }
+// Compose the display name used in roll dispatches. Mirrors what the
+// action-roll dispatcher does (see dispatchMonsterRoll) so peek-body
+// rolls and action rolls render identically in Beyond20:
+//   "C Cracked-tooth — Goblin"  (letter + descriptor + monster name)
+//   "C — Goblin"        
+
+--- data-hp-undo ---
+ative number-input arrows
+//                          which we lose by going `type="text"` for delta support)
+// On any commit (Enter or blur) we stash the prior value into m._hpPrev
+// so the inline ↶ undo button can revert. Undo TOGGLES — clicking it
+// swaps current ↔ previous, so repeated clicks bounce between the two.
+function renderMonsterHpBar(m, idx) {
+  const sn = m.snapshot || {};
+  const maxHp = parseInt(sn.hp) || 0;
+  const curHp = (typeof m.hp_current === 'number') ? m.hp_current : maxHp;
+  const hasPrev = (typeof m._hpPrev === 'number') && m._hpPrev !== curHp;
+  const hasBloodiedActions = getWorkshopRenderableActions(sn).some(a => actionBloodiedDamage(a));
+  const isBloodied = maxHp > 0 && curHp <= maxHp * 0.5;
+  const bloodiedBadge = hasBloodiedActions
+    ? `<span class="hpbar-bloodied ${isBloodied ? 'active' : ''}" title="This stat block has HP-threshold damage actions">${isBloodied ? '🩸 Bloodied' : 'Bloodied at ≤50%'}</span>`
+    : '';
+  return `
+    <div class="node-mon-hpbar ${isBloodied && hasBloodiedActions ? 'is-bloodied' : ''}" data-hpbar="${idx}">
+      <span class="hpbar-label">HP</span>
+      <input type="text" inputmode="numeric"
+             class="hpbar-input"
+             data-peek-hp="${idx}"
+             value="${curHp}"
+             title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
+      <span class="hpbar-ticks">
+        <button class="hpbar-tick" data-hp-tick="${idx},1"  type="button" title="+1 HP">▴</button>
+        <button class="hpbar-tick" data-hp-tick="${idx},-1" type="button" title="−1 HP">▾</button>
+      </span>
+      <span class="hpbar-max">/ ${maxHp}</span>
+      ${(typeof bloodiedBadge !== "undefined" ? bloodiedBadge : "")}
+      <button class="hpbar-undo ${hasPrev ? '' : 'hidden'}"
+              data-hp-undo="${idx}" type="button"
+              title="${hasPrev ? 'Undo last HP change (back to ' + m._hpPrev + ')' : 'No previous HP value to revert to'}"
+              ${hasPrev ? '' : 'disabled'}>↶</button>
+    </div>
+  `;
+}
+
+// Body of the peek expansion: multiplier, ability grid, save row, horde row.
+// (HP moved out of the peek to its own always-visible bar in Stage 29 —
+// see renderMonsterHpBar. Multiplier stays here because it's a wave-count
+// concept tied to the statblock, not a per-instance fight value.)
+function renderMonsterPeekBody(m, idx) {
+  const mult = (typeof m.mult === 'number' && m.mult >= 1) ? m.mult : 1;
+  return `
+    <div class="node-mon-hpmult">
+      <span style="margin-left:auto;">
+        × <span class="mult-stepper ${mult > 1 ? 'active' : ''}" data-peek-mult-wrap="${idx}">
+          <button class="mult-btn" data-peek-mult-delta="${idx},-1" type="button">−</button>
+          <span class="mult-num">${mult}</span>
+          <button class="mult-btn" data-peek-mult-delta="${idx},1" type="button">+</button>
+        </span>
+      </span>
+    </div>
+    ${renderAbilityGrid(m, idx)}
+    ${renderSaveRow(m, idx)}
+    ${renderHordeRow(m, idx)}
+  `;
+}
+
+// Compute mod from a score. Workshop stores ability as either number or
+// [score, '+0']-style pair (per the v0.4.2 schema dump). Be tolerant.
+function _scoreOf(p) { if (Array.isArray(p)) return parseInt(p[0]) || 10; if (typeof p === 'number') return p; return parseInt(p) || 10; }
+function _modOf(score) { return Math.floor((score - 10) / 2); }
+// Compose the display name used in roll dispatches. Mirrors what the
+// action-roll dispatcher does (see dispatchMonsterRoll) so peek-body
+// rolls and action rolls render identically in Beyond20:
+//   "C Cracked-tooth — Goblin"  (letter + descriptor + monster name)
+//   "C — Goblin"                (letter only, no descriptor on this instance)
+//   "Goblin"                    (singleton or no flavor at all)
+
+// ── ENCOUNTER BALANCE WIZARD (Stage 59 / DPR Flat Balance) ─────────────────────
+let _ebwState = null;
+const EBW_CR_OPTIONS = ['0','1/8','1/4','1/2','1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','
+
+--- hpbar-input ---
+tton>
+        <button data-ov-action="cancel" type="button">Cancel</button>
+        <button data-ov-action="apply" type="button">Apply</button>
+      </div>
+    </div>`;
+}
+
+// Always-visible HP bar — sits between the monster's header (letter/
+// flavor/name/peek-toggle) and its action buttons. Pulled out of the
+// peek body in Stage 29 so HP is one click away during play.
+//
+// Input accepts:
+//   • plain number      → set absolute HP (e.g. "12" → hp_current = 12)
+//   • "+N" / "-N"       → apply delta from current  (e.g. "-6" → -6 from current)
+//   • clicking ▴ / ▾    → ±1 tick (replicates the native number-input arrows
+//                          which we lose by going `type="text"` for delta support)
+// On any commit (Enter or blur) we stash the prior value into m._hpPrev
+// so the inline ↶ undo button can revert. Undo TOGGLES — clicking it
+// swaps current ↔ previous, so repeated clicks bounce between the two.
+function renderMonsterHpBar(m, idx) {
+  const sn = m.snapshot || {};
+  const maxHp = parseInt(sn.hp) || 0;
+  const curHp = (typeof m.hp_current === 'number') ? m.hp_current : maxHp;
+  const hasPrev = (typeof m._hpPrev === 'number') && m._hpPrev !== curHp;
+  const hasBloodiedActions = getWorkshopRenderableActions(sn).some(a => actionBloodiedDamage(a));
+  const isBloodied = maxHp > 0 && curHp <= maxHp * 0.5;
+  const bloodiedBadge = hasBloodiedActions
+    ? `<span class="hpbar-bloodied ${isBloodied ? 'active' : ''}" title="This stat block has HP-threshold damage actions">${isBloodied ? '🩸 Bloodied' : 'Bloodied at ≤50%'}</span>`
+    : '';
+  return `
+    <div class="node-mon-hpbar ${isBloodied && hasBloodiedActions ? 'is-bloodied' : ''}" data-hpbar="${idx}">
+      <span class="hpbar-label">HP</span>
+      <input type="text" inputmode="numeric"
+             class="hpbar-input"
+             data-peek-hp="${idx}"
+             value="${curHp}"
+             title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
+      <span class="hpbar-ticks">
+        <button class="hpbar-tick" data-hp-tick="${idx},1"  type="button" title="+1 HP">▴</button>
+        <button class="hpbar-tick" data-hp-tick="${idx},-1" type="button" title="−1 HP">▾</button>
+      </span>
+      <span class="hpbar-max">/ ${maxHp}</span>
+      ${(typeof bloodiedBadge !== "undefined" ? bloodiedBadge : "")}
+      <button class="hpbar-undo ${hasPrev ? '' : 'hidden'}"
+              data-hp-undo="${idx}" type="button"
+              title="${hasPrev ? 'Undo last HP change (back to ' + m._hpPrev + ')' : 'No previous HP value to revert to'}"
+              ${hasPrev ? '' : 'disabled'}>↶</button>
+    </div>
+  `;
+}
+
+// Body of the peek expansion: multiplier, ability grid, save row, horde row.
+// (HP moved out of the peek to its own always-visible bar in Stage 29 —
+// see renderMonsterHpBar. Multiplier stays here because it's a wave-count
+// concept tied to the statblock, not a per-instance fight value.)
+function renderMonsterPeekBody(m, idx) {
+  const mult = (typeof m.mult === 'number' && m.mult >= 1) ? m.mult : 1;
+  return `
+    <div class="node-mon-hpmult">
+      <span style="margin-left:auto;">
+        × <span class="mult-stepper ${mult > 1 ? 'active' : ''}" data-peek-mult-wrap="${idx}">
+          <button class="mult-btn" data-peek-mult-delta="${idx},-1" type="button">−</button>
+          <span class="mult-num">${mult}</span>
+          <button class="mult-btn" data-peek-mult-delta="${idx},1" type="button">+</button>
+        </span>
+      </span>
+    </div>
+    ${renderAbilityGrid(m, idx)}
+    ${renderSaveRow(m, idx)}
+    ${renderHordeRow(m, idx)}
+  `;
+}
+
+// Compute mod from a score. Workshop stores ability as either number or
+// [score, '+0']-style pair (per the v0.4.2 schema dump). Be tolerant.
+function _scoreOf(p) { if (Array.isArray(p)) return parseInt(p[0]) || 10; if (typeof p === 'number') return p; return parseInt(p) || 10; }
+function _modOf(score) { return Math.floor((score - 10) / 2); }
+// Compose the display name used in roll dispatches. Mirr
+
+--- hpbar-tick ---
+ble HP bar — sits between the monster's header (letter/
+// flavor/name/peek-toggle) and its action buttons. Pulled out of the
+// peek body in Stage 29 so HP is one click away during play.
+//
+// Input accepts:
+//   • plain number      → set absolute HP (e.g. "12" → hp_current = 12)
+//   • "+N" / "-N"       → apply delta from current  (e.g. "-6" → -6 from current)
+//   • clicking ▴ / ▾    → ±1 tick (replicates the native number-input arrows
+//                          which we lose by going `type="text"` for delta support)
+// On any commit (Enter or blur) we stash the prior value into m._hpPrev
+// so the inline ↶ undo button can revert. Undo TOGGLES — clicking it
+// swaps current ↔ previous, so repeated clicks bounce between the two.
+function renderMonsterHpBar(m, idx) {
+  const sn = m.snapshot || {};
+  const maxHp = parseInt(sn.hp) || 0;
+  const curHp = (typeof m.hp_current === 'number') ? m.hp_current : maxHp;
+  const hasPrev = (typeof m._hpPrev === 'number') && m._hpPrev !== curHp;
+  const hasBloodiedActions = getWorkshopRenderableActions(sn).some(a => actionBloodiedDamage(a));
+  const isBloodied = maxHp > 0 && curHp <= maxHp * 0.5;
+  const bloodiedBadge = hasBloodiedActions
+    ? `<span class="hpbar-bloodied ${isBloodied ? 'active' : ''}" title="This stat block has HP-threshold damage actions">${isBloodied ? '🩸 Bloodied' : 'Bloodied at ≤50%'}</span>`
+    : '';
+  return `
+    <div class="node-mon-hpbar ${isBloodied && hasBloodiedActions ? 'is-bloodied' : ''}" data-hpbar="${idx}">
+      <span class="hpbar-label">HP</span>
+      <input type="text" inputmode="numeric"
+             class="hpbar-input"
+             data-peek-hp="${idx}"
+             value="${curHp}"
+             title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
+      <span class="hpbar-ticks">
+        <button class="hpbar-tick" data-hp-tick="${idx},1"  type="button" title="+1 HP">▴</button>
+        <button class="hpbar-tick" data-hp-tick="${idx},-1" type="button" title="−1 HP">▾</button>
+      </span>
+      <span class="hpbar-max">/ ${maxHp}</span>
+      ${(typeof bloodiedBadge !== "undefined" ? bloodiedBadge : "")}
+      <button class="hpbar-undo ${hasPrev ? '' : 'hidden'}"
+              data-hp-undo="${idx}" type="button"
+              title="${hasPrev ? 'Undo last HP change (back to ' + m._hpPrev + ')' : 'No previous HP value to revert to'}"
+              ${hasPrev ? '' : 'disabled'}>↶</button>
+    </div>
+  `;
+}
+
+// Body of the peek expansion: multiplier, ability grid, save row, horde row.
+// (HP moved out of the peek to its own always-visible bar in Stage 29 —
+// see renderMonsterHpBar. Multiplier stays here because it's a wave-count
+// concept tied to the statblock, not a per-instance fight value.)
+function renderMonsterPeekBody(m, idx) {
+  const mult = (typeof m.mult === 'number' && m.mult >= 1) ? m.mult : 1;
+  return `
+    <div class="node-mon-hpmult">
+      <span style="margin-left:auto;">
+        × <span class="mult-stepper ${mult > 1 ? 'active' : ''}" data-peek-mult-wrap="${idx}">
+          <button class="mult-btn" data-peek-mult-delta="${idx},-1" type="button">−</button>
+          <span class="mult-num">${mult}</span>
+          <button class="mult-btn" data-peek-mult-delta="${idx},1" type="button">+</button>
+        </span>
+      </span>
+    </div>
+    ${renderAbilityGrid(m, idx)}
+    ${renderSaveRow(m, idx)}
+    ${renderHordeRow(m, idx)}
+  `;
+}
+
+// Compute mod from a score. Workshop stores ability as either number or
+// [score, '+0']-style pair (per the v0.4.2 schema dump). Be tolerant.
+function _scoreOf(p) { if (Array.isArray(p)) return parseInt(p[0]) || 10; if (typeof p === 'number') return p; return parseInt(p) || 10; }
+function _modOf(score) { return Math.floor((score - 10) / 2); }
+// Compose the display name used in roll dispatches. Mirrors what the
+// action-roll dispatcher does (see dispatchMonsterRoll) so peek-body
+// rolls and action rolls render identically in Beyond20:
+//   "C Cracked-tooth — Goblin"  (letter + des
