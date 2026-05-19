@@ -77,18 +77,7 @@ function rqAdjustNpcSkinHpByNodeId(nodeId, delta) {
   rqSetNpcSkinHpByNodeId(nodeId, hp.current + Number(delta || 0));
 }
 function rqNpcCombatHpHtml(node) {
-  const skin = rqGetNpcSkinData(node);
-  if (!skin) return '';
-  const hp = rqGetNpcSkinHp(node);
-  const id = rqEscapeHtmlLite(node?.id ?? '');
-  return `<div class="npc-combat-hp-wrap" data-node-id="${id}">
-    <span class="npc-combat-hp-label">HP</span>
-    <input class="npc-combat-hp-input" type="number" value="${hp.current}" min="0" max="${hp.max}" data-node-id="${id}">
-    <button type="button" class="npc-combat-hp-step" data-delta="-1" data-node-id="${id}">−</button>
-    <button type="button" class="npc-combat-hp-step" data-delta="1" data-node-id="${id}">+</button>
-    <span class="npc-combat-hp-max">/ ${hp.max}</span>\n    <button type="button" class="npc-combat-hp-undo" data-node-id="${id}" title="Undo previous HP change">↶</button>
-    <span class="npc-combat-hp-state">${rqNpcHpStateBadge(hp.current, hp.max)}</span>
-  </div>`;
+  return rqNpcHpbarHtml_v154(node);
 }
 function rqNpcMonsterCountsForTeamup() {
   try {
@@ -18063,5 +18052,202 @@ function rqRenderNpcEncounterMonsterInset(node) {
   if (document.body) mo.observe(document.body, { childList:true, subtree:true });
   setTimeout(enhanceNpcInsets, 150);
   setTimeout(enhanceNpcInsets, 700);
+})();
+
+
+
+// v1.3.54 — NPC HP bar parity with encounter monster rows.
+// Uses the same visible HPBar classes as encounter monsters:
+// node-mon-hpbar, hpbar-input, hpbar-tick, hpbar-max, hpbar-bloodied, hpbar-undo.
+window.__rqNpcHpUndoStack_v154 = window.__rqNpcHpUndoStack_v154 || [];
+
+function rqAllCanvasNodes_v154() {
+  try {
+    if (typeof state !== 'undefined' && state?.nodes?.values) return Array.from(state.nodes.values());
+  } catch (_) {}
+  try {
+    if (typeof nodes !== 'undefined' && Array.isArray(nodes)) return nodes;
+  } catch (_) {}
+  return [];
+}
+
+function rqFindCanvasNode_v154(nodeId) {
+  const id = String(nodeId || '');
+  return rqAllCanvasNodes_v154().find(n => String(n.id) === id) || null;
+}
+
+function rqNpcHpbarHtml_v154(node) {
+  const skin = rqGetNpcSkinData(node);
+  if (!skin) return '';
+  const hp = rqGetNpcSkinHp(node);
+  const nodeId = rqEscapeHtmlLite(node?.id ?? '');
+  const stateBadge = rqNpcHpStateBadge(hp.current, hp.max);
+  const threshold = (skin.actions || skin.snapshot?.actions || []).some(a => a?.bloodiedDamage || a?.damageThreshold || a?.thresholdDamage);
+  return `<div class="node-mon-hpbar npc-node-hpbar" data-npc-hpbar="${nodeId}">
+      <span class="hpbar-label">HP</span>
+      <input type="text" inputmode="numeric" class="hpbar-input npc-hpbar-input" data-npc-peek-hp="${nodeId}" value="${hp.current}" title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
+      <span class="hpbar-ticks">
+        <button class="hpbar-tick npc-hpbar-tick" data-npc-hp-tick="${nodeId},1" type="button" title="+1 HP">▴</button>
+        <button class="hpbar-tick npc-hpbar-tick" data-npc-hp-tick="${nodeId},-1" type="button" title="−1 HP">▾</button>
+      </span>
+      <span class="hpbar-max">/ ${hp.max}</span>
+      ${stateBadge || (threshold ? '<span class="hpbar-bloodied" title="This stat block has HP-threshold damage actions">Bloodied at ≤50%</span>' : '<span class="hpbar-bloodied hidden"></span>')}
+      <button class="hpbar-undo npc-hpbar-undo hidden" data-npc-hp-undo="${nodeId}" type="button" title="No previous HP value to revert to" disabled>↶</button>
+    </div>`;
+}
+
+function rqRefreshNpcHpbar_v154(nodeId) {
+  const node = rqFindCanvasNode_v154(nodeId);
+  if (!node) return;
+  const hp = rqGetNpcSkinHp(node);
+  document.querySelectorAll(`.npc-node-hpbar[data-npc-hpbar="${CSS.escape(String(nodeId))}"]`).forEach(bar => {
+    const input = bar.querySelector('.npc-hpbar-input');
+    if (input && document.activeElement !== input) input.value = hp.current;
+    const max = bar.querySelector('.hpbar-max');
+    if (max) max.textContent = `/ ${hp.max}`;
+    const badgeOld = bar.querySelector('.mon-hp-state-badge, .hpbar-bloodied');
+    const badgeHtml = rqNpcHpStateBadge(hp.current, hp.max);
+    if (badgeOld) {
+      if (badgeHtml) badgeOld.outerHTML = badgeHtml;
+      else badgeOld.outerHTML = '<span class="hpbar-bloodied hidden"></span>';
+    }
+    const undo = bar.querySelector('.npc-hpbar-undo');
+    if (undo) {
+      const canUndo = window.__rqNpcHpUndoStack_v154.some(x => String(x.nodeId) === String(nodeId));
+      undo.classList.toggle('hidden', !canUndo);
+      undo.disabled = !canUndo;
+      undo.title = canUndo ? 'Undo previous HP value' : 'No previous HP value to revert to';
+    }
+  });
+}
+
+function rqSetNpcHpbarValue_v154(nodeId, nextHp, opts) {
+  const node = rqFindCanvasNode_v154(nodeId);
+  if (!node) return;
+  const hp = rqGetNpcSkinHp(node);
+  if (!(opts && opts.skipUndo)) {
+    window.__rqNpcHpUndoStack_v154.push({ nodeId: String(nodeId), hp: hp.current });
+    if (window.__rqNpcHpUndoStack_v154.length > 60) window.__rqNpcHpUndoStack_v154.shift();
+  }
+  const max = hp.max || Number(nextHp) || 0;
+  const clamped = Math.max(0, Math.min(Number(nextHp) || 0, max));
+  const skin = rqGetNpcSkinData(node);
+  if (skin) {
+    skin.hp_current = clamped;
+    skin.currentHP = clamped;
+    skin.currentHp = clamped;
+    skin.hpCurrent = clamped;
+  }
+  node.fields = node.fields || {};
+  node.fields.npcCurrentHP = clamped;
+  try { refreshNodeFace(node); } catch (e) { rqRefreshNpcHpbar_v154(nodeId); }
+  if (typeof scheduleSave === 'function') scheduleSave();
+  else if (typeof saveNow === 'function') saveNow();
+  setTimeout(() => rqRefreshNpcHpbar_v154(nodeId), 20);
+}
+
+function rqUndoNpcHpbar_v154(nodeId) {
+  const id = String(nodeId);
+  for (let i = window.__rqNpcHpUndoStack_v154.length - 1; i >= 0; i--) {
+    const item = window.__rqNpcHpUndoStack_v154[i];
+    if (String(item.nodeId) !== id) continue;
+    window.__rqNpcHpUndoStack_v154.splice(i, 1);
+    rqSetNpcHpbarValue_v154(id, item.hp, { skipUndo: true });
+    return;
+  }
+  rqRefreshNpcHpbar_v154(id);
+}
+
+function rqApplyNpcHpbarInput_v154(input) {
+  const nodeId = input.dataset.npcPeekHp;
+  const node = rqFindCanvasNode_v154(nodeId);
+  if (!node) return;
+  const hp = rqGetNpcSkinHp(node);
+  const raw = String(input.value || '').trim();
+  let next = hp.current;
+  if (/^[+-]\s*\d+/.test(raw)) next = hp.current + Number(raw.replace(/\s+/g, ''));
+  else if (raw !== '') next = Number(raw);
+  rqSetNpcHpbarValue_v154(nodeId, next);
+}
+
+// Replace old npc-combat HP blocks with true encounter-style hpbar markup.
+function rqUpgradeNpcHpBars_v154() {
+  document.querySelectorAll('.npc-combat-hp-wrap').forEach(old => {
+    const nodeId = old.dataset.nodeId || old.querySelector('[data-node-id]')?.dataset?.nodeId;
+    const node = rqFindCanvasNode_v154(nodeId);
+    if (!node || !rqGetNpcSkinData(node)) return;
+    old.outerHTML = rqNpcHpbarHtml_v154(node);
+  });
+}
+
+(function(){
+  if (window.__rqNpcHpbarParityDelegated_v154) return;
+  window.__rqNpcHpbarParityDelegated_v154 = true;
+
+  document.addEventListener('mousedown', e => {
+    if (e.target.closest?.('.npc-node-hpbar')) e.stopPropagation();
+  }, true);
+
+  document.addEventListener('focusin', e => {
+    const input = e.target.closest?.('.npc-hpbar-input');
+    if (!input) return;
+    setTimeout(() => { try { input.select(); } catch (_) {} }, 0);
+  }, true);
+
+  document.addEventListener('click', e => {
+    const input = e.target.closest?.('.npc-hpbar-input');
+    if (input) {
+      e.stopPropagation();
+      setTimeout(() => { try { input.select(); } catch (_) {} }, 0);
+      return;
+    }
+    const tick = e.target.closest?.('.npc-hpbar-tick');
+    if (tick) {
+      e.preventDefault();
+      e.stopPropagation();
+      const [nodeId, delta] = String(tick.dataset.npcHpTick || '').split(',');
+      const node = rqFindCanvasNode_v154(nodeId);
+      if (!node) return;
+      const hp = rqGetNpcSkinHp(node);
+      rqSetNpcHpbarValue_v154(nodeId, hp.current + Number(delta || 0));
+      return;
+    }
+    const undo = e.target.closest?.('.npc-hpbar-undo');
+    if (undo) {
+      e.preventDefault();
+      e.stopPropagation();
+      rqUndoNpcHpbar_v154(undo.dataset.npcHpUndo);
+    }
+  }, true);
+
+  document.addEventListener('keydown', e => {
+    const input = e.target.closest?.('.npc-hpbar-input');
+    if (!input) return;
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      rqApplyNpcHpbarInput_v154(input);
+      input.blur();
+    } else if (e.key === 'Escape') {
+      const node = rqFindCanvasNode_v154(input.dataset.npcPeekHp);
+      if (node) input.value = rqGetNpcSkinHp(node).current;
+      input.blur();
+    }
+  }, true);
+
+  document.addEventListener('change', e => {
+    const input = e.target.closest?.('.npc-hpbar-input');
+    if (!input) return;
+    e.stopPropagation();
+    rqApplyNpcHpbarInput_v154(input);
+  }, true);
+
+  const mo = new MutationObserver(() => {
+    clearTimeout(window.__rqNpcHpbarUpgradeT);
+    window.__rqNpcHpbarUpgradeT = setTimeout(rqUpgradeNpcHpBars_v154, 80);
+  });
+  if (document.body) mo.observe(document.body, { childList: true, subtree: true });
+  setTimeout(rqUpgradeNpcHpBars_v154, 100);
+  setTimeout(rqUpgradeNpcHpBars_v154, 600);
 })();
 
