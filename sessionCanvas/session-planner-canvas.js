@@ -17846,3 +17846,222 @@ function rqWireNpcHpParityControls(root) { if (window.__rqNpcHpDelegatedControls
   }, true);
 })();
 
+
+
+// v1.3.53 — NPC monster inset parity with encounter monster rows.
+// The NPC inset now uses encounter-style classes/data attributes so the same
+// front-end handlers can operate on it: book, HP field, stepper, undo, action buttons.
+function rqNpcAsEncounterMonsterInstance(node) {
+  const skin = rqGetNpcSkinData(node);
+  if (!skin) return null;
+  const sn = skin.snapshot || skin;
+  const hp = rqGetNpcSkinHp(node);
+  return {
+    _fromNpcSkin: true,
+    _sourceNodeId: node.id,
+    monster_id: skin.monster_id || sn.id || ('npc-' + node.id),
+    nameOverride: skin.nameOverride || skin.displayName || node.title || sn.name || 'NPC',
+    hp_current: hp.current,
+    hp_max: hp.max,
+    currentHP: hp.current,
+    maxHP: hp.max,
+    snapshot: {
+      ...sn,
+      name: sn.name || skin.name || node.title || 'NPC',
+      hp: hp.max,
+      maxHP: hp.max,
+      currentHP: hp.current,
+      ac: sn.ac ?? skin.ac ?? '',
+      cr: sn.cr ?? skin.cr ?? '0',
+      actions: sn.actions || skin.actions || [],
+      special_abilities: sn.special_abilities || skin.special_abilities || skin.special || [],
+      spells: sn.spells || skin.spells || []
+    },
+    mult: skin.mult || 1,
+    hiddenActions: skin.hiddenActions || {},
+    actionOverrides: skin.actionOverrides || {},
+    _override: skin._override || {}
+  };
+}
+
+function rqRenderNpcEncounterMonsterInset(node) {
+  const m = rqNpcAsEncounterMonsterInstance(node);
+  if (!m) return '';
+  const sn = m.snapshot || {};
+  const hp = rqGetNpcSkinHp(node);
+  const nodeId = rqEscapeHtmlLite(node.id);
+
+  const actions = (sn.actions || []).filter(a => {
+    const ov = (m.actionOverrides && m.actionOverrides[a.name]) || a._override || {};
+    return !(ov.hidden || a.hidden);
+  });
+
+  const actionButtons = actions.map((a, i) => {
+    const ov = (m.actionOverrides && m.actionOverrides[a.name]) || a._override || {};
+    const name = rqEscapeHtmlLite((ov.displayName || ov.name || a.displayName || a.name || 'Action'));
+    const mechanics = (typeof resolveAbilityMechanics === 'function') ? resolveAbilityMechanics({...a, _override: ov}) : {};
+    const range = mechanics.range || a.range || a.reach || '';
+    const dmg = mechanics.damage || a.damage || '';
+    const dmgType = mechanics.damageType || a.dmgType || a.damageType || '';
+    const chip = [
+      range ? `[${range}]` : '',
+      dmg ? `${dmg}${dmgType ? ' ' + dmgType : ''}` : ''
+    ].filter(Boolean).join(' ');
+    return `<button type="button" class="node-mon-action npc-enc-action" data-npc-mon-action="${nodeId},${i}" title="Roll ${name}">
+      🎲 <span class="node-mon-action-name">${name}</span>${chip ? ` <span class="node-mon-action-chip">${rqEscapeHtmlLite(chip)}</span>` : ''}
+    </button>
+    <button type="button" class="node-mon-action-edit npc-enc-action-edit" data-npc-mon-edit="${nodeId},${i}" title="Override action">✎</button>`;
+  }).join('');
+
+  const specials = sn.special_abilities || sn.special || [];
+  const passive = (typeof rqPassiveFeatureChips === 'function')
+    ? rqPassiveFeatureChips(specials, 0, { showHidden: false, monster: m })
+    : '';
+
+  return `<div class="npc-enc-monster-card node-monster-row enc-monster-row" data-npc-node-id="${nodeId}" data-node-id="${nodeId}">
+    <div class="node-monster-mainline">
+      <button type="button" class="node-mon-book npc-enc-book" data-npc-mon-book="${nodeId}" title="Open full stat block">📖</button>
+      <span class="node-mon-name">${rqEscapeHtmlLite(sn.name || m.nameOverride || 'NPC Statblock')}</span>
+      <span class="node-mon-meta">CR ${rqEscapeHtmlLite(sn.cr ?? '0')} · HP ${hp.max} · AC ${rqEscapeHtmlLite(sn.ac ?? '')}</span>
+    </div>
+
+    <div class="node-mon-hp-row">
+      <span class="node-mon-hp-label">HP</span>
+      <input class="node-mon-hp-input npc-enc-hp-input" type="text" value="${hp.current}" data-npc-node-id="${nodeId}">
+      <div class="node-mon-hp-stepper">
+        <button type="button" class="node-mon-hp-step npc-enc-hp-step" data-delta="1" data-npc-node-id="${nodeId}">▲</button>
+        <button type="button" class="node-mon-hp-step npc-enc-hp-step" data-delta="-1" data-npc-node-id="${nodeId}">▼</button>
+      </div>
+      <span class="node-mon-hp-max">/ ${hp.max}</span>
+      <button type="button" class="node-mon-hp-undo npc-enc-hp-undo" data-npc-node-id="${nodeId}" title="Undo previous HP change">↶</button>
+      <span class="npc-combat-hp-state">${rqNpcHpStateBadge(hp.current, hp.max)}</span>
+    </div>
+
+    <div class="node-mon-actions npc-enc-actions">${actionButtons}</div>
+    ${passive}
+  </div>`;
+}
+
+// Replace the old NPC-only HP block with the encounter-style inset after render.
+(function(){
+  if (window.__rqNpcInsetParity_v153) return;
+  window.__rqNpcInsetParity_v153 = true;
+
+  function getNode(id){
+    return (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(id));
+  }
+
+  function applyHp(nodeId, raw){
+    const node = getNode(nodeId);
+    if (!node) return;
+    const hp = rqGetNpcSkinHp(node);
+    const s = String(raw ?? '').trim();
+    let next = hp.current;
+    if (/^[+-]\s*\d+/.test(s)) next = hp.current + Number(s.replace(/\s+/g, ''));
+    else if (s !== '') next = Number(s);
+    rqSetNpcSkinHpByNodeId(nodeId, next);
+  }
+
+  function enhanceNpcInsets(){
+    document.querySelectorAll('.npc-combat-hp-wrap').forEach(wrap => {
+      const nodeId = wrap.dataset.nodeId || wrap.querySelector('[data-node-id]')?.dataset.nodeId;
+      const node = getNode(nodeId);
+      if (!node || !rqGetNpcSkinData(node)) return;
+      const card = wrap.closest('.node, .canvas-node, .rq-node') || wrap.parentElement;
+      if (!card || card.querySelector('.npc-enc-monster-card')) return;
+      const statsLine = [...card.querySelectorAll('*')].find(el => /STATS:\s*/i.test(el.textContent || ''));
+      if (statsLine) {
+        const oldInset = wrap.closest('.npc-combat-hp-wrap');
+        oldInset?.remove();
+        statsLine.insertAdjacentHTML('afterend', rqRenderNpcEncounterMonsterInset(node));
+      }
+    });
+  }
+
+  document.addEventListener('focusin', e => {
+    const input = e.target.closest?.('.npc-enc-hp-input');
+    if (!input) return;
+    setTimeout(() => { try { input.select(); } catch(_){} }, 0);
+  }, true);
+
+  document.addEventListener('click', e => {
+    const input = e.target.closest?.('.npc-enc-hp-input');
+    if (input) {
+      e.stopPropagation();
+      setTimeout(() => { try { input.select(); } catch(_){} }, 0);
+      return;
+    }
+
+    const step = e.target.closest?.('.npc-enc-hp-step');
+    if (step) {
+      e.preventDefault(); e.stopPropagation();
+      const nodeId = step.dataset.npcNodeId;
+      const node = getNode(nodeId);
+      if (!node) return;
+      const hp = rqGetNpcSkinHp(node);
+      rqSetNpcSkinHpByNodeId(nodeId, hp.current + Number(step.dataset.delta || 0));
+      return;
+    }
+
+    const undo = e.target.closest?.('.npc-enc-hp-undo');
+    if (undo) {
+      e.preventDefault(); e.stopPropagation();
+      rqUndoNpcHpChange(undo.dataset.npcNodeId);
+      return;
+    }
+
+    const book = e.target.closest?.('.npc-enc-book');
+    if (book) {
+      e.preventDefault(); e.stopPropagation();
+      const node = getNode(book.dataset.npcMonBook);
+      const skin = node && rqGetNpcSkinData(node);
+      if (skin && typeof openMonsterStatblockModal === 'function') openMonsterStatblockModal(skin.snapshot || skin);
+      else if (skin && typeof showMonsterStatblock === 'function') showMonsterStatblock(skin.snapshot || skin);
+      return;
+    }
+
+    const act = e.target.closest?.('.npc-enc-action');
+    if (act) {
+      e.preventDefault(); e.stopPropagation();
+      const [nodeId, idx] = String(act.dataset.npcMonAction || '').split(',');
+      const node = getNode(nodeId);
+      const skin = node && rqGetNpcSkinData(node);
+      const action = (skin?.snapshot?.actions || skin?.actions || [])[Number(idx)];
+      if (action && typeof rollNpcAction === 'function') rollNpcAction(node, action, Number(idx));
+      else if (action && typeof dispatchMonsterActionRoll === 'function') dispatchMonsterActionRoll(action, skin.snapshot || skin);
+      return;
+    }
+  }, true);
+
+  document.addEventListener('keydown', e => {
+    const input = e.target.closest?.('.npc-enc-hp-input');
+    if (!input) return;
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      applyHp(input.dataset.npcNodeId, input.value);
+      input.blur();
+    }
+    if (e.key === 'Escape') {
+      const node = getNode(input.dataset.npcNodeId);
+      if (node) input.value = rqGetNpcSkinHp(node).current;
+      input.blur();
+    }
+  }, true);
+
+  document.addEventListener('change', e => {
+    const input = e.target.closest?.('.npc-enc-hp-input');
+    if (!input) return;
+    e.stopPropagation();
+    applyHp(input.dataset.npcNodeId, input.value);
+  }, true);
+
+  const mo = new MutationObserver(() => {
+    clearTimeout(window.__rqNpcInsetParityT);
+    window.__rqNpcInsetParityT = setTimeout(enhanceNpcInsets, 100);
+  });
+  if (document.body) mo.observe(document.body, { childList:true, subtree:true });
+  setTimeout(enhanceNpcInsets, 150);
+  setTimeout(enhanceNpcInsets, 700);
+})();
+
