@@ -18770,3 +18770,226 @@ function rqRenderNpcEncounterMonsterRows_v156(node) {
   }
 })();
 
+
+
+// v1.3.57 — SINGLE authoritative NPC HP handler.
+// This intentionally suppresses every older NPC HP handler path before it can run.
+// It owns all NPC HP inputs/buttons, parses ±N exactly once, and writes to node.fields.skin.
+(function(){
+  if (window.__rqNpcHpSingleHandler_v157) return;
+  window.__rqNpcHpSingleHandler_v157 = true;
+
+  window.__rqNpcHpUndo_v157 = window.__rqNpcHpUndo_v157 || [];
+
+  function allNodes(){
+    try { if (typeof state !== 'undefined' && state?.nodes?.values) return Array.from(state.nodes.values()); } catch (_) {}
+    return [];
+  }
+
+  function findNode(id){
+    id = String(id || '');
+    return allNodes().find(n => String(n.id) === id) || null;
+  }
+
+  function skin(node){
+    const f = node?.fields || {};
+    const d = node?.data || {};
+    return f.skin || f.monsterSkin || f.npcMonsterSkin || f.statblock || f.monster || f.attachedMonster ||
+           d.skin || d.monsterSkin || d.npcMonsterSkin || d.statblock || d.monster || d.attachedMonster ||
+           d.npc?.monsterSkin || d.npc?.statblock || d.npc?.monster || null;
+  }
+
+  function hp(node){
+    const s = skin(node) || {};
+    const snap = s.snapshot || s;
+    const max = Number(s.hp_max ?? s.maxHP ?? s.maxHp ?? s.hpMax ?? snap.maxHP ?? snap.hp ?? s.hp ?? 0) || 0;
+    const cur = Number(s.hp_current ?? s.currentHP ?? s.currentHp ?? s.hpCurrent ?? node?.fields?.npcCurrentHP ?? node?.fields?.currentHP ?? max);
+    return { current: Number.isFinite(cur) ? cur : max, max };
+  }
+
+  function write(node, next, opts){
+    const s = skin(node);
+    if (!node || !s) return;
+    const old = hp(node);
+    const clamped = Math.max(0, Math.min(Number(next) || 0, old.max || Number(next) || 0));
+
+    if (!(opts && opts.skipUndo)) {
+      window.__rqNpcHpUndo_v157.push({ nodeId: String(node.id), hp: old.current });
+      if (window.__rqNpcHpUndo_v157.length > 60) window.__rqNpcHpUndo_v157.shift();
+    }
+
+    s.hp_current = clamped;
+    s.currentHP = clamped;
+    s.currentHp = clamped;
+    s.hpCurrent = clamped;
+
+    if (s.snapshot) {
+      s.snapshot.currentHP = clamped;
+      s.snapshot.hp_current = clamped;
+    }
+
+    node.fields = node.fields || {};
+    node.fields.npcCurrentHP = clamped;
+    node.fields.currentHP = clamped;
+
+    try { refreshNodeFace(node); } catch (err) { console.warn('[v1.3.57 NPC HP] refresh failed', err); }
+
+    if (typeof scheduleSave === 'function') scheduleSave();
+    else if (typeof saveNow === 'function') saveNow();
+  }
+
+  function parse(raw, current){
+    const s = String(raw ?? '').trim();
+    if (s === '') return current;
+    if (/^[+-]\s*\d+/.test(s)) return current + Number(s.replace(/\s+/g, ''));
+    return Number(s);
+  }
+
+  function nodeIdFrom(el){
+    const bar = el.closest?.('[data-npc-hpbar-v156], [data-npc-hpbar], .npc-node-hpbar, .npc-combat-hp-wrap, .npc-enc-monster-card');
+    return el.dataset.npcPeekHpV156 ||
+           el.dataset.npcPeekHp ||
+           el.dataset.nodeId ||
+           bar?.dataset?.npcHpbarV156 ||
+           bar?.dataset?.npcHpbar ||
+           bar?.dataset?.nodeId ||
+           "";
+  }
+
+  function isNpcHpTarget(el){
+    return !!el?.closest?.(
+      '[data-npc-peek-hp-v156], [data-npc-hp-tick-v156], [data-npc-hp-undo-v156], ' +
+      '.npc-hpbar-input, .npc-hpbar-tick, .npc-hpbar-undo, ' +
+      '.npc-combat-hp-input, .npc-combat-hp-step, .npc-combat-hp-undo, ' +
+      '.npc-enc-hp-input, .npc-enc-hp-step, .npc-enc-hp-undo'
+    );
+  }
+
+  function getInput(el){
+    return el.closest?.('[data-npc-peek-hp-v156], .npc-hpbar-input, .npc-combat-hp-input, .npc-enc-hp-input');
+  }
+
+  function getTick(el){
+    return el.closest?.('[data-npc-hp-tick-v156], .npc-hpbar-tick, .npc-combat-hp-step, .npc-enc-hp-step');
+  }
+
+  function getUndo(el){
+    return el.closest?.('[data-npc-hp-undo-v156], .npc-hpbar-undo, .npc-combat-hp-undo, .npc-enc-hp-undo');
+  }
+
+  function tickDelta(btn){
+    if (btn.dataset.npcHpTickV156) {
+      const parts = String(btn.dataset.npcHpTickV156).split(',');
+      return { nodeId: parts[0], delta: Number(parts[1] || 0) };
+    }
+    if (btn.dataset.npcHpTick) {
+      const parts = String(btn.dataset.npcHpTick).split(',');
+      return { nodeId: parts[0], delta: Number(parts[1] || 0) };
+    }
+    return { nodeId: nodeIdFrom(btn), delta: Number(btn.dataset.delta || 0) };
+  }
+
+  function refreshVisible(node){
+    setTimeout(() => {
+      const h = hp(node);
+      document.querySelectorAll(
+        `[data-npc-hpbar-v156="${CSS.escape(String(node.id))}"], [data-npc-hpbar="${CSS.escape(String(node.id))}"], [data-node-id="${CSS.escape(String(node.id))}"]`
+      ).forEach(bar => {
+        const input = bar.querySelector?.('[data-npc-peek-hp-v156], .npc-hpbar-input, .npc-combat-hp-input, .npc-enc-hp-input');
+        if (input && document.activeElement !== input) input.value = h.current;
+      });
+    }, 20);
+  }
+
+  // Capture and stop before older delegated handlers can fire.
+  document.addEventListener('mousedown', e => {
+    if (isNpcHpTarget(e.target)) e.stopImmediatePropagation();
+  }, true);
+
+  document.addEventListener('click', e => {
+    const input = getInput(e.target);
+    if (input) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setTimeout(() => { try { input.focus(); input.select(); } catch(_){} }, 0);
+      return;
+    }
+
+    const tick = getTick(e.target);
+    if (tick) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const info = tickDelta(tick);
+      const node = findNode(info.nodeId);
+      if (!node) return;
+      const h = hp(node);
+      write(node, h.current + info.delta);
+      refreshVisible(node);
+      return;
+    }
+
+    const undo = getUndo(e.target);
+    if (undo) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const id = nodeIdFrom(undo) || undo.dataset.npcHpUndoV156 || undo.dataset.npcHpUndo || undo.dataset.nodeId;
+      const node = findNode(id);
+      if (!node) return;
+      for (let i = window.__rqNpcHpUndo_v157.length - 1; i >= 0; i--) {
+        const item = window.__rqNpcHpUndo_v157[i];
+        if (String(item.nodeId) !== String(id)) continue;
+        window.__rqNpcHpUndo_v157.splice(i, 1);
+        write(node, item.hp, { skipUndo: true });
+        refreshVisible(node);
+        return;
+      }
+    }
+  }, true);
+
+  document.addEventListener('focusin', e => {
+    const input = getInput(e.target);
+    if (!input) return;
+    setTimeout(() => { try { input.select(); } catch(_){} }, 0);
+  }, true);
+
+  document.addEventListener('keydown', e => {
+    const input = getInput(e.target);
+    if (!input) return;
+
+    e.stopImmediatePropagation();
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const id = nodeIdFrom(input);
+      const node = findNode(id);
+      if (!node) return;
+      const h = hp(node);
+      write(node, parse(input.value, h.current));
+      input.blur();
+      refreshVisible(node);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      const node = findNode(nodeIdFrom(input));
+      if (node) input.value = hp(node).current;
+      input.blur();
+    }
+  }, true);
+
+  document.addEventListener('change', e => {
+    const input = getInput(e.target);
+    if (!input) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const node = findNode(nodeIdFrom(input));
+    if (!node) return;
+    const h = hp(node);
+    write(node, parse(input.value, h.current));
+    refreshVisible(node);
+  }, true);
+
+  window.rqNpcHpDebug_v157 = function(id){
+    const node = findNode(id);
+    return { node, skin: skin(node), hp: hp(node), undo: window.__rqNpcHpUndo_v157 };
+  };
+})();
+
