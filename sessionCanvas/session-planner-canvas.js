@@ -1,114 +1,4 @@
 
-// v1.3.49 — direct NPC combat controls + team-up parity.
-function rqEscapeHtmlLite(v) {
-  if (typeof escapeHtml === 'function') return escapeHtml(v);
-  if (typeof escHtml === 'function') return escHtml(v);
-  return String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-}
-function rqIsNpcNode(node) {
-  return !!node && (node.type === 'npc' || node.kind === 'npc' || node.nodeType === 'npc' || /npc/i.test(String(node.type || node.kind || '')));
-}
-function rqGetNpcSkinData(node) {
-  const d = node?.data || {};
-  const f = node?.fields || {};
-  return f.skin || f.monsterSkin || f.npcMonsterSkin || f.statblock || f.monster || f.attachedMonster ||
-         d.skin || d.monsterSkin || d.npcMonsterSkin || d.statblock || d.monster || d.attachedMonster ||
-         d.npc?.monsterSkin || d.npc?.statblock || d.npc?.monster || null;
-}
-function rqNpcSkinName(node) {
-  const s = rqGetNpcSkinData(node) || {};
-  return s.displayName || s.name || s.title || node?.title || node?.name || 'NPC Statblock';
-}
-function rqGetNpcSkinHp(node) {
-  const skin = rqGetNpcSkinData(node) || {};
-  const f = node?.fields || {};
-  const d = node?.data || {};
-  const sn = skin.snapshot || skin;
-  const max = Number(
-    skin.hp_max ?? skin.maxHP ?? skin.maxHp ?? skin.hpMax ?? skin.max_hp ??
-    f.npcMaxHP ?? d.npcMaxHP ?? f.maxHP ?? d.maxHP ?? f.hpMax ?? d.hpMax ??
-    sn.hp ?? skin.hp ?? f.hp ?? d.hp ?? 0
-  ) || 0;
-  const cur = Number(
-    skin.hp_current ?? skin.currentHP ?? skin.currentHp ?? skin.hpCurrent ?? skin.current_hp ??
-    f.npcCurrentHP ?? d.npcCurrentHP ?? f.currentHP ?? d.currentHP ?? f.hpCurrent ?? d.hpCurrent ??
-    max
-  ) || max || 0;
-  return { current: cur, max };
-}
-function rqNpcHpStateLabel(currentHp, maxHp) {
-  const hp = Number(currentHp), max = Number(maxHp);
-  if (!Number.isFinite(hp) || !Number.isFinite(max) || max <= 0) return '';
-  const pct = hp / max;
-  if (pct <= 0.25) return 'Rough';
-  if (pct <= 0.5) return 'Bloodied';
-  if (hp <= 5 && max <= 20) return 'Last Leg';
-  return '';
-}
-function rqNpcHpStateClass(label) {
-  return label === 'Last Leg' ? 'last-leg' : label === 'Rough' ? 'rough' : label === 'Bloodied' ? 'bloodied' : '';
-}
-function rqNpcHpStateBadge(currentHp, maxHp) {
-  const label = rqNpcHpStateLabel(currentHp, maxHp);
-  return label ? `<span class="mon-hp-state-badge ${rqNpcHpStateClass(label)}" title="HP state">${rqEscapeHtmlLite(label)}</span>` : '';
-}
-function rqSetNpcSkinHpByNodeId(nodeId, nextHp) {
-  const arr = (typeof nodes !== 'undefined' ? nodes : []);
-  const node = arr.find(n => String(n.id) === String(nodeId));
-  if (!node) return;
-  const skin = rqGetNpcSkinData(node);
-  if (!skin) return;
-  const hp = rqGetNpcSkinHp(node);
-  const clamped = Math.max(0, Math.min(Number(nextHp) || 0, hp.max || Number(nextHp) || 0));
-  skin.hp_current = clamped;
-  skin.currentHP = clamped;
-  skin.currentHp = clamped;
-  skin.hpCurrent = clamped;
-  node.fields = node.fields || {};
-  node.fields.npcCurrentHP = clamped;
-  try { refreshNodeFace(node); } catch (e) { console.warn('[rqSetNpcSkinHpByNodeId] refresh failed', e); }
-  if (typeof scheduleSave === 'function') scheduleSave();
-  else if (typeof saveNow === 'function') saveNow();
-}
-function rqAdjustNpcSkinHpByNodeId(nodeId, delta) {
-  const node = (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(nodeId));
-  if (!node) return;
-  const hp = rqGetNpcSkinHp(node);
-  rqSetNpcSkinHpByNodeId(nodeId, hp.current + Number(delta || 0));
-}
-function rqNpcCombatHpHtml(node) {
-  return rqNpcHpbarHtml_v154(node);
-}
-function rqNpcMonsterCountsForTeamup() {
-  try {
-    return (typeof nodes !== 'undefined' ? nodes : [])
-      .filter(n => rqIsNpcNode(n) && rqGetNpcSkinData(n))
-      .map(n => {
-        const skin = rqGetNpcSkinData(n);
-        const hp = rqGetNpcSkinHp(n);
-        return {
-          id: `npc-${n.id}`,
-          nodeId: n.id,
-          sourceNodeId: n.id,
-          name: rqNpcSkinName(n),
-          cr: skin.cr ?? skin.challenge_rating ?? skin.challengeRating ?? '0',
-          hp: hp.max,
-          currentHP: hp.current,
-          maxHP: hp.max,
-          ac: skin.ac ?? skin.armor_class ?? '',
-          actions: skin.actions || [],
-          special_abilities: skin.special_abilities || skin.special || [],
-          sourceNodeType: 'npc',
-          _fromNpcSkin: true
-        };
-      });
-  } catch (err) {
-    console.error('[rqNpcMonsterCountsForTeamup] failed', err);
-    return [];
-  }
-}
-window.rqNpcMonsterCountsForTeamup = rqNpcMonsterCountsForTeamup;
-
 
 // v1.3.42 — safe NPC HP state badge helper.
 function rqNpcHpStateBadge(currentHp, maxHp) {
@@ -17498,79 +17388,13 @@ function rqSafeRenderNodeFace(node) {
 
 
 
-// v1.3.49 — fallback NPC combat HP enhancer.
-(function(){
-  function cardCandidates(){
-    return [...document.querySelectorAll('.node, .canvas-node, .rq-node, [data-node-id], [data-id]')]
-      .filter(el => /STATS:\s*/i.test(el.textContent || '') && /HP\s+\d+/i.test(el.textContent || ''));
-  }
-  function resolveNode(card){
-    const txt = card.textContent || '';
-    const arr = (typeof nodes !== 'undefined' ? nodes : []);
-    return arr.find(n => rqIsNpcNode(n) && rqGetNpcSkinData(n) && txt.includes(rqNpcSkinName(n)));
-  }
-  function apply(){
-    for (const card of cardCandidates()) {
-      if (card.querySelector('.npc-combat-hp-wrap')) continue;
-      const node = resolveNode(card);
-      if (!node) continue;
-      const statsLine = [...card.querySelectorAll('*')].find(el => /STATS:\s*/i.test(el.textContent || '') && /HP\s+\d+/i.test(el.textContent || ''));
-      if (!statsLine) continue;
-      statsLine.insertAdjacentHTML('afterend', rqNpcCombatHpHtml(node));
-    }
-  }
-  document.addEventListener('input', e => {
-    if (e.target?.matches?.('.npc-combat-hp-input')) {
-      rqSetNpcSkinHpByNodeId(e.target.dataset.nodeId, e.target.value);
-    }
-  }, true);
-  document.addEventListener('click', e => {
-    const btn = e.target?.closest?.('.npc-combat-hp-step');
-    if (btn) rqAdjustNpcSkinHpByNodeId(btn.dataset.nodeId, Number(btn.dataset.delta || 0));
-  }, true);
-  window.rqApplyNpcCombatEnhancements = apply;
-  const mo = new MutationObserver(() => {
-    clearTimeout(window.__rqNpcHpEnhanceT);
-    window.__rqNpcHpEnhanceT = setTimeout(apply, 100);
-  });
-  if (document.body) mo.observe(document.body, {childList:true, subtree:true});
-  setTimeout(apply, 150);
-  setTimeout(apply, 700);
-})();
 
 
 
-// v1.3.49 — NPC team-up integration helpers.
-function rqMergeNpcSkinsIntoMonsterList(list) {
-  const base = Array.isArray(list) ? list.slice() : [];
-  const seen = new Set(base.map(x => String(x.nodeId || x.sourceNodeId || x.id || '')));
-  for (const m of rqNpcMonsterCountsForTeamup()) {
-    if (!seen.has(String(m.nodeId))) base.push(m);
-  }
-  return base;
-}
-window.rqMergeNpcSkinsIntoMonsterList = rqMergeNpcSkinsIntoMonsterList;
-(function(){
-  const names = [
-    'getLinkedEncounterMonsters',
-    'collectLinkedEncounterMonsters',
-    'getTeamupMonsters',
-    'collectTeamupMonsters',
-    'getEncounterTeamMonsters',
-    'getConnectedEncounterMonsters',
-    'collectConnectedEncounterMonsters'
-  ];
-  for (const name of names) {
-    const fn = window[name];
-    if (typeof fn === 'function' && !fn.__rqNpcTeamupWrapped) {
-      const wrapped = function(...args) {
-        return rqMergeNpcSkinsIntoMonsterList(fn.apply(this, args));
-      };
-      wrapped.__rqNpcTeamupWrapped = true;
-      window[name] = wrapped;
-    }
-  }
-})();
+
+
+
+
 
 
 
@@ -17595,1191 +17419,59 @@ function rqPassiveFeatureChips(specials, idx, opts) {
 
 
 
-// v1.3.51 — NPC HP control parity with encounter monster HP controls.
-window.__rqNpcHpUndoStack = window.__rqNpcHpUndoStack || [];
 
-function rqPushNpcHpUndo(nodeId, previousHp) {
-  window.__rqNpcHpUndoStack.push({ nodeId: String(nodeId), previousHp: Number(previousHp) || 0, ts: Date.now() });
-  if (window.__rqNpcHpUndoStack.length > 50) window.__rqNpcHpUndoStack.shift();
-}
 
-function rqUndoNpcHpChange(nodeId) {
-  const id = String(nodeId);
-  for (let i = window.__rqNpcHpUndoStack.length - 1; i >= 0; i--) {
-    const item = window.__rqNpcHpUndoStack[i];
-    if (String(item.nodeId) !== id) continue;
-    window.__rqNpcHpUndoStack.splice(i, 1);
-    rqSetNpcSkinHpByNodeId(id, item.previousHp, { skipUndo: true });
-    return true;
-  }
-  return false;
-}
 
-// Extend existing setter, preserving original behavior but adding optional undo suppression.
-if (typeof rqSetNpcSkinHpByNodeId === 'function' && !rqSetNpcSkinHpByNodeId.__rqV151Wrapped) {
-  const __rqOldSetNpcSkinHpByNodeId = rqSetNpcSkinHpByNodeId;
-  rqSetNpcSkinHpByNodeId = function(nodeId, nextHp, opts) {
-    try {
-      if (!(opts && opts.skipUndo)) {
-        const node = (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(nodeId));
-        if (node) {
-          const hp = rqGetNpcSkinHp(node);
-          rqPushNpcHpUndo(nodeId, hp.current);
-        }
-      }
-    } catch (_) {}
-    return __rqOldSetNpcSkinHpByNodeId(nodeId, nextHp);
-  };
-  rqSetNpcSkinHpByNodeId.__rqV151Wrapped = true;
-}
 
-function rqApplyNpcHpInputValue(input, nodeId) {
-  const raw = String(input.value || '').trim();
-  const node = (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(nodeId));
-  if (!node) return;
-  const hp = rqGetNpcSkinHp(node);
-  if (/^[+-]\s*\d+/.test(raw)) {
-    rqSetNpcSkinHpByNodeId(nodeId, hp.current + Number(raw.replace(/\s+/g, '')));
-  } else {
-    rqSetNpcSkinHpByNodeId(nodeId, Number(raw || 0));
-  }
-}
 
-function rqWireNpcHpParityControls(root) { if (window.__rqNpcHpDelegatedControls_v152) return;
-  (root || document).querySelectorAll('.npc-combat-hp-input').forEach(input => {
-    if (input.__rqNpcHpParityWired) return;
-    input.__rqNpcHpParityWired = true;
 
-    input.addEventListener('focus', () => {
-      try { input.select(); } catch (_) {}
-    });
-    input.addEventListener('click', () => {
-      try { input.select(); } catch (_) {}
-    });
-    input.addEventListener('keydown', e => {
-      if (e.key !== 'Enter') return;
-      e.preventDefault();
-      e.stopPropagation();
-      rqApplyNpcHpInputValue(input, input.dataset.nodeId);
-    });
-    input.addEventListener('change', e => {
-      e.stopPropagation();
-      rqApplyNpcHpInputValue(input, input.dataset.nodeId);
-    });
-  });
 
-  (root || document).querySelectorAll('.npc-combat-hp-step').forEach(btn => {
-    if (btn.__rqNpcHpParityWired) return;
-    btn.__rqNpcHpParityWired = true;
-    btn.addEventListener('click', e => {
-      e.preventDefault();
-      e.stopPropagation();
-      rqAdjustNpcSkinHpByNodeId(btn.dataset.nodeId, Number(btn.dataset.delta || 0));
-    });
-  });
 
-  (root || document).querySelectorAll('.npc-combat-hp-undo').forEach(btn => {
-    if (btn.__rqNpcHpParityWired) return;
-    btn.__rqNpcHpParityWired = true;
-    btn.addEventListener('click', e => {
-      e.preventDefault();
-      e.stopPropagation();
-      rqUndoNpcHpChange(btn.dataset.nodeId);
-    });
-  });
-}
 
-// Patch generated NPC HP control HTML after render if the undo button is missing.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// v1.3.58 — clean NPC monster inset + single HP implementation.
+// This deliberately avoids older npc-combat/npc-hpbar/npc-enc-hp class names so no legacy listener can fire.
 (function(){
-  function enhance(){
-    document.querySelectorAll('.npc-combat-hp-wrap').forEach(wrap => {
-      const id = wrap.dataset.nodeId || wrap.querySelector('[data-node-id]')?.dataset.nodeId || '';
-      if (!id) return;
-      if (!wrap.querySelector('.npc-combat-hp-undo')) {
-        const undo = document.createElement('button');
-        undo.type = 'button';
-        undo.className = 'npc-combat-hp-undo';
-        undo.dataset.nodeId = id;
-        undo.title = 'Undo previous HP change';
-        undo.textContent = '↶';
-        const max = wrap.querySelector('.npc-combat-hp-max');
-        (max || wrap).insertAdjacentElement(max ? 'afterend' : 'beforeend', undo);
-      }
-    });
-    rqWireNpcHpParityControls(document);
+  if (window.__rqNpcMonsterClean_v158) return;
+  window.__rqNpcMonsterClean_v158 = true;
+
+  const undoStack = [];
+
+  function esc(v){
+    if (typeof escHtml === 'function') return escHtml(v);
+    if (typeof escapeHtml === 'function') return escapeHtml(v);
+    return String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   }
-
-  const mo = new MutationObserver(() => {
-    clearTimeout(window.__rqNpcHpParityTimer);
-    window.__rqNpcHpParityTimer = setTimeout(enhance, 80);
-  });
-  if (document.body) mo.observe(document.body, { childList:true, subtree:true });
-  document.addEventListener('DOMContentLoaded', enhance);
-  setTimeout(enhance, 150);
-  setTimeout(enhance, 700);
-})();
-
-
-
-// v1.3.52 — NPC HP controls now use encounter-style delegated behavior.
-// This survives node-face refreshes and prevents canvas drag/select handlers from stealing clicks.
-(function(){
-  if (window.__rqNpcHpDelegatedControls_v152) return;
-  window.__rqNpcHpDelegatedControls_v152 = true;
-
-  function rqFindNpcNodeForControl(el) {
-    const id = el?.dataset?.nodeId || el?.closest?.('.npc-combat-hp-wrap')?.dataset?.nodeId;
-    if (!id) return null;
-    return (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(id)) || null;
-  }
-
-  function rqCommitNpcHpInput(input) {
-    const node = rqFindNpcNodeForControl(input);
-    if (!node) return;
-    const raw = String(input.value || '').trim();
-    const hp = rqGetNpcSkinHp(node);
-    let next = hp.current;
-
-    if (/^[+-]\s*\d+/.test(raw)) {
-      next = hp.current + Number(raw.replace(/\s+/g, ''));
-    } else if (raw !== '') {
-      next = Number(raw);
-    }
-
-    rqSetNpcSkinHpByNodeId(node.id, next);
-  }
-
-  function rqUpdateNpcHpWrapDisplay(wrap, node) {
-    if (!wrap || !node) return;
-    const hp = rqGetNpcSkinHp(node);
-    const input = wrap.querySelector('.npc-combat-hp-input');
-    if (input && document.activeElement !== input) input.value = hp.current;
-    const max = wrap.querySelector('.npc-combat-hp-max');
-    if (max) max.textContent = `/ ${hp.max}`;
-    const state = wrap.querySelector('.npc-combat-hp-state');
-    if (state) state.innerHTML = rqNpcHpStateBadge(hp.current, hp.max);
-  }
-
-  document.addEventListener('mousedown', e => {
-    if (e.target.closest?.('.npc-combat-hp-wrap')) {
-      e.stopPropagation();
-    }
-  }, true);
-
-  document.addEventListener('click', e => {
-    const input = e.target.closest?.('.npc-combat-hp-input');
-    if (input) {
-      e.stopPropagation();
-      setTimeout(() => {
-        try { input.select(); } catch (_) {}
-      }, 0);
-      return;
-    }
-
-    const step = e.target.closest?.('.npc-combat-hp-step');
-    if (step) {
-      e.preventDefault();
-      e.stopPropagation();
-      const node = rqFindNpcNodeForControl(step);
-      if (!node) return;
-      const delta = Number(step.dataset.delta || 0);
-      rqAdjustNpcSkinHpByNodeId(node.id, delta);
-      setTimeout(() => rqUpdateNpcHpWrapDisplay(step.closest('.npc-combat-hp-wrap'), node), 0);
-      return;
-    }
-
-    const undo = e.target.closest?.('.npc-combat-hp-undo');
-    if (undo) {
-      e.preventDefault();
-      e.stopPropagation();
-      const node = rqFindNpcNodeForControl(undo);
-      if (!node) return;
-      rqUndoNpcHpChange(node.id);
-      setTimeout(() => rqUpdateNpcHpWrapDisplay(undo.closest('.npc-combat-hp-wrap'), node), 0);
-    }
-  }, true);
-
-  document.addEventListener('focusin', e => {
-    const input = e.target.closest?.('.npc-combat-hp-input');
-    if (!input) return;
-    setTimeout(() => {
-      try { input.select(); } catch (_) {}
-    }, 0);
-  }, true);
-
-  document.addEventListener('keydown', e => {
-    const input = e.target.closest?.('.npc-combat-hp-input');
-    if (!input) return;
-
-    e.stopPropagation();
-
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      rqCommitNpcHpInput(input);
-      input.blur();
-      return;
-    }
-
-    if (e.key === 'Escape') {
-      const node = rqFindNpcNodeForControl(input);
-      if (node) input.value = rqGetNpcSkinHp(node).current;
-      input.blur();
-    }
-  }, true);
-
-  document.addEventListener('change', e => {
-    const input = e.target.closest?.('.npc-combat-hp-input');
-    if (!input) return;
-    e.stopPropagation();
-    rqCommitNpcHpInput(input);
-  }, true);
-})();
-
-
-
-// v1.3.53 — NPC monster inset parity with encounter monster rows.
-// The NPC inset now uses encounter-style classes/data attributes so the same
-// front-end handlers can operate on it: book, HP field, stepper, undo, action buttons.
-function rqNpcAsEncounterMonsterInstance(node) {
-  const skin = rqGetNpcSkinData(node);
-  if (!skin) return null;
-  const sn = skin.snapshot || skin;
-  const hp = rqGetNpcSkinHp(node);
-  return {
-    _fromNpcSkin: true,
-    _sourceNodeId: node.id,
-    monster_id: skin.monster_id || sn.id || ('npc-' + node.id),
-    nameOverride: skin.nameOverride || skin.displayName || node.title || sn.name || 'NPC',
-    hp_current: hp.current,
-    hp_max: hp.max,
-    currentHP: hp.current,
-    maxHP: hp.max,
-    snapshot: {
-      ...sn,
-      name: sn.name || skin.name || node.title || 'NPC',
-      hp: hp.max,
-      maxHP: hp.max,
-      currentHP: hp.current,
-      ac: sn.ac ?? skin.ac ?? '',
-      cr: sn.cr ?? skin.cr ?? '0',
-      actions: sn.actions || skin.actions || [],
-      special_abilities: sn.special_abilities || skin.special_abilities || skin.special || [],
-      spells: sn.spells || skin.spells || []
-    },
-    mult: skin.mult || 1,
-    hiddenActions: skin.hiddenActions || {},
-    actionOverrides: skin.actionOverrides || {},
-    _override: skin._override || {}
-  };
-}
-
-function rqRenderNpcEncounterMonsterInset(node) {
-  const m = rqNpcAsEncounterMonsterInstance(node);
-  if (!m) return '';
-  const sn = m.snapshot || {};
-  const hp = rqGetNpcSkinHp(node);
-  const nodeId = rqEscapeHtmlLite(node.id);
-
-  const actions = (sn.actions || []).filter(a => {
-    const ov = (m.actionOverrides && m.actionOverrides[a.name]) || a._override || {};
-    return !(ov.hidden || a.hidden);
-  });
-
-  const actionButtons = actions.map((a, i) => {
-    const ov = (m.actionOverrides && m.actionOverrides[a.name]) || a._override || {};
-    const name = rqEscapeHtmlLite((ov.displayName || ov.name || a.displayName || a.name || 'Action'));
-    const mechanics = (typeof resolveAbilityMechanics === 'function') ? resolveAbilityMechanics({...a, _override: ov}) : {};
-    const range = mechanics.range || a.range || a.reach || '';
-    const dmg = mechanics.damage || a.damage || '';
-    const dmgType = mechanics.damageType || a.dmgType || a.damageType || '';
-    const chip = [
-      range ? `[${range}]` : '',
-      dmg ? `${dmg}${dmgType ? ' ' + dmgType : ''}` : ''
-    ].filter(Boolean).join(' ');
-    return `<button type="button" class="node-mon-action npc-enc-action" data-npc-mon-action="${nodeId},${i}" title="Roll ${name}">
-      🎲 <span class="node-mon-action-name">${name}</span>${chip ? ` <span class="node-mon-action-chip">${rqEscapeHtmlLite(chip)}</span>` : ''}
-    </button>
-    <button type="button" class="node-mon-action-edit npc-enc-action-edit" data-npc-mon-edit="${nodeId},${i}" title="Override action">✎</button>`;
-  }).join('');
-
-  const specials = sn.special_abilities || sn.special || [];
-  const passive = (typeof rqPassiveFeatureChips === 'function')
-    ? rqPassiveFeatureChips(specials, 0, { showHidden: false, monster: m })
-    : '';
-
-  return `<div class="npc-enc-monster-card node-monster-row enc-monster-row" data-npc-node-id="${nodeId}" data-node-id="${nodeId}">
-    <div class="node-monster-mainline">
-      <button type="button" class="node-mon-book npc-enc-book" data-npc-mon-book="${nodeId}" title="Open full stat block">📖</button>
-      <span class="node-mon-name">${rqEscapeHtmlLite(sn.name || m.nameOverride || 'NPC Statblock')}</span>
-      <span class="node-mon-meta">CR ${rqEscapeHtmlLite(sn.cr ?? '0')} · HP ${hp.max} · AC ${rqEscapeHtmlLite(sn.ac ?? '')}</span>
-    </div>
-
-    <div class="node-mon-hp-row">
-      <span class="node-mon-hp-label">HP</span>
-      <input class="node-mon-hp-input npc-enc-hp-input" type="text" value="${hp.current}" data-npc-node-id="${nodeId}">
-      <div class="node-mon-hp-stepper">
-        <button type="button" class="node-mon-hp-step npc-enc-hp-step" data-delta="1" data-npc-node-id="${nodeId}">▲</button>
-        <button type="button" class="node-mon-hp-step npc-enc-hp-step" data-delta="-1" data-npc-node-id="${nodeId}">▼</button>
-      </div>
-      <span class="node-mon-hp-max">/ ${hp.max}</span>
-      <button type="button" class="node-mon-hp-undo npc-enc-hp-undo" data-npc-node-id="${nodeId}" title="Undo previous HP change">↶</button>
-      <span class="npc-combat-hp-state">${rqNpcHpStateBadge(hp.current, hp.max)}</span>
-    </div>
-
-    <div class="node-mon-actions npc-enc-actions">${actionButtons}</div>
-    ${passive}
-  </div>`;
-}
-
-// Replace the old NPC-only HP block with the encounter-style inset after render.
-(function(){
-  if (window.__rqNpcInsetParity_v153) return;
-  window.__rqNpcInsetParity_v153 = true;
-
-  function getNode(id){
-    return (typeof nodes !== 'undefined' ? nodes : []).find(n => String(n.id) === String(id));
-  }
-
-  function applyHp(nodeId, raw){
-    const node = getNode(nodeId);
-    if (!node) return;
-    const hp = rqGetNpcSkinHp(node);
-    const s = String(raw ?? '').trim();
-    let next = hp.current;
-    if (/^[+-]\s*\d+/.test(s)) next = hp.current + Number(s.replace(/\s+/g, ''));
-    else if (s !== '') next = Number(s);
-    rqSetNpcSkinHpByNodeId(nodeId, next);
-  }
-
-  function enhanceNpcInsets(){
-    document.querySelectorAll('.npc-combat-hp-wrap').forEach(wrap => {
-      const nodeId = wrap.dataset.nodeId || wrap.querySelector('[data-node-id]')?.dataset.nodeId;
-      const node = getNode(nodeId);
-      if (!node || !rqGetNpcSkinData(node)) return;
-      const card = wrap.closest('.node, .canvas-node, .rq-node') || wrap.parentElement;
-      if (!card || card.querySelector('.npc-enc-monster-card')) return;
-      const statsLine = [...card.querySelectorAll('*')].find(el => /STATS:\s*/i.test(el.textContent || ''));
-      if (statsLine) {
-        const oldInset = wrap.closest('.npc-combat-hp-wrap');
-        oldInset?.remove();
-        statsLine.insertAdjacentHTML('afterend', rqRenderNpcEncounterMonsterInset(node));
-      }
-    });
-  }
-
-  document.addEventListener('focusin', e => {
-    const input = e.target.closest?.('.npc-enc-hp-input');
-    if (!input) return;
-    setTimeout(() => { try { input.select(); } catch(_){} }, 0);
-  }, true);
-
-  document.addEventListener('click', e => {
-    const input = e.target.closest?.('.npc-enc-hp-input');
-    if (input) {
-      e.stopPropagation();
-      setTimeout(() => { try { input.select(); } catch(_){} }, 0);
-      return;
-    }
-
-    const step = e.target.closest?.('.npc-enc-hp-step');
-    if (step) {
-      e.preventDefault(); e.stopPropagation();
-      const nodeId = step.dataset.npcNodeId;
-      const node = getNode(nodeId);
-      if (!node) return;
-      const hp = rqGetNpcSkinHp(node);
-      rqSetNpcSkinHpByNodeId(nodeId, hp.current + Number(step.dataset.delta || 0));
-      return;
-    }
-
-    const undo = e.target.closest?.('.npc-enc-hp-undo');
-    if (undo) {
-      e.preventDefault(); e.stopPropagation();
-      rqUndoNpcHpChange(undo.dataset.npcNodeId);
-      return;
-    }
-
-    const book = e.target.closest?.('.npc-enc-book');
-    if (book) {
-      e.preventDefault(); e.stopPropagation();
-      const node = getNode(book.dataset.npcMonBook);
-      const skin = node && rqGetNpcSkinData(node);
-      if (skin && typeof openMonsterStatblockModal === 'function') openMonsterStatblockModal(skin.snapshot || skin);
-      else if (skin && typeof showMonsterStatblock === 'function') showMonsterStatblock(skin.snapshot || skin);
-      return;
-    }
-
-    const act = e.target.closest?.('.npc-enc-action');
-    if (act) {
-      e.preventDefault(); e.stopPropagation();
-      const [nodeId, idx] = String(act.dataset.npcMonAction || '').split(',');
-      const node = getNode(nodeId);
-      const skin = node && rqGetNpcSkinData(node);
-      const action = (skin?.snapshot?.actions || skin?.actions || [])[Number(idx)];
-      if (action && typeof rollNpcAction === 'function') rollNpcAction(node, action, Number(idx));
-      else if (action && typeof dispatchMonsterActionRoll === 'function') dispatchMonsterActionRoll(action, skin.snapshot || skin);
-      return;
-    }
-  }, true);
-
-  document.addEventListener('keydown', e => {
-    const input = e.target.closest?.('.npc-enc-hp-input');
-    if (!input) return;
-    e.stopPropagation();
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      applyHp(input.dataset.npcNodeId, input.value);
-      input.blur();
-    }
-    if (e.key === 'Escape') {
-      const node = getNode(input.dataset.npcNodeId);
-      if (node) input.value = rqGetNpcSkinHp(node).current;
-      input.blur();
-    }
-  }, true);
-
-  document.addEventListener('change', e => {
-    const input = e.target.closest?.('.npc-enc-hp-input');
-    if (!input) return;
-    e.stopPropagation();
-    applyHp(input.dataset.npcNodeId, input.value);
-  }, true);
-
-  const mo = new MutationObserver(() => {
-    clearTimeout(window.__rqNpcInsetParityT);
-    window.__rqNpcInsetParityT = setTimeout(enhanceNpcInsets, 100);
-  });
-  if (document.body) mo.observe(document.body, { childList:true, subtree:true });
-  setTimeout(enhanceNpcInsets, 150);
-  setTimeout(enhanceNpcInsets, 700);
-})();
-
-
-
-// v1.3.54 — NPC HP bar parity with encounter monster rows.
-// Uses the same visible HPBar classes as encounter monsters:
-// node-mon-hpbar, hpbar-input, hpbar-tick, hpbar-max, hpbar-bloodied, hpbar-undo.
-window.__rqNpcHpUndoStack_v154 = window.__rqNpcHpUndoStack_v154 || [];
-
-function rqAllCanvasNodes_v154() {
-  try {
-    if (typeof state !== 'undefined' && state?.nodes?.values) return Array.from(state.nodes.values());
-  } catch (_) {}
-  try {
-    if (typeof nodes !== 'undefined' && Array.isArray(nodes)) return nodes;
-  } catch (_) {}
-  return [];
-}
-
-function rqFindCanvasNode_v154(nodeId) {
-  const id = String(nodeId || '');
-  return rqAllCanvasNodes_v154().find(n => String(n.id) === id) || null;
-}
-
-function rqNpcHpbarHtml_v154(node) {
-  const skin = rqGetNpcSkinData(node);
-  if (!skin) return '';
-  const hp = rqGetNpcSkinHp(node);
-  const nodeId = rqEscapeHtmlLite(node?.id ?? '');
-  const stateBadge = rqNpcHpStateBadge(hp.current, hp.max);
-  const threshold = (skin.actions || skin.snapshot?.actions || []).some(a => a?.bloodiedDamage || a?.damageThreshold || a?.thresholdDamage);
-  return `<div class="node-mon-hpbar npc-node-hpbar" data-npc-hpbar="${nodeId}">
-      <span class="hpbar-label">HP</span>
-      <input type="text" inputmode="numeric" class="hpbar-input npc-hpbar-input" data-npc-peek-hp="${nodeId}" value="${hp.current}" title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
-      <span class="hpbar-ticks">
-        <button class="hpbar-tick npc-hpbar-tick" data-npc-hp-tick="${nodeId},1" type="button" title="+1 HP">▴</button>
-        <button class="hpbar-tick npc-hpbar-tick" data-npc-hp-tick="${nodeId},-1" type="button" title="−1 HP">▾</button>
-      </span>
-      <span class="hpbar-max">/ ${hp.max}</span>
-      ${stateBadge || (threshold ? '<span class="hpbar-bloodied" title="This stat block has HP-threshold damage actions">Bloodied at ≤50%</span>' : '<span class="hpbar-bloodied hidden"></span>')}
-      <button class="hpbar-undo npc-hpbar-undo hidden" data-npc-hp-undo="${nodeId}" type="button" title="No previous HP value to revert to" disabled>↶</button>
-    </div>`;
-}
-
-function rqRefreshNpcHpbar_v154(nodeId) {
-  const node = rqFindCanvasNode_v154(nodeId);
-  if (!node) return;
-  const hp = rqGetNpcSkinHp(node);
-  document.querySelectorAll(`.npc-node-hpbar[data-npc-hpbar="${CSS.escape(String(nodeId))}"]`).forEach(bar => {
-    const input = bar.querySelector('.npc-hpbar-input');
-    if (input && document.activeElement !== input) input.value = hp.current;
-    const max = bar.querySelector('.hpbar-max');
-    if (max) max.textContent = `/ ${hp.max}`;
-    const badgeOld = bar.querySelector('.mon-hp-state-badge, .hpbar-bloodied');
-    const badgeHtml = rqNpcHpStateBadge(hp.current, hp.max);
-    if (badgeOld) {
-      if (badgeHtml) badgeOld.outerHTML = badgeHtml;
-      else badgeOld.outerHTML = '<span class="hpbar-bloodied hidden"></span>';
-    }
-    const undo = bar.querySelector('.npc-hpbar-undo');
-    if (undo) {
-      const canUndo = window.__rqNpcHpUndoStack_v154.some(x => String(x.nodeId) === String(nodeId));
-      undo.classList.toggle('hidden', !canUndo);
-      undo.disabled = !canUndo;
-      undo.title = canUndo ? 'Undo previous HP value' : 'No previous HP value to revert to';
-    }
-  });
-}
-
-function rqSetNpcHpbarValue_v154(nodeId, nextHp, opts) {
-  const node = rqFindCanvasNode_v154(nodeId);
-  if (!node) return;
-  const hp = rqGetNpcSkinHp(node);
-  if (!(opts && opts.skipUndo)) {
-    window.__rqNpcHpUndoStack_v154.push({ nodeId: String(nodeId), hp: hp.current });
-    if (window.__rqNpcHpUndoStack_v154.length > 60) window.__rqNpcHpUndoStack_v154.shift();
-  }
-  const max = hp.max || Number(nextHp) || 0;
-  const clamped = Math.max(0, Math.min(Number(nextHp) || 0, max));
-  const skin = rqGetNpcSkinData(node);
-  if (skin) {
-    skin.hp_current = clamped;
-    skin.currentHP = clamped;
-    skin.currentHp = clamped;
-    skin.hpCurrent = clamped;
-  }
-  node.fields = node.fields || {};
-  node.fields.npcCurrentHP = clamped;
-  try { refreshNodeFace(node); } catch (e) { rqRefreshNpcHpbar_v154(nodeId); }
-  if (typeof scheduleSave === 'function') scheduleSave();
-  else if (typeof saveNow === 'function') saveNow();
-  setTimeout(() => rqRefreshNpcHpbar_v154(nodeId), 20);
-}
-
-function rqUndoNpcHpbar_v154(nodeId) {
-  const id = String(nodeId);
-  for (let i = window.__rqNpcHpUndoStack_v154.length - 1; i >= 0; i--) {
-    const item = window.__rqNpcHpUndoStack_v154[i];
-    if (String(item.nodeId) !== id) continue;
-    window.__rqNpcHpUndoStack_v154.splice(i, 1);
-    rqSetNpcHpbarValue_v154(id, item.hp, { skipUndo: true });
-    return;
-  }
-  rqRefreshNpcHpbar_v154(id);
-}
-
-function rqApplyNpcHpbarInput_v154(input) {
-  const nodeId = input.dataset.npcPeekHp;
-  const node = rqFindCanvasNode_v154(nodeId);
-  if (!node) return;
-  const hp = rqGetNpcSkinHp(node);
-  const raw = String(input.value || '').trim();
-  let next = hp.current;
-  if (/^[+-]\s*\d+/.test(raw)) next = hp.current + Number(raw.replace(/\s+/g, ''));
-  else if (raw !== '') next = Number(raw);
-  rqSetNpcHpbarValue_v154(nodeId, next);
-}
-
-// Replace old npc-combat HP blocks with true encounter-style hpbar markup.
-function rqUpgradeNpcHpBars_v154() {
-  document.querySelectorAll('.npc-combat-hp-wrap').forEach(old => {
-    const nodeId = old.dataset.nodeId || old.querySelector('[data-node-id]')?.dataset?.nodeId;
-    const node = rqFindCanvasNode_v154(nodeId);
-    if (!node || !rqGetNpcSkinData(node)) return;
-    old.outerHTML = rqNpcHpbarHtml_v154(node);
-  });
-}
-
-(function(){
-  if (window.__rqNpcHpbarParityDelegated_v154) return;
-  window.__rqNpcHpbarParityDelegated_v154 = true;
-
-  document.addEventListener('mousedown', e => {
-    if (e.target.closest?.('.npc-node-hpbar')) e.stopPropagation();
-  }, true);
-
-  document.addEventListener('focusin', e => {
-    const input = e.target.closest?.('.npc-hpbar-input');
-    if (!input) return;
-    setTimeout(() => { try { input.select(); } catch (_) {} }, 0);
-  }, true);
-
-  document.addEventListener('click', e => {
-    const input = e.target.closest?.('.npc-hpbar-input');
-    if (input) {
-      e.stopPropagation();
-      setTimeout(() => { try { input.select(); } catch (_) {} }, 0);
-      return;
-    }
-    const tick = e.target.closest?.('.npc-hpbar-tick');
-    if (tick) {
-      e.preventDefault();
-      e.stopPropagation();
-      const [nodeId, delta] = String(tick.dataset.npcHpTick || '').split(',');
-      const node = rqFindCanvasNode_v154(nodeId);
-      if (!node) return;
-      const hp = rqGetNpcSkinHp(node);
-      rqSetNpcHpbarValue_v154(nodeId, hp.current + Number(delta || 0));
-      return;
-    }
-    const undo = e.target.closest?.('.npc-hpbar-undo');
-    if (undo) {
-      e.preventDefault();
-      e.stopPropagation();
-      rqUndoNpcHpbar_v154(undo.dataset.npcHpUndo);
-    }
-  }, true);
-
-  document.addEventListener('keydown', e => {
-    const input = e.target.closest?.('.npc-hpbar-input');
-    if (!input) return;
-    e.stopPropagation();
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      rqApplyNpcHpbarInput_v154(input);
-      input.blur();
-    } else if (e.key === 'Escape') {
-      const node = rqFindCanvasNode_v154(input.dataset.npcPeekHp);
-      if (node) input.value = rqGetNpcSkinHp(node).current;
-      input.blur();
-    }
-  }, true);
-
-  document.addEventListener('change', e => {
-    const input = e.target.closest?.('.npc-hpbar-input');
-    if (!input) return;
-    e.stopPropagation();
-    rqApplyNpcHpbarInput_v154(input);
-  }, true);
-
-  const mo = new MutationObserver(() => {
-    clearTimeout(window.__rqNpcHpbarUpgradeT);
-    window.__rqNpcHpbarUpgradeT = setTimeout(rqUpgradeNpcHpBars_v154, 80);
-  });
-  if (document.body) mo.observe(document.body, { childList: true, subtree: true });
-  setTimeout(rqUpgradeNpcHpBars_v154, 100);
-  setTimeout(rqUpgradeNpcHpBars_v154, 600);
-})();
-
-
-
-// v1.3.55 — authoritative NPC HP arithmetic parity.
-// Mirrors encounter HPBar behavior: input value is a command. If it begins with + or -,
-// apply it as a delta to the current stored HP; otherwise set absolute HP.
-// This handler also prevents older NPC HP handlers from double-firing.
-(function(){
-  if (window.__rqNpcHpArithmeticParity_v155) return;
-  window.__rqNpcHpArithmeticParity_v155 = true;
-
-  function allNodesV155(){
-    try {
-      if (typeof state !== 'undefined' && state?.nodes?.values) return Array.from(state.nodes.values());
-    } catch (_) {}
-    try {
-      if (typeof nodes !== 'undefined' && Array.isArray(nodes)) return nodes;
-    } catch (_) {}
-    return [];
-  }
-
-  function findNodeV155(id){
-    id = String(id || '');
-    return allNodesV155().find(n => String(n.id) === id) || null;
-  }
-
-  function skinV155(node){
-    if (!node) return null;
-    const f = node.fields || {};
-    const d = node.data || {};
-    return f.skin || f.monsterSkin || f.npcMonsterSkin || f.statblock || f.monster || f.attachedMonster ||
-           d.skin || d.monsterSkin || d.npcMonsterSkin || d.statblock || d.monster || d.attachedMonster ||
-           d.npc?.monsterSkin || d.npc?.statblock || d.npc?.monster || null;
-  }
-
-  function hpV155(node){
-    const skin = skinV155(node) || {};
-    const f = node?.fields || {};
-    const d = node?.data || {};
-    const sn = skin.snapshot || skin;
-    const max = Number(
-      skin.hp_max ?? skin.maxHP ?? skin.maxHp ?? skin.hpMax ?? skin.max_hp ??
-      f.npcMaxHP ?? d.npcMaxHP ?? f.maxHP ?? d.maxHP ?? f.hpMax ?? d.hpMax ??
-      sn.hp ?? skin.hp ?? f.hp ?? d.hp ?? 0
-    ) || 0;
-    const cur = Number(
-      skin.hp_current ?? skin.currentHP ?? skin.currentHp ?? skin.hpCurrent ?? skin.current_hp ??
-      f.npcCurrentHP ?? d.npcCurrentHP ?? f.currentHP ?? d.currentHP ?? f.hpCurrent ?? d.hpCurrent ??
-      max
-    );
-    return { current: Number.isFinite(cur) ? cur : max, max };
-  }
-
-  function writeHpV155(node, next, opts){
-    const skin = skinV155(node);
-    if (!node || !skin) return;
-    const before = hpV155(node);
-    const max = before.max || Number(next) || 0;
-    const clamped = Math.max(0, Math.min(Number(next) || 0, max));
-
-    if (!(opts && opts.skipUndo)) {
-      window.__rqNpcHpUndoStack_v154 = window.__rqNpcHpUndoStack_v154 || [];
-      window.__rqNpcHpUndoStack_v154.push({ nodeId: String(node.id), hp: before.current });
-      if (window.__rqNpcHpUndoStack_v154.length > 60) window.__rqNpcHpUndoStack_v154.shift();
-    }
-
-    skin.hp_current = clamped;
-    skin.currentHP = clamped;
-    skin.currentHp = clamped;
-    skin.hpCurrent = clamped;
-
-    node.fields = node.fields || {};
-    node.fields.npcCurrentHP = clamped;
-    node.fields.currentHP = clamped;
-
-    try { refreshNodeFace(node); }
-    catch (err) { console.warn('[v1.3.55 NPC HP] refresh failed', err); }
-
-    if (typeof scheduleSave === 'function') scheduleSave();
-    else if (typeof saveNow === 'function') saveNow();
-
-    setTimeout(() => refreshBarsV155(node.id), 25);
-  }
-
-  function parseCommandV155(raw, current){
-    const s = String(raw ?? '').trim();
-    if (s === '') return current;
-    if (/^[+-]\s*\d+/.test(s)) return current + Number(s.replace(/\s+/g, ''));
-    return Number(s);
-  }
-
-  function refreshBarsV155(nodeId){
-    const node = findNodeV155(nodeId);
-    if (!node) return;
-    const hp = hpV155(node);
-    const selector = `.npc-node-hpbar[data-npc-hpbar="${CSS.escape(String(nodeId))}"], .npc-combat-hp-wrap[data-node-id="${CSS.escape(String(nodeId))}"]`;
-    document.querySelectorAll(selector).forEach(bar => {
-      const input = bar.querySelector('.npc-hpbar-input, .npc-combat-hp-input');
-      if (input && document.activeElement !== input) input.value = hp.current;
-      const max = bar.querySelector('.hpbar-max, .npc-combat-hp-max');
-      if (max) max.textContent = `/ ${hp.max}`;
-      const state = bar.querySelector('.npc-combat-hp-state, .mon-hp-state-badge, .hpbar-bloodied');
-      const badge = (typeof rqNpcHpStateBadge === 'function') ? rqNpcHpStateBadge(hp.current, hp.max) : '';
-      if (state) {
-        if (state.classList.contains('npc-combat-hp-state')) state.innerHTML = badge;
-        else state.outerHTML = badge || '<span class="hpbar-bloodied hidden"></span>';
-      }
-      const undo = bar.querySelector('.npc-hpbar-undo, .npc-combat-hp-undo');
-      if (undo) {
-        const stack = window.__rqNpcHpUndoStack_v154 || [];
-        const canUndo = stack.some(x => String(x.nodeId) === String(nodeId));
-        undo.classList.toggle('hidden', !canUndo);
-        undo.disabled = !canUndo;
-        undo.title = canUndo ? 'Undo previous HP value' : 'No previous HP value to revert to';
-      }
-    });
-  }
-
-  function nodeIdFromElV155(el){
-    return el?.dataset?.npcPeekHp ||
-           el?.dataset?.nodeId ||
-           el?.closest?.('.npc-node-hpbar')?.dataset?.npcHpbar ||
-           el?.closest?.('.npc-combat-hp-wrap')?.dataset?.nodeId ||
-           '';
-  }
-
-  function applyInputV155(input){
-    const nodeId = nodeIdFromElV155(input);
-    const node = findNodeV155(nodeId);
-    if (!node) return;
-    const hp = hpV155(node);
-    const next = parseCommandV155(input.value, hp.current);
-    writeHpV155(node, next);
-  }
-
-  function undoV155(nodeId){
-    const node = findNodeV155(nodeId);
-    if (!node) return;
-    const stack = window.__rqNpcHpUndoStack_v154 || [];
-    for (let i = stack.length - 1; i >= 0; i--) {
-      const item = stack[i];
-      if (String(item.nodeId) !== String(nodeId)) continue;
-      stack.splice(i, 1);
-      writeHpV155(node, item.hp, { skipUndo: true });
-      return;
-    }
-    refreshBarsV155(nodeId);
-  }
-
-  // Capture-phase listeners run before older NPC listeners and stop them.
-  document.addEventListener('mousedown', e => {
-    if (e.target.closest?.('.npc-node-hpbar, .npc-combat-hp-wrap')) e.stopPropagation();
-  }, true);
-
-  document.addEventListener('click', e => {
-    const input = e.target.closest?.('.npc-hpbar-input, .npc-combat-hp-input');
-    if (input) {
-      e.stopImmediatePropagation();
-      e.preventDefault();
-      setTimeout(() => { try { input.focus(); input.select(); } catch (_) {} }, 0);
-      return;
-    }
-
-    const tick = e.target.closest?.('.npc-hpbar-tick, .npc-combat-hp-step');
-    if (tick) {
-      e.stopImmediatePropagation();
-      e.preventDefault();
-      let nodeId = nodeIdFromElV155(tick);
-      let delta = Number(tick.dataset.delta || 0);
-      if (tick.dataset.npcHpTick) {
-        const parts = String(tick.dataset.npcHpTick).split(',');
-        nodeId = parts[0];
-        delta = Number(parts[1] || 0);
-      }
-      const node = findNodeV155(nodeId);
-      if (!node) return;
-      const hp = hpV155(node);
-      writeHpV155(node, hp.current + delta);
-      return;
-    }
-
-    const undo = e.target.closest?.('.npc-hpbar-undo, .npc-combat-hp-undo');
-    if (undo) {
-      e.stopImmediatePropagation();
-      e.preventDefault();
-      undoV155(nodeIdFromElV155(undo) || undo.dataset.npcHpUndo);
-    }
-  }, true);
-
-  document.addEventListener('focusin', e => {
-    const input = e.target.closest?.('.npc-hpbar-input, .npc-combat-hp-input');
-    if (!input) return;
-    setTimeout(() => { try { input.select(); } catch (_) {} }, 0);
-  }, true);
-
-  document.addEventListener('keydown', e => {
-    const input = e.target.closest?.('.npc-hpbar-input, .npc-combat-hp-input');
-    if (!input) return;
-
-    // The HP field owns key handling while focused.
-    e.stopImmediatePropagation();
-
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      applyInputV155(input);
-      input.blur();
-      return;
-    }
-
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      const node = findNodeV155(nodeIdFromElV155(input));
-      if (node) input.value = hpV155(node).current;
-      input.blur();
-    }
-  }, true);
-
-  document.addEventListener('change', e => {
-    const input = e.target.closest?.('.npc-hpbar-input, .npc-combat-hp-input');
-    if (!input) return;
-    e.stopImmediatePropagation();
-    e.preventDefault();
-    applyInputV155(input);
-  }, true);
-
-  window.rqNpcHpDebug_v155 = function(nodeId){
-    const node = findNodeV155(nodeId);
-    return { node, skin: skinV155(node), hp: hpV155(node), stack: window.__rqNpcHpUndoStack_v154 };
-  };
-})();
-
-
-
-// v1.3.56 — NPC uses encounter monster instance/renderer.
-// This is intentionally not another parallel NPC HP implementation.
-// NPC statblocks are projected into node.fields.monsters[0], then rendered through
-// renderOneMonsterCard when available, using the same monster instance shape as encounter nodes.
-function rqNpcSkinFromNode_v156(node) {
-  const f = node?.fields || {};
-  const d = node?.data || {};
-  return f.skin || f.monsterSkin || f.npcMonsterSkin || f.statblock || f.monster || f.attachedMonster ||
-         d.skin || d.monsterSkin || d.npcMonsterSkin || d.statblock || d.monster || d.attachedMonster ||
-         d.npc?.monsterSkin || d.npc?.statblock || d.npc?.monster || null;
-}
-
-function rqNpcSkinToEncounterMonster_v156(node) {
-  const skin = rqNpcSkinFromNode_v156(node);
-  if (!skin) return null;
-
-  const snap = skin.snapshot || skin;
-  const maxHp = Number(
-    skin.hp_max ?? skin.maxHP ?? skin.maxHp ?? skin.hpMax ?? snap.maxHP ?? snap.hp ?? skin.hp ?? 0
-  ) || 0;
-  const curHp = Number(
-    skin.hp_current ?? skin.currentHP ?? skin.currentHp ?? skin.hpCurrent ??
-    node?.fields?.npcCurrentHP ?? node?.fields?.currentHP ?? maxHp
-  );
-  const hpCurrent = Number.isFinite(curHp) ? curHp : maxHp;
-
-  const instance = {
-    monster_id: skin.monster_id || skin.id || snap.id || `npc-skin-${node.id}`,
-    id: skin.instance_id || skin.instanceId || `npc-skin-${node.id}`,
-    nameOverride: skin.nameOverride || skin.displayName || node.title || snap.name || 'NPC',
-    mult: Number(skin.mult || 1),
-    hp_current: hpCurrent,
-    hp_max: maxHp,
-    actionOverrides: skin.actionOverrides || {},
-    hiddenActions: skin.hiddenActions || {},
-    snapshot: {
-      ...snap,
-      id: snap.id || skin.id || `npc-skin-${node.id}`,
-      name: snap.name || skin.name || skin.displayName || node.title || 'NPC',
-      cr: snap.cr ?? skin.cr ?? '0',
-      ac: snap.ac ?? skin.ac ?? '',
-      hp: maxHp,
-      maxHP: maxHp,
-      currentHP: hpCurrent,
-      actions: snap.actions || skin.actions || [],
-      bonus_actions: snap.bonus_actions || skin.bonus_actions || [],
-      reactions: snap.reactions || skin.reactions || [],
-      legendary_actions: snap.legendary_actions || skin.legendary_actions || [],
-      special_abilities: snap.special_abilities || snap.special || skin.special_abilities || skin.special || [],
-      spells: snap.spells || skin.spells || []
-    },
-    _fromNpcSkin: true,
-    _sourceNodeId: node.id
-  };
-
-  // Store the encounter-compatible shape on the NPC node so existing teamup/difficulty code can see it.
-  node.fields = node.fields || {};
-  node.fields.monsters = [instance];
-
-  return instance;
-}
-
-function rqSyncNpcEncounterMonsterBack_v156(node, inst) {
-  const skin = rqNpcSkinFromNode_v156(node);
-  if (!skin || !inst) return;
-  skin.hp_current = inst.hp_current;
-  skin.currentHP = inst.hp_current;
-  skin.currentHp = inst.hp_current;
-  skin.hpCurrent = inst.hp_current;
-  skin.hp_max = inst.hp_max || skin.hp_max || skin.hp || inst.snapshot?.hp;
-  skin.actionOverrides = inst.actionOverrides || skin.actionOverrides || {};
-  skin.hiddenActions = inst.hiddenActions || skin.hiddenActions || {};
-  node.fields = node.fields || {};
-  node.fields.npcCurrentHP = inst.hp_current;
-}
-
-function rqRenderNpcEncounterMonsterRows_v156(node) {
-  const inst = rqNpcSkinToEncounterMonster_v156(node);
-  if (!inst) return '';
-
-  // Preferred path: reuse the real encounter monster renderer. It already knows hpbar-input,
-  // data-peek-hp, data-hp-tick, undo, action buttons, hidden action overrides, and book/peek controls.
-  if (typeof renderOneMonsterCard === 'function') {
-    try {
-      const html = renderOneMonsterCard(inst, 0, {
-        node,
-        isNpcInset: true,
-        showHidden: false,
-        monster: inst
-      });
-      if (html) return `<div class="npc-encounter-monster-renderer" data-npc-node-id="${String(node.id)}">${html}</div>`;
-    } catch (err) {
-      console.warn('[v1.3.56] renderOneMonsterCard failed for NPC inset; using fallback encounter row.', err);
-    }
-  }
-
-  // Fallback uses the encounter row's exact hpbar/data convention so the same delegated HP code can be reused.
-  const sn = inst.snapshot || {};
-  const safe = (typeof escHtml === 'function') ? escHtml : (typeof escapeHtml === 'function' ? escapeHtml : (v => String(v ?? '')));
-  return `<div class="npc-encounter-monster-renderer" data-npc-node-id="${safe(node.id)}">
-    <div class="node-monster-row enc-monster-row npc-enc-monster-row" data-npc-enc-monster="0">
-      <div class="node-mon-main">
-        <button class="node-mon-book" data-npc-book="${safe(node.id)}" type="button" title="Open full stat block">📖</button>
-        <span class="node-mon-name">${safe(sn.name || inst.nameOverride || 'NPC')}</span>
-        <span class="node-mon-meta">CR ${safe(sn.cr ?? '0')} · HP ${safe(inst.hp_max)} · AC ${safe(sn.ac ?? '')}</span>
-      </div>
-      <div class="node-mon-hpbar" data-npc-hpbar-v156="${safe(node.id)}">
-        <span class="hpbar-label">HP</span>
-        <input type="text" inputmode="numeric" class="hpbar-input" data-npc-peek-hp-v156="${safe(node.id)}" value="${safe(inst.hp_current)}" title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
-        <span class="hpbar-ticks">
-          <button class="hpbar-tick" data-npc-hp-tick-v156="${safe(node.id)},1" type="button" title="+1 HP">▴</button>
-          <button class="hpbar-tick" data-npc-hp-tick-v156="${safe(node.id)},-1" type="button" title="−1 HP">▾</button>
-        </span>
-        <span class="hpbar-max">/ ${safe(inst.hp_max)}</span>
-        <button class="hpbar-undo hidden" data-npc-hp-undo-v156="${safe(node.id)}" type="button" title="No previous HP value to revert to" disabled>↶</button>
-      </div>
-    </div>
-  </div>`;
-}
-
-// Install NPC inset into the existing NPC face by replacing older npc-combat widgets.
-// This is only a bridge into the renderer; HP math below uses encounter-style state.
-(function(){
-  if (window.__rqNpcUsesEncounterRenderer_v156) return;
-  window.__rqNpcUsesEncounterRenderer_v156 = true;
-
-  window.__rqNpcHpUndo_v156 = window.__rqNpcHpUndo_v156 || [];
-
-  function allNodes(){
-    try { if (typeof state !== 'undefined' && state?.nodes?.values) return Array.from(state.nodes.values()); } catch (_) {}
-    return [];
-  }
-  function findNode(id){ return allNodes().find(n => String(n.id) === String(id)); }
-
-  function currentInst(node){
-    const inst = rqNpcSkinToEncounterMonster_v156(node);
-    return inst;
-  }
-
-  function setHp(node, next, opts){
-    const inst = currentInst(node);
-    if (!inst) return;
-    const before = Number(inst.hp_current || 0);
-    const max = Number(inst.hp_max || inst.snapshot?.hp || next || 0);
-    const val = Math.max(0, Math.min(Number(next) || 0, max));
-    if (!(opts && opts.skipUndo)) {
-      window.__rqNpcHpUndo_v156.push({ nodeId: String(node.id), hp: before });
-      if (window.__rqNpcHpUndo_v156.length > 60) window.__rqNpcHpUndo_v156.shift();
-    }
-    inst.hp_current = val;
-    inst.snapshot.currentHP = val;
-    rqSyncNpcEncounterMonsterBack_v156(node, inst);
-    try { refreshNodeFace(node); } catch (_) {}
-    if (typeof scheduleSave === 'function') scheduleSave();
-    else if (typeof saveNow === 'function') saveNow();
-  }
-
-  function applyInput(input){
-    const id = input.dataset.npcPeekHpV156;
-    const node = findNode(id);
-    if (!node) return;
-    const inst = currentInst(node);
-    const raw = String(input.value || '').trim();
-    let next = Number(inst.hp_current || 0);
-    if (/^[+-]\s*\d+/.test(raw)) next += Number(raw.replace(/\s+/g, ''));
-    else if (raw !== '') next = Number(raw);
-    setHp(node, next);
-  }
-
-  function undo(id){
-    const node = findNode(id);
-    if (!node) return;
-    for (let i = window.__rqNpcHpUndo_v156.length - 1; i >= 0; i--) {
-      const item = window.__rqNpcHpUndo_v156[i];
-      if (String(item.nodeId) !== String(id)) continue;
-      window.__rqNpcHpUndo_v156.splice(i, 1);
-      setHp(node, item.hp, { skipUndo: true });
-      return;
-    }
-  }
-
-  function enhance(){
-    allNodes().forEach(node => {
-      if (node.type !== 'npc' || !rqNpcSkinFromNode_v156(node)) return;
-      const card = document.querySelector(`[data-node-id="${CSS.escape(String(node.id))}"], #node-${CSS.escape(String(node.id))}`);
-      if (!card) return;
-      if (card.querySelector('.npc-encounter-monster-renderer')) return;
-
-      const old = card.querySelector('.npc-combat-hp-wrap, .npc-enc-monster-card');
-      const stats = [...card.querySelectorAll('*')].find(el => /STATS:\s*/i.test(el.textContent || ''));
-      const target = old || stats;
-      if (!target) return;
-
-      if (old) old.outerHTML = rqRenderNpcEncounterMonsterRows_v156(node);
-      else stats.insertAdjacentHTML('afterend', rqRenderNpcEncounterMonsterRows_v156(node));
-    });
-  }
-
-  document.addEventListener('mousedown', e => {
-    if (e.target.closest?.('[data-npc-hpbar-v156]')) e.stopPropagation();
-  }, true);
-
-  document.addEventListener('focusin', e => {
-    const input = e.target.closest?.('[data-npc-peek-hp-v156]');
-    if (!input) return;
-    setTimeout(() => { try { input.select(); } catch (_) {} }, 0);
-  }, true);
-
-  document.addEventListener('click', e => {
-    const input = e.target.closest?.('[data-npc-peek-hp-v156]');
-    if (input) {
-      e.stopPropagation();
-      setTimeout(() => { try { input.select(); } catch (_) {} }, 0);
-      return;
-    }
-
-    const tick = e.target.closest?.('[data-npc-hp-tick-v156]');
-    if (tick) {
-      e.preventDefault(); e.stopPropagation();
-      const [id, delta] = String(tick.dataset.npcHpTickV156 || '').split(',');
-      const node = findNode(id);
-      if (!node) return;
-      const inst = currentInst(node);
-      setHp(node, Number(inst.hp_current || 0) + Number(delta || 0));
-      return;
-    }
-
-    const undoBtn = e.target.closest?.('[data-npc-hp-undo-v156]');
-    if (undoBtn) {
-      e.preventDefault(); e.stopPropagation();
-      undo(undoBtn.dataset.npcHpUndoV156);
-    }
-  }, true);
-
-  document.addEventListener('keydown', e => {
-    const input = e.target.closest?.('[data-npc-peek-hp-v156]');
-    if (!input) return;
-    e.stopPropagation();
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      applyInput(input);
-      input.blur();
-    } else if (e.key === 'Escape') {
-      const node = findNode(input.dataset.npcPeekHpV156);
-      const inst = node && currentInst(node);
-      if (inst) input.value = inst.hp_current;
-      input.blur();
-    }
-  }, true);
-
-  document.addEventListener('change', e => {
-    const input = e.target.closest?.('[data-npc-peek-hp-v156]');
-    if (!input) return;
-    e.stopPropagation();
-    applyInput(input);
-  }, true);
-
-  const mo = new MutationObserver(() => {
-    clearTimeout(window.__rqNpcRendererEnhanceT_v156);
-    window.__rqNpcRendererEnhanceT_v156 = setTimeout(enhance, 80);
-  });
-  if (document.body) mo.observe(document.body, { childList:true, subtree:true });
-  setTimeout(enhance, 100);
-  setTimeout(enhance, 700);
-})();
-
-
-
-// v1.3.56 — encounter team-up allows NPC nodes that expose fields.monsters via rqNpcSkinToEncounterMonster_v156.
-(function(){
-  if (window.__rqNpcTeamupPatch_v156) return;
-  window.__rqNpcTeamupPatch_v156 = true;
-  if (typeof computeEncounterTeamupDifficulty === 'function') {
-    const oldCompute = computeEncounterTeamupDifficulty;
-    window.computeEncounterTeamupDifficulty = function(node) {
-      try {
-        if (typeof state !== 'undefined' && state?.nodes?.values) {
-          Array.from(state.nodes.values()).forEach(n => {
-            if (n && n.type === 'npc' && rqNpcSkinFromNode_v156(n)) rqNpcSkinToEncounterMonster_v156(n);
-          });
-        }
-      } catch (_) {}
-      return oldCompute.apply(this, arguments);
-    };
-  }
-})();
-
-
-
-// v1.3.57 — SINGLE authoritative NPC HP handler.
-// This intentionally suppresses every older NPC HP handler path before it can run.
-// It owns all NPC HP inputs/buttons, parses ±N exactly once, and writes to node.fields.skin.
-(function(){
-  if (window.__rqNpcHpSingleHandler_v157) return;
-  window.__rqNpcHpSingleHandler_v157 = true;
-
-  window.__rqNpcHpUndo_v157 = window.__rqNpcHpUndo_v157 || [];
 
   function allNodes(){
     try { if (typeof state !== 'undefined' && state?.nodes?.values) return Array.from(state.nodes.values()); } catch (_) {}
@@ -18787,8 +17479,11 @@ function rqRenderNpcEncounterMonsterRows_v156(node) {
   }
 
   function findNode(id){
-    id = String(id || '');
-    return allNodes().find(n => String(n.id) === id) || null;
+    return allNodes().find(n => String(n.id) === String(id)) || null;
+  }
+
+  function isNpc(node){
+    return node && String(node.type || node.kind || '').toLowerCase() === 'npc';
   }
 
   function skin(node){
@@ -18807,189 +17502,226 @@ function rqRenderNpcEncounterMonsterRows_v156(node) {
     return { current: Number.isFinite(cur) ? cur : max, max };
   }
 
-  function write(node, next, opts){
-    const s = skin(node);
-    if (!node || !s) return;
-    const old = hp(node);
-    const clamped = Math.max(0, Math.min(Number(next) || 0, old.max || Number(next) || 0));
-
-    if (!(opts && opts.skipUndo)) {
-      window.__rqNpcHpUndo_v157.push({ nodeId: String(node.id), hp: old.current });
-      if (window.__rqNpcHpUndo_v157.length > 60) window.__rqNpcHpUndo_v157.shift();
-    }
-
-    s.hp_current = clamped;
-    s.currentHP = clamped;
-    s.currentHp = clamped;
-    s.hpCurrent = clamped;
-
-    if (s.snapshot) {
-      s.snapshot.currentHP = clamped;
-      s.snapshot.hp_current = clamped;
-    }
-
-    node.fields = node.fields || {};
-    node.fields.npcCurrentHP = clamped;
-    node.fields.currentHP = clamped;
-
-    try { refreshNodeFace(node); } catch (err) { console.warn('[v1.3.57 NPC HP] refresh failed', err); }
-
-    if (typeof scheduleSave === 'function') scheduleSave();
-    else if (typeof saveNow === 'function') saveNow();
+  function hpBadge(cur, max){
+    cur = Number(cur); max = Number(max);
+    if (!Number.isFinite(cur) || !Number.isFinite(max) || max <= 0) return '';
+    const pct = cur / max;
+    let label = '';
+    if (pct <= 0.25) label = 'Rough';
+    else if (pct <= 0.5) label = 'Bloodied';
+    else if (cur <= 5 && max <= 20) label = 'Last Leg';
+    if (!label) return '';
+    const cls = label === 'Last Leg' ? 'last-leg' : label === 'Rough' ? 'rough' : 'bloodied';
+    return `<span class="mon-hp-state-badge ${cls}" title="HP state">${label}</span>`;
   }
 
-  function parse(raw, current){
+  function writeHp(node, next, opts){
+    const s = skin(node);
+    if (!node || !s) return;
+    const before = hp(node);
+    const max = before.max || Number(next) || 0;
+    const val = Math.max(0, Math.min(Number(next) || 0, max));
+
+    if (!(opts && opts.skipUndo)) {
+      undoStack.push({ id: String(node.id), hp: before.current });
+      if (undoStack.length > 60) undoStack.shift();
+    }
+
+    s.hp_current = val;
+    s.currentHP = val;
+    s.currentHp = val;
+    s.hpCurrent = val;
+    if (s.snapshot) {
+      s.snapshot.currentHP = val;
+      s.snapshot.hp_current = val;
+    }
+    node.fields = node.fields || {};
+    node.fields.npcCurrentHP = val;
+    node.fields.currentHP = val;
+
+    try { refreshNodeFace(node); } catch (e) { refreshVisible(node.id); }
+    if (typeof scheduleSave === 'function') scheduleSave();
+    else if (typeof saveNow === 'function') saveNow();
+    setTimeout(() => refreshVisible(node.id), 20);
+  }
+
+  function parseCommand(raw, current){
     const s = String(raw ?? '').trim();
-    if (s === '') return current;
+    if (!s) return current;
     if (/^[+-]\s*\d+/.test(s)) return current + Number(s.replace(/\s+/g, ''));
     return Number(s);
   }
 
-  function nodeIdFrom(el){
-    const bar = el.closest?.('[data-npc-hpbar-v156], [data-npc-hpbar], .npc-node-hpbar, .npc-combat-hp-wrap, .npc-enc-monster-card');
-    return el.dataset.npcPeekHpV156 ||
-           el.dataset.npcPeekHp ||
-           el.dataset.nodeId ||
-           bar?.dataset?.npcHpbarV156 ||
-           bar?.dataset?.npcHpbar ||
-           bar?.dataset?.nodeId ||
-           "";
+  function renderInset(node){
+    const s = skin(node);
+    if (!s) return '';
+    const snap = s.snapshot || s;
+    const h = hp(node);
+    const nodeId = esc(node.id);
+    const name = esc(s.displayName || s.nameOverride || snap.name || node.title || 'NPC Statblock');
+    const cr = esc(s.cr ?? snap.cr ?? '0');
+    const ac = esc(s.ac ?? snap.ac ?? '');
+    const actions = (snap.actions || s.actions || []).slice(0, 6);
+
+    const actionHtml = actions.map((a, i) => {
+      const label = esc(a?.name || 'Action');
+      return `<button type="button" class="node-mon-action rq-npc-action" data-rq-npc-action="${nodeId},${i}" title="Roll ${label}">🎲 ${label}</button>`;
+    }).join('');
+
+    return `<div class="rq-npc-monster-inset" data-rq-npc-node="${nodeId}">
+      <div class="node-monster-row enc-monster-row">
+        <div class="node-monster-mainline">
+          <button type="button" class="node-mon-book rq-npc-book" data-rq-npc-book="${nodeId}" title="Open full stat block">📖</button>
+          <span class="node-mon-name">${name}</span>
+          <span class="node-mon-meta">CR ${cr} · HP ${h.max} · AC ${ac}</span>
+        </div>
+        <div class="node-mon-hpbar rq-npc-clean-hpbar" data-rq-npc-hpbar="${nodeId}">
+          <span class="hpbar-label">HP</span>
+          <input type="text" inputmode="numeric" class="hpbar-input rq-npc-clean-hp-input" data-rq-npc-hp-input="${nodeId}" value="${h.current}" title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
+          <span class="hpbar-ticks">
+            <button class="hpbar-tick rq-npc-clean-hp-tick" data-rq-npc-hp-tick="${nodeId},1" type="button" title="+1 HP">▴</button>
+            <button class="hpbar-tick rq-npc-clean-hp-tick" data-rq-npc-hp-tick="${nodeId},-1" type="button" title="−1 HP">▾</button>
+          </span>
+          <span class="hpbar-max">/ ${h.max}</span>
+          ${hpBadge(h.current, h.max)}
+          <button class="hpbar-undo rq-npc-clean-hp-undo ${undoStack.some(x => String(x.id) === String(node.id)) ? '' : 'hidden'}" data-rq-npc-hp-undo="${nodeId}" type="button" title="Undo previous HP value" ${undoStack.some(x => String(x.id) === String(node.id)) ? '' : 'disabled'}>↶</button>
+        </div>
+        <div class="node-mon-actions">${actionHtml}</div>
+      </div>
+    </div>`;
   }
 
-  function isNpcHpTarget(el){
-    return !!el?.closest?.(
-      '[data-npc-peek-hp-v156], [data-npc-hp-tick-v156], [data-npc-hp-undo-v156], ' +
-      '.npc-hpbar-input, .npc-hpbar-tick, .npc-hpbar-undo, ' +
-      '.npc-combat-hp-input, .npc-combat-hp-step, .npc-combat-hp-undo, ' +
-      '.npc-enc-hp-input, .npc-enc-hp-step, .npc-enc-hp-undo'
-    );
+  function refreshVisible(nodeId){
+    const node = findNode(nodeId);
+    if (!node) return;
+    const h = hp(node);
+    document.querySelectorAll(`[data-rq-npc-hpbar="${CSS.escape(String(nodeId))}"]`).forEach(bar => {
+      const input = bar.querySelector('[data-rq-npc-hp-input]');
+      if (input && document.activeElement !== input) input.value = h.current;
+      const max = bar.querySelector('.hpbar-max');
+      if (max) max.textContent = `/ ${h.max}`;
+    });
   }
 
-  function getInput(el){
-    return el.closest?.('[data-npc-peek-hp-v156], .npc-hpbar-input, .npc-combat-hp-input, .npc-enc-hp-input');
+  function install(){
+    allNodes().forEach(node => {
+      if (!isNpc(node) || !skin(node)) return;
+      const card = document.querySelector(`[data-node-id="${CSS.escape(String(node.id))}"], #node-${CSS.escape(String(node.id))}`);
+      if (!card) return;
+      const existingClean = card.querySelector('.rq-npc-monster-inset');
+      if (existingClean) return;
+
+      // Remove all old NPC HP/monster inset variants so their handlers have no targets.
+      card.querySelectorAll('.npc-combat-hp-wrap, .npc-enc-monster-card, .npc-encounter-monster-renderer').forEach(el => el.remove());
+
+      const stats = [...card.querySelectorAll('*')].find(el => /STATS:\s*/i.test(el.textContent || ''));
+      if (stats) stats.insertAdjacentHTML('afterend', renderInset(node));
+    });
   }
 
-  function getTick(el){
-    return el.closest?.('[data-npc-hp-tick-v156], .npc-hpbar-tick, .npc-combat-hp-step, .npc-enc-hp-step');
-  }
+  function getIdFromInput(input){ return input?.dataset?.rqNpcHpInput || ''; }
 
-  function getUndo(el){
-    return el.closest?.('[data-npc-hp-undo-v156], .npc-hpbar-undo, .npc-combat-hp-undo, .npc-enc-hp-undo');
-  }
-
-  function tickDelta(btn){
-    if (btn.dataset.npcHpTickV156) {
-      const parts = String(btn.dataset.npcHpTickV156).split(',');
-      return { nodeId: parts[0], delta: Number(parts[1] || 0) };
-    }
-    if (btn.dataset.npcHpTick) {
-      const parts = String(btn.dataset.npcHpTick).split(',');
-      return { nodeId: parts[0], delta: Number(parts[1] || 0) };
-    }
-    return { nodeId: nodeIdFrom(btn), delta: Number(btn.dataset.delta || 0) };
-  }
-
-  function refreshVisible(node){
-    setTimeout(() => {
-      const h = hp(node);
-      document.querySelectorAll(
-        `[data-npc-hpbar-v156="${CSS.escape(String(node.id))}"], [data-npc-hpbar="${CSS.escape(String(node.id))}"], [data-node-id="${CSS.escape(String(node.id))}"]`
-      ).forEach(bar => {
-        const input = bar.querySelector?.('[data-npc-peek-hp-v156], .npc-hpbar-input, .npc-combat-hp-input, .npc-enc-hp-input');
-        if (input && document.activeElement !== input) input.value = h.current;
-      });
-    }, 20);
-  }
-
-  // Capture and stop before older delegated handlers can fire.
   document.addEventListener('mousedown', e => {
-    if (isNpcHpTarget(e.target)) e.stopImmediatePropagation();
+    if (e.target.closest?.('.rq-npc-monster-inset')) e.stopPropagation();
   }, true);
 
   document.addEventListener('click', e => {
-    const input = getInput(e.target);
+    const input = e.target.closest?.('[data-rq-npc-hp-input]');
     if (input) {
       e.preventDefault();
-      e.stopImmediatePropagation();
+      e.stopPropagation();
       setTimeout(() => { try { input.focus(); input.select(); } catch(_){} }, 0);
       return;
     }
 
-    const tick = getTick(e.target);
+    const tick = e.target.closest?.('[data-rq-npc-hp-tick]');
     if (tick) {
       e.preventDefault();
-      e.stopImmediatePropagation();
-      const info = tickDelta(tick);
-      const node = findNode(info.nodeId);
+      e.stopPropagation();
+      const [id, delta] = String(tick.dataset.rqNpcHpTick || '').split(',');
+      const node = findNode(id);
       if (!node) return;
       const h = hp(node);
-      write(node, h.current + info.delta);
-      refreshVisible(node);
+      writeHp(node, h.current + Number(delta || 0));
       return;
     }
 
-    const undo = getUndo(e.target);
+    const undo = e.target.closest?.('[data-rq-npc-hp-undo]');
     if (undo) {
       e.preventDefault();
-      e.stopImmediatePropagation();
-      const id = nodeIdFrom(undo) || undo.dataset.npcHpUndoV156 || undo.dataset.npcHpUndo || undo.dataset.nodeId;
+      e.stopPropagation();
+      const id = undo.dataset.rqNpcHpUndo;
       const node = findNode(id);
       if (!node) return;
-      for (let i = window.__rqNpcHpUndo_v157.length - 1; i >= 0; i--) {
-        const item = window.__rqNpcHpUndo_v157[i];
-        if (String(item.nodeId) !== String(id)) continue;
-        window.__rqNpcHpUndo_v157.splice(i, 1);
-        write(node, item.hp, { skipUndo: true });
-        refreshVisible(node);
+      for (let i = undoStack.length - 1; i >= 0; i--) {
+        if (String(undoStack[i].id) !== String(id)) continue;
+        const prev = undoStack.splice(i, 1)[0].hp;
+        writeHp(node, prev, { skipUndo: true });
         return;
       }
+    }
+
+    const book = e.target.closest?.('[data-rq-npc-book]');
+    if (book) {
+      e.preventDefault();
+      e.stopPropagation();
+      const node = findNode(book.dataset.rqNpcBook);
+      const s = node && skin(node);
+      if (s && typeof openMonsterStatblockModal === 'function') openMonsterStatblockModal(s.snapshot || s);
+      else if (s && typeof showMonsterStatblock === 'function') showMonsterStatblock(s.snapshot || s);
     }
   }, true);
 
   document.addEventListener('focusin', e => {
-    const input = getInput(e.target);
+    const input = e.target.closest?.('[data-rq-npc-hp-input]');
     if (!input) return;
     setTimeout(() => { try { input.select(); } catch(_){} }, 0);
   }, true);
 
   document.addEventListener('keydown', e => {
-    const input = getInput(e.target);
+    const input = e.target.closest?.('[data-rq-npc-hp-input]');
     if (!input) return;
-
-    e.stopImmediatePropagation();
+    e.stopPropagation();
 
     if (e.key === 'Enter') {
       e.preventDefault();
-      const id = nodeIdFrom(input);
-      const node = findNode(id);
+      const node = findNode(getIdFromInput(input));
       if (!node) return;
       const h = hp(node);
-      write(node, parse(input.value, h.current));
+      writeHp(node, parseCommand(input.value, h.current));
       input.blur();
-      refreshVisible(node);
-    } else if (e.key === 'Escape') {
+    }
+
+    if (e.key === 'Escape') {
       e.preventDefault();
-      const node = findNode(nodeIdFrom(input));
+      const node = findNode(getIdFromInput(input));
       if (node) input.value = hp(node).current;
       input.blur();
     }
   }, true);
 
   document.addEventListener('change', e => {
-    const input = getInput(e.target);
+    const input = e.target.closest?.('[data-rq-npc-hp-input]');
     if (!input) return;
     e.preventDefault();
-    e.stopImmediatePropagation();
-    const node = findNode(nodeIdFrom(input));
+    e.stopPropagation();
+    const node = findNode(getIdFromInput(input));
     if (!node) return;
     const h = hp(node);
-    write(node, parse(input.value, h.current));
-    refreshVisible(node);
+    writeHp(node, parseCommand(input.value, h.current));
   }, true);
 
-  window.rqNpcHpDebug_v157 = function(id){
+  const mo = new MutationObserver(() => {
+    clearTimeout(window.__rqNpcCleanInstallT);
+    window.__rqNpcCleanInstallT = setTimeout(install, 80);
+  });
+  if (document.body) mo.observe(document.body, { childList:true, subtree:true });
+  setTimeout(install, 100);
+  setTimeout(install, 700);
+
+  window.rqNpcCleanDebug_v158 = function(id){
     const node = findNode(id);
-    return { node, skin: skin(node), hp: hp(node), undo: window.__rqNpcHpUndo_v157 };
+    return { node, skin: skin(node), hp: hp(node), undoStack };
   };
 })();
 
