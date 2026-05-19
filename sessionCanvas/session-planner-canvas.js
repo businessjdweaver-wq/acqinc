@@ -1,3 +1,93 @@
+const escapeHtml = (typeof escHtml === 'function') ? escHtml : (v => String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])));
+
+// v1.3.59 — compatibility shims after NPC HP cleanup.
+// Existing renderNpcSkinFaceHtml still calls rqNpcCombatHpHtml; keep that function as a bridge
+// into the clean rq-npc-* inset instead of letting session deserialization fail.
+function rqSafeEscHtml_v159(v) {
+  if (typeof escHtml === 'function') return escHtml(v);
+  if (typeof escapeHtml === 'function') return escapeHtml(v);
+  return String(v ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+function rqNpcCombatHpHtml(node) {
+  try {
+    if (typeof rqNpcCleanRenderInset_v159 === 'function') return rqNpcCleanRenderInset_v159(node);
+    // Fallback if the clean renderer has not loaded yet.
+    const f = node?.fields || {};
+    const s = f.skin || f.monsterSkin || f.statblock || f.monster || null;
+    if (!s) return '';
+    const snap = s.snapshot || s;
+    const max = Number(s.hp_max ?? s.maxHP ?? s.hpMax ?? snap.hp ?? s.hp ?? 0) || 0;
+    const cur = Number(s.hp_current ?? s.currentHP ?? s.hpCurrent ?? f.npcCurrentHP ?? max) || max;
+    const id = rqSafeEscHtml_v159(node?.id ?? '');
+    return `<div class="rq-npc-monster-inset" data-rq-npc-node="${id}">
+      <div class="node-monster-row enc-monster-row">
+        <div class="node-monster-mainline">
+          <button type="button" class="node-mon-book rq-npc-book" data-rq-npc-book="${id}" title="Open full stat block">📖</button>
+          <span class="node-mon-name">${rqSafeEscHtml_v159(s.displayName || s.nameOverride || snap.name || node?.title || 'NPC Statblock')}</span>
+          <span class="node-mon-meta">CR ${rqSafeEscHtml_v159(s.cr ?? snap.cr ?? '0')} · HP ${max} · AC ${rqSafeEscHtml_v159(s.ac ?? snap.ac ?? '')}</span>
+        </div>
+        <div class="node-mon-hpbar rq-npc-clean-hpbar" data-rq-npc-hpbar="${id}">
+          <span class="hpbar-label">HP</span>
+          <input type="text" inputmode="numeric" class="hpbar-input rq-npc-clean-hp-input" data-rq-npc-hp-input="${id}" value="${cur}" title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
+          <span class="hpbar-ticks">
+            <button class="hpbar-tick rq-npc-clean-hp-tick" data-rq-npc-hp-tick="${id},1" type="button" title="+1 HP">▴</button>
+            <button class="hpbar-tick rq-npc-clean-hp-tick" data-rq-npc-hp-tick="${id},-1" type="button" title="−1 HP">▾</button>
+          </span>
+          <span class="hpbar-max">/ ${max}</span>
+          <button class="hpbar-undo rq-npc-clean-hp-undo hidden" data-rq-npc-hp-undo="${id}" type="button" title="No previous HP value to revert to" disabled>↶</button>
+        </div>
+      </div>
+    </div>`;
+  } catch (err) {
+    console.error('[rqNpcCombatHpHtml] failed', err);
+    return '';
+  }
+}
+window.rqNpcCombatHpHtml = rqNpcCombatHpHtml;
+
+
+// v1.3.59 — standalone clean NPC inset renderer used by compatibility shim.
+function rqNpcCleanRenderInset_v159(node) {
+  const f = node?.fields || {};
+  const d = node?.data || {};
+  const s = f.skin || f.monsterSkin || f.npcMonsterSkin || f.statblock || f.monster || f.attachedMonster ||
+            d.skin || d.monsterSkin || d.npcMonsterSkin || d.statblock || d.monster || d.attachedMonster ||
+            d.npc?.monsterSkin || d.npc?.statblock || d.npc?.monster || null;
+  if (!s) return '';
+  const snap = s.snapshot || s;
+  const max = Number(s.hp_max ?? s.maxHP ?? s.maxHp ?? s.hpMax ?? snap.maxHP ?? snap.hp ?? s.hp ?? 0) || 0;
+  const curRaw = Number(s.hp_current ?? s.currentHP ?? s.currentHp ?? s.hpCurrent ?? f.npcCurrentHP ?? f.currentHP ?? max);
+  const cur = Number.isFinite(curRaw) ? curRaw : max;
+  const nodeId = rqSafeEscHtml_v159(node?.id ?? '');
+  const actions = (snap.actions || s.actions || []).slice(0, 6);
+  const actionHtml = actions.map((a, i) => {
+    const label = rqSafeEscHtml_v159(a?.name || 'Action');
+    return `<button type="button" class="node-mon-action rq-npc-action" data-rq-npc-action="${nodeId},${i}" title="Roll ${label}">🎲 ${label}</button>`;
+  }).join('');
+  return `<div class="rq-npc-monster-inset" data-rq-npc-node="${nodeId}">
+    <div class="node-monster-row enc-monster-row">
+      <div class="node-monster-mainline">
+        <button type="button" class="node-mon-book rq-npc-book" data-rq-npc-book="${nodeId}" title="Open full stat block">📖</button>
+        <span class="node-mon-name">${rqSafeEscHtml_v159(s.displayName || s.nameOverride || snap.name || node?.title || 'NPC Statblock')}</span>
+        <span class="node-mon-meta">CR ${rqSafeEscHtml_v159(s.cr ?? snap.cr ?? '0')} · HP ${max} · AC ${rqSafeEscHtml_v159(s.ac ?? snap.ac ?? '')}</span>
+      </div>
+      <div class="node-mon-hpbar rq-npc-clean-hpbar" data-rq-npc-hpbar="${nodeId}">
+        <span class="hpbar-label">HP</span>
+        <input type="text" inputmode="numeric" class="hpbar-input rq-npc-clean-hp-input" data-rq-npc-hp-input="${nodeId}" value="${cur}" title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
+        <span class="hpbar-ticks">
+          <button class="hpbar-tick rq-npc-clean-hp-tick" data-rq-npc-hp-tick="${nodeId},1" type="button" title="+1 HP">▴</button>
+          <button class="hpbar-tick rq-npc-clean-hp-tick" data-rq-npc-hp-tick="${nodeId},-1" type="button" title="−1 HP">▾</button>
+        </span>
+        <span class="hpbar-max">/ ${max}</span>
+        <button class="hpbar-undo rq-npc-clean-hp-undo hidden" data-rq-npc-hp-undo="${nodeId}" type="button" title="No previous HP value to revert to" disabled>↶</button>
+      </div>
+      <div class="node-mon-actions">${actionHtml}</div>
+    </div>
+  </div>`;
+}
+window.rqNpcCleanRenderInset_v159 = rqNpcCleanRenderInset_v159;
+
 
 
 // v1.3.42 — safe NPC HP state badge helper.
@@ -17355,7 +17445,7 @@ function rqSafeRenderNodeFace(node) {
   } catch (err) {
     console.error('[rqSafeRenderNodeFace] Node face render failed; using fallback face so canvas load can continue.', node, err);
     const title = (node && (node.title || node.name || node.type)) || 'Node';
-    return `<div class="node-face-error"><strong>${escapeHtml ? escapeHtml(title) : title}</strong><br><span>Render error; open/edit to repair.</span></div>`;
+    return `<div class="node-face-error"><strong>${(typeof escapeHtml === 'function' ? escapeHtml(title) : (typeof escHtml === 'function' ? escHtml(title) : String(title).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))))}</strong><br><span>Render error; open/edit to repair.</span></div>`;
   }
 }
 
