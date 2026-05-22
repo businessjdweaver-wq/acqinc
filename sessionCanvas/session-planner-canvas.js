@@ -1531,60 +1531,250 @@ function closeSessionPicker() {
 }
 
 // ── WRAP-SESSION MODAL ────────────────────────────────────
-// Opens a list of every node currently visible on the canvas plus the
-// frame, with radio buttons to choose scope: session / campaign. Apply
-// pushes the choices through, moving nodes between sessions.blocks and
-// campaigns.blocks as needed.
-let wrapModalChoices = {};            // { nodeId: 'session' | 'campaign' | 'arc' }
-let wrapModalCollections = {};        // { nodeId: campaignCollectionId | '' | '__new__' }
-let wrapModalArcCollections = {};     // { nodeId: arcCollectionId | '' | '__new__' }
+// Wrap Session now assumes continuity: every session-scope node currently
+// on the canvas is carried forward into the next session. Campaign/arc nodes
+// are not duplicated because their tier already makes them visible beyond
+// this session. The DM's post-session notes are saved separately for calendar
+// display and also materialized as a node on the session being wrapped.
 function openWrapSessionModal() {
   if (!sessionState.currentSessionId) {
     alert('Open a session first.');
     return;
   }
-  wrapModalChoices = {};
-  wrapModalCollections = {};
-  wrapModalArcCollections = {};
-  // Canvas nodes — initial scope from each node's existing scope
-  state.nodes.forEach(n => {
-    wrapModalChoices[n.id] =
-      n.scope === 'campaign' ? 'campaign' :
-      n.scope === 'arc'      ? 'arc'      :
-      'session';
-    const inCampCol = (sessionState.campaignBlocks.collections || []).find(c =>
-      (c.member_node_ids || []).includes(n.id));
-    wrapModalCollections[n.id] = inCampCol ? inCampCol.id : '';
-    const inArcCol = (sessionState.arcBlocks.collections || []).find(c =>
-      (c.member_node_ids || []).includes(n.id));
-    wrapModalArcCollections[n.id] = inArcCol ? inArcCol.id : '';
-  });
-  // Campaign frame (non-home) entries
-  (sessionState.campaignBlocks.nodes || []).forEach(n => {
-    if (n.home_session_id !== sessionState.currentSessionId) {
-      wrapModalChoices[n.id] = 'campaign';
-      const inCol = (sessionState.campaignBlocks.collections || []).find(c =>
-        (c.member_node_ids || []).includes(n.id));
-      wrapModalCollections[n.id] = inCol ? inCol.id : '';
-      wrapModalArcCollections[n.id] = '';   // shouldn't be in arc collections at the same time
-    }
-  });
-  // Arc frame (non-home) entries
-  (sessionState.arcBlocks.nodes || []).forEach(n => {
-    if (n.home_session_id !== sessionState.currentSessionId) {
-      wrapModalChoices[n.id] = 'arc';
-      const inCol = (sessionState.arcBlocks.collections || []).find(c =>
-        (c.member_node_ids || []).includes(n.id));
-      wrapModalArcCollections[n.id] = inCol ? inCol.id : '';
-      wrapModalCollections[n.id] = '';
-    }
-  });
   renderWrapModalList();
+  const notes = document.getElementById('wrapSessionNotes');
+  if (notes) notes.value = '';
   document.getElementById('wrap-modal').classList.add('open');
 }
 
 function closeWrapSessionModal() {
   document.getElementById('wrap-modal').classList.remove('open');
+}
+
+function renderWrapModalList() {
+  const list = document.getElementById('wrap-modal-list');
+  if (!list) return;
+  const sessionNodes = Array.from(state.nodes.values()).filter(n => !n.scope || n.scope === 'session');
+  const persistentNodes = Array.from(state.nodes.values()).filter(n => n.scope === 'campaign' || n.scope === 'arc');
+  const next = findWrapNextSessionRow();
+  const nextTitle = next ? (next.title || 'Untitled Session') : 'a new next session';
+  list.innerHTML = `
+    <div class="wrap-summary-card">
+      <div class="wrap-summary-line"><b>${sessionNodes.length}</b> session node${sessionNodes.length === 1 ? '' : 's'} will be copied forward into <b>${escHtml(nextTitle)}</b>.</div>
+      <div class="wrap-summary-line muted"><b>${persistentNodes.length}</b> campaign/arc node${persistentNodes.length === 1 ? '' : 's'} already persist beyond this session and will not be duplicated.</div>
+    </div>
+    <label class="wrap-notes-label" for="wrapSessionNotes">DM Post-Session Narrative / Notes</label>
+    <textarea id="wrapSessionNotes" class="wrap-notes-box" rows="8" placeholder="What happened, what changed, unresolved hooks, table context, reminders for next time…"></textarea>
+    <div class="wrap-summary-card muted small">
+      These notes will be saved to dedicated post-session note fields, rendered as a node on this session, and displayed in the Campaign Calendar after the Supabase columns below are added.
+    </div>`;
+}
+
+function findWrapNextSessionRow() {
+  const cur = (sessionState.sessions || []).find(s => String(s.id) === String(sessionState.currentSessionId));
+  if (!cur) return null;
+  const sameCampaign = (sessionState.sessions || [])
+    .filter(s => String(s.campaign_id) === String(cur.campaign_id) && String(s.id) !== String(cur.id));
+  const curSort = Number.isFinite(Number(cur.sort_order)) ? Number(cur.sort_order) : null;
+  const after = sameCampaign.filter(s => {
+    if (curSort !== null && Number.isFinite(Number(s.sort_order))) return Number(s.sort_order) > curSort;
+    if (cur.session_date && s.session_date && s.session_date !== cur.session_date) return s.session_date > cur.session_date;
+    return Number(s.id) > Number(cur.id);
+  });
+  after.sort((a,b) => {
+    const as = Number.isFinite(Number(a.sort_order)) ? Number(a.sort_order) : 999999;
+    const bs = Number.isFinite(Number(b.sort_order)) ? Number(b.sort_order) : 999999;
+    if (as !== bs) return as - bs;
+    const ad = a.session_date || '', bd = b.session_date || '';
+    if (ad !== bd) return ad.localeCompare(bd);
+    return Number(a.id) - Number(b.id);
+  });
+  return after[0] || null;
+}
+
+async function createWrapNextSessionRow() {
+  const cur = (sessionState.sessions || []).find(s => String(s.id) === String(sessionState.currentSessionId));
+  if (!cur || !cur.campaign_id) throw new Error('Current session is missing campaign_id.');
+  const nextSort = (Number.isFinite(Number(cur.sort_order)) ? Number(cur.sort_order) : 0) + 1;
+  const result = await sbFetch('sessions', {
+    method: 'POST',
+    prefer: 'return=representation',
+    body: JSON.stringify({
+      campaign_id: cur.campaign_id,
+      arc_id: cur.arc_id || null,
+      title: 'Next Session',
+      session_date: new Date().toISOString().slice(0, 10),
+      status: 'Planning',
+      blocks: { format: 'canvas', version: 1, nodes: [], edges: [], view: { x: 0, y: 0, zoom: 1 } },
+      sort_order: nextSort,
+    }),
+  });
+  const row = Array.isArray(result) ? result[0] : result;
+  if (!row || row.id == null) throw new Error('Server returned no next-session row.');
+  sessionState.sessions.push(row);
+  return row;
+}
+
+function makeWrapNodeSnapshot(n, idMap) {
+  const fields = n.fields ? JSON.parse(JSON.stringify(n.fields)) : {};
+  if (Array.isArray(fields.monsters)) {
+    fields.monsters = fields.monsters.map(m => {
+      if (m && m._editingAction) { const clean = { ...m }; delete clean._editingAction; return clean; }
+      return m;
+    });
+  }
+  if (fields.skin && fields.skin._editingAction) {
+    fields.skin = { ...fields.skin };
+    delete fields.skin._editingAction;
+  }
+  const rec = {
+    id: idMap.get(n.id),
+    type: n.type,
+    x: n.x,
+    y: n.y,
+    title: n.title,
+    summary: n.summary || '',
+    fields,
+    collapsed: !!n.collapsed,
+  };
+  if (n.table) rec.table = { headers: Array.isArray(n.table.headers) ? [...n.table.headers] : [], rows: Array.isArray(n.table.rows) ? n.table.rows.map(r => Array.isArray(r) ? [...r] : []) : [] };
+  if (n.brainstorm) rec.brainstorm = { items: Array.isArray(n.brainstorm.items) ? n.brainstorm.items.map(s => String(s || '')) : [] };
+  if (n.image) rec.image = cloneImagePayloadForSessionCopy(n, idMap);
+  return rec;
+}
+
+function buildWrapCarryForwardPayload() {
+  const nodesToCopy = Array.from(state.nodes.values()).filter(n => !n.scope || n.scope === 'session');
+  const sourceIds = new Set(nodesToCopy.map(n => n.id));
+  const idMap = new Map();
+  nodesToCopy.forEach(n => idMap.set(n.id, 'n' + (nodeIdSeq++)));
+  const nodes = nodesToCopy.map(n => makeWrapNodeSnapshot(n, idMap));
+  const edges = state.edges.filter(e => edgeIsCopyableSessionInterior(e, sourceIds)).map(e => ({
+    id: 'e' + Date.now() + Math.random().toString(36).slice(2, 8),
+    from_node: remapCopiedEndpointForSessionCopy(e.from, sourceIds, idMap),
+    to_node: remapCopiedEndpointForSessionCopy(e.to, sourceIds, idMap),
+    from_anchor: (e.from && e.from.anchor) || 'pin',
+    to_anchor: (e.to && e.to.anchor) || 'pin',
+    dir: e.dir || 'forward',
+    label: e.label || '',
+  })).filter(e => e.from_node && e.to_node);
+  return { nodes, edges };
+}
+
+function addWrapNotesNode(notes) {
+  const clean = String(notes || '').trim();
+  if (!clean) return null;
+  const centerX = Math.round((-VIEW.x + (window.innerWidth * 0.5)) / (VIEW.zoom || 1));
+  const centerY = Math.round((-VIEW.y + (window.innerHeight * 0.5)) / (VIEW.zoom || 1));
+  const node = createNode({
+    x: centerX - 160,
+    y: centerY - 120,
+    type: 'scene',
+    title: 'Post-Session Notes',
+    summary: clean.slice(0, 220),
+  });
+  node.fields = {
+    ...(node.fields || {}),
+    location: 'Session Wrap',
+    description: clean,
+    notes: clean,
+  };
+  if (node.el) node.el.innerHTML = (typeof rqSafeRenderNodeFace === 'function' ? rqSafeRenderNodeFace(node) : renderNodeFace(node));
+  return node;
+}
+
+async function saveWrapPostSessionNotes(notes) {
+  const clean = String(notes || '').trim();
+  if (!clean) return;
+  const cid = sessionState.currentSessionId;
+  const cur = (sessionState.sessions || []).find(s => String(s.id) === String(cid));
+  const nowIso = new Date().toISOString();
+
+  // Dedicated session columns. Requires SQL below.
+  try {
+    await sbFetch('sessions?id=eq.' + encodeURIComponent(cid), {
+      method: 'PATCH', prefer: 'return=minimal',
+      body: JSON.stringify({ post_session_notes: clean, wrapped_at: nowIso }),
+    });
+    if (cur) { cur.post_session_notes = clean; cur.wrapped_at = nowIso; }
+  } catch (e) {
+    console.warn('Post-session note save to sessions failed:', e.message);
+  }
+
+  // Dedicated calendar row columns. Requires SQL below. Non-fatal because
+  // older databases will not have rq_session_times.session_id yet.
+  try {
+    const existing = await sbFetch('rq_session_times?session_id=eq.' + encodeURIComponent(cid) + '&select=id&limit=1');
+    if (existing && existing.length) {
+      await sbFetch('rq_session_times?id=eq.' + encodeURIComponent(existing[0].id), {
+        method: 'PATCH', prefer: 'return=minimal',
+        body: JSON.stringify({ post_session_notes: clean, session_id: cid }),
+      });
+    } else if (cur) {
+      await sbFetch('rq_session_times', {
+        method: 'POST', prefer: 'return=minimal',
+        body: JSON.stringify({
+          session_id: cid,
+          campaign_id: cur.campaign_id || null,
+          arc_id: cur.arc_id || null,
+          title: cur.title || 'Session',
+          post_session_notes: clean,
+          tags: [],
+          time_breakdown: {},
+        }),
+      });
+    }
+  } catch (e) {
+    console.warn('Post-session note save to campaign calendar failed:', e.message);
+  }
+}
+
+async function applyWrapSessionPromotions() {
+  const cid = sessionState.currentSessionId;
+  if (!cid) return;
+  const btn = document.querySelector('#wrap-modal-foot button.primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Wrapping…'; }
+  try {
+    const notesEl = document.getElementById('wrapSessionNotes');
+    const notes = notesEl ? notesEl.value : '';
+
+    // Add notes to the session being wrapped before cloning forward, so the
+    // note remains historical and does not automatically appear next session.
+    addWrapNotesNode(notes);
+    markDirty();
+    await flushSaveNow();
+    await saveWrapPostSessionNotes(notes);
+
+    let next = findWrapNextSessionRow();
+    if (!next) next = await createWrapNextSessionRow();
+
+    const carry = buildWrapCarryForwardPayload();
+    const rows = await sbFetch('sessions?id=eq.' + encodeURIComponent(next.id) + '&select=*');
+    if (!rows || !rows.length) throw new Error('Next session not found in database.');
+    const destRow = rows[0];
+    const destBlocks = (destRow.blocks && typeof destRow.blocks === 'object') ? destRow.blocks : {};
+    const nextBlocks = {
+      ...destBlocks,
+      format: 'canvas',
+      version: 1,
+      nodes: [...(Array.isArray(destBlocks.nodes) ? destBlocks.nodes : []), ...carry.nodes],
+      edges: [...(Array.isArray(destBlocks.edges) ? destBlocks.edges : []), ...carry.edges],
+    };
+    await sbFetch('sessions?id=eq.' + encodeURIComponent(next.id), {
+      method: 'PATCH', prefer: 'return=minimal',
+      body: JSON.stringify({ blocks: nextBlocks }),
+    });
+    next.blocks = nextBlocks;
+
+    closeWrapSessionModal();
+    if (typeof showToast === 'function') {
+      showToast('🎁 Wrapped session: carried ' + carry.nodes.length + ' node' + (carry.nodes.length === 1 ? '' : 's') + ' into "' + (next.title || 'Next Session') + '".');
+    }
+  } catch (err) {
+    alert('Wrap Session failed: ' + (err && err.message ? err.message : String(err)));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Wrap Session'; }
+  }
 }
 
 // ── COLLECTION MANAGER MODAL ─────────────────────────────
