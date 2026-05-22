@@ -1679,7 +1679,7 @@ function buildWrapCarryForwardPayload() {
     label: e.label || '',
   })).filter(e => e.from_node && e.to_node);
 
-  // v1.3.59: Canvas Groups are saved in session.blocks.canvas_groups and
+  // v1.3.60: Canvas Groups are saved in session.blocks.canvas_groups and
   // reference node ids. Since Wrap Session gives copied nodes new ids, group
   // membership must be carried forward through the same source→destination
   // idMap used for nodes and edges. Groups with no copied session nodes are
@@ -1715,49 +1715,126 @@ function _rqNodeRepairSignature(n) {
   return [n.type || '', n.title || '', n.summary || '', Math.round(Number(n.x) || 0), Math.round(Number(n.y) || 0)].join('¦');
 }
 
-async function rqRepairCanvasGroupsBetweenSessions(sourceSessionId, destSessionId) {
-  const srcRows = await sbFetch('sessions?id=eq.' + encodeURIComponent(sourceSessionId) + '&select=id,blocks,title');
-  const dstRows = await sbFetch('sessions?id=eq.' + encodeURIComponent(destSessionId) + '&select=id,blocks,title');
-  const src = Array.isArray(srcRows) ? srcRows[0] : null;
-  const dst = Array.isArray(dstRows) ? dstRows[0] : null;
-  if (!src || !dst) throw new Error('Could not find both source and destination sessions.');
-  const srcBlocks = (src.blocks && typeof src.blocks === 'object') ? src.blocks : {};
-  const dstBlocks = (dst.blocks && typeof dst.blocks === 'object') ? dst.blocks : {};
+async function _rqFindSessionForGroupRepair(ref) {
+  const raw = String(ref == null ? '' : ref).trim();
+  if (!raw) return null;
+  const select = 'id,campaign_id,arc_id,title,session_date,status,blocks,sort_order';
+
+  // First try exact database id.
+  let rows = await sbFetch('sessions?id=eq.' + encodeURIComponent(raw) + '&select=' + select).catch(() => []);
+  if (Array.isArray(rows) && rows[0]) return rows[0];
+
+  // Then try common visible-label/title patterns: 129, Session 129, session 129.
+  const candidates = [raw];
+  if (/^\d+$/.test(raw)) {
+    candidates.push('Session ' + raw, 'session ' + raw, 'Session #' + raw, '#' + raw);
+  }
+  for (const c of candidates) {
+    rows = await sbFetch('sessions?title=eq.' + encodeURIComponent(c) + '&select=' + select + '&limit=1').catch(() => []);
+    if (Array.isArray(rows) && rows[0]) return rows[0];
+  }
+
+  // Finally, allow a broad title search for visible session numbers.
+  if (/^\d+$/.test(raw)) {
+    rows = await sbFetch('sessions?title=ilike.' + encodeURIComponent('%' + raw + '%') + '&select=' + select + '&order=created_at.desc&limit=10').catch(() => []);
+    if (Array.isArray(rows) && rows.length) {
+      const exactish = rows.find(r => new RegExp('(^|\\D)' + raw + '($|\\D)').test(String(r.title || '')));
+      return exactish || rows[0];
+    }
+  }
+  return null;
+}
+
+function _rqRepairGroupNodeIds(group) {
+  if (!group || typeof group !== 'object') return [];
+  const raw = Array.isArray(group.node_ids) ? group.node_ids
+    : Array.isArray(group.nodeIds) ? group.nodeIds
+    : Array.isArray(group.nodes) ? group.nodes
+    : [];
+  return raw.map(v => typeof v === 'object' ? (v.id || v.node_id || v.nodeId) : v).filter(v => v != null && v !== '').map(String);
+}
+
+function _rqSessionBlocksFromRow(row) {
+  return row && row.blocks && typeof row.blocks === 'object' ? row.blocks : {};
+}
+
+async function rqRepairCanvasGroupsBetweenSessions(sourceSessionRef, destSessionRef) {
+  const src = await _rqFindSessionForGroupRepair(sourceSessionRef);
+  const dst = await _rqFindSessionForGroupRepair(destSessionRef);
+  if (!src || !dst) {
+    throw new Error('Could not find both source and destination sessions. Tried database id first, then visible title patterns like "Session 129". Source found: ' + !!src + '; destination found: ' + !!dst + '.');
+  }
+
+  const srcBlocks = _rqSessionBlocksFromRow(src);
+  const dstBlocks = _rqSessionBlocksFromRow(dst);
   const srcNodes = Array.isArray(srcBlocks.nodes) ? srcBlocks.nodes : [];
   const dstNodes = Array.isArray(dstBlocks.nodes) ? dstBlocks.nodes : [];
   const srcGroups = Array.isArray(srcBlocks.canvas_groups) ? srcBlocks.canvas_groups : [];
+  if (!srcGroups.length) {
+    throw new Error('Source session "' + (src.title || src.id) + '" has no canvas_groups in blocks.canvas_groups.');
+  }
+
   const dstBySig = new Map();
   dstNodes.forEach(n => {
     const sig = _rqNodeRepairSignature(n);
     if (sig && !dstBySig.has(sig)) dstBySig.set(sig, n.id);
   });
+
+  // Also index by title/type as a forgiving fallback when copied nodes were nudged or re-laid out.
+  const dstByLooseSig = new Map();
+  dstNodes.forEach(n => {
+    const sig = [n.type || '', n.title || '', n.summary || ''].join('¦');
+    if (sig && !dstByLooseSig.has(sig)) dstByLooseSig.set(sig, n.id);
+  });
+
   const srcToDst = new Map();
   srcNodes.forEach(n => {
-    const sig = _rqNodeRepairSignature(n);
-    if (sig && dstBySig.has(sig)) srcToDst.set(String(n.id), String(dstBySig.get(sig)));
+    const strictSig = _rqNodeRepairSignature(n);
+    const looseSig = [n.type || '', n.title || '', n.summary || ''].join('¦');
+    const match = (strictSig && dstBySig.get(strictSig)) || (looseSig && dstByLooseSig.get(looseSig));
+    if (match) srcToDst.set(String(n.id), String(match));
   });
+
   const repairedGroups = srcGroups.map(g => {
-    const ids = (Array.isArray(g.node_ids) ? g.node_ids : [])
+    const ids = _rqRepairGroupNodeIds(g)
       .map(id => srcToDst.get(String(id)))
       .filter(Boolean);
     return {
+      ...g,
       id: 'grp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
-      name: String(g.name || 'Untitled Group'),
       node_ids: [...new Set(ids)],
       created_at: new Date().toISOString(),
+      repaired_from_group_id: g.id || null,
+      repaired_from_session_id: src.id,
     };
-  }).filter(g => g.node_ids.length);
-  const patched = { ...dstBlocks, canvas_groups: repairedGroups, active_canvas_group_id: repairedGroups[0]?.id || '' };
-  await sbFetch('sessions?id=eq.' + encodeURIComponent(destSessionId), {
+  }).filter(g => Array.isArray(g.node_ids) && g.node_ids.length);
+
+  if (!repairedGroups.length) {
+    throw new Error('Found source groups, but could not match any source grouped nodes to copied destination nodes. Matched nodes: ' + srcToDst.size + '.');
+  }
+
+  const patched = {
+    ...dstBlocks,
+    canvas_groups: repairedGroups,
+    active_canvas_group_id: repairedGroups[0]?.id || ''
+  };
+  await sbFetch('sessions?id=eq.' + encodeURIComponent(dst.id), {
     method: 'PATCH', prefer: 'return=minimal',
     body: JSON.stringify({ blocks: patched }),
   });
-  return { source: src.title, destination: dst.title, groups: repairedGroups.length, matchedNodes: srcToDst.size };
+  return {
+    source: src.title || src.id,
+    source_id: src.id,
+    destination: dst.title || dst.id,
+    destination_id: dst.id,
+    groups: repairedGroups.length,
+    matchedNodes: srcToDst.size
+  };
 }
 window.rqRepairCanvasGroupsBetweenSessions = rqRepairCanvasGroupsBetweenSessions;
 window.repairCanvasGroupsBetweenSessions = rqRepairCanvasGroupsBetweenSessions;
 window.rqRepairGroups = rqRepairCanvasGroupsBetweenSessions;
-console.info('[RQ] Canvas group repair helper loaded. Example: rqRepairCanvasGroupsBetweenSessions(128, 129)');
+console.info('[RQ] Canvas group repair helper loaded. Try: rqRepairCanvasGroupsBetweenSessions(128, 129). It now accepts database ids or visible session numbers/titles.');
 
 function addWrapNotesNode(notes) {
   const clean = String(notes || '').trim();
