@@ -1490,7 +1490,7 @@ const sessionState = {
 async function loadCampaignsAndArcsAndSessions() {
   const [campsR, arcsR, sessR] = await Promise.allSettled([
     sbFetch('campaigns?select=id,name,system,blocks&order=name.asc'),
-    sbFetch('arcs?select=id,campaign_id,name,sort_order,blocks&order=campaign_id.asc,sort_order.asc'),
+    sbFetch('arcs?select=id,campaign_id,name,parent_arc_id,sort_order,blocks&order=campaign_id.asc,parent_arc_id.asc,sort_order.asc'),
     sbFetch('sessions?select=id,campaign_id,arc_id,title,session_date,status,blocks,sort_order&order=campaign_id.asc,sort_order.asc'),
   ]);
   const errors = [];
@@ -3276,7 +3276,7 @@ function renderSessionPicker() {
   }
   let html = errBanner;
   camps.forEach(c => {
-    const campArcs = sessionState.arcs.filter(a => String(a.campaign_id) === String(c.id));
+    const campArcs = getChildArcs(null, c.id);
     // Sessions for this campaign with no arc go into a virtual "Loose Sessions" bucket
     const looseSessions = sessionState.sessions.filter(s =>
       String(s.campaign_id) === String(c.id) && !s.arc_id);
@@ -3315,14 +3315,25 @@ function renderSessionPicker() {
   pickerBody.innerHTML = html;
 }
 
-function renderArcInPicker(arc) {
+function getChildArcs(parentArcId, campaignId) {
+  return (sessionState.arcs || [])
+    .filter(a => String(a.campaign_id) === String(campaignId)
+      && String(a.parent_arc_id || '') === String(parentArcId || ''))
+    .sort((a,b) => (Number(a.sort_order || 0) - Number(b.sort_order || 0)) || String(a.name || '').localeCompare(String(b.name || '')));
+}
+
+function renderArcInPicker(arc, depth = 0) {
   const arcSessions = sessionState.sessions.filter(s => String(s.arc_id) === String(arc.id));
+  const childArcs = getChildArcs(arc.id, arc.campaign_id);
+  const pad = Math.max(0, depth) * 18;
   return `
-    <div class="sp-arc" data-arc-id="${arc.id}">
+    <div class="sp-arc" data-arc-id="${arc.id}" style="margin-left:${pad}px;">
       <div class="sp-arc-header" onclick="toggleArc('${arc.id}')">
         <span class="sp-arc-caret">▶</span>${escHtml(arc.name || 'Untitled Arc')}
+        ${childArcs.length ? `<span style="margin-left:8px;color:var(--steel-pale);font-family:'JetBrains Mono',monospace;font-size:0.52rem;">${childArcs.length} child${childArcs.length===1?'':'ren'}</span>` : ''}
       </div>
       <div class="sp-arc-body">
+        ${childArcs.map(child => renderArcInPicker(child, depth + 1)).join('')}
         ${arcSessions.map(s => renderSessionInPicker(s)).join('')}
         <button class="sp-new-session-btn" onclick="createNewSession('${arc.campaign_id}', '${arc.id}')">+ New Session</button>
       </div>
@@ -3876,19 +3887,44 @@ function loadCampaignBlocksForCurrentSession() {
 }
 
 // Same as campaign-blocks loader, scoped to the session's arc.
+function getDescendantArcIds(rootArcId) {
+  const ids = [];
+  const walk = (pid) => {
+    (sessionState.arcs || [])
+      .filter(a => String(a.parent_arc_id || '') === String(pid || ''))
+      .forEach(a => { ids.push(a.id); walk(a.id); });
+  };
+  if (rootArcId) { ids.push(rootArcId); walk(rootArcId); }
+  return ids;
+}
+
+function _tagArcBlockItems(items, arcId) {
+  return (Array.isArray(items) ? items : []).map(item => ({ ...item, _origin_arc_id: item._origin_arc_id || arcId }));
+}
+
+function _stripArcBlockItem(item) {
+  const { _origin_arc_id, ...clean } = item || {};
+  return clean;
+}
+
 function loadArcBlocksForCurrentSession() {
   const aid = sessionState.currentArcId;
   if (!aid) {
     sessionState.arcBlocks = { nodes: [], collections: [], edges: [] };
     return;
   }
-  const arc = sessionState.arcs.find(a => String(a.id) === String(aid));
-  const blocks = (arc && arc.blocks) || { nodes: [], collections: [], edges: [] };
-  sessionState.arcBlocks = {
-    nodes:       Array.isArray(blocks.nodes)       ? blocks.nodes       : [],
-    collections: Array.isArray(blocks.collections) ? blocks.collections : [],
-    edges:       Array.isArray(blocks.edges)       ? blocks.edges       : [],
-  };
+  const arcIds = getDescendantArcIds(aid);
+  const nodes = [];
+  const collections = [];
+  const edges = [];
+  arcIds.forEach(id => {
+    const arc = sessionState.arcs.find(a => String(a.id) === String(id));
+    const blocks = (arc && arc.blocks) || { nodes: [], collections: [], edges: [] };
+    nodes.push(..._tagArcBlockItems(blocks.nodes, id));
+    collections.push(..._tagArcBlockItems(blocks.collections, id));
+    edges.push(..._tagArcBlockItems(blocks.edges, id));
+  });
+  sessionState.arcBlocks = { nodes, collections, edges };
 }
 
 // Mark arc blocks dirty so they get autosaved (independent of campaign).
@@ -3910,24 +3946,39 @@ async function attemptArcAutosave() {
   sessionState.arcSaveInFlight = true;
   setCanvasSavedState('saving');
   try {
-    // Preserve any keys we don't actively manage in arc.blocks. Currently
-    // arc.blocks only holds nodes/collections/edges, but the spread
-    // future-proofs against silent data loss when new arc-level features
-    // get added (mirrors the campaign autosave fix).
-    const arc = sessionState.arcs.find(a => String(a.id) === String(aid));
-    const existingBlocks = (arc && arc.blocks) ? arc.blocks : {};
-    const payload = {
-      ...existingBlocks,
-      nodes:       sessionState.arcBlocks.nodes       || [],
-      collections: sessionState.arcBlocks.collections || [],
-      edges:       sessionState.arcBlocks.edges       || [],
-    };
-    await sbFetch('arcs?id=eq.' + aid, {
-      method: 'PATCH',
-      prefer: 'return=minimal',
-      body: JSON.stringify({ blocks: payload }),
-    });
-    if (arc) arc.blocks = payload;
+    // Nested arcs: the visible arc frame may include nodes/collections/edges
+    // from the current arc and its descendants. Preserve each item's origin
+    // so editing a child-arc frame card saves back to that child arc instead
+    // of flattening everything into the parent.
+    const originIds = new Set();
+    (sessionState.arcBlocks.nodes || []).forEach(n => originIds.add(String(n._origin_arc_id || aid)));
+    (sessionState.arcBlocks.collections || []).forEach(c => originIds.add(String(c._origin_arc_id || aid)));
+    (sessionState.arcBlocks.edges || []).forEach(e => originIds.add(String(e._origin_arc_id || aid)));
+    if (!originIds.size) originIds.add(String(aid));
+
+    for (const oid of originIds) {
+      const arc = sessionState.arcs.find(a => String(a.id) === String(oid));
+      if (!arc) continue;
+      const existingBlocks = arc.blocks || {};
+      const payload = {
+        ...existingBlocks,
+        nodes: (sessionState.arcBlocks.nodes || [])
+          .filter(n => String(n._origin_arc_id || aid) === String(oid))
+          .map(_stripArcBlockItem),
+        collections: (sessionState.arcBlocks.collections || [])
+          .filter(c => String(c._origin_arc_id || aid) === String(oid))
+          .map(_stripArcBlockItem),
+        edges: (sessionState.arcBlocks.edges || [])
+          .filter(e => String(e._origin_arc_id || aid) === String(oid))
+          .map(_stripArcBlockItem),
+      };
+      await sbFetch('arcs?id=eq.' + encodeURIComponent(oid), {
+        method: 'PATCH',
+        prefer: 'return=minimal',
+        body: JSON.stringify({ blocks: payload }),
+      });
+      arc.blocks = payload;
+    }
     sessionState.arcLastSavedGen = sessionState.arcSaveGen;
     setCanvasSavedState('saved');
   } catch (e) {

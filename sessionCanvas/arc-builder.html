@@ -144,6 +144,11 @@ body {
 }
 .arc-entry:hover { background: rgba(124,77,188,0.08); border-color: rgba(124,77,188,0.2); }
 .arc-entry.active { background: rgba(124,77,188,0.15); border-color: rgba(124,77,188,0.4); }
+.arc-children { margin-left: 14px; padding-left: 8px; border-left: 1px dashed rgba(124,77,188,0.28); }
+.arc-tree-row { display:flex; align-items:stretch; gap:4px; }
+.arc-tree-row .arc-entry { flex:1; }
+.arc-child-btn { align-self:stretch; opacity:0.55; border-color:rgba(124,77,188,0.22); color:var(--arc-pale); padding:0 7px; }
+.arc-tree-row:hover .arc-child-btn { opacity:1; }
 .arc-entry-title {
   font-family: 'Cinzel', serif;
   font-size: 0.65rem;
@@ -613,7 +618,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Arc Builder</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.3.2</span>
+  <span class="topbar-version">v0.3.3</span>
   <div class="topbar-actions">
     <a href="session-planner-canvas.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">🧭 Canvas</a>
     <a href="campaign-calendar.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">📅 Calendar</a>
@@ -860,7 +865,7 @@ function setArcBuilderCampaign(id) {
 
 async function loadArcs() {
   try {
-    arcs = await sbGet('arcs', '?select=id,campaign_id,name,sort_order,blocks,status,objective,dm_notes,player_notes_public,tags,campaign_day_start&order=campaign_id.asc,sort_order.asc,name.asc&limit=500');
+    arcs = await sbGet('arcs', '?select=id,campaign_id,name,parent_arc_id,sort_order,blocks,status,objective,dm_notes,player_notes_public,tags,campaign_day_start&order=campaign_id.asc,parent_arc_id.asc,sort_order.asc,name.asc&limit=500');
     await loadSessions();
     if (!currentCampaignId && arcs[0]?.campaign_id) currentCampaignId = arcs[0].campaign_id;
     renderCampaignSelect();
@@ -890,6 +895,55 @@ function arcMeta(a, key, fallback = '') {
   return ab && ab[key] !== undefined && ab[key] !== null ? ab[key] : fallback;
 }
 
+function childArcsOf(parentId, list = null) {
+  const src = list || (currentCampaignId ? arcs.filter(a => String(a.campaign_id) === String(currentCampaignId)) : arcs);
+  return src
+    .filter(a => String(a.parent_arc_id || '') === String(parentId || ''))
+    .sort((a,b) => (Number(a.sort_order || 0) - Number(b.sort_order || 0)) || arcTitle(a).localeCompare(arcTitle(b)));
+}
+
+function descendantArcIds(rootId) {
+  const ids = [];
+  const walk = (pid) => childArcsOf(pid, arcs).forEach(child => { ids.push(child.id); walk(child.id); });
+  if (rootId) { ids.push(rootId); walk(rootId); }
+  return ids;
+}
+
+function renderArcTree(parentId, visibleArcs, depth = 0) {
+  return childArcsOf(parentId, visibleArcs).map(a => {
+    const children = childArcsOf(a.id, visibleArcs);
+    const active = currentArc && String(currentArc.id) === String(a.id);
+    return `
+      <div class="arc-tree-node" data-arc-id="${escHtml(a.id)}">
+        <div class="arc-tree-row">
+          <div class="arc-entry ${active ? 'active' : ''}" onclick="openArc(${JSON.stringify(a).replace(/"/g,'&quot;')})">
+            <div class="arc-entry-title">${children.length ? '▾ ' : ''}${escHtml(arcTitle(a))}</div>
+            <div class="arc-entry-meta">
+              <span class="arc-status ${arcMeta(a, 'status', 'active')}">${arcMeta(a, 'status', 'active')}</span>
+              ${arcMeta(a, 'campaign_day_start', null) != null ? `<span>Day ${arcMeta(a, 'campaign_day_start', null)}</span>` : ''}
+              ${children.length ? `<span>· ${children.length} child${children.length===1?'':'ren'}</span>` : ''}
+            </div>
+          </div>
+          <button class="btn btn-xs arc-child-btn" onclick="event.stopPropagation(); newArc('${escHtml(a.id)}')" title="Create a child arc inside this arc">+</button>
+        </div>
+        ${children.length ? `<div class="arc-children">${renderArcTree(a.id, visibleArcs, depth + 1)}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function parentArcOptions(selectedId) {
+  if (!currentArc) return '<option value="">None — top-level arc</option>';
+  const invalid = new Set(descendantArcIds(currentArc.id).map(String));
+  invalid.add(String(currentArc.id));
+  const visible = currentCampaignId ? arcs.filter(a => String(a.campaign_id) === String(currentCampaignId)) : arcs;
+  const opts = ['<option value="">None — top-level arc</option>'];
+  visible
+    .filter(a => !invalid.has(String(a.id)))
+    .sort((a,b) => arcTitle(a).localeCompare(arcTitle(b)))
+    .forEach(a => opts.push(`<option value="${escHtml(a.id)}" ${String(selectedId || '') === String(a.id) ? 'selected' : ''}>${escHtml(arcTitle(a))}</option>`));
+  return opts.join('');
+}
+
 function renderArcList() {
   renderCampaignSelect();
   const list = document.getElementById('arcList');
@@ -902,15 +956,7 @@ function renderArcList() {
     list.innerHTML = `<div class="arc-empty"><div style="font-size:2rem;opacity:0.3;">📖</div><div>No arcs yet for this campaign.<br>Create your first story arc.</div></div>`;
     return;
   }
-  list.innerHTML = visibleArcs.map(a => `
-    <div class="arc-entry ${currentArc?.id === a.id ? 'active' : ''}" onclick="openArc(${JSON.stringify(a).replace(/"/g,'&quot;')})">
-      <div class="arc-entry-title">${escHtml(arcTitle(a))}</div>
-      <div class="arc-entry-meta">
-        <span class="arc-status ${arcMeta(a, 'status', 'active')}">${arcMeta(a, 'status', 'active')}</span>
-        ${arcMeta(a, 'campaign_day_start', null) != null ? `<span>Day ${arcMeta(a, 'campaign_day_start', null)}</span>` : ''}
-        
-      </div>
-    </div>`).join('');
+  list.innerHTML = renderArcTree(null, visibleArcs) || `<div class="arc-empty"><div style="font-size:2rem;opacity:0.3;">📖</div><div>No top-level arcs found.</div></div>`;
 }
 
 // ── OPEN ARC ──
@@ -930,14 +976,15 @@ async function openArc(arc) {
 }
 
 // ── NEW ARC ──
-async function newArc() {
+async function newArc(parentArcId = null) {
   if (!currentCampaignId) {
     showToast('Could not create arc: no campaign selected. Open or create a campaign/session in Session Planner Canvas first.', true);
     return;
   }
   const arc = {
     campaign_id: parseInt(currentCampaignId),
-    name: 'New Arc',
+    parent_arc_id: parentArcId ? parseInt(parentArcId) : null,
+    name: parentArcId ? 'New Child Arc' : 'New Arc',
     status: 'active',
     objective: '',
     dm_notes: '',
@@ -989,6 +1036,14 @@ function renderEditor() {
       <div class="field-group">
         <label class="field-label">Arc Title</label>
         <input class="field-input" id="arcTitle" type="text" value="${escHtml(arcTitle(a)==='Untitled Arc'?'':arcTitle(a))}" placeholder="The Fall of House Vrakar…" oninput="document.getElementById('arcTitleDisplay').textContent=this.value;autoSave()">
+      </div>
+
+      <div class="field-group">
+        <label class="field-label">Parent Arc / Folder</label>
+        <span class="field-hint">Nest this arc under a broader arc. Parent arc frames include nodes from their child arcs.</span>
+        <select class="select-input" id="arcParent" onchange="autoSave()">
+          ${parentArcOptions(a.parent_arc_id)}
+        </select>
       </div>
 
       <div class="field-group">
@@ -1145,7 +1200,7 @@ function setCampaignDay() {
 // ── SESSION TIME DATA ──
 function loadArcSessions(arcId) {
   return (sessions || [])
-    .filter(s => String(s.arc_id || '') === String(arcId || ''))
+    .filter(s => descendantArcIds(arcId).map(String).includes(String(s.arc_id || '')))
     .map(s => {
       const b = s.blocks || {};
       const tb = b.time_breakdown || b.session_time?.time_breakdown || {};
@@ -1287,6 +1342,7 @@ async function saveArc() {
     status:               document.getElementById('arcStatus')?.value               || 'active',
     tags:                 allTags,
     campaign_day_start:   parseInt(document.getElementById('arcStartDay')?.value)   || null,
+    parent_arc_id:         document.getElementById('arcParent')?.value ? parseInt(document.getElementById('arcParent').value) : null,
     blocks:               { ...existingBlocks, nodes: existingBlocks.nodes || [], collections: existingBlocks.collections || [], edges: existingBlocks.edges || [] }
   };
 
