@@ -17406,7 +17406,7 @@ window.rqNpcMonsterCountsForTeamup = rqNpcMonsterCountsForTeamup;
 
 
 
-// v1.3.48 — robust NPC combat enhancer attachment.
+// v1.3.49 — CSS node connector layer fix; JS unchanged from v1.3.48 behavior.
 (function(){
   function rqFindNpcCards(){
     return [...document.querySelectorAll('.node, .canvas-node, .rq-node, .card')].filter(el => {
