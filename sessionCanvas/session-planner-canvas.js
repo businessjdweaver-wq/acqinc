@@ -1551,18 +1551,32 @@ function closeWrapSessionModal() {
   document.getElementById('wrap-modal').classList.remove('open');
 }
 
+function _wrapSuggestNextSessionTitle() {
+  const cur = (sessionState.sessions || []).find(s => String(s.id) === String(sessionState.currentSessionId));
+  const curTitle = (cur && cur.title) ? String(cur.title) : 'Next Session';
+  const m = curTitle.match(/^(.*?)(\d+)(.*)$/);
+  if (m) return (m[1] || '') + (parseInt(m[2], 10) + 1) + (m[3] || '');
+  return curTitle.replace(/\s*$/,'') + ' — Next';
+}
+
 function renderWrapModalList() {
   const list = document.getElementById('wrap-modal-list');
   if (!list) return;
   const sessionNodes = Array.from(state.nodes.values()).filter(n => !n.scope || n.scope === 'session');
   const persistentNodes = Array.from(state.nodes.values()).filter(n => n.scope === 'campaign' || n.scope === 'arc');
-  const next = findWrapNextSessionRow();
-  const nextTitle = next ? (next.title || 'Untitled Session') : 'a new next session';
+  const suggestedTitle = _wrapSuggestNextSessionTitle();
+  const today = new Date().toISOString().slice(0, 10);
   list.innerHTML = `
     <div class="wrap-summary-card">
-      <div class="wrap-summary-line"><b>${sessionNodes.length}</b> session node${sessionNodes.length === 1 ? '' : 's'} will be copied forward into <b>${escHtml(nextTitle)}</b>.</div>
+      <div class="wrap-summary-line"><b>${sessionNodes.length}</b> session node${sessionNodes.length === 1 ? '' : 's'} will be copied forward into a <b>new session</b>.</div>
       <div class="wrap-summary-line muted"><b>${persistentNodes.length}</b> campaign/arc node${persistentNodes.length === 1 ? '' : 's'} already persist beyond this session and will not be duplicated.</div>
     </div>
+    <label class="wrap-notes-label" for="wrapNextSessionTitle">Create Next Session</label>
+    <div class="wrap-next-session-grid">
+      <input id="wrapNextSessionTitle" class="wrap-next-session-input" type="text" value="${escAttr(suggestedTitle)}" placeholder="Next session title">
+      <input id="wrapNextSessionDate" class="wrap-next-session-input" type="date" value="${escAttr(today)}">
+    </div>
+    <div class="wrap-summary-card muted small">Wrap Session now creates a fresh next-session row instead of guessing from older existing sessions. Nodes are copied into the new row after it is created.</div>
     <label class="wrap-notes-label" for="wrapSessionNotes">DM Post-Session Narrative / Notes</label>
     <textarea id="wrapSessionNotes" class="wrap-notes-box" rows="8" placeholder="What happened, what changed, unresolved hooks, table context, reminders for next time…"></textarea>
     <div class="wrap-summary-card muted small">
@@ -1592,21 +1606,27 @@ function findWrapNextSessionRow() {
   return after[0] || null;
 }
 
-async function createWrapNextSessionRow() {
+async function createWrapNextSessionRow(opts = {}) {
   const cur = (sessionState.sessions || []).find(s => String(s.id) === String(sessionState.currentSessionId));
   if (!cur || !cur.campaign_id) throw new Error('Current session is missing campaign_id.');
-  const nextSort = (Number.isFinite(Number(cur.sort_order)) ? Number(cur.sort_order) : 0) + 1;
+  const sameCampaign = (sessionState.sessions || []).filter(s => String(s.campaign_id) === String(cur.campaign_id));
+  const maxSort = sameCampaign.reduce((max, s) => {
+    const n = Number(s.sort_order);
+    return Number.isFinite(n) ? Math.max(max, n) : max;
+  }, 0);
+  const title = String(opts.title || '').trim() || _wrapSuggestNextSessionTitle();
+  const sessionDate = String(opts.session_date || '').trim() || new Date().toISOString().slice(0, 10);
   const result = await sbFetch('sessions', {
     method: 'POST',
     prefer: 'return=representation',
     body: JSON.stringify({
       campaign_id: cur.campaign_id,
       arc_id: cur.arc_id || null,
-      title: 'Next Session',
-      session_date: new Date().toISOString().slice(0, 10),
+      title,
+      session_date: sessionDate,
       status: 'Planning',
       blocks: { format: 'canvas', version: 1, nodes: [], edges: [], view: { x: 0, y: 0, zoom: 1 } },
-      sort_order: nextSort,
+      sort_order: maxSort + 1,
     }),
   });
   const row = Array.isArray(result) ? result[0] : result;
@@ -1745,8 +1765,12 @@ async function applyWrapSessionPromotions() {
     await flushSaveNow();
     await saveWrapPostSessionNotes(notes);
 
-    let next = findWrapNextSessionRow();
-    if (!next) next = await createWrapNextSessionRow();
+    const nextTitleEl = document.getElementById('wrapNextSessionTitle');
+    const nextDateEl = document.getElementById('wrapNextSessionDate');
+    const next = await createWrapNextSessionRow({
+      title: nextTitleEl ? nextTitleEl.value : '',
+      session_date: nextDateEl ? nextDateEl.value : '',
+    });
 
     const carry = buildWrapCarryForwardPayload();
     const rows = await sbFetch('sessions?id=eq.' + encodeURIComponent(next.id) + '&select=*');
