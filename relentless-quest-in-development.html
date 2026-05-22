@@ -20150,7 +20150,9 @@ function applyDowntimeThreshold(c, type, target){
   var threshold=downtimeThreshold(type,target,c);
   var msgs=[];
   while((c.dtProgress[key]||0)>=threshold){
-    c.dtProgress[key]-=threshold;
+    var _oneTimeUnlock=downtimeIsOneTimeTrack(type);
+    if(_oneTimeUnlock){delete c.dtProgress[key];}
+    else{c.dtProgress[key]-=threshold;}
     var unlockMsg='';
     if(type==='skill'&&(c.skills||[]).indexOf(target)===-1){
       if(!c.skills)c.skills=[];
@@ -20291,7 +20293,9 @@ function resolveDowntimeRoll(pending, roll){
   var unlocked=false;
   var unlockMsg='';
   if(c.dtProgress[key]>=threshold){
-    c.dtProgress[key]-=threshold;
+    var _oneTimeUnlock=downtimeIsOneTimeTrack(job.type);
+    if(_oneTimeUnlock){delete c.dtProgress[key];}
+    else{c.dtProgress[key]-=threshold;}
     unlocked=true;
     if(job.type==='skill'&&(c.skills||[]).indexOf(job.target)===-1){
       c.skills.push(job.target);
@@ -20473,6 +20477,112 @@ function downtimeRedundantMessage(c,type,target){
   return nm+' already has this downtime reward. Choose a different target.';
 }
 
+// v1.7181 — Skill/language/faith pacing gates.
+// One-time training tracks are capped by class/level and must be unlocked by
+// a territory building dedicated to that exact target. Contacts/intel remain
+// repeatable economy tracks and do not use these gates.
+function downtimeIsOneTimeTrack(type){
+  return type==='skill'||type==='language'||type==='faith';
+}
+var DOWNTIME_CLASS_CAP_BONUS={
+  'Sorcerer':0,'Monk':0,
+  'Wizard':1,'Fighter':1,'Paladin':1,'Barbarian':1,
+  'Cleric':2,'Druid':2,'Warlock':2,'Artificer':2,
+  'Ranger':3,
+  'Rogue':6,
+  'Bard':8
+};
+function downtimeClassCap(c){
+  var lvl=Math.max(1,parseInt((c&&c.level)||1,10)||1);
+  var cls=(c&&c.cls)||'';
+  var bonus=DOWNTIME_CLASS_CAP_BONUS[cls]||0;
+  return Math.ceil((20+bonus)*Math.min(20,lvl)/20);
+}
+function downtimeOneTimeCount(c){
+  if(!c)return 0;
+  return ((c.skills||[]).length||0)+((c.lang||[]).length||0)+(c.rel?1:0);
+}
+function downtimeCapReached(c){
+  return downtimeOneTimeCount(c)>=downtimeClassCap(c);
+}
+function downtimeCapMessage(c){
+  var nm=(c&&c.name)||'This character';
+  return nm+' has '+downtimeOneTimeCount(c)+' / '+downtimeClassCap(c)+' skill/language/faith slots for level '+((c&&c.level)||1)+'. Level up before learning another one-time downtime reward.';
+}
+function _dtCleanTarget(v){
+  return String(v||'').replace(/^(?:★|🔄) /,'').trim();
+}
+function _dtAssetUnlockMatches(a,type,target,territory){
+  if(!a||!a.meta)return false;
+  if(a.meta.ownerType!=='territory'||a.meta.ownerRef!==territory)return false;
+  var uType=(a.meta.unlockType||a.meta.unlock_type||'').trim();
+  var uVal=(a.meta.unlockValue||a.meta.unlock_value||'').trim();
+  return uType===type&&uVal===target;
+}
+function downtimeTargetUnlockedByBuilding(c,type,target){
+  if(!downtimeIsOneTimeTrack(type))return true;
+  if(!c)return false;
+  var territory=c.homeTerritory||S.originTerritory||'';
+  if(!territory)return false;
+  target=_dtCleanTarget(target);
+  return (S.partyAssets||[]).some(function(a){return _dtAssetUnlockMatches(a,type,target,territory);});
+}
+function downtimeLockedMessage(c,type,target){
+  var territory=(c&&c.homeTerritory)||S.originTerritory||'this territory';
+  return downtimeTrackLabel(type,target)+' is not unlocked in '+territory+'. Purchase or dedicate a relevant building to this exact '+(type==='language'?'language':type==='faith'?'faith':'skill')+' first.';
+}
+function downtimeCanStartOneTimeTarget(c,type,target){
+  if(!downtimeIsOneTimeTrack(type))return {ok:true,msg:''};
+  target=_dtCleanTarget(target);
+  if(downtimeTargetAlreadyOwned(c,type,target))return {ok:false,msg:downtimeRedundantMessage(c,type,target)};
+  if(downtimeCapReached(c))return {ok:false,msg:downtimeCapMessage(c)};
+  if(!downtimeTargetUnlockedByBuilding(c,type,target))return {ok:false,msg:downtimeLockedMessage(c,type,target)};
+  return {ok:true,msg:''};
+}
+function _dtBuildingUnlockOptions(buildingName){
+  var opts=[];
+  ['skill','language','faith'].forEach(function(type){
+    var map=DOWNTIME_BUILDING_CONTRIBS[type]||{};
+    Object.keys(map).forEach(function(target){
+      if((map[target]||[]).indexOf(buildingName)!==-1){
+        opts.push({type:type,target:target});
+      }
+    });
+  });
+  // Universal shrine fallback for non-canonical faiths is handled by custom
+  // faith entry in the prompt, so no finite list is added here.
+  return opts;
+}
+function _dtPromptBuildingDedication(asset,item){
+  if(!asset||!asset.meta||!item)return;
+  var name=item.name||asset.name||'this building';
+  var opts=_dtBuildingUnlockOptions(name);
+  var examples=opts.slice(0,12).map(function(o){return o.type+':'+o.target;}).join('\n');
+  var msg='Dedicate '+name+' to unlock one downtime target in this territory.\n\n'+
+    'Use one of these formats:\nskill:Acrobatics\nlanguage:Giant\nfaith:Protean Way\n\n'+
+    (examples?('Suggested for this building:\n'+examples+(opts.length>12?'\n…':'')+'\n\n'):'')+
+    'Leave blank to skip for now.';
+  var raw='';
+  try{raw=window.prompt(msg,'')||'';}catch(e){raw='';}
+  raw=raw.trim();
+  if(!raw)return;
+  var colon=raw.indexOf(':');
+  if(colon===-1){alert('Dedication skipped: use type:value, such as language:Giant.');return;}
+  var type=raw.slice(0,colon).trim().toLowerCase();
+  var value=raw.slice(colon+1).trim();
+  if(type==='lang')type='language';
+  if(type==='religion'||type==='deity')type='faith';
+  if(!downtimeIsOneTimeTrack(type)||!value){
+    alert('Dedication skipped: type must be skill, language, or faith.');
+    return;
+  }
+  asset.meta.unlockType=type;
+  asset.meta.unlockValue=value;
+  asset.meta.unlock_type=type;   // DB/Supabase-friendly mirror
+  asset.meta.unlock_value=value; // DB/Supabase-friendly mirror
+  if(typeof logAdd==='function')logAdd('🏛 '+name+' dedicated to '+type+': '+value,'buy');
+}
+
 // v1.7180 — Obsolete downtime-track cleanup.
 // The reward gate prevents new redundant skill/language/faith work, but old
 // saves may still contain dtProgress keys (and occasionally active/pending
@@ -20567,7 +20677,11 @@ function _dtInProgressSet(dtType){
 }
 function getDowntimeTargetOptions(c,type){
   function suggest(all,alreadyHas,coveredKey,dtType){
+    if(downtimeIsOneTimeTrack(dtType)&&downtimeCapReached(c))return [];
     var missing=all.filter(function(v){return !alreadyHas(v);});
+    if(downtimeIsOneTimeTrack(dtType)){
+      missing=missing.filter(function(v){return downtimeTargetUnlockedByBuilding(c,dtType,v);});
+    }
     if(!missing.length)return [];
     var franchiseCovered=_franchiseCoveredSet(coveredKey);
     var inProgress=_dtInProgressSet(dtType);
@@ -20802,6 +20916,13 @@ function confirmDowntimeModal(){
   }
   if(downtimeTargetAlreadyOwned(c,type,target)){
     alert(downtimeRedundantMessage(c,type,target));
+    DOWNTIME_PENDING.target='';
+    renderDowntimeModal();
+    return;
+  }
+  var oneTimeGate=downtimeCanStartOneTimeTarget(c,type,target);
+  if(!oneTimeGate.ok){
+    alert(oneTimeGate.msg);
     DOWNTIME_PENDING.target='';
     renderDowntimeModal();
     return;
@@ -21915,7 +22036,12 @@ function renderParty(){
     var resumable=(S.party||[]).map(function(c,ci){return{c:c,ci:ci};}).filter(function(e){
       if(!e.c)return false;
       var prog=e.c.dtProgress||{};
-      var hasProgress=Object.keys(prog).some(function(k){return (prog[k]||0)>0&&!downtimeProgressKeyIsObsolete(e.c,k);});
+      var hasProgress=Object.keys(prog).some(function(k){
+        if((prog[k]||0)<=0||downtimeProgressKeyIsObsolete(e.c,k))return false;
+        var p=_downtimeKeyParts(k);
+        var gate=downtimeCanStartOneTimeTarget(e.c,p.type,p.target);
+        return gate.ok;
+      });
       var isBusy=!!(S.downtimeJobs||[]).some(function(j){return j.ci===e.ci&&(j.endsAt||0)>_now;});
       var isQuesting=!!_questingCis[e.ci];
       return hasProgress&&!isBusy&&!isQuesting;
@@ -21941,7 +22067,11 @@ function renderParty(){
     // Build per-character rows with checkbox + track + progress bar
     var charRows=resumable.map(function(e,idx){
       var prog=e.c.dtProgress||{};
-      var bestKey=Object.keys(prog).filter(function(k){return (prog[k]||0)>0&&!downtimeProgressKeyIsObsolete(e.c,k);})
+      var bestKey=Object.keys(prog).filter(function(k){
+          if((prog[k]||0)<=0||downtimeProgressKeyIsObsolete(e.c,k))return false;
+          var p=_downtimeKeyParts(k);
+          return downtimeCanStartOneTimeTarget(e.c,p.type,p.target).ok;
+        })
         .sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
       var trackLabel='',trackProg=0,trackThreshold=8;
       if(bestKey){
@@ -22053,7 +22183,11 @@ function renderParty(){
           var _endsAt=Date.now()+_ms;
           _selected.forEach(function(e){
             var prog=e.c.dtProgress||{};
-            var bestKey=Object.keys(prog).filter(function(k){return (prog[k]||0)>0&&!downtimeProgressKeyIsObsolete(e.c,k);})
+            var bestKey=Object.keys(prog).filter(function(k){
+                if((prog[k]||0)<=0||downtimeProgressKeyIsObsolete(e.c,k))return false;
+                var p=_downtimeKeyParts(k);
+                return downtimeCanStartOneTimeTarget(e.c,p.type,p.target).ok;
+              })
               .sort(function(a,b){return (prog[b]||0)-(prog[a]||0);})[0];
             if(!bestKey)return;
             var parts=bestKey.split(':');
@@ -33703,7 +33837,9 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
       else if(ownerVal.indexOf('squad::')===0){meta.ownerType='squad';meta.ownerRef=ownerVal.slice(7);}
       else if(ownerVal.indexOf('vehicle::')===0){meta.ownerType='vehicle';meta.ownerRef=ownerVal.slice(9);}
       else if(ownerVal.indexOf('territory::')===0){meta.ownerType='territory';meta.ownerRef=ownerVal.slice(11);} // v1.7158
-      S.partyAssets.push({name:item.name,ic:item.ic,type:item.type,meta:meta});
+      var _assetObj={name:item.name,ic:item.ic,type:item.type,meta:meta};
+      if(_isBuildingBuy)_dtPromptBuildingDedication(_assetObj,item);
+      S.partyAssets.push(_assetObj);
       if(aq===0)_newAssetUid=meta.uid;
     }
     logAdd('Purchased: '+item.name+' ×'+qty+' ('+total+' gp)','buy');
