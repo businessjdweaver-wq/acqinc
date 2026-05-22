@@ -6805,12 +6805,67 @@ function pathDFor(p1, p2, n1 = null, n2 = null) {
 }
 function applyEdgeMarkers(edge) {
   const dir = edge.dir;
-  edge.pathEl.setAttribute('marker-end',   dir === 'forward' || dir === 'both' ? 'url(#arrow)' : '');
-  edge.pathEl.setAttribute('marker-start', dir === 'backward'|| dir === 'both' ? 'url(#arrow)' : '');
+  const startHasArrow = dir === 'backward' || dir === 'both';
+  const endHasArrow   = dir === 'forward'  || dir === 'both';
+  // Every connector end should read as intentional: arrows where directed,
+  // dots where that end has no arrowhead.
+  edge.pathEl.setAttribute('marker-start', startHasArrow ? 'url(#arrow)' : 'url(#edge-dot)');
+  edge.pathEl.setAttribute('marker-end',   endHasArrow   ? 'url(#arrow)' : 'url(#edge-dot)');
   // Update the pill's glyph so it reads the current direction at a glance
   if (edge.pillEl) edge.pillEl.textContent = DIR_GLYPH[dir];
 }
 const DIR_GLYPH = { both: '↔', forward: '→', backward: '←', none: '—' };
+
+function edgeEndpointNodeIds(edge) {
+  const ids = new Set();
+  const add = (endpoint) => {
+    if (!endpoint || !endpoint.nodeId) return;
+    const pinRef = parseImagePinEndpointId(endpoint.nodeId);
+    ids.add(pinRef ? pinRef.imageNodeId : endpoint.nodeId);
+  };
+  add(edge.from);
+  add(edge.to);
+  return ids;
+}
+function updateEdgeNodeOverlap(edge) {
+  if (!edge || !edge.pathEl || edge.pathEl.classList.contains('cross-scope')) {
+    if (edge && edge.pathEl) edge.pathEl.classList.remove('node-overlap');
+    return;
+  }
+  let total = 0;
+  try { total = edge.pathEl.getTotalLength(); } catch (err) { return; }
+  if (!total) return;
+  const endpointIds = edgeEndpointNodeIds(edge);
+  const rects = [];
+  state.nodes.forEach(n => {
+    if (!n || !n.el || endpointIds.has(n.id)) return;
+    const size = nodeSize(n);
+    if (!size || !size.w || !size.h) return;
+    rects.push({
+      x: Number(n.x) || 0,
+      y: Number(n.y) || 0,
+      w: size.w,
+      h: size.h
+    });
+  });
+  let overlaps = false;
+  const step = Math.max(8, Math.min(18, total / 48));
+  for (let d = 0; d <= total && !overlaps; d += step) {
+    let pt;
+    try { pt = edge.pathEl.getPointAtLength(d); } catch (err) { break; }
+    for (const r of rects) {
+      // A small inset prevents a connector that merely grazes a border from
+      // being marked as an under-node crossing.
+      const inset = 4;
+      if (pt.x >= r.x + inset && pt.x <= r.x + r.w - inset &&
+          pt.y >= r.y + inset && pt.y <= r.y + r.h - inset) {
+        overlaps = true;
+        break;
+      }
+    }
+  }
+  edge.pathEl.classList.toggle('node-overlap', overlaps);
+}
 
 function redrawEdge(edge) {
   // Endpoints may be in different scopes. Resolve each to either:
@@ -6888,6 +6943,7 @@ function redrawEdge(edge) {
     edge.pillFOEl.setAttribute('y', my - 13);
     positionEdgeLabel(edge, mx, my);
     updateEdgeImageOverlap(edge);
+    updateEdgeNodeOverlap(edge);
     return;
   }
 
@@ -6939,6 +6995,7 @@ function redrawEdge(edge) {
     edge.pillFOEl.setAttribute('y', my - 13);
     positionEdgeLabel(edge, mx, my);
     updateEdgeImageOverlap(edge);
+    updateEdgeNodeOverlap(edge);
     return;
   }
 
@@ -6970,6 +7027,7 @@ function redrawEdge(edge) {
   edge.pillFOEl.setAttribute('y', my - 13);
   positionEdgeLabel(edge, mx, my);
   updateEdgeImageOverlap(edge);
+  updateEdgeNodeOverlap(edge);
 }
 
 // Position the label foreignObject so its caption sits above the pill,
@@ -17406,7 +17464,7 @@ window.rqNpcMonsterCountsForTeamup = rqNpcMonsterCountsForTeamup;
 
 
 
-// v1.3.49 — CSS node connector layer fix; JS unchanged from v1.3.48 behavior.
+// v1.3.50 — connector endpoints use dot markers when not arrowed; connectors become dashed when crossing beneath nodes.
 (function(){
   function rqFindNpcCards(){
     return [...document.querySelectorAll('.node, .canvas-node, .rq-node, .card')].filter(el => {
