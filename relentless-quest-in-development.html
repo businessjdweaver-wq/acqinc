@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest</title>
+<title>Relentless Quest v1.7182</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -5019,6 +5019,31 @@ body.dev-active #app{margin-top:36px;}
   <div class="mbtns">
     <button class="btn bink" id="ov-bi-no">Cancel</button>
     <button class="btn bgn" id="ov-bi-yes">Acquire</button>
+  </div>
+</div></div>
+
+<!-- v1.7182 — Building downtime dedication modal. Replaces the old prompt()
+     flow used at building purchase time. Options are generated from
+     DOWNTIME_BUILDING_CONTRIBS so each building only offers the skill,
+     language, or faith targets it can logically support. -->
+<div class="ov" id="ov-dt-dedicate" style="z-index:565"><div class="modal" style="max-width:380px">
+  <h3>🏛 Dedicate Building</h3>
+  <p id="ov-dt-ded-msg"></p>
+  <div id="ov-dt-ded-empty" class="hint" style="display:none;margin-bottom:10px">This building does not currently unlock a specific skill, language, or faith track.</div>
+  <div id="ov-dt-ded-form">
+    <div class="frow">
+      <label class="lbl">Training Type</label>
+      <select id="ov-dt-ded-type"></select>
+    </div>
+    <div class="frow">
+      <label class="lbl">Specific Track</label>
+      <select id="ov-dt-ded-target"></select>
+      <div id="ov-dt-ded-hint" class="hint" style="margin-top:4px"></div>
+    </div>
+  </div>
+  <div class="mbtns">
+    <button class="btn bink" id="ov-dt-ded-skip">Skip</button>
+    <button class="btn bgn" id="ov-dt-ded-save">Save Dedication</button>
   </div>
 </div></div>
 
@@ -20541,47 +20566,121 @@ function downtimeCanStartOneTimeTarget(c,type,target){
 }
 function _dtBuildingUnlockOptions(buildingName){
   var opts=[];
+  var seen={};
+  function add(type,target){
+    target=String(target||'').trim();
+    if(!downtimeIsOneTimeTrack(type)||!target)return;
+    var key=type+'::'+target;
+    if(seen[key])return;
+    seen[key]=true;
+    opts.push({type:type,target:target});
+  }
   ['skill','language','faith'].forEach(function(type){
     var map=DOWNTIME_BUILDING_CONTRIBS[type]||{};
     Object.keys(map).forEach(function(target){
-      if((map[target]||[]).indexOf(buildingName)!==-1){
-        opts.push({type:type,target:target});
-      }
+      if((map[target]||[]).indexOf(buildingName)!==-1)add(type,target);
     });
   });
-  // Universal shrine fallback for non-canonical faiths is handled by custom
-  // faith entry in the prompt, so no finite list is added here.
+  // v1.7182 — Shrine buildings are the intentional catch-all for non-core
+  // faiths such as Protean Way, Medio, Texere Dragons, etc. The acceleration
+  // map only lists the Nine Minds explicitly, so pull the campaign faith list
+  // into the dropdown for these buildings.
+  if(buildingName==='Temple Shrine'||buildingName==='Wayside Shrine'){
+    ((DND&&DND.rel)||[]).forEach(function(r){add('faith',r);});
+  }
+  // Keep the dropdown deterministic and grouped by type.
+  var rank={skill:1,language:2,faith:3};
+  opts.sort(function(a,b){
+    return (rank[a.type]||9)-(rank[b.type]||9)||a.target.localeCompare(b.target);
+  });
   return opts;
 }
-function _dtPromptBuildingDedication(asset,item){
-  if(!asset||!asset.meta||!item)return;
-  var name=item.name||asset.name||'this building';
-  var opts=_dtBuildingUnlockOptions(name);
-  var examples=opts.slice(0,12).map(function(o){return o.type+':'+o.target;}).join('\n');
-  var msg='Dedicate '+name+' to unlock one downtime target in this territory.\n\n'+
-    'Use one of these formats:\nskill:Acrobatics\nlanguage:Giant\nfaith:Protean Way\n\n'+
-    (examples?('Suggested for this building:\n'+examples+(opts.length>12?'\n…':'')+'\n\n'):'')+
-    'Leave blank to skip for now.';
-  var raw='';
-  try{raw=window.prompt(msg,'')||'';}catch(e){raw='';}
-  raw=raw.trim();
-  if(!raw)return;
-  var colon=raw.indexOf(':');
-  if(colon===-1){alert('Dedication skipped: use type:value, such as language:Giant.');return;}
-  var type=raw.slice(0,colon).trim().toLowerCase();
-  var value=raw.slice(colon+1).trim();
-  if(type==='lang')type='language';
-  if(type==='religion'||type==='deity')type='faith';
-  if(!downtimeIsOneTimeTrack(type)||!value){
-    alert('Dedication skipped: type must be skill, language, or faith.');
-    return;
-  }
+function _dtDedicationTypeLabel(type){
+  if(type==='skill')return 'Skill';
+  if(type==='language')return 'Language';
+  if(type==='faith')return 'Faith';
+  return type;
+}
+function _dtDedicationHint(type){
+  if(type==='skill')return 'Characters may start downtime toward this exact skill if they are below their class/level cap.';
+  if(type==='language')return 'Characters may start downtime toward this exact language if they are below their class/level cap.';
+  if(type==='faith')return 'Characters may start downtime toward this exact faith if they are below their class/level cap.';
+  return '';
+}
+var DOWNTIME_DEDICATION_PENDING=null;
+function _dtApplyBuildingDedication(asset,type,value,itemName){
+  if(!asset)return;
+  if(!asset.meta)asset.meta={};
+  type=String(type||'').trim();
+  value=String(value||'').trim();
+  if(!downtimeIsOneTimeTrack(type)||!value)return false;
   asset.meta.unlockType=type;
   asset.meta.unlockValue=value;
   asset.meta.unlock_type=type;   // DB/Supabase-friendly mirror
   asset.meta.unlock_value=value; // DB/Supabase-friendly mirror
-  if(typeof logAdd==='function')logAdd('🏛 '+name+' dedicated to '+type+': '+value,'buy');
+  if(typeof logAdd==='function')logAdd('🏛 '+(itemName||asset.name||'Building')+' dedicated to '+type+': '+value,'buy');
+  return true;
 }
+function _dtRenderBuildingDedicationModal(){
+  var pending=DOWNTIME_DEDICATION_PENDING||{};
+  var asset=pending.asset||null;
+  var item=pending.item||asset||{};
+  var name=(item&&item.name)||assetDisplayName(asset)||'this building';
+  var opts=_dtBuildingUnlockOptions(name);
+  var msg=document.getElementById('ov-dt-ded-msg');
+  var empty=document.getElementById('ov-dt-ded-empty');
+  var form=document.getElementById('ov-dt-ded-form');
+  var typeSel=document.getElementById('ov-dt-ded-type');
+  var targetSel=document.getElementById('ov-dt-ded-target');
+  var hint=document.getElementById('ov-dt-ded-hint');
+  if(msg)msg.textContent='Choose what '+name+' unlocks for downtime training in this territory.';
+  if(!typeSel||!targetSel)return;
+  var types=[];
+  opts.forEach(function(o){if(types.indexOf(o.type)===-1)types.push(o.type);});
+  typeSel.innerHTML=types.map(function(t){return '<option value="'+esc(t)+'">'+esc(_dtDedicationTypeLabel(t))+'</option>';}).join('');
+  if(empty)empty.style.display=opts.length?'none':'block';
+  if(form)form.style.display=opts.length?'block':'none';
+  function fillTargets(){
+    var t=typeSel.value||types[0]||'';
+    var list=opts.filter(function(o){return o.type===t;});
+    targetSel.innerHTML=list.map(function(o){return '<option value="'+esc(o.target)+'">'+esc(o.target)+'</option>';}).join('');
+    if(hint)hint.textContent=_dtDedicationHint(t);
+  }
+  typeSel.onchange=fillTargets;
+  fillTargets();
+}
+function _dtOpenBuildingDedicationModal(asset,item,onDone){
+  DOWNTIME_DEDICATION_PENDING={asset:asset,item:item,onDone:onDone};
+  _dtRenderBuildingDedicationModal();
+  var skip=document.getElementById('ov-dt-ded-skip');
+  var saveBtn=document.getElementById('ov-dt-ded-save');
+  function finish(){
+    var cb=DOWNTIME_DEDICATION_PENDING&&DOWNTIME_DEDICATION_PENDING.onDone;
+    DOWNTIME_DEDICATION_PENDING=null;
+    closeOv('ov-dt-dedicate');
+    if(typeof cb==='function')cb();
+  }
+  if(skip)skip.onclick=function(){finish();};
+  if(saveBtn)saveBtn.onclick=function(){
+    var pending=DOWNTIME_DEDICATION_PENDING||{};
+    var typeEl=document.getElementById('ov-dt-ded-type');
+    var targetEl=document.getElementById('ov-dt-ded-target');
+    var type=typeEl?typeEl.value:'';
+    var target=targetEl?targetEl.value:'';
+    if(type&&target){
+      _dtApplyBuildingDedication(pending.asset,type,target,(pending.item&&pending.item.name)||'Building');
+      if(typeof save==='function')save();
+    }
+    finish();
+  };
+  openOv('ov-dt-dedicate');
+}
+// Backward-compatible alias for any older call sites; this now opens the
+// modal instead of using window.prompt().
+function _dtPromptBuildingDedication(asset,item){
+  _dtOpenBuildingDedicationModal(asset,item,function(){});
+}
+
 
 // v1.7180 — Obsolete downtime-track cleanup.
 // The reward gate prevents new redundant skill/language/faith work, but old
@@ -33829,6 +33928,7 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
       item.type==='workshop'||item.type==='utility'||item.type==='stronghold'
     );
     var _newAssetUid=null;
+    var _firstBuildingAsset=null;
     for(var aq=0;aq<qty;aq++){
       var meta={uid:newAssetUid(),customName:(aq===0?petName:''),ownerType:'',ownerRef:''};
       if(ownerVal==='__storage__'||ownerVal==='storage'){meta.ownerType='';meta.ownerRef='';}
@@ -33838,9 +33938,8 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
       else if(ownerVal.indexOf('vehicle::')===0){meta.ownerType='vehicle';meta.ownerRef=ownerVal.slice(9);}
       else if(ownerVal.indexOf('territory::')===0){meta.ownerType='territory';meta.ownerRef=ownerVal.slice(11);} // v1.7158
       var _assetObj={name:item.name,ic:item.ic,type:item.type,meta:meta};
-      if(_isBuildingBuy)_dtPromptBuildingDedication(_assetObj,item);
       S.partyAssets.push(_assetObj);
-      if(aq===0)_newAssetUid=meta.uid;
+      if(aq===0){_newAssetUid=meta.uid;if(_isBuildingBuy)_firstBuildingAsset=_assetObj;}
     }
     logAdd('Purchased: '+item.name+' ×'+qty+' ('+total+' gp)','buy');
     P5.item=null;P5.assetMode=false;P5.customItem=null;
@@ -33872,11 +33971,18 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
       // Open the naming modal — same one used by the legacy real-estate
       // flow. finishRealEstateNaming() reads _rePendingItem.uid and
       // commits the customName via the Save / Skip buttons.
-      var _msgEl=document.getElementById('ov-cre-name-msg');
-      if(_msgEl)_msgEl.textContent='You acquired '+item.name+'. Give it a memorable name, or skip to keep the default.';
-      var _inp=document.getElementById('ov-cre-name-input');
-      if(_inp){_inp.value='';setTimeout(function(){try{_inp.focus();}catch(e){}},80);}
-      openOv('ov-cre-name');
+      var _openBuildingNameModal=function(){
+        var _msgEl=document.getElementById('ov-cre-name-msg');
+        if(_msgEl)_msgEl.textContent='You acquired '+item.name+'. Give it a memorable name, or skip to keep the default.';
+        var _inp=document.getElementById('ov-cre-name-input');
+        if(_inp){_inp.value='';setTimeout(function(){try{_inp.focus();}catch(e){}},80);}
+        openOv('ov-cre-name');
+      };
+      if(_firstBuildingAsset){
+        _dtOpenBuildingDedicationModal(_firstBuildingAsset,item,_openBuildingNameModal);
+      } else {
+        _openBuildingNameModal();
+      }
       return;
     }
     closeOv('ov-buyitem');
