@@ -3380,7 +3380,7 @@ async function moveSessionFromPicker(id) {
       sessionState.currentArcId = row.arc_id || null;
       loadArcBlocksForCurrentSession();
       renderArcFrame();
-      renderEdges();
+      if (typeof redrawEdges === 'function') redrawEdges();
     }
     renderSessionPicker();
     setCanvasSavedState('saved');
