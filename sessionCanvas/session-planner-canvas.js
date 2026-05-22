@@ -2111,7 +2111,7 @@ function deleteCollection(collectionId) {
   cmTierMarkDirty();
 }
 
-function renderWrapModalList() {
+function legacyRenderWrapModalList() {
   const list = document.getElementById('wrap-modal-list');
   if (!list) return;
 
@@ -2283,7 +2283,7 @@ function renderWrapModalList() {
 //       session, restore to canvas; otherwise it returns to the home
 //       session's canvas next time that session is opened)
 //   • Otherwise no change
-function applyWrapSessionPromotions() {
+function legacyApplyWrapSessionPromotions() {
   const cid = sessionState.currentSessionId;
   if (!cid) return;
 
