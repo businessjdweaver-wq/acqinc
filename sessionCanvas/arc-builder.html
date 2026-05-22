@@ -433,6 +433,7 @@ body {
   font-size: 0.75rem;
 }
 .session-row-day {
+  cursor: pointer;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.55rem;
   color: var(--gold-pale);
@@ -612,7 +613,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Arc Builder</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.3.1</span>
+  <span class="topbar-version">v0.3.2</span>
   <div class="topbar-actions">
     <a href="session-planner-canvas.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">🧭 Canvas</a>
     <a href="campaign-calendar.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">📅 Calendar</a>
@@ -875,7 +876,7 @@ async function loadArcs() {
 
 async function loadSessions() {
   try {
-    sessions = await sbGet('sessions', '?select=id,campaign_id,arc_id,title,session_date,status,sort_order,blocks&order=campaign_id.asc,sort_order.asc&limit=1000');
+    sessions = await sbGet('sessions', '?select=id,campaign_id,arc_id,title,session_date,status,sort_order,blocks,campaign_day_start,campaign_day_end&order=campaign_id.asc,sort_order.asc&limit=1000');
   } catch(e) {
     sessions = [];
   }
@@ -1018,7 +1019,7 @@ function renderEditor() {
             <div class="session-list">
               ${sessions.map(s => `
                 <div class="session-row">
-                  <span class="session-row-day">Day ${s.campaign_day_start}${s.campaign_day_end !== s.campaign_day_start ? '–'+s.campaign_day_end : ''}</span>
+                  <span class="session-row-day" title="Click to edit session campaign day" onclick="editSessionCampaignDay('${s.id}')">Day ${s.campaign_day_start}${s.campaign_day_end !== s.campaign_day_start ? '–'+s.campaign_day_end : ''}</span>
                   <span class="session-row-title">${escHtml(s.title)}</span>
                   <span class="session-row-duration">${formatDuration(s.time_breakdown)}</span>
                 </div>`).join('')}
@@ -1148,8 +1149,8 @@ function loadArcSessions(arcId) {
     .map(s => {
       const b = s.blocks || {};
       const tb = b.time_breakdown || b.session_time?.time_breakdown || {};
-      const start = b.campaign_day_start || b.session_time?.campaign_day_start || null;
-      const end = b.campaign_day_end || b.session_time?.campaign_day_end || start;
+      const start = s.campaign_day_start ?? b.campaign_day_start ?? b.session_time?.campaign_day_start ?? null;
+      const end = s.campaign_day_end ?? b.campaign_day_end ?? b.session_time?.campaign_day_end ?? start;
       return {
         id: s.id,
         title: s.title || 'Session',
@@ -1159,6 +1160,51 @@ function loadArcSessions(arcId) {
         time_breakdown: tb
       };
     });
+}
+
+
+async function editSessionCampaignDay(sessionId) {
+  const sess = (sessions || []).find(s => String(s.id) === String(sessionId));
+  if (!sess) return;
+  const b = sess.blocks || {};
+  const currentStart = sess.campaign_day_start ?? b.campaign_day_start ?? b.session_time?.campaign_day_start ?? '';
+  const currentEnd = sess.campaign_day_end ?? b.campaign_day_end ?? b.session_time?.campaign_day_end ?? currentStart ?? '';
+
+  const startRaw = prompt('Campaign day start for this session:', currentStart === '?' ? '' : String(currentStart || ''));
+  if (startRaw === null) return;
+  const start = parseInt(startRaw, 10);
+  if (!Number.isFinite(start) || start < 1) {
+    showToast('Campaign day start must be a positive number.', true);
+    return;
+  }
+
+  const endRaw = prompt('Campaign day end for this session (leave blank to match start):', (currentEnd && currentEnd !== '?' && String(currentEnd) !== String(start)) ? String(currentEnd) : '');
+  if (endRaw === null) return;
+  const end = endRaw.trim() ? parseInt(endRaw, 10) : start;
+  if (!Number.isFinite(end) || end < start) {
+    showToast('Campaign day end must be a number greater than or equal to the start day.', true);
+    return;
+  }
+
+  const nextBlocks = { ...(sess.blocks || {}) };
+  nextBlocks.campaign_day_start = start;
+  nextBlocks.campaign_day_end = end;
+  nextBlocks.session_time = { ...(nextBlocks.session_time || {}), campaign_day_start: start, campaign_day_end: end };
+
+  try {
+    const rows = await sbPatch('sessions', sessionId, {
+      campaign_day_start: start,
+      campaign_day_end: end,
+      blocks: nextBlocks
+    });
+    const updated = rows && rows[0] ? rows[0] : { ...sess, campaign_day_start: start, campaign_day_end: end, blocks: nextBlocks };
+    const idx = sessions.findIndex(s => String(s.id) === String(sessionId));
+    if (idx >= 0) sessions[idx] = { ...sessions[idx], ...updated };
+    showToast('✓ Session day updated');
+    renderEditor();
+  } catch(e) {
+    showToast('Could not update session day: ' + e.message, true);
+  }
 }
 
 function formatDuration(breakdown) {
