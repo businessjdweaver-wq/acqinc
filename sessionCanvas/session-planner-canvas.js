@@ -1679,7 +1679,7 @@ function buildWrapCarryForwardPayload() {
     label: e.label || '',
   })).filter(e => e.from_node && e.to_node);
 
-  // v1.3.58: Canvas Groups are saved in session.blocks.canvas_groups and
+  // v1.3.59: Canvas Groups are saved in session.blocks.canvas_groups and
   // reference node ids. Since Wrap Session gives copied nodes new ids, group
   // membership must be carried forward through the same source→destination
   // idMap used for nodes and edges. Groups with no copied session nodes are
@@ -1755,6 +1755,9 @@ async function rqRepairCanvasGroupsBetweenSessions(sourceSessionId, destSessionI
   return { source: src.title, destination: dst.title, groups: repairedGroups.length, matchedNodes: srcToDst.size };
 }
 window.rqRepairCanvasGroupsBetweenSessions = rqRepairCanvasGroupsBetweenSessions;
+window.repairCanvasGroupsBetweenSessions = rqRepairCanvasGroupsBetweenSessions;
+window.rqRepairGroups = rqRepairCanvasGroupsBetweenSessions;
+console.info('[RQ] Canvas group repair helper loaded. Example: rqRepairCanvasGroupsBetweenSessions(128, 129)');
 
 function addWrapNotesNode(notes) {
   const clean = String(notes || '').trim();
