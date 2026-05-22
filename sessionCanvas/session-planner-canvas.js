@@ -1679,6 +1679,7 @@ function buildWrapCarryForwardPayload() {
     label: e.label || '',
   })).filter(e => e.from_node && e.to_node);
 
+  // v1.3.61: Name Forge adds semantic fallback for utilitarian seeds like outpost.
   // v1.3.60: Canvas Groups are saved in session.blocks.canvas_groups and
   // reference node ids. Since Wrap Session gives copied nodes new ids, group
   // membership must be carried forward through the same source→destination
@@ -8732,6 +8733,79 @@ const NAME_FORGE_NATIVE_STYLE_SUFFIXES = {
   'Hebrew-inspired': { person:['el','iel','iah','on','ar'], place:['im','on','ir','shaar'] }
 };
 
+// Semantic fallback layer. Some seeds are utilitarian English nouns; directly
+// suffixing them creates weak results like Outposteth. These maps abstract the
+// seed into usable naming concepts before phonetic mutation/templates are used.
+const NAME_FORGE_CONCEPT_TAGS = {
+  outpost:['frontier','watch','military','remote','fortified','expedition'], waystation:['frontier','travel','watch','remote'], station:['travel','watch','industry'], fort:['military','fortified','watch'], fortress:['military','fortified','watch'], camp:['frontier','expedition','remote'], encampment:['frontier','expedition','remote'], watchtower:['watch','fortified','military'], tower:['watch','high'],
+  warehouse:['storage','industry','trade'], storehouse:['storage','trade'], depot:['storage','military','travel'], dock:['trade','water','travel'], harbor:['trade','water','travel'], tavern:['hospitality','travel'], inn:['hospitality','travel'], library:['scholarly','memory'], archive:['scholarly','memory'], temple:['sacred','ancient'], shrine:['sacred','ancient'], prison:['law','fortified','ominous'], jail:['law','fortified'], courthouse:['law','civic'], market:['trade','civic'], mine:['industry','underground'], sewer:['underground','ominous'], laboratory:['scholarly','industry'], workshop:['industry','craft'], gate:['threshold','fortified'], bridge:['threshold','travel']
+};
+const NAME_FORGE_CONCEPT_VOCAB = {
+  frontier:['march','reach','border','edge','farpoint','northreach','lastlight'], watch:['watch','vigil','ward','sentinel','beacon','lookout','eyes'], military:['bastion','redoubt','fort','garrison','standard','shield','spear'], remote:['hollow','moor','waste','wild','heath','scar','fell'], fortified:['hold','wall','gate','keep','bulwark','rampart'], expedition:['trail','survey','claim','camp','relay','waymark'],
+  travel:['road','way','crossing','relay','milestone','path','caravan'], industry:['forge','foundry','mill','works','gear','kiln','smoke'], storage:['vault','granary','cache','depot','cellar','lockhouse'], trade:['exchange','ledger','scale','coin','cargo','quay'], water:['tide','harbor','dock','reef','channel'], hospitality:['lantern','hearth','cup','rest','kettle','sign'], scholarly:['archive','script','codex','index','lumen','lectern'], memory:['echo','record','reliquary','remnant','page'], sacred:['altar','choir','vesper','sanctum','reliquary'], ancient:['elder','first','old','dust','prime'], law:['writ','codex','ward','chain','seal'], civic:['forum','square','hall','pillar','district'], underground:['deep','under','root','stone','chasm'], craft:['hammer','brass','needle','loom','wheel'], threshold:['gate','arch','passage','threshold','crossing'], ominous:['black','hollow','grave','ash','bone','wither'], high:['spire','crown','aerie','height']
+};
+const NAME_FORGE_THEME_VOCAB = {
+  mirabilis:['vigil','sepulcher','marrow','ash','blackwatch','reliquary','ossuary','pale','dominion'], clara:['lumen','dream','archive','observatory','whisper','glass','somnian','silver'], spezzak:['brass','gear','relay','foundry','tinker','cog','smoke','station'], gojimasu:['lantern','vine','theatre','curfew','velvet','moonwine'], aequus:['root','bough','fern','mist','stag','grove'], luminix:['lumen','radiant','spirit','aureate','glimmer']
+};
+const NAME_FORGE_PLACE_TEMPLATES = [
+  'The {adj} {noun}', '{adj} {noun}', '{noun} {root}', '{root} {noun}', 'Fort {root}', '{noun} of {root}', '{root}\'s {noun}', '{noun} {suffix}'
+];
+function _nfConceptTagsForWords(words) {
+  const tags = [];
+  const seen = new Set();
+  (words || []).forEach(w => {
+    const key = _nfCleanRoot(w);
+    Object.keys(NAME_FORGE_CONCEPT_TAGS).forEach(k => {
+      if (key === k || (key.length >= 5 && k.includes(key)) || (k.length >= 5 && key.includes(k))) {
+        NAME_FORGE_CONCEPT_TAGS[k].forEach(t => { if (!seen.has(t)) { seen.add(t); tags.push(t); } });
+      }
+    });
+  });
+  return tags;
+}
+function _nfThemeWordsFromSeeds(words) {
+  const out = [];
+  const seen = new Set();
+  (words || []).forEach(w => {
+    const key = _nfCleanRoot(w);
+    Object.keys(NAME_FORGE_THEME_VOCAB).forEach(k => {
+      if (key === k || key.includes(k) || k.includes(key)) {
+        NAME_FORGE_THEME_VOCAB[k].forEach(v => { if (!seen.has(v)) { seen.add(v); out.push(v); } });
+      }
+    });
+  });
+  return out;
+}
+function _nfConceptParts(seedWords, type, tone) {
+  const tags = _nfConceptTagsForWords(seedWords);
+  const theme = _nfThemeWordsFromSeeds(seedWords);
+  const words = [];
+  tags.forEach(t => (NAME_FORGE_CONCEPT_VOCAB[t] || []).forEach(v => words.push(v)));
+  theme.forEach(v => words.push(v));
+  if (tone && NAME_FORGE_CONCEPT_VOCAB[tone]) NAME_FORGE_CONCEPT_VOCAB[tone].forEach(v => words.push(v));
+  const seen = new Set();
+  return words.map(w => _nfCleanRoot(w)).filter(w => w && !seen.has(w) && seen.add(w)).map(root => ({ root, source:'conceptual root' }));
+}
+function _nfSeedLiteralCount(name, seedWords) {
+  const n = _nfCleanRoot(name);
+  return (seedWords || []).some(w => { const k = _nfCleanRoot(w); return k && k.length >= 4 && n.includes(k); }) ? 1 : 0;
+}
+function _nfBuildConceptualPlaceName(parts, tone, style) {
+  const concepts = parts.filter(p => p && /conceptual root|theme root/.test(p.source || ''));
+  if (!concepts.length) return '';
+  const suffixes = NAME_FORGE_SUFFIXES.place;
+  const prefixes = (NAME_FORGE_TONE_PREFIXES[tone] || NAME_FORGE_TONE_PREFIXES.subtle).filter(Boolean);
+  const noun = _nfTitle(_nfPick(concepts).root);
+  const adjPool = prefixes.length ? prefixes : ['Far','Iron','Hollow','High','Old','Pale','Last','Silver','Cinder'];
+  const adj = _nfPick(adjPool);
+  let rootPart = _nfPick(parts.filter(p => !/conceptual root/.test(p.source || '')) || concepts);
+  if (!rootPart) rootPart = _nfPick(concepts);
+  const root = _nfTitle(_nfMutate(rootPart.root || rootPart, style, { preserve:/conceptual root/.test(rootPart.source || '') }));
+  const suffix = _nfTitle(_nfPick(suffixes));
+  const template = _nfPick(NAME_FORGE_PLACE_TEMPLATES);
+  return template.replace('{adj}', adj).replace('{noun}', noun).replace('{root}', root).replace('{suffix}', suffix).replace(/\s+/g, ' ').trim();
+}
+
 function renderNameForgeLauncher(node) {
   // Kept as a no-op compatibility hook. The launcher now lives directly
   // beneath the side-panel title, wired by updateNameForgeTitleButton().
@@ -8833,7 +8907,6 @@ function _nfRootsForSeed(seed, styles) {
       if (key === k || k.includes(key) || key.includes(k)) out.push(...table[k]);
     });
   });
-  if (!out.length && key) out.push(key);
   return out;
 }
 
@@ -9055,6 +9128,10 @@ async function fetchNameForgeRoots() {
   generateNameForgeResults();
 }
 function buildNameForgeName(parts, type, tone, style) {
+  if (type === 'place' && Math.random() < 0.72) {
+    const conceptual = _nfBuildConceptualPlaceName(parts, tone, style);
+    if (conceptual) return conceptual;
+  }
   const suffixes = NAME_FORGE_SUFFIXES[type] || NAME_FORGE_SUFFIXES.person;
   const nativeSuf = (NAME_FORGE_NATIVE_STYLE_SUFFIXES[style] && (NAME_FORGE_NATIVE_STYLE_SUFFIXES[style][type] || NAME_FORGE_NATIVE_STYLE_SUFFIXES[style].person)) || suffixes;
   const prefixes = NAME_FORGE_TONE_PREFIXES[tone] || NAME_FORGE_TONE_PREFIXES.subtle;
@@ -9092,6 +9169,7 @@ function generateNameForgeResults() {
   const pastedWords = _nfWords((document.getElementById('nf-pasted') || {}).value || '').filter(w => w.length <= 18);
   const styles = style === 'Mixed' ? Object.keys(NAME_FORGE_ROOTS) : [style];
   let parts = [];
+  parts.push(..._nfConceptParts(seedWords, type, tone));
   const wantedLangs = new Set(_nfStyleLangs(style));
   const hasFetched = nameForgeFetchedRoots && nameForgeFetchedRoots.length;
   if (!hasFetched) seedWords.forEach(w => { parts.push(..._nfRootsForSeed(w, styles).map(root => ({ root, source:'local root' }))); });
@@ -9108,14 +9186,23 @@ function generateNameForgeResults() {
   // stay inside generated names, e.g. konnichiwa → Konnichiwan / Konnichimura.
   nameForgePinnedRoots.forEach(r => { parts.push({ root:r, source:'pinned translation' }, { root:r, source:'pinned translation' }, { root:r, source:'pinned translation' }); });
   if (!parts.length) parts = ['moon','memory','shadow','gate','ember','thorn'].flatMap(w => _nfRootsForSeed(w, styles)).map(root => ({ root, source:'fallback' }));
+  if (!parts.length) parts = ['vigil','bastion','hollow','ember','thorn','gate','silver','ash'].map(root => ({ root, source:'fallback concept' }));
   parts = parts.map(p => ({ ...p, root:_nfCleanRoot(p.root || p) })).filter(p => p.root);
   const seen = new Set();
   const results = [];
+  let literalKept = 0;
+  const literalLimit = Math.max(1, Math.floor(count * 0.4));
   let guard = 0;
-  while (results.length < count && guard++ < count * 12) {
+  while (results.length < count && guard++ < count * 18) {
     const name = buildNameForgeName(parts, type, tone, _nfPick(styles));
     const key = name.toLowerCase();
-    if (!seen.has(key) && name.length > 2) { seen.add(key); results.push(name); }
+    const hasSeedLiteral = _nfSeedLiteralCount(name, seedWords);
+    if (hasSeedLiteral && literalKept >= literalLimit && guard < count * 14) continue;
+    if (!seen.has(key) && name.length > 2) {
+      seen.add(key);
+      if (hasSeedLiteral) literalKept++;
+      results.push(name);
+    }
   }
   nameForgeLast = results;
   renderNameForgeResults();
