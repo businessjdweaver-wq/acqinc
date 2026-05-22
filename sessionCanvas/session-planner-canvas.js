@@ -3240,11 +3240,12 @@ function renderSessionPicker() {
       <div class="sp-empty">
         ${errs.length
           ? 'Campaigns failed to load. See the error above.'
-          : 'No campaigns yet.<br>Create one in the <a href="session-planner.html" style="color:var(--gold-pale);">classic planner</a> and come back here.'}
+          : 'No campaigns yet.<br>Create or organize campaign arcs in Arc Builder, then come back here.'}
         <div style="margin-top:18px;">
-          <a href="session-planner.html"  style="color:var(--gold-pale); margin-right: 16px;">↗ Classic Planner (campaign manager)</a>
           <a href="arc-builder.html"      style="color:var(--gold-pale); margin-right: 16px;">↗ Arc Builder</a>
-          <a href="monster-workshop.html" style="color:var(--gold-pale);">↗ Monster Workshop</a>
+          <a href="campaign-calendar.html" style="color:var(--gold-pale); margin-right: 16px;">↗ Campaign Calendar</a>
+          <a href="monster-workshop.html" style="color:var(--gold-pale); margin-right: 16px;">↗ Monster Workshop</a>
+          <a href="monster-blender.html" style="color:var(--gold-pale);">↗ Monster Blender</a>
         </div>
       </div>`;
     return;
@@ -3281,7 +3282,6 @@ function renderSessionPicker() {
     <div style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(184,134,11,0.18);
                 display: flex; gap: 18px; flex-wrap: wrap;
                 font-family: 'JetBrains Mono', monospace; font-size: 0.6rem; letter-spacing: 0.1em;">
-      <a href="session-planner.html"   style="color:var(--steel-pale); text-transform: uppercase;">↗ Classic Planner / Campaigns</a>
       <a href="arc-builder.html"       style="color:var(--steel-pale); text-transform: uppercase;">↗ Arc Builder</a>
       <a href="campaign-calendar.html" style="color:var(--steel-pale); text-transform: uppercase;">↗ Calendar</a>
       <a href="monster-workshop.html"  style="color:var(--steel-pale); text-transform: uppercase;">↗ Monster Workshop</a>
