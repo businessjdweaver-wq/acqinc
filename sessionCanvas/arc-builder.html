@@ -113,6 +113,19 @@ body {
   color: var(--arc-pale);
   flex: 1;
 }
+
+.campaign-select {
+  min-width: 120px;
+  max-width: 150px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(124,77,188,0.25);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--parchment);
+  font-family: 'Cinzel', serif;
+  font-size: 0.52rem;
+}
+.campaign-select option { background: #1a1610; color: var(--parchment); }
 .arc-list {
   flex: 1;
   overflow-y: auto;
@@ -599,7 +612,7 @@ body {
   <span class="topbar-sep">›</span>
   <span class="topbar-title">Arc Builder</span>
   <span class="topbar-sep">›</span>
-  <span class="topbar-version">v0.3.0</span>
+  <span class="topbar-version">v0.3.1</span>
   <div class="topbar-actions">
     <a href="session-planner-canvas.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">🧭 Canvas</a>
     <a href="campaign-calendar.html" class="btn btn-ghost btn-sm" style="text-decoration:none;">📅 Calendar</a>
@@ -616,6 +629,7 @@ body {
   <div class="arc-sidebar">
     <div class="sidebar-header">
       <span class="sidebar-title">Story Arcs</span>
+      <select class="campaign-select" id="arcCampaignSelect" title="Campaign" onchange="setArcBuilderCampaign(this.value)"></select>
       <button class="btn btn-arc btn-sm" onclick="newArc()">+ New Arc</button>
     </div>
     <div class="arc-list" id="arcList">
@@ -695,8 +709,10 @@ function rqHeaders(extra = {}) {
 const BASE_URL = window.location.origin + window.location.pathname.replace('arc-builder.html','');
 
 // ── STATE ──
+let campaigns    = [];
 let arcs         = [];
 let sessions     = [];   // canonical sessions table rows
+let currentCampaignId = null;
 let currentArc   = null;
 let manualTags   = [];   // user-added macro tags
 let autoTags     = [];   // extracted from [brackets]
@@ -704,6 +720,7 @@ let playerNotes  = [];
 
 // ── INIT ──
 async function init() {
+  await loadCampaigns();
   await loadArcs();
   // Check URL for direct arc link
   const params = new URLSearchParams(window.location.search);
@@ -785,7 +802,7 @@ async function rqDoLogin() {
 }
 function rqLogout() {
   rqClearAuth();
-  arcs = []; currentArc = null;
+  campaigns = []; arcs = []; sessions = []; currentCampaignId = null; currentArc = null;
   rqShowLogin();
 }
 document.addEventListener('keydown', (e) => {
@@ -796,15 +813,61 @@ document.addEventListener('keydown', (e) => {
   if (t && (t.id === 'rqAuthEmail' || t.id === 'rqAuthPass')) { e.preventDefault(); rqDoLogin(); }
 });
 
-// ── LOAD ARCS ──
+// ── LOAD CAMPAIGNS + ARCS ──
+async function loadCampaigns() {
+  try {
+    campaigns = await sbGet('campaigns', '?select=id,name,system,blocks&order=name.asc&limit=100');
+    const saved = localStorage.getItem('rq_arc_builder_campaign_id');
+    if (saved && campaigns.some(c => String(c.id) === String(saved))) {
+      currentCampaignId = saved;
+    } else if (currentArc?.campaign_id && campaigns.some(c => String(c.id) === String(currentArc.campaign_id))) {
+      currentCampaignId = currentArc.campaign_id;
+    } else {
+      currentCampaignId = campaigns[0]?.id || null;
+    }
+  } catch(e) {
+    campaigns = [];
+    currentCampaignId = null;
+    showToast('Could not load campaigns: ' + e.message, true);
+  }
+}
+
+function renderCampaignSelect() {
+  const sel = document.getElementById('arcCampaignSelect');
+  if (!sel) return;
+  if (!campaigns.length) {
+    sel.innerHTML = '<option value="">No campaigns</option>';
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  sel.innerHTML = campaigns.map(c => `<option value="${escHtml(c.id)}" ${String(c.id) === String(currentCampaignId) ? 'selected' : ''}>${escHtml(c.name || ('Campaign ' + c.id))}</option>`).join('');
+}
+
+function setArcBuilderCampaign(id) {
+  currentCampaignId = id || null;
+  try { localStorage.setItem('rq_arc_builder_campaign_id', String(currentCampaignId || '')); } catch(e) {}
+  currentArc = null;
+  renderArcList();
+  document.getElementById('arcEditor').innerHTML = `
+    <div class="editor-placeholder">
+      <div class="editor-placeholder-icon">📖</div>
+      <div class="editor-placeholder-text">Select an arc to edit, or create a new one for this campaign.</div>
+      <button class="btn btn-arc" onclick="newArc()">+ New Arc</button>
+    </div>`;
+}
+
 async function loadArcs() {
   try {
     arcs = await sbGet('arcs', '?select=id,campaign_id,name,sort_order,blocks,status,objective,dm_notes,player_notes_public,tags,campaign_day_start&order=campaign_id.asc,sort_order.asc,name.asc&limit=500');
     await loadSessions();
+    if (!currentCampaignId && arcs[0]?.campaign_id) currentCampaignId = arcs[0].campaign_id;
+    renderCampaignSelect();
     renderArcList();
   } catch(e) {
     showToast('Could not load arcs: ' + e.message, true);
     arcs = [];
+    renderCampaignSelect();
     renderArcList();
   }
 }
@@ -827,12 +890,18 @@ function arcMeta(a, key, fallback = '') {
 }
 
 function renderArcList() {
+  renderCampaignSelect();
   const list = document.getElementById('arcList');
-  if (!arcs.length) {
-    list.innerHTML = `<div class="arc-empty"><div style="font-size:2rem;opacity:0.3;">📖</div><div>No arcs yet.<br>Create your first story arc.</div></div>`;
+  const visibleArcs = currentCampaignId ? arcs.filter(a => String(a.campaign_id) === String(currentCampaignId)) : arcs;
+  if (!campaigns.length) {
+    list.innerHTML = `<div class="arc-empty"><div style="font-size:2rem;opacity:0.3;">📖</div><div>No campaigns found.<br>Create/open a campaign in Session Planner Canvas first.</div></div>`;
     return;
   }
-  list.innerHTML = arcs.map(a => `
+  if (!visibleArcs.length) {
+    list.innerHTML = `<div class="arc-empty"><div style="font-size:2rem;opacity:0.3;">📖</div><div>No arcs yet for this campaign.<br>Create your first story arc.</div></div>`;
+    return;
+  }
+  list.innerHTML = visibleArcs.map(a => `
     <div class="arc-entry ${currentArc?.id === a.id ? 'active' : ''}" onclick="openArc(${JSON.stringify(a).replace(/"/g,'&quot;')})">
       <div class="arc-entry-title">${escHtml(arcTitle(a))}</div>
       <div class="arc-entry-meta">
@@ -846,6 +915,10 @@ function renderArcList() {
 // ── OPEN ARC ──
 async function openArc(arc) {
   currentArc = arc;
+  if (arc.campaign_id) {
+    currentCampaignId = arc.campaign_id;
+    try { localStorage.setItem('rq_arc_builder_campaign_id', String(currentCampaignId)); } catch(e) {}
+  }
   const savedTags = arcMeta(arc, 'tags', []);
   manualTags = savedTags ? savedTags.filter(t => !t.startsWith('__auto__')) : [];
   autoTags   = savedTags ? savedTags.filter(t => t.startsWith('__auto__')).map(t => t.replace('__auto__','')) : [];
@@ -857,7 +930,12 @@ async function openArc(arc) {
 
 // ── NEW ARC ──
 async function newArc() {
+  if (!currentCampaignId) {
+    showToast('Could not create arc: no campaign selected. Open or create a campaign/session in Session Planner Canvas first.', true);
+    return;
+  }
   const arc = {
+    campaign_id: parseInt(currentCampaignId),
     name: 'New Arc',
     status: 'active',
     objective: '',
