@@ -1452,7 +1452,7 @@ const sessionState = {
   arcs: [],        // [{id,campaign_id,title}]
   sessions: [],    // [{id,arc_id,campaign_id,title,session_date,blocks,...}]
   currentSessionId: null,
-  canvasGroups: [],       // Stage 57: per-session named groups of canvas node ids
+  canvasGroups: [],       // Stage 58: per-session named groups of canvas node ids
   activeCanvasGroupId: '',
   // Campaign-scope tracking. The current session belongs to one campaign;
   // we cache that campaign's full blocks JSONB here so the left frame can
@@ -1678,8 +1678,83 @@ function buildWrapCarryForwardPayload() {
     dir: e.dir || 'forward',
     label: e.label || '',
   })).filter(e => e.from_node && e.to_node);
-  return { nodes, edges };
+
+  // v1.3.58: Canvas Groups are saved in session.blocks.canvas_groups and
+  // reference node ids. Since Wrap Session gives copied nodes new ids, group
+  // membership must be carried forward through the same source→destination
+  // idMap used for nodes and edges. Groups with no copied session nodes are
+  // dropped; mixed groups keep the copied session-node members only.
+  const canvas_groups = (Array.isArray(sessionState.canvasGroups) ? sessionState.canvasGroups : [])
+    .map(g => {
+      const mappedIds = (Array.isArray(g.node_ids) ? g.node_ids : [])
+        .map(id => idMap.get(String(id)) || idMap.get(id))
+        .filter(Boolean);
+      return {
+        id: 'grp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        name: String(g.name || 'Untitled Group'),
+        node_ids: [...new Set(mappedIds.map(String))],
+        created_at: new Date().toISOString(),
+      };
+    })
+    .filter(g => g.node_ids.length);
+
+  const active_canvas_group_id = (() => {
+    const oldActive = String(sessionState.activeCanvasGroupId || '');
+    if (!oldActive) return '';
+    const old = (sessionState.canvasGroups || []).find(g => String(g.id) === oldActive);
+    if (!old) return '';
+    const found = canvas_groups.find(g => g.name === String(old.name || 'Untitled Group'));
+    return found ? found.id : '';
+  })();
+
+  return { nodes, edges, canvas_groups, active_canvas_group_id, idMap };
 }
+
+function _rqNodeRepairSignature(n) {
+  if (!n || typeof n !== 'object') return '';
+  return [n.type || '', n.title || '', n.summary || '', Math.round(Number(n.x) || 0), Math.round(Number(n.y) || 0)].join('¦');
+}
+
+async function rqRepairCanvasGroupsBetweenSessions(sourceSessionId, destSessionId) {
+  const srcRows = await sbFetch('sessions?id=eq.' + encodeURIComponent(sourceSessionId) + '&select=id,blocks,title');
+  const dstRows = await sbFetch('sessions?id=eq.' + encodeURIComponent(destSessionId) + '&select=id,blocks,title');
+  const src = Array.isArray(srcRows) ? srcRows[0] : null;
+  const dst = Array.isArray(dstRows) ? dstRows[0] : null;
+  if (!src || !dst) throw new Error('Could not find both source and destination sessions.');
+  const srcBlocks = (src.blocks && typeof src.blocks === 'object') ? src.blocks : {};
+  const dstBlocks = (dst.blocks && typeof dst.blocks === 'object') ? dst.blocks : {};
+  const srcNodes = Array.isArray(srcBlocks.nodes) ? srcBlocks.nodes : [];
+  const dstNodes = Array.isArray(dstBlocks.nodes) ? dstBlocks.nodes : [];
+  const srcGroups = Array.isArray(srcBlocks.canvas_groups) ? srcBlocks.canvas_groups : [];
+  const dstBySig = new Map();
+  dstNodes.forEach(n => {
+    const sig = _rqNodeRepairSignature(n);
+    if (sig && !dstBySig.has(sig)) dstBySig.set(sig, n.id);
+  });
+  const srcToDst = new Map();
+  srcNodes.forEach(n => {
+    const sig = _rqNodeRepairSignature(n);
+    if (sig && dstBySig.has(sig)) srcToDst.set(String(n.id), String(dstBySig.get(sig)));
+  });
+  const repairedGroups = srcGroups.map(g => {
+    const ids = (Array.isArray(g.node_ids) ? g.node_ids : [])
+      .map(id => srcToDst.get(String(id)))
+      .filter(Boolean);
+    return {
+      id: 'grp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+      name: String(g.name || 'Untitled Group'),
+      node_ids: [...new Set(ids)],
+      created_at: new Date().toISOString(),
+    };
+  }).filter(g => g.node_ids.length);
+  const patched = { ...dstBlocks, canvas_groups: repairedGroups, active_canvas_group_id: repairedGroups[0]?.id || '' };
+  await sbFetch('sessions?id=eq.' + encodeURIComponent(destSessionId), {
+    method: 'PATCH', prefer: 'return=minimal',
+    body: JSON.stringify({ blocks: patched }),
+  });
+  return { source: src.title, destination: dst.title, groups: repairedGroups.length, matchedNodes: srcToDst.size };
+}
+window.rqRepairCanvasGroupsBetweenSessions = rqRepairCanvasGroupsBetweenSessions;
 
 function addWrapNotesNode(notes) {
   const clean = String(notes || '').trim();
@@ -1783,6 +1858,8 @@ async function applyWrapSessionPromotions() {
       version: 1,
       nodes: [...(Array.isArray(destBlocks.nodes) ? destBlocks.nodes : []), ...carry.nodes],
       edges: [...(Array.isArray(destBlocks.edges) ? destBlocks.edges : []), ...carry.edges],
+      canvas_groups: [...(Array.isArray(destBlocks.canvas_groups) ? destBlocks.canvas_groups : []), ...carry.canvas_groups],
+      active_canvas_group_id: carry.active_canvas_group_id || destBlocks.active_canvas_group_id || '',
     };
     await sbFetch('sessions?id=eq.' + encodeURIComponent(next.id), {
       method: 'PATCH', prefer: 'return=minimal',
