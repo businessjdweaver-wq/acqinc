@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7209</title>
+<title>Relentless Quest v1.7210</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3130,7 +3130,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7209</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7210</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -18402,7 +18402,7 @@ var DOWNTIME_BUILDING_CONTRIBS={
 // accelerate any sincere faith research, regardless of pantheon.
 function downtimeBuildingContributors(type,target,c){
   if(!c)return [];
-  var territory=c.homeTerritory||S.originTerritory||'';
+  var territory=downtimeEffectiveTerritory(c);
   if(!territory)return [];
   var typeMap=DOWNTIME_BUILDING_CONTRIBS[type];
   if(!typeMap)return [];
@@ -20821,6 +20821,26 @@ function downtimeCapDropdownLabel(c){
 function _dtCleanTarget(v){
   return String(v||'').replace(/^(?:★|🔄) /,'').trim();
 }
+
+// v1.7210 — Effective downtime territory.
+// A character's stored homeTerritory can be stale after squad relocation.
+// Downtime study should use the character's CURRENT squad/HQ territory when
+// the character is assigned to a squad, then fall back to homeTerritory.
+function downtimeEffectiveTerritory(c){
+  var fallback=(c&&c.homeTerritory)||S.originTerritory||'';
+  if(!c||!Array.isArray(S.party)||!Array.isArray(S.squads))return fallback;
+  var ci=S.party.indexOf(c);
+  if(ci<0)return fallback;
+  for(var i=0;i<S.squads.length;i++){
+    var sq=S.squads[i]||{};
+    var members=Array.isArray(sq.memberIdxs)?sq.memberIdxs:[];
+    if(members.indexOf(ci)!==-1)return sq.homeTerritory||fallback;
+    // Defensive support for any alternate squad membership shapes.
+    if(Array.isArray(sq.members)&&sq.members.indexOf(c.name)!==-1)return sq.homeTerritory||fallback;
+    if(Array.isArray(sq.memberNames)&&sq.memberNames.indexOf(c.name)!==-1)return sq.homeTerritory||fallback;
+  }
+  return fallback;
+}
 function _dtTerritoryKnowledgeBucket(territory){
   if(!territory||!S||!S.territoryWeights)return null;
   return S.territoryWeights[territory]||null;
@@ -20917,7 +20937,7 @@ function _dtBuildingHasOverride(territory,buildingName,type,target){
   return _dtBuildingOverrideList(territory,buildingName,type).indexOf(target)!==-1;
 }
 function downtimeTerritoryLockedMessage(c,type,target){
-  var territory=(c&&c.homeTerritory)||S.originTerritory||'this territory';
+  var territory=(c&&downtimeEffectiveTerritory(c))||S.originTerritory||'this territory';
   return downtimeTrackLabel(type,target)+' is not available to study in '+territory+". Edit that territory's available "+(type==='language'?'languages':'faiths')+' in the Quest Editor, or dedicate a building in a territory where it is available.';
 }
 function _dtAssetUnlockMatches(a,type,target,territory){
@@ -20930,13 +20950,13 @@ function _dtAssetUnlockMatches(a,type,target,territory){
 function downtimeTargetUnlockedByBuilding(c,type,target){
   if(!downtimeIsOneTimeTrack(type))return true;
   if(!c)return false;
-  var territory=c.homeTerritory||S.originTerritory||'';
+  var territory=downtimeEffectiveTerritory(c);
   if(!territory)return false;
   target=_dtCleanTarget(target);
   return (S.partyAssets||[]).some(function(a){return _dtAssetUnlockMatches(a,type,target,territory);});
 }
 function downtimeLockedMessage(c,type,target){
-  var territory=(c&&c.homeTerritory)||S.originTerritory||'this territory';
+  var territory=(c&&downtimeEffectiveTerritory(c))||S.originTerritory||'this territory';
   return downtimeTrackLabel(type,target)+' is not unlocked in '+territory+'. Purchase or dedicate a relevant building to this exact '+(type==='language'?'language':type==='faith'?'faith':type)+' first.';
 }
 function downtimeCanStartOneTimeTarget(c,type,target){
@@ -20944,7 +20964,7 @@ function downtimeCanStartOneTimeTarget(c,type,target){
   target=_dtCleanTarget(target);
   if(downtimeTargetAlreadyOwned(c,type,target))return {ok:false,msg:downtimeRedundantMessage(c,type,target)};
   if(downtimeUsesClassCap(type)&&downtimeCapReached(c))return {ok:false,msg:downtimeCapMessage(c)};
-  var territory=(c&&c.homeTerritory)||S.originTerritory||'';
+  var territory=(c&&downtimeEffectiveTerritory(c))||S.originTerritory||'';
   if(!downtimeTargetAllowedInTerritory(territory,type,target))return {ok:false,msg:downtimeTerritoryLockedMessage(c,type,target)};
   if(!downtimeTargetUnlockedByBuilding(c,type,target))return {ok:false,msg:downtimeLockedMessage(c,type,target)};
   return {ok:true,msg:''};
@@ -21103,7 +21123,7 @@ function _dtPromptBuildingDedication(asset,item){
 // Some browser/debug contexts do not reveal top-level function declarations
 // reliably, so expose the downtime dedication helpers under one stable object.
 window.RQ_DOWNTIME_GATE_DEBUG={
-  version:'v1.7205',
+  version:'v1.7210',
   buildingOptions:_dtBuildingUnlockOptions,
   buildingOverrides:_dtTerritoryBuildingOverrides,
   buildingOverrideList:_dtBuildingOverrideList,
@@ -21119,7 +21139,8 @@ window.RQ_DOWNTIME_GATE_DEBUG={
   oneTimeCount:downtimeOneTimeCount,
   removeEarned:devDeleteDowntimeEarnedProficiency,
   threshold:downtimeThreshold,
-  contributors:downtimeBuildingContributors
+  contributors:downtimeBuildingContributors,
+  effectiveTerritory:downtimeEffectiveTerritory
 };
 
 
@@ -21391,7 +21412,7 @@ function renderDowntimeModal(){
       var floor=DOWNTIME_THRESHOLD_FLOOR[dtType]||Math.ceil(base/2);
       var contributors=downtimeBuildingContributors(dtType,keyTarget,c);
       var thresh=downtimeThreshold(dtType,keyTarget,c);
-      var territoryLabel=c.homeTerritory||S.originTerritory||'(no territory)';
+      var territoryLabel=downtimeEffectiveTerritory(c)||S.originTerritory||'(no territory)';
       // Determine candidates the player COULD invest in to push lower.
       // Only relevant when the threshold hasn't bottomed out at floor and
       // there are still candidate slots (< DOWNTIME_BUILDING_CAP).
@@ -48619,7 +48640,7 @@ document.addEventListener('click',function(e){
       debugKeys:window.RQ_DOWNTIME_GATE_DEBUG?Object.keys(window.RQ_DOWNTIME_GATE_DEBUG):[],
       asset:asset, item:item
     });
-    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7205.');
+    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7210.');
   }
 });
 
