@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7208</title>
+<title>Relentless Quest v1.7209</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3130,7 +3130,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7208</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7209</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -21200,21 +21200,31 @@ function _franchiseCoveredSet(key){
   });
   return covered;
 }
-function _dtInProgressSet(dtType){
-  // Returns set of targets any party member is currently progressing toward
+function _dtInProgressSet(dtType, character){
+  // v1.7209 — multi-learner downtime fix.
+  // Older builds returned targets any party member was working on, which
+  // unintentionally made a dedicated building behave like a single classroom
+  // seat: if one character was learning Draconic, every other character lost
+  // Draconic from their dropdown. Building dedications are intended to unlock
+  // a track for the territory, not reserve it globally. This helper now only
+  // marks targets already in progress for the same character, so other party
+  // members can study the same language/skill/tool/etc. at the same time.
   var inProgress={};
-  (S.party||[]).forEach(function(pc){
-    if(!pc||!pc.dtProgress)return;
+  var pc=character||null;
+  if(pc&&pc.dtProgress){
     Object.keys(pc.dtProgress).forEach(function(key){
       if((pc.dtProgress[key]||0)<=0)return;
       var parts=key.split(':');
       if(parts[0]===dtType)inProgress[parts.slice(1).join(':')]=true;
     });
-  });
-  // Also include targets of active downtime jobs (not yet resolved)
+  }
+  // Also include active jobs for the same character, if any. This mainly
+  // protects against stale modal state; the UI normally prevents opening a
+  // new assignment while that character is busy.
   var now=Date.now();
+  var ci=(pc&&Array.isArray(S.party))?S.party.indexOf(pc):-1;
   (S.downtimeJobs||[]).forEach(function(j){
-    if(j&&j.type===dtType&&(j.endsAt||0)>now)inProgress[j.target||'']=true;
+    if(j&&j.type===dtType&&(j.endsAt||0)>now&&(ci<0||j.ci===ci))inProgress[j.target||'']=true;
   });
   return inProgress;
 }
@@ -21227,7 +21237,7 @@ function getDowntimeTargetOptions(c,type){
     }
     if(!missing.length)return [];
     var franchiseCovered=_franchiseCoveredSet(coveredKey);
-    var inProgress=_dtInProgressSet(dtType);
+    var inProgress=_dtInProgressSet(dtType,c);
     // Exclude values already being worked toward by any party member
     var available=missing.filter(function(v){return !inProgress[v];});
     var alreadyInProgress=missing.filter(function(v){return inProgress[v];});
