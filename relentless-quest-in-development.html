@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7183</title>
+<title>Relentless Quest v1.7184</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -5022,7 +5022,7 @@ body.dev-active #app{margin-top:36px;}
   </div>
 </div></div>
 
-<!-- v1.7183 — Building downtime dedication modal. Replaces the old prompt()
+<!-- v1.7184 — Building downtime dedication modal. Replaces the old prompt()
      flow used at building purchase time. Options are generated from
      DOWNTIME_BUILDING_CONTRIBS so each building only offers the skill,
      language, or faith targets it can logically support. -->
@@ -20517,25 +20517,67 @@ var DOWNTIME_CLASS_CAP_BONUS={
   'Rogue':6,
   'Bard':8
 };
-function downtimeClassCap(c){
-  var lvl=Math.max(1,parseInt((c&&c.level)||1,10)||1);
-  var cls=(c&&c.cls)||'';
-  var bonus=DOWNTIME_CLASS_CAP_BONUS[cls]||0;
-  return Math.ceil((20+bonus)*Math.min(20,lvl)/20);
-}
 function downtimeOneTimeCount(c){
   if(!c)return 0;
   return ((c.skills||[]).length||0)+((c.lang||[]).length||0)+(c.rel?1:0);
+}
+function downtimeNativeOneTimeCount(c){
+  if(!c)return 0;
+  var n=parseInt(c.dtNativeOneTimeCount,10);
+  if(isNaN(n)||n<0){
+    n=downtimeOneTimeCount(c);
+    c.dtNativeOneTimeCount=n;
+  }
+  return n;
+}
+function downtimeEarnedSlotCount(c){
+  var lvl=Math.max(1,Math.min(20,parseInt((c&&c.level)||1,10)||1));
+  var cls=(c&&c.cls)||'';
+  var bonus=DOWNTIME_CLASS_CAP_BONUS[cls]||0;
+  return Math.ceil(lvl/4)+Math.floor((bonus*lvl)/20);
+}
+function downtimeClassCap(c){
+  return downtimeNativeOneTimeCount(c)+downtimeEarnedSlotCount(c);
 }
 function downtimeCapReached(c){
   return downtimeOneTimeCount(c)>=downtimeClassCap(c);
 }
 function downtimeCapMessage(c){
   var nm=(c&&c.name)||'This character';
-  return nm+' has '+downtimeOneTimeCount(c)+' / '+downtimeClassCap(c)+' skill/language/faith slots for level '+((c&&c.level)||1)+'. Level up before learning another one-time downtime reward.';
+  return nm+' has '+downtimeOneTimeCount(c)+' / '+downtimeClassCap(c)+' skill/language/faith slots for level '+((c&&c.level)||1)+' ('+downtimeNativeOneTimeCount(c)+' native + '+downtimeEarnedSlotCount(c)+' earned slots). Level up before learning another one-time downtime reward.';
 }
 function _dtCleanTarget(v){
   return String(v||'').replace(/^(?:★|🔄) /,'').trim();
+}
+function _dtTerritoryKnowledgeBucket(territory){
+  if(!territory||!S||!S.territoryWeights)return null;
+  return S.territoryWeights[territory]||null;
+}
+function _dtListFromTerritoryBucket(bucket,camel,snake){
+  if(!bucket||typeof bucket!=='object')return null;
+  var v=bucket[camel];
+  if(v==null&&bucket.knowledge&&typeof bucket.knowledge==='object')v=bucket.knowledge[camel];
+  if(v==null&&snake)v=bucket[snake];
+  if(v==null&&bucket.knowledge&&typeof bucket.knowledge==='object'&&snake)v=bucket.knowledge[snake];
+  if(Array.isArray(v))return v.map(function(x){return String(x||'').trim();}).filter(Boolean);
+  return null;
+}
+function downtimeAllowedTargetsForTerritory(territory,type){
+  var bucket=_dtTerritoryKnowledgeBucket(territory);
+  if(type==='language')return _dtListFromTerritoryBucket(bucket,'availableLanguages','available_languages');
+  if(type==='faith')return _dtListFromTerritoryBucket(bucket,'availableFaiths','available_faiths');
+  return null;
+}
+function downtimeTargetAllowedInTerritory(territory,type,target){
+  if(type!=='language'&&type!=='faith')return true;
+  var list=downtimeAllowedTargetsForTerritory(territory,type);
+  if(!list||!list.length)return true;
+  target=_dtCleanTarget(target);
+  return list.indexOf(target)!==-1;
+}
+function downtimeTerritoryLockedMessage(c,type,target){
+  var territory=(c&&c.homeTerritory)||S.originTerritory||'this territory';
+  return downtimeTrackLabel(type,target)+' is not available to study in '+territory+'. Edit that territory's available '+(type==='language'?'languages':'faiths')+' in the Quest Editor, or dedicate a building in a territory where it is available.';
 }
 function _dtAssetUnlockMatches(a,type,target,territory){
   if(!a||!a.meta)return false;
@@ -20561,15 +20603,18 @@ function downtimeCanStartOneTimeTarget(c,type,target){
   target=_dtCleanTarget(target);
   if(downtimeTargetAlreadyOwned(c,type,target))return {ok:false,msg:downtimeRedundantMessage(c,type,target)};
   if(downtimeCapReached(c))return {ok:false,msg:downtimeCapMessage(c)};
+  var territory=(c&&c.homeTerritory)||S.originTerritory||'';
+  if(!downtimeTargetAllowedInTerritory(territory,type,target))return {ok:false,msg:downtimeTerritoryLockedMessage(c,type,target)};
   if(!downtimeTargetUnlockedByBuilding(c,type,target))return {ok:false,msg:downtimeLockedMessage(c,type,target)};
   return {ok:true,msg:''};
 }
-function _dtBuildingUnlockOptions(buildingName){
+function _dtBuildingUnlockOptions(buildingName,territory){
   var opts=[];
   var seen={};
   function add(type,target){
     target=String(target||'').trim();
     if(!downtimeIsOneTimeTrack(type)||!target)return;
+    if(territory&&!downtimeTargetAllowedInTerritory(territory,type,target))return;
     var key=type+'::'+target;
     if(seen[key])return;
     seen[key]=true;
@@ -20626,7 +20671,8 @@ function _dtRenderBuildingDedicationModal(){
   var asset=pending.asset||null;
   var item=pending.item||asset||{};
   var name=(item&&item.name)||assetDisplayName(asset)||'this building';
-  var opts=_dtBuildingUnlockOptions(name);
+  var territory=(asset&&asset.meta&&(asset.meta.ownerRef||asset.meta.owner_ref))||'';
+  var opts=_dtBuildingUnlockOptions(name,territory);
   var msg=document.getElementById('ov-dt-ded-msg');
   var empty=document.getElementById('ov-dt-ded-empty');
   var form=document.getElementById('ov-dt-ded-form');
@@ -20685,13 +20731,17 @@ function _dtPromptBuildingDedication(asset,item){
 // Some browser/debug contexts do not reveal top-level function declarations
 // reliably, so expose the downtime dedication helpers under one stable object.
 window.RQ_DOWNTIME_GATE_DEBUG={
-  version:'v1.7183',
+  version:'v1.7184',
   buildingOptions:_dtBuildingUnlockOptions,
+  allowedTargetsForTerritory:downtimeAllowedTargetsForTerritory,
+  targetAllowedInTerritory:downtimeTargetAllowedInTerritory,
   openBuildingDedicationModal:_dtOpenBuildingDedicationModal,
   applyBuildingDedication:_dtApplyBuildingDedication,
   targetUnlockedByBuilding:downtimeTargetUnlockedByBuilding,
   canStartOneTimeTarget:downtimeCanStartOneTimeTarget,
   classCap:downtimeClassCap,
+  nativeCount:downtimeNativeOneTimeCount,
+  earnedSlots:downtimeEarnedSlotCount,
   oneTimeCount:downtimeOneTimeCount
 };
 
@@ -44457,7 +44507,15 @@ function mergeCustomContent(){
           return;
         }
         var bucket=(tw.species&&typeof tw.species==='object')?tw.species:{};
-        S.territoryWeights[tw.territory]={species:Object.assign({},bucket)};
+        var out={species:Object.assign({},bucket)};
+        if(Array.isArray(tw.availableLanguages))out.availableLanguages=tw.availableLanguages.slice();
+        if(Array.isArray(tw.availableFaiths))out.availableFaiths=tw.availableFaiths.slice();
+        if(tw.knowledge&&typeof tw.knowledge==='object'){
+          if(Array.isArray(tw.knowledge.availableLanguages)&&!out.availableLanguages)out.availableLanguages=tw.knowledge.availableLanguages.slice();
+          if(Array.isArray(tw.knowledge.availableFaiths)&&!out.availableFaiths)out.availableFaiths=tw.knowledge.availableFaiths.slice();
+        }
+        if(tw.realEstateDeny)out.realEstateDeny=clone(tw.realEstateDeny);
+        S.territoryWeights[tw.territory]=out;
       });
     });
   }
