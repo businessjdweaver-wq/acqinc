@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7191</title>
+<title>Relentless Quest v1.7192</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -20686,7 +20686,7 @@ function downtimeIsOneTimeTrack(type){
   return type==='skill'||type==='language'||type==='faith'||type==='tool'||type==='weapon'||type==='armor'||type==='vehicle'||type==='instrument'||type==='gaming';
 }
 function downtimeUsesClassCap(type){
-  // v1.7191 — all one-time proficiencies now share the proportional cap.
+  // v1.7192 — all one-time proficiencies now share the proportional cap.
   // Contacts/intel remain repeatable economy tracks and do not use the cap.
   return downtimeIsOneTimeTrack(type);
 }
@@ -20703,7 +20703,7 @@ function _dtUniqueCount(arr){
   (arr||[]).forEach(function(v){v=String(v||'').trim();if(v)seen[v]=true;});
   return Object.keys(seen).length;
 }
-function downtimeOneTimeCount(c){
+function _dtNativeVisibleProficiencyCount(c){
   if(!c)return 0;
   return _dtUniqueCount(c.skills)+
     _dtUniqueCount(c.lang)+
@@ -20712,17 +20712,25 @@ function downtimeOneTimeCount(c){
     _dtUniqueCount(c.weapons)+
     _dtUniqueCount(c.armorProfs||c.armor);
 }
+function downtimeOneTimeCount(c){
+  if(!c)return 0;
+  // v1.7192 — cap pacing is based only on proficiencies actually earned
+  // through downtime. Native class/species/background proficiencies can be
+  // numerous (especially weapons/tools) and should not consume advancement
+  // capacity. The authoritative earned list is written when a one-time
+  // downtime track completes and is pruned by the dev-mode removal tool.
+  var seen={};
+  (c.dtEarnedProficiencies||[]).forEach(function(e){
+    if(!e||!e.type||!e.target)return;
+    if(!downtimeIsOneTimeTrack(e.type))return;
+    seen[_dtEarnedKey(e.type,e.target)]=true;
+  });
+  return Object.keys(seen).length;
+}
 function downtimeNativeOneTimeCount(c){
   if(!c)return 0;
-  // v1.7191 — use a new baseline field so existing native tools/weapons/armor
-  // are counted into the starting baseline the first time this version runs.
-  // The old dtNativeOneTimeCount tracked only skills/languages/faiths.
-  var n=parseInt(c.dtNativeProficiencyCount,10);
-  if(isNaN(n)||n<0){
-    n=downtimeOneTimeCount(c);
-    c.dtNativeProficiencyCount=n;
-  }
-  return n;
+  // Diagnostic/display only. This is not used for cap enforcement in v1.7192.
+  return _dtNativeVisibleProficiencyCount(c);
 }
 function downtimeEarnedSlotCount(c){
   var lvl=Math.max(1,Math.min(20,parseInt((c&&c.level)||1,10)||1));
@@ -20731,16 +20739,19 @@ function downtimeEarnedSlotCount(c){
   return Math.ceil(lvl/4)+Math.floor((bonus*lvl)/20);
 }
 function downtimeClassCap(c){
-  return downtimeNativeOneTimeCount(c)+downtimeEarnedSlotCount(c);
+  // v1.7192 — public/debug name retained, but the enforceable cap is now
+  // the number of downtime-earned slots available at this level. Native
+  // proficiencies are reported separately and do not consume this cap.
+  return downtimeEarnedSlotCount(c);
 }
 function downtimeCapReached(c){
-  return downtimeOneTimeCount(c)>=downtimeClassCap(c);
+  return downtimeOneTimeCount(c)>=downtimeEarnedSlotCount(c);
 }
 function downtimeCapMessage(c){
   var nm=(c&&c.name)||'This character';
-  return nm+' has '+downtimeOneTimeCount(c)+' / '+downtimeClassCap(c)+' proficiency slots for level '+((c&&c.level)||1)+' ('+downtimeNativeOneTimeCount(c)+' native + '+downtimeEarnedSlotCount(c)+' earned slots). Level up before learning another downtime-earned proficiency.';
+  return nm+' has used '+downtimeOneTimeCount(c)+' / '+downtimeEarnedSlotCount(c)+' downtime-earned proficiency slots for level '+((c&&c.level)||1)+'. Native proficiencies ('+downtimeNativeOneTimeCount(c)+') do not count against this cap. Level up before learning another downtime-earned proficiency.';
 }
-// v1.7191 — When a one-time proficiency dropdown is empty solely because
+// v1.7192 — When a one-time proficiency dropdown is empty solely because
 // the character has reached the proportional cap, show the next level that
 // would open at least one additional earned slot. This makes the assignment
 // UI explain the remedy instead of looking broken/empty.
@@ -21027,7 +21038,7 @@ function _dtPromptBuildingDedication(asset,item){
 // Some browser/debug contexts do not reveal top-level function declarations
 // reliably, so expose the downtime dedication helpers under one stable object.
 window.RQ_DOWNTIME_GATE_DEBUG={
-  version:'v1.7191',
+  version:'v1.7192',
   buildingOptions:_dtBuildingUnlockOptions,
   buildingOverrides:_dtTerritoryBuildingOverrides,
   buildingOverrideList:_dtBuildingOverrideList,
@@ -21778,7 +21789,7 @@ function _cpkOverviewHtml(c,ci){
     );
   }
 
-  // v1.7191 — Dev-only removal of downtime-earned proficiencies.
+  // v1.7192 — Dev-only removal of downtime-earned proficiencies.
   // Only entries recorded through the downtime completion resolver are shown,
   // so native/class/background proficiencies are not accidentally removed.
   if(typeof isDevModeActive==='function'&&isDevModeActive()){
@@ -24885,7 +24896,7 @@ document.getElementById('ov-charpeek-close').addEventListener('click',function(e
   closeOv('ov-charpeek');
   window._recentModalClose=Date.now();
 });
-// v1.7191 — Dev-mode removal of downtime-earned proficiencies from char peek.
+// v1.7192 — Dev-mode removal of downtime-earned proficiencies from char peek.
 document.addEventListener('click',function(e){
   var btn=e.target.closest('[data-a="cpk-dev-dt-remove-go"]');
   if(!btn)return;
