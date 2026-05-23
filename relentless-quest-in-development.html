@@ -994,6 +994,13 @@ body.high-contrast{
   color:#1f5c63;font-weight:700;
 }
 
+
+/* v1.7197 — Dev-mode inline proficiency removal on Party cards. */
+.dev-prof-wrap{position:relative;display:inline-flex;margin:0 2px 2px 0;}
+.dev-prof-wrap > .pill,.dev-prof-wrap > button.pill{margin-right:0;}
+.dev-prof-x{position:absolute;top:-6px;right:-6px;width:16px;height:16px;border-radius:50%;border:1px solid var(--crimson);background:var(--parchment);color:var(--crimson);font-size:11px;line-height:13px;padding:0;cursor:pointer;font-family:Arial,sans-serif;font-weight:700;z-index:4;box-shadow:0 1px 3px rgba(0,0,0,.22);}
+.dev-prof-x:hover{background:var(--crimson);color:#fff;}
+
 /* RESPONSIVE */
 html{
   -webkit-text-size-adjust:100%;
@@ -17751,6 +17758,12 @@ window.rqPersistenceTest=function(){
     if(Array.isArray(c.armorProfs)&&c.armorProfs.length){
       _statsWithMeta._armorProfs=c.armorProfs.slice();
     }
+    // v1.7197 — Creation-time proficiency snapshot. Stored in stats JSON so
+    // dev cleanup controls can distinguish native/starting proficiencies
+    // from proficiencies added later through downtime or manual cleanup.
+    if(c.creationProficiencies&&typeof c.creationProficiencies==='object'){
+      _statsWithMeta._creationProficiencies=c.creationProficiencies;
+    }
     return {
       name:c.name,species:c.species||'',cls:c.cls||'',bg:c.bg||'',
       rel:c.rel||'',age:c.age||0,height:c.height||'',weight:c.weight||'',
@@ -17856,10 +17869,11 @@ window.rqPersistenceTest=function(){
     var _cSpecialty=''; // v1.7147
     var _cInvMeta=null; // v1.7148
     var _cArmorProfs=[]; // v1.7188
+    var _cCreationProficiencies=null; // v1.7197
     var _rawStats=row.stats||{};
     var _cleanStats=_rawStats;
     if(_rawStats&&typeof _rawStats==='object'&&
-       (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined||_rawStats._specialty!==undefined||_rawStats._invMeta!==undefined||_rawStats._armorProfs!==undefined)){
+       (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined||_rawStats._specialty!==undefined||_rawStats._invMeta!==undefined||_rawStats._armorProfs!==undefined||_rawStats._creationProficiencies!==undefined)){
       _cleanStats=Object.assign({},_rawStats);
       if(typeof _cleanStats._homeTerritory==='string'&&_cleanStats._homeTerritory)_cHomeTerritory=_cleanStats._homeTerritory;
       if(typeof _cleanStats._statsClass==='string'&&_cleanStats._statsClass)_cStatsClass=_cleanStats._statsClass;
@@ -17873,12 +17887,14 @@ window.rqPersistenceTest=function(){
       // organically in charItemUsesLeft / _consumeItemFromChar.
       if(_cleanStats._invMeta&&typeof _cleanStats._invMeta==='object')_cInvMeta=_cleanStats._invMeta;
       if(Array.isArray(_cleanStats._armorProfs))_cArmorProfs=_cleanStats._armorProfs.slice();
+      if(_cleanStats._creationProficiencies&&typeof _cleanStats._creationProficiencies==='object')_cCreationProficiencies=JSON.parse(JSON.stringify(_cleanStats._creationProficiencies));
       delete _cleanStats._homeTerritory;
       delete _cleanStats._statsClass;
       delete _cleanStats._gradClass;
       delete _cleanStats._specialty;
       delete _cleanStats._invMeta;
       delete _cleanStats._armorProfs;
+      delete _cleanStats._creationProficiencies;
     }
     var c={
       name:row.name,species:row.species,cls:row.cls,bg:row.bg,rel:row.rel,
@@ -17898,6 +17914,7 @@ window.rqPersistenceTest=function(){
     if(_cGradClass)c.gradClass=_cGradClass;
     if(_cSpecialty)c.specialty=_cSpecialty; // v1.7147
     if(_cInvMeta)c.invMeta=_cInvMeta; // v1.7148
+    if(_cCreationProficiencies)c.creationProficiencies=_cCreationProficiencies; // v1.7197
     return c;
   }
   function _deserializeSquadRow(row,party){
@@ -21055,7 +21072,7 @@ function _dtPromptBuildingDedication(asset,item){
 // Some browser/debug contexts do not reveal top-level function declarations
 // reliably, so expose the downtime dedication helpers under one stable object.
 window.RQ_DOWNTIME_GATE_DEBUG={
-  version:'v1.7196',
+  version:'v1.7197',
   buildingOptions:_dtBuildingUnlockOptions,
   buildingOverrides:_dtTerritoryBuildingOverrides,
   buildingOverrideList:_dtBuildingOverrideList,
@@ -21732,6 +21749,84 @@ function _dtCurrentProficiencyRecords(c){
   (Array.isArray(c.armorProfs)?c.armorProfs:(Array.isArray(c.armor)?c.armor:[])).forEach(function(v){_dtPushProfRecord(out,seen,'armor',v);});
   return out.sort(function(a,b){return _dtEarnedProficiencyLabel(a).localeCompare(_dtEarnedProficiencyLabel(b));});
 }
+
+function _dtNormalizeProfType(type,target){
+  type=String(type||'').trim();
+  target=String(target||'').trim();
+  if(type==='tool'){
+    if(/vehicle/i.test(target))return 'vehicle';
+    if(/dice|dragonchess|playing card|three-dragon|gaming/i.test(target))return 'gaming';
+    if(/lute|flute|drum|viol|lyre|horn|pan flute|shawm|bagpipe|dulcimer/i.test(target))return 'instrument';
+  }
+  return type;
+}
+function _dtCreationSnapshotFromCharacter(c){
+  var snap={skill:[],language:[],faith:[],tool:[],weapon:[],armor:[],vehicle:[],instrument:[],gaming:[]};
+  function add(type,val){
+    val=String(val||'').trim();if(!val)return;
+    type=_dtNormalizeProfType(type,val);
+    if(!snap[type])snap[type]=[];
+    if(snap[type].indexOf(val)===-1)snap[type].push(val);
+  }
+  // Explicit snapshot wins.
+  if(c&&c.creationProficiencies&&typeof c.creationProficiencies==='object'){
+    Object.keys(snap).forEach(function(k){
+      var arr=c.creationProficiencies[k]||c.creationProficiencies[k+'s']||[];
+      if(Array.isArray(arr))arr.forEach(function(v){add(k,v);});
+    });
+    return snap;
+  }
+  // Legacy fallback: infer the safest native package we can from species/class.
+  // This intentionally protects obvious PHB/class-native proficiencies; older
+  // pre-refactor downtime additions may still show a dev X if they are outside
+  // this inferred native package.
+  if(!c)return snap;
+  var cls=c.cls||'';
+  if(CLASS_SKILLS&&CLASS_SKILLS[cls]&&CLASS_SKILLS[cls].mandatory)add('skill',CLASS_SKILLS[cls].mandatory);
+  var ess=(typeof classEssentials==='function')?classEssentials(cls):{skills:[],tools:[],weapons:[]};
+  (ess.skills||[]).forEach(function(v){add('skill',v);});
+  (ess.tools||[]).forEach(function(v){add('tool',v);});
+  (ess.weapons||[]).forEach(function(v){add('weapon',v);});
+  add('language','Common');
+  var nativeLa=(typeof _speciesLanguage==='function')?_speciesLanguage(c.species):'';
+  if(nativeLa)add('language',nativeLa);
+  if(c.rel)add('faith',c.rel);
+  return snap;
+}
+function dtStampCreationProficiencies(c){
+  if(!c)return c;
+  var snap={skill:[],language:[],faith:[],tool:[],weapon:[],armor:[],vehicle:[],instrument:[],gaming:[]};
+  function add(type,val){val=String(val||'').trim();if(!val)return;type=_dtNormalizeProfType(type,val);if(snap[type].indexOf(val)===-1)snap[type].push(val);}
+  (c.skills||[]).forEach(function(v){add('skill',v);});
+  (c.lang||[]).forEach(function(v){add('language',v);});
+  if(c.rel)add('faith',c.rel);
+  (c.faiths||[]).forEach(function(v){add('faith',v);});
+  (c.tools||[]).forEach(function(v){add('tool',v);});
+  (c.weapons||[]).forEach(function(v){add('weapon',v);});
+  (c.armorProfs||c.armor||[]).forEach(function(v){add('armor',v);});
+  c.creationProficiencies=snap;
+  return c;
+}
+function _dtIsCreationProficiency(c,type,target){
+  type=_dtNormalizeProfType(type,target);
+  target=String(target||'').trim();
+  var snap=_dtCreationSnapshotFromCharacter(c);
+  return !!(snap[type]&&snap[type].indexOf(target)!==-1);
+}
+function _dtPartyInlineCanRemove(c,type,target){
+  if(!isDevModeActive()||!downtimeIsOneTimeTrack(type)||!target)return false;
+  if(_dtIsCreationProficiency(c,type,target))return false;
+  // If there is an earned marker, definitely removable. If not, legacy
+  // pre-refactor extras outside the inferred creation package are also removable.
+  return true;
+}
+function devProfPill(ci,type,target,html,activeFilter){
+  var c=S.party&&S.party[ci];
+  var pill=ptag(html,target,activeFilter);
+  if(!_dtPartyInlineCanRemove(c,type,target))return pill;
+  return '<span class="dev-prof-wrap">'+pill+'<button type="button" class="dev-prof-x" data-a="dev-remove-prof-inline" data-ci="'+ci+'" data-type="'+esc(type)+'" data-target="'+esc(target)+'" title="Remove '+esc(downtimeTrackLabel(type,target))+' from '+esc((c&&c.name)||'character')+'">×</button></span>';
+}
+
 function _dtRemoveValueFromArray(arr,value){
   if(!Array.isArray(arr))return false;
   var before=arr.length;
@@ -21839,7 +21934,7 @@ function _cpkOverviewHtml(c,ci){
     );
   }
 
-  // v1.7196 — Dev-only removal of currently-held proficiencies.
+  // v1.7197 — Dev-only removal of currently-held proficiencies.
   // Lists current skills/languages/faiths/tools/weapons/armor/vehicles/instruments/gaming
   // so older pre-refactor downtime awards can be removed too. The deletion
   // routine also clears any dtEarnedProficiencies marker when one exists.
@@ -22301,11 +22396,11 @@ function charCardHtml(c,ci,opts){
     return '<span class="squad-tag'+(isActive?' squad-tag-active':'')+'" data-a="ptag" data-v="'+esc(sqName)+'">⚔ '+esc(sqName)+'</span>';
   }).join('');
 
-  var filteredLang=matchPills(c.lang,'🗣',function(l){ return EXOTIC_LANG.indexOf(l)!==-1?'border-color:var(--purple);color:var(--purple)':''; });
-  var filteredRel=(c.rel&&matches(c.rel)) ? ptag('<span'+(EXOTIC_REL.indexOf(c.rel)!==-1?' style="border-color:var(--purple);color:var(--purple)"':'')+'>'+relIcon(c.rel)+' '+esc(c.rel)+(EXOTIC_REL.indexOf(c.rel)!==-1?' ✦':'')+' </span>',c.rel,af) : '';
-  var filteredSkills=matchPills(c.skills,'⭐');
-  var filteredTools=matchPills(c.tools,'🔧',function(s){ return EXOTIC_TOOLS.indexOf(s)!==-1?'color:var(--purple)':''; });
-  var filteredWeapons=matchPills(c.weapons,'⚔');
+  var filteredLang=(c.lang||[]).filter(function(v){return matches(v);}).map(function(l){var style=EXOTIC_LANG.indexOf(l)!==-1?'border-color:var(--purple);color:var(--purple)':'';return devProfPill(ci,'language',l,(style?'<span style="'+style+'">':'')+'🗣 '+esc(l)+(style?' </span>':''),af);}).join('');
+  var filteredRel=(c.rel&&matches(c.rel)) ? devProfPill(ci,'faith',c.rel,'<span'+(EXOTIC_REL.indexOf(c.rel)!==-1?' style="border-color:var(--purple);color:var(--purple)"':'')+'>'+relIcon(c.rel)+' '+esc(c.rel)+(EXOTIC_REL.indexOf(c.rel)!==-1?' ✦':'')+' </span>',af) : '';
+  var filteredSkills=(c.skills||[]).filter(function(v){return matches(v);}).map(function(v){return devProfPill(ci,'skill',v,'⭐ '+esc(v),af);}).join('');
+  var filteredTools=(c.tools||[]).filter(function(v){return matches(v);}).map(function(v){var ex=EXOTIC_TOOLS.indexOf(v)!==-1;return devProfPill(ci,_dtNormalizeProfType('tool',v),v,(ex?'<span style="color:var(--purple)">':'')+'🔧 '+esc(v)+(ex?' </span>':''),af);}).join('');
+  var filteredWeapons=(c.weapons||[]).filter(function(v){return matches(v);}).map(function(v){return devProfPill(ci,'weapon',v,'⚔ '+esc(v),af);}).join('');
   var filteredInv=(realInv||[]).filter(function(x){return matches(x);}).map(function(x){
     var wt=ITEM_WEIGHT[x];
     var wtStr=(wt!==undefined&&wt>0)?' <span style="font-size:.75em;color:var(--ink-light)">('+wt+'lb)</span>':'';
@@ -22371,16 +22466,16 @@ function charCardHtml(c,ci,opts){
       (c.lang||[]).map(function(l){
         var exotic=EXOTIC_LANG.indexOf(l)!==-1;
         var style=exotic?'border-color:var(--purple);color:var(--purple)':'';
-        return ptag('<span style="'+style+'">🗣 '+esc(l)+(exotic?' ✦':'')+' </span>',l,af);
+        return devProfPill(ci,'language',l,'<span style="'+style+'">🗣 '+esc(l)+(exotic?' ✦':'')+' </span>',af);
       }).join('')+
-      (c.rel?ptag('<span'+(EXOTIC_REL.indexOf(c.rel)!==-1?' style="border-color:var(--purple);color:var(--purple)"':'')+'>'+relIcon(c.rel)+' '+esc(c.rel)+(EXOTIC_REL.indexOf(c.rel)!==-1?' ✦':'')+' </span>',c.rel,af):'<span class="pill">🙏 –</span>')+
+      (c.rel?devProfPill(ci,'faith',c.rel,'<span'+(EXOTIC_REL.indexOf(c.rel)!==-1?' style="border-color:var(--purple);color:var(--purple)"':'')+'>'+relIcon(c.rel)+' '+esc(c.rel)+(EXOTIC_REL.indexOf(c.rel)!==-1?' ✦':'')+' </span>',af):'<span class="pill">🙏 –</span>')+
       '</div>'+
-      '<div class="pills">'+(c.skills||[]).map(function(s){return ptag('⭐ '+esc(s),s,af);}).join('')+'</div>'+
+      '<div class="pills">'+(c.skills||[]).map(function(s){return devProfPill(ci,'skill',s,'⭐ '+esc(s),af);}).join('')+'</div>'+
       '<div class="pills">'+(c.tools||[]).map(function(s){
         var exotic=EXOTIC_TOOLS.indexOf(s)!==-1;
-        return ptag((exotic?'<span style="color:var(--purple)">':'')+'🔧 '+esc(s)+(exotic?' ✦</span>':''),s,af);
+        return devProfPill(ci,_dtNormalizeProfType('tool',s),s,(exotic?'<span style="color:var(--purple)">':'')+'🔧 '+esc(s)+(exotic?' ✦</span>':''),af);
       }).join('')+
-      (c.weapons||[]).map(function(s){return ptag('⚔ '+esc(s),s,af);}).join('')+
+      (c.weapons||[]).map(function(s){return devProfPill(ci,'weapon',s,'⚔ '+esc(s),af);}).join('')+
       '</div>'+
       (c.exoticTrait?'<div style="font-size:.75em;color:var(--purple);margin:3px 0 4px;font-style:italic">✦ '+esc(c.exoticTrait)+'</div>':'')+
       (function(){
@@ -24952,6 +25047,25 @@ document.getElementById('ov-charpeek-close').addEventListener('click',function(e
   closeOv('ov-charpeek');
   window._recentModalClose=Date.now();
 });
+
+// v1.7197 — Party-card dev X removal for non-creation proficiencies.
+document.addEventListener('click',function(e){
+  var btn=e.target.closest('[data-a="dev-remove-prof-inline"]');
+  if(!btn)return;
+  e.preventDefault();e.stopPropagation();
+  var ci=parseInt(btn.getAttribute('data-ci'),10);
+  var type=btn.getAttribute('data-type')||'';
+  var target=btn.getAttribute('data-target')||'';
+  var c=S.party&&S.party[ci];
+  if(!c)return;
+  if(_dtIsCreationProficiency(c,type,target)){
+    alert('That proficiency is protected because it appears to be part of '+c.name+''s creation package.');
+    return;
+  }
+  if(!confirm('Remove '+downtimeTrackLabel(type,target)+' from '+c.name+'?'))return;
+  devDeleteDowntimeEarnedProficiency(ci,type,target);
+});
+
 // v1.7194 — Dev-mode removal of downtime-earned proficiencies from char peek.
 document.addEventListener('click',function(e){
   var btn=e.target.closest('[data-a="cpk-dev-dt-remove-go"]');
@@ -39979,7 +40093,7 @@ function sbPull(manual){
         var _rawStats=c.stats||legacyMeta.stats||{};
         var _cleanStats=_rawStats;
         if(_rawStats&&(typeof _rawStats==='object')&&
-           (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined||_rawStats._specialty!==undefined||_rawStats._invMeta!==undefined||_rawStats._armorProfs!==undefined)){
+           (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined||_rawStats._specialty!==undefined||_rawStats._invMeta!==undefined||_rawStats._armorProfs!==undefined||_rawStats._creationProficiencies!==undefined)){
           _cleanStats=Object.assign({},_rawStats);
           if(typeof _cleanStats._homeTerritory==='string'&&_cleanStats._homeTerritory){
             _cHomeTerritory=_cleanStats._homeTerritory;
@@ -40004,6 +40118,7 @@ function sbPull(manual){
           delete _cleanStats._specialty;
           delete _cleanStats._invMeta;
       delete _cleanStats._armorProfs;
+      delete _cleanStats._creationProficiencies;
         }
         // Proper columns take priority; legacy meta is fallback
         var _rebuilt={_sbId:c.id,name:c.name,species:c.species,cls:c.cls,bg:c.bg,rel:c.rel,
@@ -48314,7 +48429,7 @@ function _autoCreateDashCard(quest,scope){
 
 
 
-// v1.7196 — Existing-building dedication editor.
+// v1.7197 — Existing-building dedication editor.
 // If a building was purchased before the dedication modal existed, or if a
 // sync conflict stripped the unlock metadata, the player can repair it in the
 // UI rather than using console surgery. The button appears in Party → Assets &
@@ -48366,7 +48481,7 @@ document.addEventListener('click',function(e){
       debugKeys:window.RQ_DOWNTIME_GATE_DEBUG?Object.keys(window.RQ_DOWNTIME_GATE_DEBUG):[],
       asset:asset, item:item
     });
-    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7196.');
+    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7197.');
   }
 });
 
