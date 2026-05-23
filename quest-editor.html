@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Quest Editor v1.7172</title>
+<title>Quest Editor v1.7173</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -386,7 +386,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 <body>
 <div id="login-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--parch);border:2px solid var(--gold);border-radius:10px;padding:24px;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.5)">
-    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.7172</span></h2>
+    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.7173</span></h2>
     <div style="margin-bottom:12px">
       <label style="display:block;font-size:.8em;color:var(--ink2);margin-bottom:4px">Email</label>
       <input type="text" id="email" autocomplete="email" style="width:100%;padding:8px;border:1px solid var(--gold);border-radius:5px;background:var(--parch);font-size:.9em;box-sizing:border-box">
@@ -402,7 +402,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 
 <div id="app">
   <div id="hdr">
-    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.7172</span></h1>
+    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.7173</span></h1>
     <div id="login-area">
       <span id="user-email"></span>
       <button class="hbtn" id="btn-push" style="display:none" title="Push all local changes to Supabase">☁ Push</button>
@@ -4806,14 +4806,20 @@ function showTerritoryForm(key) {
   var REAL_ESTATE_CATALOG = [
     {name:'Storage Shed',            price:200},
     {name:'Stables',                 price:500},
+    {name:'Training Yard',           price:500},
+    {name:'Guard Post',              price:750},
     {name:'Market Stall',            price:800},
     {name:'Barracks',                price:1000},
     {name:'Smithy',                  price:1200},
+    {name:'Wayside Shrine',          price:700},
     {name:'Tavern (Common Room)',    price:1500},
     {name:'Greenhouse',              price:1800},
     {name:"Alchemist's Lab",         price:2000},
     {name:'Library & Scriptorium',   price:2500},
-    {name:'Safe House',              price:3000}
+    {name:'Safe House',              price:3000},
+    {name:'Temple Shrine',           price:5000},
+    {name:"Wizard's Tower",          price:8000},
+    {name:'Fortress Keep',           price:50000}
   ];
   var reSettings = (tw && tw.realEstateDeny) ? tw.realEstateDeny : {};
   var reDenyAllInit = !!reSettings.all;
@@ -4841,7 +4847,7 @@ function showTerritoryForm(key) {
     '</div>';
   // ────────────────────────────────────────────────────────────────────
 
-  // ── v1.7172 — Territory Knowledge Pools ───────────────────────────
+  // ── v1.7173 — Territory Knowledge Pools ───────────────────────────
   // Optional allow-lists for languages and faiths available for study in
   // this territory. Omitted arrays mean unrestricted/default. Empty arrays
   // are permitted and mean no entries of that type are available.
@@ -4877,6 +4883,52 @@ function showTerritoryForm(key) {
     knowledgeBoxHtml('faith','Available Faiths',DND_REL,faithAllowInit,'🙏');
   // ────────────────────────────────────────────────────────────────────
 
+
+  // ── v1.7173 — Building-specific knowledge overrides ───────────────
+  // Overrides are additive exceptions to territory knowledge pools. They let
+  // a specific building teach values that the territory normally does not
+  // support, such as a Wizard's Tower teaching Deep Speech in a coastal town.
+  var bkoInit = (tw && (tw.buildingKnowledgeOverrides || tw.building_knowledge_overrides || tw.buildingOverrides || tw.building_overrides)) || {};
+  function _twBkoList(building,type){
+    var b = bkoInit && bkoInit[building];
+    if(!b)return [];
+    var keys = type==='skill' ? ['skills','availableSkills','skillOverrides'] :
+      (type==='language' ? ['languages','availableLanguages','languageOverrides'] : ['faiths','availableFaiths','faithOverrides']);
+    var out=[];
+    keys.forEach(function(k){
+      var v=b[k];
+      if(Array.isArray(v))v.forEach(function(x){x=String(x||'').trim();if(x&&out.indexOf(x)===-1)out.push(x);});
+    });
+    return out;
+  }
+  function _twMultiOptions(opts, selected){
+    selected=selected||[];
+    return opts.map(function(v){return '<option value="'+esc(v)+'"'+(selected.indexOf(v)!==-1?' selected':'')+'>'+esc(v)+'</option>';}).join('');
+  }
+  var buildingOverrideRowsHtml = REAL_ESTATE_CATALOG.map(function(b){
+    var sk=_twBkoList(b.name,'skill');
+    var la=_twBkoList(b.name,'language');
+    var fa=_twBkoList(b.name,'faith');
+    var any=sk.length||la.length||fa.length;
+    return '<details style="border:1px solid var(--border2);border-radius:6px;background:rgba(255,253,232,.45);padding:6px 8px;margin-bottom:6px"'+(any?' open':'')+'>'+
+      '<summary style="cursor:pointer;font-family:'Cinzel',serif;font-size:.76em;color:var(--ink2);letter-spacing:.04em">'+esc(b.name)+(any?' · overrides active':'')+'</summary>'+
+      '<div class="fgrid c3" style="gap:8px;margin-top:8px">'+
+        '<div class="frow"><label class="flbl">Skill Overrides</label><select multiple size="4" class="tw-bko" data-building="'+esc(b.name)+'" data-bko="skill"'+(canEdit?'':' disabled')+'>'+_twMultiOptions(DND_SKILLS,sk)+'</select></div>'+
+        '<div class="frow"><label class="flbl">Language Overrides</label><select multiple size="4" class="tw-bko" data-building="'+esc(b.name)+'" data-bko="language"'+(canEdit?'':' disabled')+'>'+_twMultiOptions(DND_LANG,la)+'</select></div>'+
+        '<div class="frow"><label class="flbl">Faith Overrides</label><select multiple size="4" class="tw-bko" data-building="'+esc(b.name)+'" data-bko="faith"'+(canEdit?'':' disabled')+'>'+_twMultiOptions(DND_REL,fa)+'</select></div>'+
+      '</div>'+
+    '</details>';
+  }).join('');
+  var buildingOverrideSectionHtml =
+    '<div class="frow">'+
+      '<label>🏛 Building Knowledge Overrides <span class="select-hint">— additive exceptions; these options appear in that building's purchase dedication dropdown even if not normally available in the territory</span></label>'+
+      '<div style="background:var(--parchment);padding:8px 12px;border:1px solid var(--border2);border-radius:4px">'+
+        '<div style="font-size:.78em;color:var(--ink2);margin-bottom:8px;line-height:1.4">Use these sparingly for special institutions: embassies, hidden cult sites, wizard colleges, foreign shrines, or unique schools.</div>'+
+        buildingOverrideRowsHtml+
+      '</div>'+
+    '</div>';
+  // ────────────────────────────────────────────────────────────────────
+
   var ownerNote = (tw && tw._ownerUserId)
     ? ('<div style="font-size:.75em;color:var(--ink2);margin-bottom:8px">' +
         'Owner: ' + esc(tw._ownerUserId === uid() ? 'you' : tw._ownerUserId) +
@@ -4902,6 +4954,7 @@ function showTerritoryForm(key) {
       '</div>' +
     '</div>' +
     knowledgeSectionHtml +
+    buildingOverrideSectionHtml +
     reSectionHtml +
     (canEdit ? (
       '<div style="display:flex;align-items:center;gap:8px;margin-top:14px">' +
@@ -4936,7 +4989,7 @@ function showTerritoryForm(key) {
     };
   }
 
-  // ── v1.7172 — Territory knowledge select-all/select-none buttons
+  // ── v1.7173 — Territory knowledge select-all/select-none buttons
   fi.querySelectorAll('[data-know-all]').forEach(function(btn){
     btn.onclick = function() {
       var k = btn.getAttribute('data-know-all');
@@ -5025,6 +5078,21 @@ function showTerritoryForm(key) {
     var langAllowOut = collectKnowledge('lang', DND_LANG);
     var faithAllowOut = collectKnowledge('faith', DND_REL);
 
+    function selValuesFromSelect(el){
+      return Array.from(el && el.options ? el.options : []).filter(function(o){return o.selected;}).map(function(o){return o.value;});
+    }
+    var buildingOverridesOut = {};
+    document.querySelectorAll('select.tw-bko').forEach(function(selEl){
+      var bname = selEl.getAttribute('data-building');
+      var kind = selEl.getAttribute('data-bko');
+      var vals = selValuesFromSelect(selEl);
+      if(!bname || !kind || !vals.length)return;
+      if(!buildingOverridesOut[bname])buildingOverridesOut[bname]={};
+      if(kind==='skill')buildingOverridesOut[bname].skills=vals;
+      else if(kind==='language')buildingOverridesOut[bname].languages=vals;
+      else if(kind==='faith')buildingOverridesOut[bname].faiths=vals;
+    });
+
     // Determine ownership/visibility. Existing rows keep their owner +
     // visibility unless admin is editing an admin-owned row (admin-owned
     // is the closest thing this editor has to "official" for territories).
@@ -5035,6 +5103,7 @@ function showTerritoryForm(key) {
     var dataOut = { species: newSpecies };
     if (langAllowOut !== null) dataOut.availableLanguages = langAllowOut;
     if (faithAllowOut !== null) dataOut.availableFaiths = faithAllowOut;
+    if (Object.keys(buildingOverridesOut).length) dataOut.buildingKnowledgeOverrides = buildingOverridesOut;
     if (Object.keys(reDenyOut).length) dataOut.realEstateDeny = reDenyOut;
     var row = {
       content_type: 'territory_weights',

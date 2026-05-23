@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7185</title>
+<title>Relentless Quest v1.7186</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -20575,6 +20575,43 @@ function downtimeTargetAllowedInTerritory(territory,type,target){
   target=_dtCleanTarget(target);
   return list.indexOf(target)!==-1;
 }
+
+// v1.7186 — Per-territory building knowledge overrides.
+// Territory knowledge pools express what a region normally supports;
+// building overrides express exceptional institutions inside that territory
+// (e.g. a Wizard's Tower in Minsaka that can teach Deep Speech even when
+// Deep Speech is not part of Minsaka's normal language pool). Overrides are
+// additive and intentionally bypass the territory allow-list.
+function _dtTerritoryBuildingOverrides(territory){
+  var bucket=_dtTerritoryKnowledgeBucket(territory);
+  if(!bucket||typeof bucket!=='object')return {};
+  var o=bucket.buildingKnowledgeOverrides||bucket.building_knowledge_overrides||bucket.buildingOverrides||bucket.building_overrides;
+  if(!o&&bucket.knowledge&&typeof bucket.knowledge==='object'){
+    o=bucket.knowledge.buildingKnowledgeOverrides||bucket.knowledge.building_knowledge_overrides||bucket.knowledge.buildingOverrides||bucket.knowledge.building_overrides;
+  }
+  return (o&&typeof o==='object')?o:{};
+}
+function _dtBuildingOverrideList(territory,buildingName,type){
+  var all=_dtTerritoryBuildingOverrides(territory);
+  var b=all[buildingName]||null;
+  if(!b)return [];
+  var keyMap={
+    skill:['skills','skill','availableSkills','skillOverrides'],
+    language:['languages','language','availableLanguages','languageOverrides'],
+    faith:['faiths','faith','availableFaiths','faithOverrides']
+  };
+  var keys=keyMap[type]||[type+'s',type];
+  var out=[];
+  keys.forEach(function(k){
+    var v=b[k];
+    if(Array.isArray(v))v.forEach(function(x){x=String(x||'').trim();if(x&&out.indexOf(x)===-1)out.push(x);});
+  });
+  return out;
+}
+function _dtBuildingHasOverride(territory,buildingName,type,target){
+  target=_dtCleanTarget(target);
+  return _dtBuildingOverrideList(territory,buildingName,type).indexOf(target)!==-1;
+}
 function downtimeTerritoryLockedMessage(c,type,target){
   var territory=(c&&c.homeTerritory)||S.originTerritory||'this territory';
   return downtimeTrackLabel(type,target)+' is not available to study in '+territory+". Edit that territory's available "+(type==='language'?'languages':'faiths')+' in the Quest Editor, or dedicate a building in a territory where it is available.';
@@ -20611,19 +20648,23 @@ function downtimeCanStartOneTimeTarget(c,type,target){
 function _dtBuildingUnlockOptions(buildingName,territory){
   var opts=[];
   var seen={};
-  function add(type,target){
+  function add(type,target,optsIn){
+    optsIn=optsIn||{};
     target=String(target||'').trim();
     if(!downtimeIsOneTimeTrack(type)||!target)return;
-    if(territory&&!downtimeTargetAllowedInTerritory(territory,type,target))return;
+    if(!optsIn.override&&territory&&!downtimeTargetAllowedInTerritory(territory,type,target))return;
     var key=type+'::'+target;
     if(seen[key])return;
     seen[key]=true;
-    opts.push({type:type,target:target});
+    opts.push({type:type,target:target,override:!!optsIn.override});
   }
   ['skill','language','faith'].forEach(function(type){
     var map=DOWNTIME_BUILDING_CONTRIBS[type]||{};
     Object.keys(map).forEach(function(target){
       if((map[target]||[]).indexOf(buildingName)!==-1)add(type,target);
+    });
+    _dtBuildingOverrideList(territory,buildingName,type).forEach(function(target){
+      add(type,target,{override:true});
     });
   });
   // v1.7182 — Shrine buildings are the intentional catch-all for non-core
@@ -20731,8 +20772,10 @@ function _dtPromptBuildingDedication(asset,item){
 // Some browser/debug contexts do not reveal top-level function declarations
 // reliably, so expose the downtime dedication helpers under one stable object.
 window.RQ_DOWNTIME_GATE_DEBUG={
-  version:'v1.7185',
+  version:'v1.7186',
   buildingOptions:_dtBuildingUnlockOptions,
+  buildingOverrides:_dtTerritoryBuildingOverrides,
+  buildingOverrideList:_dtBuildingOverrideList,
   allowedTargetsForTerritory:downtimeAllowedTargetsForTerritory,
   targetAllowedInTerritory:downtimeTargetAllowedInTerritory,
   openBuildingDedicationModal:_dtOpenBuildingDedicationModal,
