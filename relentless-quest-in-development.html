@@ -995,7 +995,7 @@ body.high-contrast{
 }
 
 
-/* v1.7198 — Dev-mode inline proficiency removal on Party cards. */
+/* v1.7199 — Dev-mode inline proficiency removal on Party cards. */
 .dev-prof-wrap{position:relative;display:inline-flex;margin:0 2px 2px 0;}
 .dev-prof-wrap > .pill,.dev-prof-wrap > button.pill{margin-right:0;}
 .dev-prof-x{position:absolute;top:-6px;right:-6px;width:16px;height:16px;border-radius:50%;border:1px solid var(--crimson);background:var(--parchment);color:var(--crimson);font-size:11px;line-height:13px;padding:0;cursor:pointer;font-family:Arial,sans-serif;font-weight:700;z-index:4;box-shadow:0 1px 3px rgba(0,0,0,.22);}
@@ -3130,7 +3130,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7176</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7199</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -17758,7 +17758,7 @@ window.rqPersistenceTest=function(){
     if(Array.isArray(c.armorProfs)&&c.armorProfs.length){
       _statsWithMeta._armorProfs=c.armorProfs.slice();
     }
-    // v1.7198 — Creation-time proficiency snapshot. Stored in stats JSON so
+    // v1.7199 — Creation-time proficiency snapshot. Stored in stats JSON so
     // dev cleanup controls can distinguish native/starting proficiencies
     // from proficiencies added later through downtime or manual cleanup.
     if(c.creationProficiencies&&typeof c.creationProficiencies==='object'){
@@ -17869,7 +17869,7 @@ window.rqPersistenceTest=function(){
     var _cSpecialty=''; // v1.7147
     var _cInvMeta=null; // v1.7148
     var _cArmorProfs=[]; // v1.7188
-    var _cCreationProficiencies=null; // v1.7198
+    var _cCreationProficiencies=null; // v1.7199
     var _rawStats=row.stats||{};
     var _cleanStats=_rawStats;
     if(_rawStats&&typeof _rawStats==='object'&&
@@ -17914,7 +17914,7 @@ window.rqPersistenceTest=function(){
     if(_cGradClass)c.gradClass=_cGradClass;
     if(_cSpecialty)c.specialty=_cSpecialty; // v1.7147
     if(_cInvMeta)c.invMeta=_cInvMeta; // v1.7148
-    if(_cCreationProficiencies)c.creationProficiencies=_cCreationProficiencies; // v1.7198
+    if(_cCreationProficiencies)c.creationProficiencies=_cCreationProficiencies; // v1.7199
     return c;
   }
   function _deserializeSquadRow(row,party){
@@ -21072,7 +21072,7 @@ function _dtPromptBuildingDedication(asset,item){
 // Some browser/debug contexts do not reveal top-level function declarations
 // reliably, so expose the downtime dedication helpers under one stable object.
 window.RQ_DOWNTIME_GATE_DEBUG={
-  version:'v1.7198',
+  version:'v1.7199',
   buildingOptions:_dtBuildingUnlockOptions,
   buildingOverrides:_dtTerritoryBuildingOverrides,
   buildingOverrideList:_dtBuildingOverrideList,
@@ -21760,29 +21760,90 @@ function _dtNormalizeProfType(type,target){
   }
   return type;
 }
+function _dtAddUniqueToSnap(snap,type,val){
+  val=String(val||'').trim();if(!val)return;
+  type=_dtNormalizeProfType(type,val);
+  if(!snap[type])snap[type]=[];
+  if(snap[type].indexOf(val)===-1)snap[type].push(val);
+}
+function _dtCreationSnapshotIsExplicit(c){
+  // v1.7199 — Earlier dev-cleanup builds could treat every current legacy
+  // proficiency as creation-time, hiding all party-card X buttons. Only trust
+  // stored snapshots that were intentionally stamped by a newer creation flow
+  // or manually marked as exact. Legacy snapshots fall through to inference.
+  if(!c||!c.creationProficiencies||typeof c.creationProficiencies!=='object')return false;
+  return c.creationProficienciesMode==='explicit'||
+    c.creationProficienciesSource==='creation'||
+    c.creationProficienciesExact===true||
+    c._creationProficienciesExact===true;
+}
+function _dtBackgroundNativeProficiencies(bg){
+  bg=String(bg||'').toLowerCase();
+  var out={skill:[],tool:[],language:[]};
+  function skill(){for(var i=0;i<arguments.length;i++)out.skill.push(arguments[i]);}
+  function tool(){for(var i=0;i<arguments.length;i++)out.tool.push(arguments[i]);}
+  function lang(){for(var i=0;i<arguments.length;i++)out.language.push(arguments[i]);}
+  if(/acolyte/.test(bg)){skill('Insight','Religion');lang('Any');}
+  else if(/charlatan/.test(bg)){skill('Deception','Sleight of Hand');tool('Disguise Kit','Forgery Kit');}
+  else if(/criminal|spy/.test(bg)){skill('Deception','Stealth');tool('Thieves' Tools','Gaming Set');}
+  else if(/entertainer|gladiator/.test(bg)){skill('Acrobatics','Performance');tool('Disguise Kit','Musical Instrument');}
+  else if(/folk hero/.test(bg)){skill('Animal Handling','Survival');tool('Artisan's Tools','Land Vehicles');}
+  else if(/guild artisan|guild merchant/.test(bg)){skill('Insight','Persuasion');tool('Artisan's Tools');lang('Any');}
+  else if(/hermit/.test(bg)){skill('Medicine','Religion');tool('Herbalism Kit');lang('Any');}
+  else if(/noble|knight/.test(bg)){skill('History','Persuasion');tool('Gaming Set');lang('Any');}
+  else if(/outlander/.test(bg)){skill('Athletics','Survival');tool('Musical Instrument');lang('Any');}
+  else if(/sage/.test(bg)){skill('Arcana','History');lang('Any');}
+  else if(/sailor|pirate/.test(bg)){skill('Athletics','Perception');tool('Navigator's Tools','Water Vehicles');}
+  else if(/soldier/.test(bg)){skill('Athletics','Intimidation');tool('Gaming Set','Land Vehicles');}
+  else if(/urchin/.test(bg)){skill('Sleight of Hand','Stealth');tool('Disguise Kit','Thieves' Tools');}
+  return out;
+}
+function _dtClassLikelyNativeSkills(cls){
+  cls=String(cls||'').toLowerCase();
+  var m={
+    barbarian:['Animal Handling','Athletics','Intimidation','Nature','Perception','Survival'],
+    bard:['Acrobatics','Animal Handling','Arcana','Athletics','Deception','History','Insight','Intimidation','Investigation','Medicine','Nature','Perception','Performance','Persuasion','Religion','Sleight of Hand','Stealth','Survival'],
+    cleric:['History','Insight','Medicine','Persuasion','Religion'],
+    druid:['Arcana','Animal Handling','Insight','Medicine','Nature','Perception','Religion','Survival'],
+    fighter:['Acrobatics','Animal Handling','Athletics','History','Insight','Intimidation','Perception','Survival'],
+    monk:['Acrobatics','Athletics','History','Insight','Religion','Stealth'],
+    paladin:['Athletics','Insight','Intimidation','Medicine','Persuasion','Religion'],
+    ranger:['Animal Handling','Athletics','Insight','Investigation','Nature','Perception','Stealth','Survival'],
+    rogue:['Acrobatics','Athletics','Deception','Insight','Intimidation','Investigation','Perception','Performance','Persuasion','Sleight of Hand','Stealth'],
+    sorcerer:['Arcana','Deception','Insight','Intimidation','Persuasion','Religion'],
+    warlock:['Arcana','Deception','History','Intimidation','Investigation','Nature','Religion'],
+    wizard:['Arcana','History','Insight','Investigation','Medicine','Religion'],
+    artificer:['Arcana','History','Investigation','Medicine','Nature','Perception','Sleight of Hand']
+  };
+  var key=Object.keys(m).filter(function(k){return cls.indexOf(k)!==-1;})[0];
+  return key?m[key]:[];
+}
 function _dtCreationSnapshotFromCharacter(c){
   var snap={skill:[],language:[],faith:[],tool:[],weapon:[],armor:[],vehicle:[],instrument:[],gaming:[]};
-  function add(type,val){
-    val=String(val||'').trim();if(!val)return;
-    type=_dtNormalizeProfType(type,val);
-    if(!snap[type])snap[type]=[];
-    if(snap[type].indexOf(val)===-1)snap[type].push(val);
-  }
-  // Explicit snapshot wins.
-  if(c&&c.creationProficiencies&&typeof c.creationProficiencies==='object'){
+  function add(type,val){_dtAddUniqueToSnap(snap,type,val);}
+  // Explicit snapshots from the new creation flow are authoritative. Legacy
+  // snapshots without a source marker are deliberately ignored so devs can
+  // clean up old pre-refactor downtime awards on the Party screen.
+  if(_dtCreationSnapshotIsExplicit(c)){
     Object.keys(snap).forEach(function(k){
       var arr=c.creationProficiencies[k]||c.creationProficiencies[k+'s']||[];
       if(Array.isArray(arr))arr.forEach(function(v){add(k,v);});
     });
     return snap;
   }
-  // Legacy fallback: infer the safest native package we can from species/class.
-  // This intentionally protects obvious PHB/class-native proficiencies; older
-  // pre-refactor downtime additions may still show a dev X if they are outside
-  // this inferred native package.
   if(!c)return snap;
   var cls=c.cls||'';
-  if(CLASS_SKILLS&&CLASS_SKILLS[cls]&&CLASS_SKILLS[cls].mandatory)add('skill',CLASS_SKILLS[cls].mandatory);
+  // Protect likely class-native skill choices, not every current skill. This
+  // errs toward dev control: a weird/random legacy proficiency outside class,
+  // background, species, religion, or class essentials gets an X.
+  _dtClassLikelyNativeSkills(cls).forEach(function(v){add('skill',v);});
+  if(typeof CLASS_SKILLS!=='undefined'&&CLASS_SKILLS&&CLASS_SKILLS[cls]&&CLASS_SKILLS[cls].mandatory)add('skill',CLASS_SKILLS[cls].mandatory);
+  var bgNative=_dtBackgroundNativeProficiencies(c.bg);
+  (bgNative.skill||[]).forEach(function(v){add('skill',v);});
+  (bgNative.tool||[]).forEach(function(v){
+    if(v==='Artisan's Tools'||v==='Gaming Set'||v==='Musical Instrument')return;
+    add('tool',v);
+  });
   var ess=(typeof classEssentials==='function')?classEssentials(cls):{skills:[],tools:[],weapons:[]};
   (ess.skills||[]).forEach(function(v){add('skill',v);});
   (ess.tools||[]).forEach(function(v){add('tool',v);});
@@ -21796,7 +21857,7 @@ function _dtCreationSnapshotFromCharacter(c){
 function dtStampCreationProficiencies(c){
   if(!c)return c;
   var snap={skill:[],language:[],faith:[],tool:[],weapon:[],armor:[],vehicle:[],instrument:[],gaming:[]};
-  function add(type,val){val=String(val||'').trim();if(!val)return;type=_dtNormalizeProfType(type,val);if(snap[type].indexOf(val)===-1)snap[type].push(val);}
+  function add(type,val){_dtAddUniqueToSnap(snap,type,val);}
   (c.skills||[]).forEach(function(v){add('skill',v);});
   (c.lang||[]).forEach(function(v){add('language',v);});
   if(c.rel)add('faith',c.rel);
@@ -21805,6 +21866,9 @@ function dtStampCreationProficiencies(c){
   (c.weapons||[]).forEach(function(v){add('weapon',v);});
   (c.armorProfs||c.armor||[]).forEach(function(v){add('armor',v);});
   c.creationProficiencies=snap;
+  c.creationProficienciesMode='explicit';
+  c.creationProficienciesSource='creation';
+  c.creationProficienciesExact=true;
   return c;
 }
 function _dtIsCreationProficiency(c,type,target){
@@ -21934,7 +21998,7 @@ function _cpkOverviewHtml(c,ci){
     );
   }
 
-  // v1.7198 — Dev-only removal of currently-held proficiencies.
+  // v1.7199 — Dev-only removal of currently-held proficiencies.
   // Lists current skills/languages/faiths/tools/weapons/armor/vehicles/instruments/gaming
   // so older pre-refactor downtime awards can be removed too. The deletion
   // routine also clears any dtEarnedProficiencies marker when one exists.
@@ -25048,7 +25112,7 @@ document.getElementById('ov-charpeek-close').addEventListener('click',function(e
   window._recentModalClose=Date.now();
 });
 
-// v1.7198 — Party-card dev X removal for non-creation proficiencies.
+// v1.7199 — Party-card dev X removal for non-creation proficiencies.
 document.addEventListener('click',function(e){
   var btn=e.target.closest('[data-a="dev-remove-prof-inline"]');
   if(!btn)return;
@@ -48429,7 +48493,7 @@ function _autoCreateDashCard(quest,scope){
 
 
 
-// v1.7198 — Existing-building dedication editor.
+// v1.7199 — Existing-building dedication editor.
 // If a building was purchased before the dedication modal existed, or if a
 // sync conflict stripped the unlock metadata, the player can repair it in the
 // UI rather than using console surgery. The button appears in Party → Assets &
@@ -48481,7 +48545,7 @@ document.addEventListener('click',function(e){
       debugKeys:window.RQ_DOWNTIME_GATE_DEBUG?Object.keys(window.RQ_DOWNTIME_GATE_DEBUG):[],
       asset:asset, item:item
     });
-    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7198.');
+    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7199.');
   }
 });
 
