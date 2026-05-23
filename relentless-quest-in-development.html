@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7203</title>
+<title>Relentless Quest v1.7204</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -995,7 +995,7 @@ body.high-contrast{
 }
 
 
-/* v1.7203 — Dev-mode inline proficiency removal on Party cards. */
+/* v1.7204 — Dev-mode inline proficiency removal on Party cards. */
 .dev-prof-wrap{position:relative;display:inline-flex;margin:0 2px 2px 0;}
 .dev-prof-wrap > .pill,.dev-prof-wrap > button.pill{margin-right:0;}
 .dev-prof-x{position:absolute;top:-6px;right:-6px;width:16px;height:16px;border-radius:50%;border:1px solid var(--crimson);background:var(--parchment);color:var(--crimson);font-size:11px;line-height:13px;padding:0;cursor:pointer;font-family:Arial,sans-serif;font-weight:700;z-index:4;box-shadow:0 1px 3px rgba(0,0,0,.22);}
@@ -3130,7 +3130,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7203</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7204</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5598,6 +5598,18 @@ var SPECIES_NAMES={
   'Bosfolk':   {fn:['Bramble','Cedar','Clover','Dew','Fern','Gust','Heath','Ivy','Juniper','Laurel','Meadow','Nettle','Oak','Pine','Reed','Stone','Thicket','Vale','Willow','Wren']},
 };
 
+// v1.7204 — Canonicalize species for rule lookups while preserving the
+// display label. Examples: "Halfling (Lightfoot)" and "Halfling
+// (Harvester)" both normalize to "Halfling" for native-language and
+// creation-protection logic. The full species string remains displayed in
+// the UI.
+function speciesFamilyKey(species){
+  species=String(species||'').trim();
+  if(!species)return '';
+  var m=/^([^()]+?)\s*\([^()]+\)\s*$/.exec(species);
+  return (m?m[1]:species).trim();
+}
+
 /* Species → native language mapping (WotC-inspired) */
 var SPECIES_LANG={
   'Elf':'Elvish','Elf (Neikean)':'Elvish','Elf (Xigilian)':'Elvish','Elf (Effigian)':'Elvish',
@@ -5626,13 +5638,10 @@ var SPECIES_LANG={
 // to the random-other branch automatically).
 function _speciesLanguage(species){
   if(!species)return null;
+  species=String(species||'').trim();
   if(SPECIES_LANG[species])return SPECIES_LANG[species];
-  // Strip parenthetical subrace and try the family key.
-  var m=/^([^()]+?)\s*\([^()]+\)\s*$/.exec(species);
-  if(m){
-    var family=m[1].trim();
-    if(SPECIES_LANG[family])return SPECIES_LANG[family];
-  }
+  var family=(typeof speciesFamilyKey==='function')?speciesFamilyKey(species):species;
+  if(family&&SPECIES_LANG[family])return SPECIES_LANG[family];
   return null;
 }
 
@@ -5652,15 +5661,36 @@ function _grantSpeciesLanguageOrFallback(c){
   if(!c)return;
   if(!Array.isArray(c.lang))c.lang=[];
   var nativeLa=_speciesLanguage(c.species);
-  var doNative=nativeLa && Math.random()<0.95;
-  if(doNative){
+  // v1.7204 — Native species language is now guaranteed. The old 95/5
+  // fallback occasionally produced characters such as Halfling (Lightfoot)
+  // without Halfling. Fallback random language is now used only when the
+  // species has no native-language rule.
+  if(nativeLa){
     if(c.lang.indexOf(nativeLa)===-1)c.lang.push(nativeLa);
     return;
   }
-  // Fallback path: random language not already on the character.
   var pool=DND.lang.filter(function(l){return c.lang.indexOf(l)===-1;});
   if(!pool.length)return;
   c.lang.push(pool[Math.floor(Math.random()*pool.length)]);
+}
+
+
+function migrateEnsureSpeciesNativeLanguagesV1_7204(){
+  if(!S||!Array.isArray(S.party))return;
+  var changed=false;
+  S.party.forEach(function(c){
+    if(!c)return;
+    if(!Array.isArray(c.lang))c.lang=[];
+    var nativeLa=(typeof _speciesLanguage==='function')?_speciesLanguage(c.species):null;
+    if(nativeLa&&c.lang.indexOf(nativeLa)===-1){
+      c.lang.push(nativeLa);
+      changed=true;
+    }
+  });
+  if(changed){
+    if(!S.settings)S.settings={};
+    S.settings._speciesNativeLanguageV1_7204Done=true;
+  }
 }
 
 /* v1.7115 — Campaign-setting lore for each playable species. Surfaced via
@@ -8758,6 +8788,7 @@ function load(){
   if(typeof migrateMercPersonalV1_7024==='function')migrateMercPersonalV1_7024(); // v1.7024
   if(typeof migrateSpeciesRenameV1_7114==='function')migrateSpeciesRenameV1_7114(); // v1.7114
   if(typeof migrateMedionToEffigianV1_7118==='function')migrateMedionToEffigianV1_7118(); // v1.7118
+  if(typeof migrateEnsureSpeciesNativeLanguagesV1_7204==='function')migrateEnsureSpeciesNativeLanguagesV1_7204(); // v1.7204
   if(typeof migrateInitTerritoryWeightsV1_7116==='function')migrateInitTerritoryWeightsV1_7116(); // v1.7116
   if(typeof migrateBindOrphanCycleV1_7137==='function')migrateBindOrphanCycleV1_7137(); // v1.7137
   // v1.7158 — Convert legacy cycle-owned buildings to territory-owned. MUST
@@ -17758,7 +17789,7 @@ window.rqPersistenceTest=function(){
     if(Array.isArray(c.armorProfs)&&c.armorProfs.length){
       _statsWithMeta._armorProfs=c.armorProfs.slice();
     }
-    // v1.7203 — Creation-time proficiency snapshot. Stored in stats JSON so
+    // v1.7204 — Creation-time proficiency snapshot. Stored in stats JSON so
     // dev cleanup controls can distinguish native/starting proficiencies
     // from proficiencies added later through downtime or manual cleanup.
     if(c.creationProficiencies&&typeof c.creationProficiencies==='object'){
@@ -17869,7 +17900,7 @@ window.rqPersistenceTest=function(){
     var _cSpecialty=''; // v1.7147
     var _cInvMeta=null; // v1.7148
     var _cArmorProfs=[]; // v1.7188
-    var _cCreationProficiencies=null; // v1.7203
+    var _cCreationProficiencies=null; // v1.7204
     var _rawStats=row.stats||{};
     var _cleanStats=_rawStats;
     if(_rawStats&&typeof _rawStats==='object'&&
@@ -17914,7 +17945,7 @@ window.rqPersistenceTest=function(){
     if(_cGradClass)c.gradClass=_cGradClass;
     if(_cSpecialty)c.specialty=_cSpecialty; // v1.7147
     if(_cInvMeta)c.invMeta=_cInvMeta; // v1.7148
-    if(_cCreationProficiencies)c.creationProficiencies=_cCreationProficiencies; // v1.7203
+    if(_cCreationProficiencies)c.creationProficiencies=_cCreationProficiencies; // v1.7204
     return c;
   }
   function _deserializeSquadRow(row,party){
@@ -21072,7 +21103,7 @@ function _dtPromptBuildingDedication(asset,item){
 // Some browser/debug contexts do not reveal top-level function declarations
 // reliably, so expose the downtime dedication helpers under one stable object.
 window.RQ_DOWNTIME_GATE_DEBUG={
-  version:'v1.7203',
+  version:'v1.7204',
   buildingOptions:_dtBuildingUnlockOptions,
   buildingOverrides:_dtTerritoryBuildingOverrides,
   buildingOverrideList:_dtBuildingOverrideList,
@@ -21767,7 +21798,7 @@ function _dtAddUniqueToSnap(snap,type,val){
   if(snap[type].indexOf(val)===-1)snap[type].push(val);
 }
 function _dtCreationSnapshotIsExplicit(c){
-  // v1.7203 — Earlier dev-cleanup builds could treat every current legacy
+  // v1.7204 — Earlier dev-cleanup builds could treat every current legacy
   // proficiency as creation-time, hiding all party-card X buttons. Only trust
   // stored snapshots that were intentionally stamped by a newer creation flow
   // or manually marked as exact. Legacy snapshots fall through to inference.
@@ -22009,7 +22040,7 @@ function _cpkOverviewHtml(c,ci){
     );
   }
 
-  // v1.7203 — Dev-only removal of currently-held proficiencies.
+  // v1.7204 — Dev-only removal of currently-held proficiencies.
   // Lists current skills/languages/faiths/tools/weapons/armor/vehicles/instruments/gaming
   // so older pre-refactor downtime awards can be removed too. The deletion
   // routine also clears any dtEarnedProficiencies marker when one exists.
@@ -25129,7 +25160,7 @@ document.getElementById('ov-charpeek-close').addEventListener('click',function(e
   window._recentModalClose=Date.now();
 });
 
-// v1.7203 — Party-card dev X removal for non-creation proficiencies.
+// v1.7204 — Party-card dev X removal for non-creation proficiencies.
 document.addEventListener('click',function(e){
   var btn=e.target.closest('[data-a="dev-remove-prof-inline"]');
   if(!btn)return;
@@ -25635,9 +25666,8 @@ function openSpeciesLore(species){
   var bodyEl=document.getElementById('ov-species-lore-body');
   if(!titleEl||!bodyEl)return;
   // Detect parenthetical subrace pattern: "Elf (Xigilian)" → family="Elf"
-  var family='';
-  var m=/^([^()]+?)\s*\(([^()]+)\)\s*$/.exec(species);
-  if(m)family=m[1].trim();
+  var family=(typeof speciesFamilyKey==='function')?speciesFamilyKey(species):'';
+  if(family===species)family='';
   var sections=[];
   // Family entry (when present and distinct from full key)
   if(family && SPECIES_LORE[family]){
@@ -27567,10 +27597,9 @@ function makeCandidate(){
       var nonCommon=DND.lang.filter(function(l){return l!=='Common';});
       var langs=['Common'].concat(pick(nonCommon,rndInt(1,3)));
       if(S.settings&&S.settings.speciesNames){
-        var speciesLang=SPECIES_LANG[species];
-        if(speciesLang&&langs.indexOf(speciesLang)===-1&&langs.indexOf('Common')!==-1){
-          langs[langs.indexOf('Common')]=speciesLang; // replace one common with species lang
-          if(langs.indexOf('Common')===-1)langs.unshift('Common'); // always keep Common
+        var speciesLang=(typeof _speciesLanguage==='function')?_speciesLanguage(species):SPECIES_LANG[species];
+        if(speciesLang&&langs.indexOf(speciesLang)===-1){
+          langs.push(speciesLang);
         }
       }
       return langs;
@@ -39908,6 +39937,7 @@ function sbPull(manual){
   if(typeof migrateMercPersonalV1_7024==='function')migrateMercPersonalV1_7024(); // v1.7024
   if(typeof migrateSpeciesRenameV1_7114==='function')migrateSpeciesRenameV1_7114(); // v1.7114
   if(typeof migrateMedionToEffigianV1_7118==='function')migrateMedionToEffigianV1_7118(); // v1.7118
+  if(typeof migrateEnsureSpeciesNativeLanguagesV1_7204==='function')migrateEnsureSpeciesNativeLanguagesV1_7204(); // v1.7204
   if(typeof migrateInitTerritoryWeightsV1_7116==='function')migrateInitTerritoryWeightsV1_7116(); // v1.7116
   if(typeof migrateBindOrphanCycleV1_7137==='function')migrateBindOrphanCycleV1_7137(); // v1.7137
   if(typeof migrateCycleBuildingsToTerritories==='function')migrateCycleBuildingsToTerritories(); // v1.7158
@@ -43923,6 +43953,7 @@ function initSession(pullFromCloud){
       if(typeof migrateMercPersonalV1_7024==='function')migrateMercPersonalV1_7024(); // v1.7024
       if(typeof migrateSpeciesRenameV1_7114==='function')migrateSpeciesRenameV1_7114(); // v1.7114
       if(typeof migrateMedionToEffigianV1_7118==='function')migrateMedionToEffigianV1_7118(); // v1.7118
+  if(typeof migrateEnsureSpeciesNativeLanguagesV1_7204==='function')migrateEnsureSpeciesNativeLanguagesV1_7204(); // v1.7204
       if(typeof migrateInitTerritoryWeightsV1_7116==='function')migrateInitTerritoryWeightsV1_7116(); // v1.7116
       if(typeof migrateBindOrphanCycleV1_7137==='function')migrateBindOrphanCycleV1_7137(); // v1.7137
       if(typeof migrateCycleBuildingsToTerritories==='function')migrateCycleBuildingsToTerritories(); // v1.7158
@@ -48512,7 +48543,7 @@ function _autoCreateDashCard(quest,scope){
 
 
 
-// v1.7203 — Existing-building dedication editor.
+// v1.7204 — Existing-building dedication editor.
 // If a building was purchased before the dedication modal existed, or if a
 // sync conflict stripped the unlock metadata, the player can repair it in the
 // UI rather than using console surgery. The button appears in Party → Assets &
@@ -48564,7 +48595,7 @@ document.addEventListener('click',function(e){
       debugKeys:window.RQ_DOWNTIME_GATE_DEBUG?Object.keys(window.RQ_DOWNTIME_GATE_DEBUG):[],
       asset:asset, item:item
     });
-    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7203.');
+    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7204.');
   }
 });
 
