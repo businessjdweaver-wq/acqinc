@@ -21055,7 +21055,7 @@ function _dtPromptBuildingDedication(asset,item){
 // Some browser/debug contexts do not reveal top-level function declarations
 // reliably, so expose the downtime dedication helpers under one stable object.
 window.RQ_DOWNTIME_GATE_DEBUG={
-  version:'v1.7195',
+  version:'v1.7196',
   buildingOptions:_dtBuildingUnlockOptions,
   buildingOverrides:_dtTerritoryBuildingOverrides,
   buildingOverrideList:_dtBuildingOverrideList,
@@ -21699,6 +21699,39 @@ function _dtEarnedProficiencyLabel(e){
   if(!e)return '';
   return downtimeTrackLabel(e.type,e.target||'');
 }
+
+function _dtHasEarnedMarker(c,type,target){
+  if(!c||!Array.isArray(c.dtEarnedProficiencies))return false;
+  var key=_dtEarnedKey(type,target);
+  return c.dtEarnedProficiencies.some(function(e){return _dtEarnedKey(e&&e.type,e&&e.target)===key;});
+}
+function _dtPushProfRecord(out,seen,type,target){
+  target=String(target||'').trim();
+  if(!type||!target)return;
+  var key=_dtEarnedKey(type,target);
+  if(seen[key])return;
+  seen[key]=true;
+  out.push({type:type,target:target});
+}
+function _dtCurrentProficiencyRecords(c){
+  var out=[];var seen={};
+  if(!c)return out;
+  (Array.isArray(c.skills)?c.skills:(Array.isArray(c.skill)?c.skill:[])).forEach(function(v){_dtPushProfRecord(out,seen,'skill',v);});
+  (Array.isArray(c.lang)?c.lang:(Array.isArray(c.languages)?c.languages:[])).forEach(function(v){_dtPushProfRecord(out,seen,'language',v);});
+  (Array.isArray(c.faiths)?c.faiths:(Array.isArray(c.faith)?c.faith:[])).forEach(function(v){_dtPushProfRecord(out,seen,'faith',v);});
+  if(c.rel)_dtPushProfRecord(out,seen,'faith',c.rel);
+  (Array.isArray(c.tools)?c.tools:[]).forEach(function(v){
+    var val=String(v||'').trim();
+    var low=val.toLowerCase();
+    if(/vehicle/.test(low))_dtPushProfRecord(out,seen,'vehicle',val);
+    else if(/dice|dragonchess|playing card|three-dragon|gaming/i.test(val))_dtPushProfRecord(out,seen,'gaming',val);
+    else if(/lute|flute|drum|viol|lyre|horn|pan flute|shawm|bagpipe|dulcimer/i.test(val))_dtPushProfRecord(out,seen,'instrument',val);
+    else _dtPushProfRecord(out,seen,'tool',val);
+  });
+  (Array.isArray(c.weapons)?c.weapons:(Array.isArray(c.weaponProfs)?c.weaponProfs:[])).forEach(function(v){_dtPushProfRecord(out,seen,'weapon',v);});
+  (Array.isArray(c.armorProfs)?c.armorProfs:(Array.isArray(c.armor)?c.armor:[])).forEach(function(v){_dtPushProfRecord(out,seen,'armor',v);});
+  return out.sort(function(a,b){return _dtEarnedProficiencyLabel(a).localeCompare(_dtEarnedProficiencyLabel(b));});
+}
 function _dtRemoveValueFromArray(arr,value){
   if(!Array.isArray(arr))return false;
   var before=arr.length;
@@ -21806,23 +21839,25 @@ function _cpkOverviewHtml(c,ci){
     );
   }
 
-  // v1.7194 — Dev-only removal of downtime-earned proficiencies.
-  // Only entries recorded through the downtime completion resolver are shown,
-  // so native/class/background proficiencies are not accidentally removed.
+  // v1.7196 — Dev-only removal of currently-held proficiencies.
+  // Lists current skills/languages/faiths/tools/weapons/armor/vehicles/instruments/gaming
+  // so older pre-refactor downtime awards can be removed too. The deletion
+  // routine also clears any dtEarnedProficiencies marker when one exists.
   if(typeof isDevModeActive==='function'&&isDevModeActive()){
-    var earned=(c.dtEarnedProficiencies||[]).filter(function(e){return e&&e.type&&e.target;});
-    if(earned.length){
-      var earnedOpts=earned.map(function(e,idx){
-        return '<option value="'+idx+'">'+esc(_dtEarnedProficiencyLabel(e))+'</option>';
+    var profs=_dtCurrentProficiencyRecords(c);
+    if(profs.length){
+      var profOpts=profs.map(function(e,idx){
+        var earned=_dtHasEarnedMarker(c,e.type,e.target)?' · earned marker':' · no marker';
+        return '<option value="'+idx+'">'+esc(_dtEarnedProficiencyLabel(e)+earned)+'</option>';
       }).join('');
       parts.push(
         '<div style="margin-bottom:10px;padding:8px 10px;background:rgba(139,26,26,.05);border:1px dashed var(--crimson);border-radius:6px">'+
-          '<div style="font-family:&quot;Cinzel&quot;,serif;font-size:.7em;color:var(--crimson);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">🧪 Dev: Remove Downtime Proficiency</div>'+ 
+          '<div style="font-family:&quot;Cinzel&quot;,serif;font-size:.7em;color:var(--crimson);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">🧪 Dev: Remove Proficiency</div>'+ 
           '<div style="display:flex;gap:6px;align-items:center">'+
-            '<select id="cpk-dev-dt-remove" data-ci="'+ci+'" style="flex:1;min-width:0;padding:5px 7px;font-size:.85em;border:1px solid var(--crimson);border-radius:4px;background:#fff">'+earnedOpts+'</select>'+ 
+            '<select id="cpk-dev-dt-remove" data-ci="'+ci+'" style="flex:1;min-width:0;padding:5px 7px;font-size:.85em;border:1px solid var(--crimson);border-radius:4px;background:#fff">'+profOpts+'</select>'+ 
             '<button type="button" class="btn bred sm" data-a="cpk-dev-dt-remove-go" data-ci="'+ci+'">Remove</button>'+ 
           '</div>'+ 
-          '<div style="font-size:.7em;color:var(--ink-light);margin-top:4px;font-style:italic">Removes the selected proficiency and clears its downtime-earned record. Native proficiencies are not listed.</div>'+ 
+          '<div style="font-size:.7em;color:var(--ink-light);margin-top:4px;font-style:italic">Dev cleanup: removes the selected currently-held proficiency. If a downtime-earned marker exists, it is cleared too. Use carefully for pre-refactor cleanup.</div>'+ 
         '</div>'
       );
     }
@@ -24928,10 +24963,12 @@ document.addEventListener('click',function(e){
   var sel=document.getElementById('cpk-dev-dt-remove');
   if(!c||!sel)return;
   var idx=parseInt(sel.value,10);
-  var eRec=(c.dtEarnedProficiencies||[])[idx];
+  var records=_dtCurrentProficiencyRecords(c);
+  var eRec=records[idx];
   if(!eRec)return;
   var label=_dtEarnedProficiencyLabel(eRec);
-  if(!confirm('Remove downtime-earned proficiency from '+c.name+'?\n\n'+label+'\n\nThis will also clear the downtime-earned record for that proficiency.'))return;
+  var marker=_dtHasEarnedMarker(c,eRec.type,eRec.target);
+  if(!confirm('Remove proficiency from '+c.name+'?\n\n'+label+'\n\nThis removes the currently-held proficiency and '+(marker?'clears its downtime-earned record.':'there is no downtime-earned record to clear.')))return;
   devDeleteDowntimeEarnedProficiency(ci,eRec.type,eRec.target);
 });
 
@@ -48277,7 +48314,7 @@ function _autoCreateDashCard(quest,scope){
 
 
 
-// v1.7195 — Existing-building dedication editor.
+// v1.7196 — Existing-building dedication editor.
 // If a building was purchased before the dedication modal existed, or if a
 // sync conflict stripped the unlock metadata, the player can repair it in the
 // UI rather than using console surgery. The button appears in Party → Assets &
@@ -48329,7 +48366,7 @@ document.addEventListener('click',function(e){
       debugKeys:window.RQ_DOWNTIME_GATE_DEBUG?Object.keys(window.RQ_DOWNTIME_GATE_DEBUG):[],
       asset:asset, item:item
     });
-    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7195.');
+    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7196.');
   }
 });
 
