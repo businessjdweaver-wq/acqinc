@@ -1681,7 +1681,7 @@ function buildWrapCarryForwardPayload() {
     label: e.label || '',
   })).filter(e => e.from_node && e.to_node);
 
-  // v1.3.62: Name Forge saves results to collections, supports edit/move, and adds real-world name-list mode.
+  // v1.3.63: Name Forge uses Seed, Real-World, and Collections tabs; preserves collection save/edit/move behavior.
   // v1.3.60: Canvas Groups are saved in session.blocks.canvas_groups and
   // reference node ids. Since Wrap Session gives copied nodes new ids, group
   // membership must be carried forward through the same source→destination
@@ -8870,6 +8870,7 @@ function openNameForge(targetKey) {
   document.body.classList.add('name-forge-open');
   if (modal) modal.classList.add('open');
   populateNameForgeCultureSelect();
+  setNameForgeTab('seed');
   updateNameForgeModeUi();
   renderNameForgeRootChips();
   renderNameForgeCollections();
@@ -9189,13 +9190,33 @@ function populateNameForgeCultureSelect() {
   sel.innerHTML = Object.keys(NAME_FORGE_REAL_NAMES).map(k => `<option value="${escAttr(k)}">${escHtml(k)}</option>`).join('');
   sel.dataset.populated = '1';
 }
+function getActiveNameForgeTab() {
+  const active = document.querySelector('.name-forge-tab.active');
+  return active ? (active.dataset.nfTab || 'seed') : 'seed';
+}
+function setNameForgeTab(tab) {
+  tab = tab || 'seed';
+  if (!['seed','real','collections'].includes(tab)) tab = 'seed';
+  document.querySelectorAll('.name-forge-tab').forEach(btn => {
+    const on = btn.dataset.nfTab === tab;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  document.querySelectorAll('.name-forge-tab-panel').forEach(panel => {
+    panel.classList.toggle('active', panel.id === 'nf-tab-' + tab);
+  });
+  const mode = document.getElementById('nf-mode');
+  if (mode && tab !== 'collections') mode.value = tab === 'real' ? 'real' : 'forge';
+  const resultsPanel = document.getElementById('name-forge-results-panel');
+  if (resultsPanel) resultsPanel.style.display = tab === 'collections' ? 'none' : '';
+  if (tab === 'real') populateNameForgeCultureSelect();
+  if (tab === 'collections') renderNameForgeCollections();
+}
 function updateNameForgeModeUi() {
   populateNameForgeCultureSelect();
+  const tab = getActiveNameForgeTab();
   const mode = getNameForgeMode();
-  const forge = document.getElementById('nf-forge-controls');
-  const real = document.getElementById('nf-real-controls');
-  if (forge) forge.style.display = mode === 'real' ? 'none' : '';
-  if (real) real.style.display = mode === 'real' ? '' : 'none';
+  if (tab !== 'collections') setNameForgeTab(mode === 'real' ? 'real' : 'seed');
 }
 function _nfShuffle(arr) {
   const out = (arr || []).slice();
@@ -13554,6 +13575,16 @@ const _tablePopover = {
 // the anchor cell.
 window.addEventListener('scroll', () => _tablePopover.hide(), true);
 window.addEventListener('resize', () => _tablePopover.hide());
+
+// v1.3.63: Name Forge tab navigation. Tabs switch modes without rewriting seed input or collection data.
+document.querySelectorAll('.name-forge-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.nfTab || 'seed';
+    setNameForgeTab(tab);
+    if (tab !== 'collections') generateNameForgeResults();
+  });
+});
+
 
 ['nf-mode','nf-culture','nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
   const el = document.getElementById(id);
