@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7215</title>
+<title>Relentless Quest v1.7216</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3130,7 +3130,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7215</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7216</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -12497,6 +12497,117 @@ function renderLog(){
 
 /* ═══════════════════════ TASKS ═══════════════════════ */
 
+/* ── v1.7216 — Alexa / RQ voice inbox bridge ─────────────────────────────
+   Goal phrase: "Alexa, ask RQ to add {item}".
+   The Alexa skill should write captured text to the Supabase rq_voice_inbox
+   table. Relentless Quest imports pending rows into a single catch-all
+   contract as subtasks, then marks those rows imported. A manual console
+   test is also exposed: rqImportVoiceContract('buy milk'). */
+var RQ_VOICE_INBOX_CONTRACT_NAME='📥 RQ Voice Inbox';
+var RQ_VOICE_INBOX_TABLE='rq_voice_inbox';
+var _rqVoiceInboxPulling=false;
+var _rqVoiceInboxLastPull=0;
+
+function rqVoiceNewTaskId(){return 't'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);}
+function rqVoiceNewSubId(){return 's'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);}
+function rqVoiceCleanText(text){
+  return String(text||'').replace(/\s+/g,' ').trim().slice(0,240);
+}
+function rqVoiceFindInboxIndex(){
+  if(!S.active)S.active=[];
+  var idx=S.active.findIndex(function(t){return t && t._rqVoiceInbox===true;});
+  if(idx>=0)return idx;
+  return S.active.findIndex(function(t){
+    return t && (t.name===RQ_VOICE_INBOX_CONTRACT_NAME || t.name==='Alexa Inbox' || t.name==='RQ Voice Inbox');
+  });
+}
+function rqVoiceGetOrCreateInbox(){
+  if(!S.active)S.active=[];
+  var idx=rqVoiceFindInboxIndex();
+  if(idx>=0){
+    S.active[idx]._rqVoiceInbox=true;
+    if(!Array.isArray(S.active[idx].subtasks))S.active[idx].subtasks=[];
+    return S.active[idx];
+  }
+  var t={
+    _tid:rqVoiceNewTaskId(),
+    _rqVoiceInbox:true,
+    name:RQ_VOICE_INBOX_CONTRACT_NAME,
+    gp:10,count:0,pct:0,collapsed:false,fav:false,
+    note:'Voice-captured tasks imported from Alexa/RQ.',
+    desc:'Catch-all contract for spoken reminders added through the Alexa skill phrase: “Alexa, ask RQ to add …”.',
+    subtasks:[]
+  };
+  S.active.unshift(t);
+  return t;
+}
+function rqVoiceRecalcInboxPct(t){
+  if(!t || !Array.isArray(t.subtasks) || !t.subtasks.length){ if(t)t.pct=0; return; }
+  var done=t.subtasks.filter(function(s){return !!s.done;}).length;
+  t.pct=Math.min(6,Math.round(done/t.subtasks.length*6));
+}
+function rqImportVoiceContract(text, meta){
+  meta=meta||{};
+  var clean=rqVoiceCleanText(text);
+  if(!clean)return false;
+  var t=rqVoiceGetOrCreateInbox();
+  var srcId=meta.sourceId||meta.id||null;
+  if(srcId && t.subtasks.some(function(s){return s && s._voiceSourceId===srcId;}))return false;
+  t.subtasks.unshift({
+    _sid:rqVoiceNewSubId(),
+    name:clean,
+    done:false,
+    pct:0,
+    _rqVoice:true,
+    _voiceSourceId:srcId,
+    _voiceSource:meta.source||'alexa',
+    _voiceCreatedAt:meta.createdAt||new Date().toISOString()
+  });
+  rqVoiceRecalcInboxPct(t);
+  ensureTaskIds();
+  logAdd('Voice inbox added: "'+clean+'"','task');
+  save();
+  if(typeof renderTasks==='function')renderTasks();
+  return true;
+}
+window.rqImportVoiceContract=rqImportVoiceContract;
+
+function rqPullVoiceInbox(force){
+  if(_rqVoiceInboxPulling)return Promise.resolve({imported:0,skipped:true});
+  if(!force && Date.now()-_rqVoiceInboxLastPull<15000)return Promise.resolve({imported:0,skipped:true});
+  if(!uid || !uid())return Promise.resolve({imported:0,skipped:true});
+  if(typeof sbGet!=='function')return Promise.resolve({imported:0,skipped:true});
+  _rqVoiceInboxPulling=true;
+  _rqVoiceInboxLastPull=Date.now();
+  var q='select=id,item_text,source,created_at&status=eq.pending&user_id=eq.'+encodeURIComponent(uid())+'&order=created_at.asc&limit=50';
+  return sbGet(RQ_VOICE_INBOX_TABLE,q).then(function(rows){
+    rows=Array.isArray(rows)?rows:[];
+    var importedIds=[];
+    rows.forEach(function(r){
+      if(rqImportVoiceContract(r.item_text,{sourceId:r.id,source:r.source||'alexa',createdAt:r.created_at}))importedIds.push(r.id);
+    });
+    if(!importedIds.length)return {imported:0};
+    var filter='id=in.('+importedIds.map(function(id){return '"'+String(id).replace(/"/g,'')+'"';}).join(',')+')';
+    if(typeof sbPatch==='function'){
+      return sbPatch(RQ_VOICE_INBOX_TABLE,filter,{status:'imported',imported_at:new Date().toISOString()}).then(function(){return {imported:importedIds.length};});
+    }
+    return {imported:importedIds.length,unmarked:true};
+  }).catch(function(err){
+    console.warn('[RQ voice inbox] pull failed:',err&&err.message||err);
+    return {imported:0,error:err&&err.message||String(err)};
+  }).finally(function(){_rqVoiceInboxPulling=false;});
+}
+window.rqPullVoiceInbox=rqPullVoiceInbox;
+
+function rqArmVoiceInboxPull(){
+  if(window._rqVoiceInboxArmed)return;
+  window._rqVoiceInboxArmed=true;
+  document.addEventListener('visibilitychange',function(){
+    if(!document.hidden)rqPullVoiceInbox(false).then(function(res){if(res&&res.imported)renderTasks();});
+  });
+  setInterval(function(){rqPullVoiceInbox(false).then(function(res){if(res&&res.imported)renderTasks();});},60000);
+}
+
 function ensureTaskIds(){
   (S.active||[]).forEach(function(t,i){
     if(!t._tid)t._tid='t'+Date.now().toString(36)+Math.random().toString(36).slice(2,8)+i;
@@ -21148,7 +21259,7 @@ function _dtPromptBuildingDedication(asset,item){
 // Some browser/debug contexts do not reveal top-level function declarations
 // reliably, so expose the downtime dedication helpers under one stable object.
 window.RQ_DOWNTIME_GATE_DEBUG={
-  version:'v1.7215',
+  version:'v1.7216',
   buildingOptions:_dtBuildingUnlockOptions,
   buildingOverrides:_dtTerritoryBuildingOverrides,
   buildingOverrideList:_dtBuildingOverrideList,
@@ -37023,7 +37134,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7215',
+    appVersion:'v1.7216',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -37055,7 +37166,7 @@ if(_rqContractsExportBtn){
     var url=URL.createObjectURL(blob);
     var a=document.createElement('a');
     a.href=url;
-    a.download='relentless-quest-contracts-archive-kudos-v1.7215.json';
+    a.download='relentless-quest-contracts-archive-kudos-v1.7216.json';
     a.click();
     URL.revokeObjectURL(url);
   });
@@ -37940,6 +38051,18 @@ function sbInsert(table,rows){
     return true;
   });
 }
+
+function sbPatch(table,filter,values){
+  return sbFetch(SB_URL+'/rest/v1/'+table+'?'+filter,{
+    method:'PATCH',
+    headers:{'Prefer':'return=minimal'},
+    body:JSON.stringify(values||{})
+  }).then(function(r){
+    if(!r.ok)return r.text().then(function(t){throw new Error(table+' PATCH '+r.status+': '+t);});
+    return true;
+  });
+}
+
 function sbUpsert(table,rows,onConflict){
   var url = SB_URL+'/rest/v1/'+table;
   if(onConflict)url += '?on_conflict=' + encodeURIComponent(onConflict);
@@ -44155,6 +44278,7 @@ function initSession(pullFromCloud){
       // badge that opens the v1.7091 staleness modal on tap.
       try{ if(typeof _presenceArm==='function')_presenceArm(); }catch(e){}
       updateQpDisplay();
+      try{ rqArmVoiceInboxPull(); rqPullVoiceInbox(true).then(function(res){ if(res&&res.imported){ renderTasks(); saveLocalState(); } }); }catch(e){}
       saveLocalState();
       suppressAutoPush=false;
       navTo('tasks'); // always land on contracts after load
