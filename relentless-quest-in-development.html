@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7210</title>
+<title>Relentless Quest v1.7212</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3130,7 +3130,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7210</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7212</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4305,6 +4305,7 @@ body.dev-active #app{margin-top:36px;}
     </div>
     <div class="hint" style="margin-bottom:8px;font-size:.78em">Snapshots are stored on Supabase. Older ones are pruned automatically.</div>
     <button class="btn bink full" id="btn-export" style="margin-bottom:6px">📤 Export Save (JSON)</button>
+    <button class="btn bink full" id="btn-export-contracts" style="margin-bottom:6px">📤 Export Contracts / Archive / Kudos</button>
     <button class="btn bink full" id="btn-import-trigger" style="margin-bottom:6px">📥 Import Save (JSON)</button>
     <input type="file" id="import-file-input" accept=".json,application/json" style="display:none">
     <div class="hint" id="import-status">Import replaces all current data. Export first to back up.</div>
@@ -20822,22 +20823,46 @@ function _dtCleanTarget(v){
   return String(v||'').replace(/^(?:★|🔄) /,'').trim();
 }
 
-// v1.7210 — Effective downtime territory.
+// v1.7211 — Effective downtime territory.
 // A character's stored homeTerritory can be stale after squad relocation.
 // Downtime study should use the character's CURRENT squad/HQ territory when
 // the character is assigned to a squad, then fall back to homeTerritory.
 function downtimeEffectiveTerritory(c){
   var fallback=(c&&c.homeTerritory)||S.originTerritory||'';
-  if(!c||!Array.isArray(S.party)||!Array.isArray(S.squads))return fallback;
+  if(!c||!Array.isArray(S.party))return fallback;
   var ci=S.party.indexOf(c);
   if(ci<0)return fallback;
-  for(var i=0;i<S.squads.length;i++){
-    var sq=S.squads[i]||{};
-    var members=Array.isArray(sq.memberIdxs)?sq.memberIdxs:[];
-    if(members.indexOf(ci)!==-1)return sq.homeTerritory||fallback;
-    // Defensive support for any alternate squad membership shapes.
-    if(Array.isArray(sq.members)&&sq.members.indexOf(c.name)!==-1)return sq.homeTerritory||fallback;
-    if(Array.isArray(sq.memberNames)&&sq.memberNames.indexOf(c.name)!==-1)return sq.homeTerritory||fallback;
+  // v1.7211 — Prefer the territory implied by the most recent Party-page
+  // render. This covers both real squad rows and virtual HQ/unassigned
+  // panels; those panels can be correct even when c.homeTerritory is stale.
+  if(S._effectivePartyTerritoryByCi&&S._effectivePartyTerritoryByCi[ci]){
+    return S._effectivePartyTerritoryByCi[ci]||fallback;
+  }
+  // Then inspect squad membership directly. Use a defensive matcher because
+  // older saves/builds have stored member indexes, names, ids, or character
+  // objects in different fields.
+  function _dtMemberMatches(v){
+    if(v===ci)return true;
+    if(String(v)===String(ci))return true;
+    if(c&&c.name&&v===c.name)return true;
+    if(c&&c._sbId&&v===c._sbId)return true;
+    if(c&&c.id&&v===c.id)return true;
+    if(v&&typeof v==='object'){
+      if(v.ci===ci||v.index===ci)return true;
+      if(c&&c.name&&v.name===c.name)return true;
+      if(c&&c._sbId&&(v._sbId===c._sbId||v.id===c._sbId))return true;
+      if(c&&c.id&&(v.id===c.id||v._sbId===c.id))return true;
+    }
+    return false;
+  }
+  var sqs=Array.isArray(S.squads)?S.squads:[];
+  for(var i=0;i<sqs.length;i++){
+    var sq=sqs[i]||{};
+    var memberFields=[sq.memberIdxs,sq.members,sq.memberNames,sq.memberIds,sq.characterIds,sq.chars];
+    for(var f=0;f<memberFields.length;f++){
+      var arr=memberFields[f];
+      if(Array.isArray(arr)&&arr.some(_dtMemberMatches))return sq.homeTerritory||fallback;
+    }
   }
   return fallback;
 }
@@ -21123,7 +21148,7 @@ function _dtPromptBuildingDedication(asset,item){
 // Some browser/debug contexts do not reveal top-level function declarations
 // reliably, so expose the downtime dedication helpers under one stable object.
 window.RQ_DOWNTIME_GATE_DEBUG={
-  version:'v1.7210',
+  version:'v1.7212',
   buildingOptions:_dtBuildingUnlockOptions,
   buildingOverrides:_dtTerritoryBuildingOverrides,
   buildingOverrideList:_dtBuildingOverrideList,
@@ -23598,6 +23623,11 @@ function renderParty(){
           });
           var rosterRows=members.map(function(m,idx){
             var c=m.c, ci=m.ci;
+            // v1.7211 — Record the territory of the visible panel for this
+            // character. This is the authoritative UI context for downtime
+            // study, especially for unassigned/HQ panels and legacy rows
+            // whose stored homeTerritory was not updated during relocation.
+            if(S._effectivePartyTerritoryByCi)S._effectivePartyTerritoryByCi[ci]=sq.homeTerritory||S.originTerritory||'';
             var avail=_msUntilFree(ci);
             var availMs=avail.ms;
             var availKind=avail.kind;
@@ -36978,6 +37008,58 @@ document.getElementById('btn-export').addEventListener('click',function(){
   a.href=url;a.download='acqinc-save.json';a.click();
   URL.revokeObjectURL(url);
 });
+
+// v1.7212 — Narrow export for real-life contract progress.
+// Exports only the Contracts / Archive / Kudos systems, plus the small
+// settings subset that controls contract scheduling and display. This is
+// intentionally NOT a full save: party, quests, gold, assets, store state,
+// territory state, and downtime are excluded so the player can begin a
+// fresh test run without losing real-life contract/archive/kudos history.
+function rqContractsArchiveKudosExportPayload(){
+  function clone(x){
+    try{return JSON.parse(JSON.stringify(x==null?null:x));}
+    catch(e){return x;}
+  }
+  var st=S.settings||{};
+  return {
+    exportType:'relentless-quest-contracts-archive-kudos',
+    appVersion:'v1.7212',
+    exportedAt:new Date().toISOString(),
+    data:{
+      active:clone(S.active||[]),
+      archived:clone(S.archived||[]),
+      archGroups:clone(S.archGroups||[]),
+      archCollapsed:clone(S.archCollapsed||{}),
+      taskGroups:clone(S.taskGroups||[]),
+      projects:clone(S.projects||[]),
+      kudos:clone(S.kudos||[]),
+      lastFavCheck:S.lastFavCheck||'',
+      settings:{
+        resetTime:st.resetTime,
+        taskBudgetRemaining:st.taskBudgetRemaining,
+        taskBudgetDate:st.taskBudgetDate,
+        autoPromptSubtaskComplete:st.autoPromptSubtaskComplete,
+        contractsColumns:st.contractsColumns,
+        contractsColsAutoBalanced:st.contractsColsAutoBalanced
+      }
+    }
+  };
+}
+
+var _rqContractsExportBtn=document.getElementById('btn-export-contracts');
+if(_rqContractsExportBtn){
+  _rqContractsExportBtn.addEventListener('click',function(){
+    var payload=rqContractsArchiveKudosExportPayload();
+    var json=JSON.stringify(payload,null,2);
+    var blob=new Blob([json],{type:'application/json'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;
+    a.download='relentless-quest-contracts-archive-kudos-v1.7212.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+}
 document.getElementById('btn-import-trigger').addEventListener('click',function(){
   document.getElementById('import-file-input').value='';
   document.getElementById('import-file-input').click();
@@ -48640,7 +48722,7 @@ document.addEventListener('click',function(e){
       debugKeys:window.RQ_DOWNTIME_GATE_DEBUG?Object.keys(window.RQ_DOWNTIME_GATE_DEBUG):[],
       asset:asset, item:item
     });
-    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7210.');
+    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7212.');
   }
 });
 
