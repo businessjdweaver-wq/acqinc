@@ -447,11 +447,12 @@ try {
 
 // Submit-on-Enter inside the auth fields
 
-['nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
+['nf-mode','nf-culture','nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
   const evt = (id === 'nf-pasted' || id === 'nf-count') ? 'input' : 'change';
   el.addEventListener(evt, () => {
+    if (id === 'nf-mode') updateNameForgeModeUi();
     if (id === 'nf-style') {
       nameForgeFetchedRoots = [];
       nameForgePinnedRoots = new Set();
@@ -647,11 +648,12 @@ function _broadcastEligible(el) {
 }
 
 
-['nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
+['nf-mode','nf-culture','nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
   const evt = (id === 'nf-pasted' || id === 'nf-count') ? 'input' : 'change';
   el.addEventListener(evt, () => {
+    if (id === 'nf-mode') updateNameForgeModeUi();
     if (id === 'nf-style') {
       nameForgeFetchedRoots = [];
       nameForgePinnedRoots = new Set();
@@ -1679,7 +1681,7 @@ function buildWrapCarryForwardPayload() {
     label: e.label || '',
   })).filter(e => e.from_node && e.to_node);
 
-  // v1.3.61: Name Forge adds semantic fallback for utilitarian seeds like outpost.
+  // v1.3.62: Name Forge saves results to collections, supports edit/move, and adds real-world name-list mode.
   // v1.3.60: Canvas Groups are saved in session.blocks.canvas_groups and
   // reference node ids. Since Wrap Session gives copied nodes new ids, group
   // membership must be carried forward through the same source→destination
@@ -3371,11 +3373,12 @@ async function confirmCopyToSession() {
 
 // Esc closes the copy modal.
 
-['nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
+['nf-mode','nf-culture','nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
   const evt = (id === 'nf-pasted' || id === 'nf-count') ? 'input' : 'change';
   el.addEventListener(evt, () => {
+    if (id === 'nf-mode') updateNameForgeModeUi();
     if (id === 'nf-style') {
       nameForgeFetchedRoots = [];
       nameForgePinnedRoots = new Set();
@@ -8749,7 +8752,25 @@ const NAME_FORGE_THEME_VOCAB = {
 };
 const NAME_FORGE_PLACE_TEMPLATES = [
   'The {adj} {noun}', '{adj} {noun}', '{noun} {root}', '{root} {noun}', 'Fort {root}', '{noun} of {root}', '{root}\'s {noun}', '{noun} {suffix}'
-];
+]; 
+const NAME_FORGE_REAL_NAMES = {
+  "Mixed": { given: [], family: [] },
+  "Anglo-American": { given:['James','Mary','John','Patricia','Robert','Linda','Michael','Elizabeth','William','Barbara','David','Susan','Richard','Jessica','Joseph','Sarah','Thomas','Karen','Charles','Nancy','Margaret','George','Edward','Eleanor'], family:['Smith','Johnson','Williams','Brown','Jones','Miller','Davis','Wilson','Anderson','Thomas','Taylor','Moore','Martin','Jackson','Thompson','White','Harris','Clark','Lewis','Walker'] },
+  "French": { given:['Jean','Marie','Pierre','Anne','Louis','Claire','Jacques','Sophie','Henri','Camille','Luc','Élise','Paul','Madeleine','Étienne','Julien','Colette','Margot','René','Lucie'], family:['Martin','Bernard','Dubois','Thomas','Robert','Richard','Petit','Durand','Leroy','Moreau','Simon','Laurent','Lefebvre','Michel','Garcia','David','Bertrand','Roux','Vincent','Fournier'] },
+  "German": { given:['Hans','Anna','Karl','Maria','Friedrich','Greta','Johann','Lena','Heinrich','Clara','Otto','Marta','Wilhelm','Elsa','Lukas','Sofie','Franz','Ida','Emil','Helena'], family:['Müller','Schmidt','Schneider','Fischer','Weber','Meyer','Wagner','Becker','Hoffmann','Schäfer','Koch','Bauer','Richter','Klein','Wolf','Schröder','Neumann','Schwarz','Zimmermann','Braun'] },
+  "Spanish": { given:['José','María','Juan','Carmen','Antonio','Isabel','Manuel','Lucía','Francisco','Pilar','Luis','Teresa','Miguel','Rosa','Javier','Elena','Carlos','Ana','Diego','Sofía'], family:['García','Rodríguez','González','Fernández','López','Martínez','Sánchez','Pérez','Gómez','Martín','Jiménez','Ruiz','Hernández','Díaz','Moreno','Muñoz','Álvarez','Romero','Alonso','Gutiérrez'] },
+  "Italian": { given:['Giovanni','Maria','Giuseppe','Anna','Antonio','Lucia','Francesco','Rosa','Luigi','Giulia','Carlo','Elena','Marco','Sofia','Paolo','Teresa','Luca','Chiara','Matteo','Bianca'], family:['Rossi','Russo','Ferrari','Esposito','Bianchi','Romano','Colombo','Ricci','Marino','Greco','Bruno','Gallo','Conti','De Luca','Mancini','Costa','Giordano','Rizzo','Lombardi','Moretti'] },
+  "Irish": { given:['Seán','Aoife','Cian','Niamh','Liam','Siobhán','Eoin','Maeve','Patrick','Brigid','Declan','Róisín','Finn','Aisling','Cormac','Orla','Conor','Gráinne','Ronan','Fiona'], family:['Murphy','Kelly','O\'Sullivan','Walsh','Smith','O\'Brien','Byrne','Ryan','O\'Connor','O\'Neill','O\'Reilly','Doyle','McCarthy','Gallagher','Doherty','Kennedy','Lynch','Murray','Quinn','Moore'] },
+  "Welsh": { given:['Dafydd','Gwen','Rhys','Cerys','Owain','Megan','Gareth','Eleri','Iwan','Nia','Llywelyn','Bronwen','Emrys','Rhiannon','Aneurin','Seren','Caradog','Mair','Glyn','Lowri'], family:['Jones','Williams','Davies','Evans','Thomas','Roberts','Lewis','Hughes','Morgan','Griffiths','Edwards','Rees','Jenkins','Owen','Price','Phillips','Morris','Lloyd','Powell','Parry'] },
+  "Norse/Icelandic": { given:['Erik','Astrid','Leif','Ingrid','Sven','Freya','Bjorn','Sigrid','Olaf','Karin','Harald','Runa','Magnus','Liv','Torsten','Solveig','Nils','Eira','Sten','Alva'], family:['Andersen','Johansen','Karlsson','Nilsson','Eriksson','Hansen','Olsen','Larsen','Svensson','Pettersen','Berg','Lund','Haugen','Dahl','Nygård','Lindberg','Solberg','Holm','Vik','Aas'] },
+  "Greek": { given:['Nikos','Eleni','Giorgos','Maria','Kostas','Sophia','Dimitris','Anna','Andreas','Katerina','Yannis','Irene','Petros','Alexandra','Stavros','Theodora','Christos','Calliope','Manolis','Despina'], family:['Papadopoulos','Georgiou','Nikolaou','Dimitriou','Ioannou','Pappas','Vasileiou','Christou','Kostas','Angelopoulos','Antoniou','Athanasiou','Economou','Raptis','Karagiannis','Makris','Sarris','Lambros','Mylonas','Zervas'] },
+  "Japanese": { given:['Haruto','Yui','Sota','Aoi','Ren','Sakura','Yuto','Hina','Daiki','Mei','Kaito','Rin','Takumi','Yuna','Akira','Hana','Riku','Mio','Kenji','Emi'], family:['Sato','Suzuki','Takahashi','Tanaka','Watanabe','Ito','Yamamoto','Nakamura','Kobayashi','Kato','Yoshida','Yamada','Sasaki','Yamaguchi','Matsumoto','Inoue','Kimura','Hayashi','Shimizu','Mori'] },
+  "Arabic": { given:['Omar','Aisha','Ali','Fatima','Hassan','Layla','Yusuf','Mariam','Karim','Nadia','Samir','Amira','Ibrahim','Salma','Tariq','Hana','Zayd','Leila','Nabil','Rania'], family:['Khan','Ahmed','Ali','Hassan','Hussein','Ibrahim','Saleh','Mansour','Nasser','Abdullah','Rahman','Fahmy','Farouk','Masri','Hakim','Qureshi','Sabbagh','Najjar','Khalil','Saad'] },
+  "Hebrew": { given:['David','Miriam','Ari','Leah','Noam','Yael','Eitan','Tamar','Yonatan','Rivka','Moshe','Shira','Daniel','Aviva','Eli','Naomi','Yosef','Hannah','Oren','Dina'], family:['Cohen','Levi','Mizrahi','Peretz','Biton','Dahan','Avraham','Friedman','Katz','Malka','Azoulay','Ben-David','Rosenberg','Shapira','Goldberg','Weiss','Harel','Barak','Dayan','Segal'] },
+  "Indian/Sanskrit": { given:['Arjun','Priya','Rohan','Ananya','Vikram','Kavya','Amit','Meera','Rahul','Lakshmi','Sanjay','Isha','Dev','Nisha','Kiran','Pooja','Manoj','Asha','Ravi','Leela'], family:['Sharma','Verma','Patel','Gupta','Singh','Kumar','Das','Rao','Mehta','Nair','Iyer','Chopra','Joshi','Reddy','Agarwal','Banerjee','Malhotra','Kapoor','Pillai','Menon'] },
+  "Chinese": { given:['Wei','Fang','Ming','Li','Jun','Mei','Lei','Yan','Tao','Hua','Qiang','Jing','Chen','Lan','Bo','Xiu','Hao','Min','Yuan','Ling'], family:['Wang','Li','Zhang','Liu','Chen','Yang','Huang','Zhao','Wu','Zhou','Xu','Sun','Ma','Zhu','Hu','Guo','He','Gao','Lin','Luo'] }
+};
+
 function _nfConceptTagsForWords(words) {
   const tags = [];
   const seen = new Set();
@@ -8848,6 +8869,8 @@ function openNameForge(targetKey) {
   const modal = document.getElementById('name-forge-modal');
   document.body.classList.add('name-forge-open');
   if (modal) modal.classList.add('open');
+  populateNameForgeCultureSelect();
+  updateNameForgeModeUi();
   renderNameForgeRootChips();
   renderNameForgeCollections();
   generateNameForgeResults();
@@ -9156,7 +9179,60 @@ function buildNameForgeName(parts, type, tone, style) {
   }
   return core.replace(/\s+/g,' ').trim();
 }
+function getNameForgeMode() {
+  const el = document.getElementById('nf-mode');
+  return el ? el.value : 'forge';
+}
+function populateNameForgeCultureSelect() {
+  const sel = document.getElementById('nf-culture');
+  if (!sel || sel.dataset.populated === '1') return;
+  sel.innerHTML = Object.keys(NAME_FORGE_REAL_NAMES).map(k => `<option value="${escAttr(k)}">${escHtml(k)}</option>`).join('');
+  sel.dataset.populated = '1';
+}
+function updateNameForgeModeUi() {
+  populateNameForgeCultureSelect();
+  const mode = getNameForgeMode();
+  const forge = document.getElementById('nf-forge-controls');
+  const real = document.getElementById('nf-real-controls');
+  if (forge) forge.style.display = mode === 'real' ? 'none' : '';
+  if (real) real.style.display = mode === 'real' ? '' : 'none';
+}
+function _nfShuffle(arr) {
+  const out = (arr || []).slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+function _nfRealPoolForCulture(culture) {
+  const all = NAME_FORGE_REAL_NAMES || {};
+  if (culture && culture !== 'Mixed' && all[culture]) return all[culture];
+  const given = [], family = [];
+  Object.keys(all).forEach(k => { if (k !== 'Mixed') { given.push(...(all[k].given || [])); family.push(...(all[k].family || [])); } });
+  return { given, family };
+}
+function generateNameForgeRealWorldResults() {
+  const culture = (document.getElementById('nf-culture') || {}).value || 'Mixed';
+  const pool = _nfRealPoolForCulture(culture);
+  const given = _nfShuffle(pool.given || []);
+  const family = _nfShuffle(pool.family || []);
+  const seen = new Set();
+  const results = [];
+  let guard = 0;
+  while (results.length < 20 && guard++ < 300) {
+    const g = given[guard % Math.max(1, given.length)] || _nfPick(pool.given || ['Alex']);
+    const f = family[(guard * 7) % Math.max(1, family.length)] || _nfPick(pool.family || ['Vale']);
+    const name = `${g} ${f}`.replace(/\s+/g, ' ').trim();
+    const key = name.toLowerCase();
+    if (!seen.has(key)) { seen.add(key); results.push(name); }
+  }
+  nameForgeLast = results;
+  renderNameForgeResults();
+}
 function generateNameForgeResults() {
+  updateNameForgeModeUi();
+  if (getNameForgeMode() === 'real') return generateNameForgeRealWorldResults();
   const styleSel = document.getElementById('nf-style');
   const typeSel = document.getElementById('nf-type');
   const toneSel = document.getElementById('nf-tone');
@@ -9215,16 +9291,17 @@ function renderNameForgeResults() {
     return;
   }
   const useLabel = nameForgeCtx && nameForgeCtx.nodeType === 'scene' ? 'Use for Scene' : 'Use for NPC';
+  const subLabel = getNameForgeMode() === 'real' ? 'real-world list result' : 'root-forged result';
   el.innerHTML = nameForgeLast.map((name, idx) => `
     <div class="name-forge-result">
-      <div><div class="name-forge-name">${escHtml(name)}</div><div class="name-forge-sub">root-forged result ${idx + 1}</div></div>
+      <div><div class="name-forge-name">${escHtml(name)}</div><div class="name-forge-sub">${escHtml(subLabel)} ${idx + 1}</div></div>
       <button class="primary" type="button" data-nf-use="${escAttr(name)}">${escHtml(useLabel)}</button>
       <button type="button" data-nf-copy="${escAttr(name)}">Copy</button>
       <button type="button" data-nf-save="${escAttr(name)}">Save</button>
     </div>`).join('');
   el.querySelectorAll('[data-nf-use]').forEach(btn => btn.addEventListener('click', () => applyNameForgeName(btn.dataset.nfUse)));
   el.querySelectorAll('[data-nf-copy]').forEach(btn => btn.addEventListener('click', () => copyNameForgeName(btn.dataset.nfCopy, btn)));
-  el.querySelectorAll('[data-nf-save]').forEach(btn => btn.addEventListener('click', () => { saveNameForgeScratch(btn.dataset.nfSave); saveNameToSelectedNameForgeCollection(btn.dataset.nfSave); applyNameForgeName(btn.dataset.nfSave); }));
+  el.querySelectorAll('[data-nf-save]').forEach(btn => btn.addEventListener('click', () => { saveNameForgeScratch(btn.dataset.nfSave); saveNameToSelectedNameForgeCollection(btn.dataset.nfSave); btn.textContent = 'Saved'; setTimeout(() => { btn.textContent = 'Save'; }, 900); }));
 }
 function applyNameForgeName(name) {
   if (!nameForgeCtx) return;
@@ -9319,7 +9396,7 @@ function saveNameToSelectedNameForgeCollection(name) {
   if (!col) return;
   col.names = Array.isArray(col.names) ? col.names : [];
   if (!col.names.some(n => (n.name || n).toLowerCase() === name.toLowerCase())) {
-    col.names.push({ name, seed: (document.getElementById('nf-seeds') || {}).value || '', style: (document.getElementById('nf-style') || {}).value || '', tone: (document.getElementById('nf-tone') || {}).value || '', created_at: new Date().toISOString() });
+    col.names.push({ name, seed: (document.getElementById('nf-seeds') || {}).value || '', mode: getNameForgeMode(), culture: (document.getElementById('nf-culture') || {}).value || '', style: (document.getElementById('nf-style') || {}).value || '', tone: (document.getElementById('nf-tone') || {}).value || '', created_at: new Date().toISOString() });
     col.updated_at = new Date().toISOString();
     setNameForgeCollections(cols);
   }
@@ -9347,23 +9424,85 @@ function renderNameForgeCollections(selectedId) {
   if (!names.length) {
     list.innerHTML = '<span class="name-forge-empty">This collection is empty.</span>';
   } else {
-    list.innerHTML = names.map(item => {
+    list.innerHTML = names.map((item, idx) => {
       const n = item.name || item;
-      return `<button type="button" data-nf-collection-name="${escAttr(n)}">${escHtml(n)}</button>`;
+      return `<div class="name-forge-collection-item" data-nf-item-index="${idx}">
+        <button class="name-forge-collection-name" type="button" data-nf-collection-name="${escAttr(n)}" title="Use this name in the open editor">${escHtml(n)}</button>
+        <button class="name-forge-mini-btn" type="button" data-nf-edit-name="${idx}">Edit</button>
+        <button class="name-forge-mini-btn" type="button" data-nf-move-name="${idx}">Move</button>
+        <button class="name-forge-mini-btn danger" type="button" data-nf-delete-name="${idx}">Delete</button>
+      </div>`;
     }).join('');
     list.querySelectorAll('[data-nf-collection-name]').forEach(btn => btn.addEventListener('click', () => {
       const n = btn.dataset.nfCollectionName;
       saveNameForgeScratch(n);
       applyNameForgeName(n);
     }));
+    list.querySelectorAll('[data-nf-edit-name]').forEach(btn => btn.addEventListener('click', () => editNameForgeCollectionName(Number(btn.dataset.nfEditName))));
+    list.querySelectorAll('[data-nf-move-name]').forEach(btn => btn.addEventListener('click', () => moveNameForgeCollectionName(Number(btn.dataset.nfMoveName))));
+    list.querySelectorAll('[data-nf-delete-name]').forEach(btn => btn.addEventListener('click', () => deleteNameForgeCollectionName(Number(btn.dataset.nfDeleteName))));
   }
 }
+function _nfGetSelectedCollectionAndIndex(index) {
+  const sel = document.getElementById('nf-collection-select');
+  const cols = getNameForgeCollections();
+  const colIndex = cols.findIndex(c => c.id === (sel && sel.value));
+  if (colIndex < 0) return null;
+  const col = cols[colIndex];
+  col.names = Array.isArray(col.names) ? col.names : [];
+  if (index < 0 || index >= col.names.length) return null;
+  return { cols, col, colIndex };
+}
+function editNameForgeCollectionName(index) {
+  const ref = _nfGetSelectedCollectionAndIndex(index);
+  if (!ref) return;
+  const item = ref.col.names[index];
+  const oldName = item.name || item;
+  const next = prompt('Edit saved name:', oldName);
+  if (next == null) return;
+  const name = String(next || '').trim();
+  if (!name) return;
+  ref.col.names[index] = (typeof item === 'string') ? { name } : { ...item, name, updated_at: new Date().toISOString() };
+  ref.col.updated_at = new Date().toISOString();
+  setNameForgeCollections(ref.cols);
+  renderNameForgeCollections(ref.col.id);
+}
+function moveNameForgeCollectionName(index) {
+  const ref = _nfGetSelectedCollectionAndIndex(index);
+  if (!ref) return;
+  const options = ref.cols.filter(c => c.id !== ref.col.id);
+  if (!options.length) { alert('Create another collection before moving this name.'); return; }
+  const menu = options.map((c, i) => `${i + 1}. ${c.title}`).join('\n');
+  const answer = prompt('Move to which collection?\n' + menu, '1');
+  if (answer == null) return;
+  const picked = options[Math.max(0, Number(answer) - 1)];
+  if (!picked) return;
+  const [item] = ref.col.names.splice(index, 1);
+  picked.names = Array.isArray(picked.names) ? picked.names : [];
+  const movedName = item.name || item;
+  if (!picked.names.some(n => ((n.name || n) || '').toLowerCase() === String(movedName).toLowerCase())) picked.names.push(item);
+  ref.col.updated_at = picked.updated_at = new Date().toISOString();
+  setNameForgeCollections(ref.cols);
+  renderNameForgeCollections(picked.id);
+}
+function deleteNameForgeCollectionName(index) {
+  const ref = _nfGetSelectedCollectionAndIndex(index);
+  if (!ref) return;
+  const item = ref.col.names[index];
+  const n = item.name || item;
+  if (!confirm(`Delete saved name "${n}" from this collection?`)) return;
+  ref.col.names.splice(index, 1);
+  ref.col.updated_at = new Date().toISOString();
+  setNameForgeCollections(ref.cols);
+  renderNameForgeCollections(ref.col.id);
+}
 
-['nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
+['nf-mode','nf-culture','nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
   const evt = (id === 'nf-pasted' || id === 'nf-count') ? 'input' : 'change';
   el.addEventListener(evt, () => {
+    if (id === 'nf-mode') updateNameForgeModeUi();
     if (id === 'nf-style') {
       nameForgeFetchedRoots = [];
       nameForgePinnedRoots = new Set();
@@ -10292,11 +10431,12 @@ function renderStatblockBody(row, bodyEl, titleEl) {
 
 // Allow Esc to close the statblock modal. One-time wire on first open.
 
-['nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
+['nf-mode','nf-culture','nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
   const evt = (id === 'nf-pasted' || id === 'nf-count') ? 'input' : 'change';
   el.addEventListener(evt, () => {
+    if (id === 'nf-mode') updateNameForgeModeUi();
     if (id === 'nf-style') {
       nameForgeFetchedRoots = [];
       nameForgePinnedRoots = new Set();
@@ -13415,11 +13555,12 @@ const _tablePopover = {
 window.addEventListener('scroll', () => _tablePopover.hide(), true);
 window.addEventListener('resize', () => _tablePopover.hide());
 
-['nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
+['nf-mode','nf-culture','nf-style','nf-type','nf-tone','nf-count','nf-pasted'].forEach(id => {
   const el = document.getElementById(id);
   if (!el) return;
   const evt = (id === 'nf-pasted' || id === 'nf-count') ? 'input' : 'change';
   el.addEventListener(evt, () => {
+    if (id === 'nf-mode') updateNameForgeModeUi();
     if (id === 'nf-style') {
       nameForgeFetchedRoots = [];
       nameForgePinnedRoots = new Set();
