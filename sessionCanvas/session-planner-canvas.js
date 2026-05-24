@@ -1681,7 +1681,7 @@ function buildWrapCarryForwardPayload() {
     label: e.label || '',
   })).filter(e => e.from_node && e.to_node);
 
-  // v1.3.63: Name Forge uses Seed, Real-World, and Collections tabs; preserves collection save/edit/move behavior.
+  // v1.3.64: Name Forge collection tab visual refresh; saved-name edits now use an in-app modal.
   // v1.3.60: Canvas Groups are saved in session.blocks.canvas_groups and
   // reference node ids. Since Wrap Session gives copied nodes new ids, group
   // membership must be carried forward through the same source→destination
@@ -9474,19 +9474,44 @@ function _nfGetSelectedCollectionAndIndex(index) {
   if (index < 0 || index >= col.names.length) return null;
   return { cols, col, colIndex };
 }
-function editNameForgeCollectionName(index) {
+let nameForgeEditState = null;
+function openNameForgeEditModal(index) {
   const ref = _nfGetSelectedCollectionAndIndex(index);
   if (!ref) return;
   const item = ref.col.names[index];
-  const oldName = item.name || item;
-  const next = prompt('Edit saved name:', oldName);
-  if (next == null) return;
-  const name = String(next || '').trim();
-  if (!name) return;
-  ref.col.names[index] = (typeof item === 'string') ? { name } : { ...item, name, updated_at: new Date().toISOString() };
+  const oldName = item.name || item || '';
+  nameForgeEditState = { index, collectionId: ref.col.id };
+  const modal = document.getElementById('name-forge-edit-modal');
+  const input = document.getElementById('name-forge-edit-input');
+  if (!modal || !input) return;
+  input.value = oldName;
+  modal.classList.add('open');
+  setTimeout(() => { input.focus(); input.select(); }, 0);
+}
+function closeNameForgeEditModal() {
+  const modal = document.getElementById('name-forge-edit-modal');
+  if (modal) modal.classList.remove('open');
+  nameForgeEditState = null;
+}
+function saveNameForgeEditModal() {
+  if (!nameForgeEditState) return;
+  const sel = document.getElementById('nf-collection-select');
+  if (sel && sel.value !== nameForgeEditState.collectionId) sel.value = nameForgeEditState.collectionId;
+  const ref = _nfGetSelectedCollectionAndIndex(nameForgeEditState.index);
+  const input = document.getElementById('name-forge-edit-input');
+  if (!ref || !input) return;
+  const name = String(input.value || '').trim();
+  if (!name) { input.focus(); return; }
+  const item = ref.col.names[nameForgeEditState.index];
+  ref.col.names[nameForgeEditState.index] = (typeof item === 'string') ? { name } : { ...item, name, updated_at: new Date().toISOString() };
   ref.col.updated_at = new Date().toISOString();
   setNameForgeCollections(ref.cols);
-  renderNameForgeCollections(ref.col.id);
+  const collectionId = ref.col.id;
+  closeNameForgeEditModal();
+  renderNameForgeCollections(collectionId);
+}
+function editNameForgeCollectionName(index) {
+  openNameForgeEditModal(index);
 }
 function moveNameForgeCollectionName(index) {
   const ref = _nfGetSelectedCollectionAndIndex(index);
@@ -9538,13 +9563,34 @@ function deleteNameForgeCollectionName(index) {
 var nfCollectionSelect = document.getElementById('nf-collection-select');
 if (nfCollectionSelect) nfCollectionSelect.addEventListener('change', () => renderNameForgeCollections(nfCollectionSelect.value));
 
+(function wireNameForgeEditModal() {
+  const modal = document.getElementById('name-forge-edit-modal');
+  const closeBtn = document.getElementById('name-forge-edit-close');
+  const cancelBtn = document.getElementById('name-forge-edit-cancel');
+  const saveBtn = document.getElementById('name-forge-edit-save');
+  const input = document.getElementById('name-forge-edit-input');
+  if (closeBtn) closeBtn.addEventListener('click', closeNameForgeEditModal);
+  if (cancelBtn) cancelBtn.addEventListener('click', closeNameForgeEditModal);
+  if (saveBtn) saveBtn.addEventListener('click', saveNameForgeEditModal);
+  if (input) input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveNameForgeEditModal(); }
+  });
+  if (modal) modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeNameForgeEditModal();
+  });
+})();
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    const editModal = document.getElementById('name-forge-edit-modal');
+    if (editModal && editModal.classList.contains('open')) { e.stopPropagation(); closeNameForgeEditModal(); return; }
     const m = document.getElementById('name-forge-modal');
     if (m && m.classList.contains('open')) { e.stopPropagation(); closeNameForge(); }
   }
 });
 document.addEventListener('click', (e) => {
+  const editModal = document.getElementById('name-forge-edit-modal');
+  if (editModal && editModal.classList.contains('open')) return;
   const m = document.getElementById('name-forge-modal');
   if (!m || !m.classList.contains('open')) return;
   if (e.target === m) closeNameForge();
