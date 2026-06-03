@@ -3412,7 +3412,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 function renderSessionPicker() {
-  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.68 · Brainstorm Session Groups</div>';
+  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.69 · Mobile Connected Node Tags</div>';
   const camps = sessionState.campaigns;
   const errs  = sessionState._errors || [];
   const errBanner = errs.length ? `
@@ -17877,8 +17877,8 @@ function wireMobileNodeList() {
 // ── Single-node view ──
 // Renders: editable title, type badge, the canvas-card body (so monsters /
 // brainstorm items / table data render fully and stay interactive), then
-// the side-panel form fields, then prev/next nav buttons. Swipe gestures
-// also page through the node order.
+// the side-panel form fields, then prev/next nav buttons.
+// v1.3.69: mobile swipe-to-change-node is disabled; connected-node tags are used instead.
 function getConnectedCanvasNodes(nodeId) {
   const out = [];
   const seen = new Set();
@@ -17898,7 +17898,7 @@ function getConnectedCanvasNodes(nodeId) {
 }
 
 function renderMobileConnectedNodeLinks(node) {
-  if (!node || node.type !== 'brainstorm') return '';
+  if (!node) return '';
   const connected = getConnectedCanvasNodes(node.id);
   if (!connected.length) return '';
   return `<div class="mob-connected-nodes">
@@ -18096,31 +18096,8 @@ function wireMobileNodeView(node) {
   if (prevBtn) prevBtn.addEventListener('click', () => mobileGoNode(-1));
   if (nextBtn) nextBtn.addEventListener('click', () => mobileGoNode(+1));
 
-  // Swipe gestures on the screen scroll container
-  const screenEl = document.getElementById('mobile-screen');
-  if (screenEl) {
-    let startX = 0, startY = 0, tracking = false;
-    const onStart = (e) => {
-      const t = e.touches ? e.touches[0] : e;
-      startX = t.clientX; startY = t.clientY;
-      tracking = true;
-    };
-    const onEnd = (e) => {
-      if (!tracking) return;
-      tracking = false;
-      const t = (e.changedTouches && e.changedTouches[0]) || e;
-      const dx = (t.clientX || 0) - startX;
-      const dy = (t.clientY || 0) - startY;
-      // Horizontal swipe with strong directional intent
-      if (Math.abs(dx) > 60 && Math.abs(dx) > 1.5 * Math.abs(dy)) {
-        if (dx < 0) mobileGoNode(+1);   // swipe left → next
-        else        mobileGoNode(-1);   // swipe right → prev
-      }
-    };
-    // Re-bind on every render — old element is gone after innerHTML replacement
-    screenEl.addEventListener('touchstart', onStart, { passive: true });
-    screenEl.addEventListener('touchend',   onEnd,   { passive: true });
-  }
+  // v1.3.69: swipe-to-change-node disabled on mobile.
+  // Navigation remains available through Prev/Next and connected-node tags.
 }
 
 function mobileGoNode(delta) {
