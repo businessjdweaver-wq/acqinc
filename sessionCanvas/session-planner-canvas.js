@@ -3412,7 +3412,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 function renderSessionPicker() {
-  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.71 · Mobile Placement Overlay</div>';
+  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.72 · Mobile Placement Overlay Polish</div>';
   const camps = sessionState.campaigns;
   const errs  = sessionState._errors || [];
   const errBanner = errs.length ? `
@@ -5726,7 +5726,7 @@ function addNodeToCanvasGroup(group, node) {
   renderCanvasGroupBar();
 }
 
-// v1.3.71: nodes created from mobile are marked for desktop placement review.
+// v1.3.72: nodes created from mobile are marked for desktop placement review.
 // Batches let a mobile-created brainstorm and all of its newly connected children
 // move together as a highlighted placement group when the user returns to desktop.
 function isMobileInterfaceActive() {
@@ -6006,6 +6006,20 @@ function handleMobilePlacementMouseUp(e) {
   window.removeEventListener('mouseup', handleMobilePlacementMouseUp, true);
   markDirty();
 }
+
+function handleMobilePlacementSuppressNodeEdit(e) {
+  if (!mobilePlacementReviewActive) return;
+  if (e.target && e.target.closest && e.target.closest('#mobile-placement-overlay')) return;
+  const nodeEl = e.target && e.target.closest ? e.target.closest('.node') : null;
+  if (!nodeEl) return;
+  // During placement review, node clicks are for positioning only. Prevent accidental edit/open actions.
+  e.preventDefault();
+  e.stopPropagation();
+  if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+}
+document.addEventListener('click', handleMobilePlacementSuppressNodeEdit, true);
+document.addEventListener('dblclick', handleMobilePlacementSuppressNodeEdit, true);
+document.addEventListener('contextmenu', handleMobilePlacementSuppressNodeEdit, true);
 document.addEventListener('mousedown', handleMobilePlacementMouseDown, true);
 
 function createSessionBrainstormNode() {
@@ -18197,7 +18211,7 @@ function wireMobileNodeList() {
 // Renders: editable title, type badge, the canvas-card body (so monsters /
 // brainstorm items / table data render fully and stay interactive), then
 // the side-panel form fields, then prev/next nav buttons.
-// v1.3.71: mobile swipe-to-change-node is disabled; connected-node tags are used instead.
+// v1.3.72: mobile swipe-to-change-node is disabled; connected-node tags are used instead.
 function getConnectedCanvasNodes(nodeId) {
   const out = [];
   const seen = new Set();
@@ -18415,7 +18429,7 @@ function wireMobileNodeView(node) {
   if (prevBtn) prevBtn.addEventListener('click', () => mobileGoNode(-1));
   if (nextBtn) nextBtn.addEventListener('click', () => mobileGoNode(+1));
 
-  // v1.3.71: swipe-to-change-node disabled on mobile.
+  // v1.3.72: swipe-to-change-node disabled on mobile.
   // Navigation remains available through Prev/Next and connected-node tags.
 }
 
