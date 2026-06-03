@@ -1660,7 +1660,7 @@ function makeWrapNodeSnapshot(n, idMap) {
     collapsed: !!n.collapsed,
   };
   if (n.table) rec.table = { headers: Array.isArray(n.table.headers) ? [...n.table.headers] : [], rows: Array.isArray(n.table.rows) ? n.table.rows.map(r => Array.isArray(r) ? [...r] : []) : [] };
-  if (n.brainstorm) rec.brainstorm = { items: Array.isArray(n.brainstorm.items) ? n.brainstorm.items.map(s => String(s || '')) : [] };
+  if (n.brainstorm) rec.brainstorm = { items: Array.isArray(n.brainstorm.items) ? n.brainstorm.items.map(s => String(s || '')) : [] }; if (n.brainstorm.group_id) rec.brainstorm.group_id = n.brainstorm.group_id;
   if (n.image) rec.image = cloneImagePayloadForSessionCopy(n, idMap);
   return rec;
 }
@@ -3308,6 +3308,7 @@ async function confirmCopyToSession() {
         rec.brainstorm = {
           items: Array.isArray(n.brainstorm.items) ? n.brainstorm.items.map(s => String(s || '')) : [],
         };
+        if (n.brainstorm.group_id) rec.brainstorm.group_id = n.brainstorm.group_id;
       }
       if (n.image) {
         rec.image = cloneImagePayloadForSessionCopy(n, idMap);
@@ -3411,6 +3412,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 function renderSessionPicker() {
+  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.68 · Brainstorm Session Groups</div>';
   const camps = sessionState.campaigns;
   const errs  = sessionState._errors || [];
   const errBanner = errs.length ? `
@@ -3422,7 +3424,7 @@ function renderSessionPicker() {
     </div>` : '';
 
   if (!camps.length) {
-    pickerBody.innerHTML = errBanner + `
+    pickerBody.innerHTML = pickerVersionHtml + errBanner + `
       <div class="sp-empty">
         ${errs.length
           ? 'Campaigns failed to load. See the error above.'
@@ -3436,7 +3438,7 @@ function renderSessionPicker() {
       </div>`;
     return;
   }
-  let html = errBanner;
+  let html = pickerVersionHtml + errBanner;
   camps.forEach(c => {
     const campArcs = getChildArcs(null, c.id);
     // Sessions for this campaign with no arc go into a virtual "Loose Sessions" bucket
@@ -5659,6 +5661,74 @@ function appendSelectionToCanvasGroup() {
     if (status) status.textContent = 'Appended ' + added + ' node' + (added === 1 ? '' : 's') + ' to “' + (group.name || 'Untitled Group') + '”.';
   }
 }
+
+function _cleanGroupNodeIds(group) {
+  if (!group) return [];
+  return (Array.isArray(group.node_ids) ? group.node_ids : []).map(String).filter(Boolean);
+}
+
+function ensureCanvasGroupForBrainstormNode(node, name) {
+  if (!node || !node.id) return null;
+  if (!Array.isArray(sessionState.canvasGroups)) sessionState.canvasGroups = [];
+  const cleanName = String(name || node.title || 'Brainstorm').trim() || 'Brainstorm';
+  if (!node.brainstorm || typeof node.brainstorm !== 'object') node.brainstorm = { items: [''] };
+  let group = null;
+  const gid = node.brainstorm.group_id || node.brainstorm.canvas_group_id;
+  if (gid) group = sessionState.canvasGroups.find(g => String(g.id) === String(gid));
+  if (!group) {
+    group = sessionState.canvasGroups.find(g => String(g.name || '') === cleanName && _cleanGroupNodeIds(g).includes(String(node.id)));
+  }
+  if (!group) {
+    group = {
+      id: 'grp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      name: cleanName,
+      node_ids: [String(node.id)],
+      created_at: new Date().toISOString(),
+    };
+    sessionState.canvasGroups.push(group);
+  }
+  group.name = cleanName;
+  const ids = new Set(_cleanGroupNodeIds(group));
+  ids.add(String(node.id));
+  group.node_ids = Array.from(ids);
+  node.brainstorm.group_id = group.id;
+  sessionState.activeCanvasGroupId = group.id;
+  renderCanvasGroupBar();
+  return group;
+}
+
+function addNodeToCanvasGroup(group, node) {
+  if (!group || !node) return;
+  const ids = new Set(_cleanGroupNodeIds(group));
+  ids.add(String(node.id));
+  group.node_ids = Array.from(ids);
+  sessionState.activeCanvasGroupId = String(group.id);
+  renderCanvasGroupBar();
+}
+
+function createSessionBrainstormNode() {
+  if (!sessionState.currentSessionId) { alert('Open a session first.'); return null; }
+  const cx = (wrap.clientWidth / 2 - VIEW.x) / VIEW.zoom;
+  const cy = (wrap.clientHeight / 2 - VIEW.y) / VIEW.zoom;
+  const jitter = (state.nodes.size % 8) * 30;
+  const node = createNode({ type: 'brainstorm', x: Math.round(cx + jitter), y: Math.round(cy + jitter), title: 'New Brainstorm' });
+  node._rqPendingBrainstormGroup = true;
+  if (!node.brainstorm || typeof node.brainstorm !== 'object') node.brainstorm = { items: [''] };
+  if (document.body.classList.contains('mobile-mode') && typeof mobileState !== 'undefined') {
+    const ordered = _mobileGatherNodes().map(n => n.id);
+    if (!ordered.includes(node.id)) ordered.push(node.id);
+    mobileState.nodeOrder = ordered;
+    mobileState.nodeIndex = ordered.indexOf(node.id);
+    mobileState.screen = 'node';
+    renderMobileScreen();
+  } else {
+    openSidePanel(node);
+  }
+  markDirty();
+  return node;
+}
+window.createSessionBrainstormNode = createSessionBrainstormNode;
+
 function frameCanvasGroup(groupId) {
   const groups = getCanvasGroupList();
   const group = groups.find(g => String(g.id) === String(groupId));
@@ -6618,24 +6688,60 @@ function brainstormLineTitle(text) {
   return (words.slice(0, 3).join(' ') || 'New Brainstorm Node').slice(0, 80);
 }
 
-function promptBrainstormNodeType() {
-  const choices = Object.entries(BLOCK_TYPES || {})
-    .filter(([key, def]) => def && !def.isImage)
-    .map(([key, def]) => `${key} — ${def.label || key}`);
-  const typed = prompt('Create connected node as which type?\n\n' + choices.join('\n'), 'scene');
-  if (typed == null) return null;
-  const clean = String(typed).trim().toLowerCase();
-  if (BLOCK_TYPES[clean]) return clean;
-  const byLabel = Object.entries(BLOCK_TYPES || {}).find(([key, def]) => String(def.label || '').toLowerCase() === clean);
-  if (byLabel) return byLabel[0];
-  alert('Unknown node type: ' + typed);
-  return null;
+
+function closeBrainstormNodeTypeModal() {
+  const existing = document.getElementById('brainstorm-node-type-modal');
+  if (existing) existing.remove();
 }
 
-function createConnectedNodeFromBrainstormLine(brainstormNode, idx) {
+function chooseBrainstormNodeType(lineText) {
+  closeBrainstormNodeTypeModal();
+  return new Promise(resolve => {
+    const choices = Object.entries(BLOCK_TYPES || {})
+      .filter(([key, def]) => def && !def.isImage)
+      .map(([key, def]) => ({ key, def }));
+    const modal = document.createElement('div');
+    modal.className = 'brainstorm-node-type-modal';
+    modal.id = 'brainstorm-node-type-modal';
+    modal.innerHTML = `
+      <div class="brainstorm-node-type-card" role="dialog" aria-modal="true" aria-label="Create connected node">
+        <div class="brainstorm-node-type-head">
+          <div>
+            <div class="brainstorm-node-type-title">Create Connected Node</div>
+            <div class="brainstorm-node-type-sub">Choose the type for the node created from this brainstorm line.</div>
+          </div>
+          <button type="button" class="brainstorm-node-type-close" data-brainstorm-type-close>×</button>
+        </div>
+        <div class="brainstorm-node-type-line">${escHtml(String(lineText || '').trim() || '(blank brainstorm line)')}</div>
+        <div class="brainstorm-node-type-grid">
+          ${choices.map(({key, def}) => `
+            <button type="button" class="brainstorm-node-type-choice" data-brainstorm-type-choice="${escAttr(key)}">
+              <span class="brainstorm-node-type-icon">${escHtml(def.icon || '')}</span>
+              <span class="brainstorm-node-type-label">${escHtml(def.label || key)}</span>
+            </button>`).join('')}
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    const finish = (value) => { closeBrainstormNodeTypeModal(); resolve(value); };
+    modal.querySelector('[data-brainstorm-type-close]')?.addEventListener('click', () => finish(null));
+    modal.addEventListener('mousedown', e => { if (e.target === modal) finish(null); });
+    modal.querySelectorAll('[data-brainstorm-type-choice]').forEach(btn => {
+      btn.addEventListener('click', () => finish(btn.dataset.brainstormTypeChoice || null));
+    });
+    window.addEventListener('keydown', function escClose(e) {
+      if (e.key === 'Escape' && document.getElementById('brainstorm-node-type-modal')) {
+        window.removeEventListener('keydown', escClose);
+        finish(null);
+      }
+    });
+    setTimeout(() => modal.querySelector('[data-brainstorm-type-choice]')?.focus(), 0);
+  });
+}
+
+async function createConnectedNodeFromBrainstormLine(brainstormNode, idx) {
   if (!brainstormNode || !brainstormNode.brainstorm || !Array.isArray(brainstormNode.brainstorm.items)) return;
   const lineText = brainstormNode.brainstorm.items[idx] || '';
-  const type = promptBrainstormNodeType();
+  const type = await chooseBrainstormNodeType(lineText);
   if (!type) return;
   const parentSize = brainstormNode.el ? nodeSize(brainstormNode) : { w: 300, h: 180 };
   const x = Number(brainstormNode.x || 0) + Math.max(parentSize.w + 80, 420);
@@ -6647,6 +6753,8 @@ function createConnectedNodeFromBrainstormLine(brainstormNode, idx) {
     title: brainstormLineTitle(lineText),
     summary: String(lineText || '').trim()
   });
+  const group = ensureCanvasGroupForBrainstormNode(brainstormNode, brainstormNode.title || 'Brainstorm');
+  addNodeToCanvasGroup(group, newNode);
   createEdge(
     { nodeId: brainstormNode.id, anchor: 'mr' },
     { nodeId: newNode.id, anchor: 'ml' },
@@ -15962,6 +16070,10 @@ function commitOpenNodeFromForm() {
   if (!node) return;
   // Title
   node.title = spTitle.value || (BLOCK_TYPES[node.type]?.defaultTitle || 'Untitled');
+  if (node.type === 'brainstorm') {
+    ensureCanvasGroupForBrainstormNode(node, node.title);
+    node._rqPendingBrainstormGroup = false;
+  }
   // Fields
   const def = BLOCK_TYPES[node.type] || BLOCK_TYPES.scene;
   node.fields = node.fields || {};
@@ -17720,10 +17832,11 @@ function renderMobileNodeList() {
     const filtered = nodes.filter(n => groupIds.has(String(n.id)));
     if (filtered.length) nodes = filtered;
   }
+  const actionHtml = `<div class="mob-session-actions-top"><button type="button" data-mob-create-brainstorm>＋ Brainstorm Node</button></div>`;
   if (!nodes.length) {
-    return `<div class="mob-empty-hint">No nodes in this session yet.</div>`;
+    return actionHtml + `<div class="mob-empty-hint">No nodes in this session yet.</div>`;
   }
-  return nodes.map(n => {
+  return actionHtml + nodes.map(n => {
     const def = BLOCK_TYPES[n.type] || BLOCK_TYPES.scene;
     const icon = def.icon;
     const summary = (n.summary || '').slice(0, 100);
@@ -17745,6 +17858,7 @@ function renderMobileNodeList() {
 }
 
 function wireMobileNodeList() {
+  document.querySelector('[data-mob-create-brainstorm]')?.addEventListener('click', () => createSessionBrainstormNode());
   document.querySelectorAll('.mob-node-row[data-mob-node-id]').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = btn.dataset.mobNodeId;
@@ -17888,6 +18002,10 @@ function wireMobileNodeView(node) {
       const newTitle = titleInp.value || (BLOCK_TYPES[node.type]?.defaultTitle || 'Untitled');
       if (newTitle !== node.title) {
         node.title = newTitle;
+        if (node.type === 'brainstorm') {
+          ensureCanvasGroupForBrainstormNode(node, node.title);
+          node._rqPendingBrainstormGroup = false;
+        }
         if (node.scope === 'campaign') {
           const idx = sessionState.campaignBlocks.nodes.findIndex(n => n.id === node.id);
           if (idx >= 0) sessionState.campaignBlocks.nodes[idx].title = newTitle;
