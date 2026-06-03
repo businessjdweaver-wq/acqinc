@@ -1682,7 +1682,7 @@ function buildWrapCarryForwardPayload() {
   })).filter(e => e.from_node && e.to_node);
 
   // v1.3.64: Name Forge collection tab visual refresh; saved-name edits now use an in-app modal.
-  // v1.3.65: Session picker nested arcs open when they contain sessions; opening child arcs also opens ancestors for mobile tap safety.
+  // v1.3.66: Session picker nested arcs open when they contain sessions; opening child arcs also opens ancestors for mobile tap safety.
   // v1.3.60: Canvas Groups are saved in session.blocks.canvas_groups and
   // reference node ids. Since Wrap Session gives copied nodes new ids, group
   // membership must be carried forward through the same source→destination
@@ -3612,7 +3612,7 @@ window.toggleArc = function(id) {
   const el = document.querySelector(`.sp-arc[data-arc-id="${id}"]`);
   if (!el) return;
   el.classList.toggle('open');
-  // v1.3.65: nested picker arcs must remain reachable on mobile.
+  // v1.3.66: nested picker arcs must remain reachable on mobile.
   // When a child arc is opened, make sure every ancestor arc is also open;
   // otherwise the child sessions can exist in the DOM with 0px height and cannot be tapped.
   if (el.classList.contains('open')) {
@@ -6445,6 +6445,11 @@ function renderBrainstormNodeBodyHtml(data) {
                 data-brainstorm-cell="${data.id}|${idx}"
                 rows="1"
                 placeholder="Idea, prompt, what-if…">${escHtml(text || '')}</textarea>
+      <button class="node-brainstorm-create"
+              data-brainstorm-create-node="${data.id}|${idx}"
+              title="Create a connected node from this brainstorm line"
+              aria-label="Create a connected node from this brainstorm line"
+              type="button">＋</button>
       <button class="node-brainstorm-rowdel"
               data-brainstorm-rowdel="${data.id}|${idx}"
               title="Remove this item"
@@ -6537,6 +6542,19 @@ function wireBrainstormNode(nodeEl, node) {
     });
   });
 
+  // Per-item connected-node creation
+  nodeEl.querySelectorAll('button[data-brainstorm-create-node]').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const [, idxStr] = btn.dataset.brainstormCreateNode.split('|');
+      const idx = parseInt(idxStr);
+      if (Number.isNaN(idx)) return;
+      createConnectedNodeFromBrainstormLine(node, idx);
+    });
+  });
+
   // Per-item delete
   nodeEl.querySelectorAll('button[data-brainstorm-rowdel]').forEach(btn => {
     btn.addEventListener('mousedown', e => e.stopPropagation());
@@ -6593,6 +6611,60 @@ function updateBrainstormSummary(node) {
   }
   const first = items[0].length > 90 ? items[0].slice(0, 87) + '…' : items[0];
   node.summary = items.length === 1 ? first : `${first}  (+${items.length - 1} more)`;
+}
+
+function brainstormLineTitle(text) {
+  const words = String(text || '').trim().replace(/\s+/g, ' ').split(' ').filter(Boolean);
+  return (words.slice(0, 3).join(' ') || 'New Brainstorm Node').slice(0, 80);
+}
+
+function promptBrainstormNodeType() {
+  const choices = Object.entries(BLOCK_TYPES || {})
+    .filter(([key, def]) => def && !def.isImage)
+    .map(([key, def]) => `${key} — ${def.label || key}`);
+  const typed = prompt('Create connected node as which type?\n\n' + choices.join('\n'), 'scene');
+  if (typed == null) return null;
+  const clean = String(typed).trim().toLowerCase();
+  if (BLOCK_TYPES[clean]) return clean;
+  const byLabel = Object.entries(BLOCK_TYPES || {}).find(([key, def]) => String(def.label || '').toLowerCase() === clean);
+  if (byLabel) return byLabel[0];
+  alert('Unknown node type: ' + typed);
+  return null;
+}
+
+function createConnectedNodeFromBrainstormLine(brainstormNode, idx) {
+  if (!brainstormNode || !brainstormNode.brainstorm || !Array.isArray(brainstormNode.brainstorm.items)) return;
+  const lineText = brainstormNode.brainstorm.items[idx] || '';
+  const type = promptBrainstormNodeType();
+  if (!type) return;
+  const parentSize = brainstormNode.el ? nodeSize(brainstormNode) : { w: 300, h: 180 };
+  const x = Number(brainstormNode.x || 0) + Math.max(parentSize.w + 80, 420);
+  const y = Number(brainstormNode.y || 0) + (idx * 42);
+  const newNode = createNode({
+    x,
+    y,
+    type,
+    title: brainstormLineTitle(lineText),
+    summary: String(lineText || '').trim()
+  });
+  createEdge(
+    { nodeId: brainstormNode.id, anchor: 'mr' },
+    { nodeId: newNode.id, anchor: 'ml' },
+    'forward',
+    'brainstorm'
+  );
+  if (document.body.classList.contains('mobile-mode') && typeof mobileState !== 'undefined') {
+    const ids = mobileState.nodeOrder || [];
+    if (!ids.includes(newNode.id)) ids.push(newNode.id);
+    mobileState.nodeOrder = ids;
+    mobileState.nodeIndex = ids.indexOf(newNode.id);
+    mobileState.screen = 'node';
+    if (typeof renderMobileScreen === 'function') renderMobileScreen();
+  } else {
+    openSidePanel(newNode);
+  }
+  setTimeout(() => redrawEdges(), 50);
+  markDirty();
 }
 
 // ── ROLL-TABLE NODE: canvas-card body renderer ─────────────
@@ -17693,6 +17765,36 @@ function wireMobileNodeList() {
 // brainstorm items / table data render fully and stay interactive), then
 // the side-panel form fields, then prev/next nav buttons. Swipe gestures
 // also page through the node order.
+function getConnectedCanvasNodes(nodeId) {
+  const out = [];
+  const seen = new Set();
+  (state.edges || []).forEach(edge => {
+    const a = edge.from && edge.from.nodeId;
+    const b = edge.to && edge.to.nodeId;
+    let otherId = null;
+    if (String(a) === String(nodeId)) otherId = b;
+    else if (String(b) === String(nodeId)) otherId = a;
+    if (!otherId || seen.has(otherId)) return;
+    const other = state.nodes.get(otherId);
+    if (!other) return;
+    seen.add(otherId);
+    out.push(other);
+  });
+  return out;
+}
+
+function renderMobileConnectedNodeLinks(node) {
+  if (!node || node.type !== 'brainstorm') return '';
+  const connected = getConnectedCanvasNodes(node.id);
+  if (!connected.length) return '';
+  return `<div class="mob-connected-nodes">
+    <div class="mob-connected-title">Connected nodes</div>
+    <div class="mob-connected-list">
+      ${connected.map(n => `<button type="button" data-mob-open-connected="${escAttr(n.id)}">${escHtml(n.title || 'Untitled')}</button>`).join('')}
+    </div>
+  </div>`;
+}
+
 function renderMobileNodeView(node) {
   const def = BLOCK_TYPES[node.type] || BLOCK_TYPES.scene;
 
@@ -17738,6 +17840,7 @@ function renderMobileNodeView(node) {
       <div>
         <span class="mob-node-view-typebadge">${escHtml(def.icon)} ${escHtml(def.label)}</span>
       </div>
+      ${renderMobileConnectedNodeLinks(node)}
       <div class="mob-card-body" id="mob-card-host">
         ${faceHtml}
       </div>
@@ -17856,6 +17959,18 @@ function wireMobileNodeView(node) {
       });
     });
   }
+
+  document.querySelectorAll('[data-mob-open-connected]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.mobOpenConnected;
+      const ids = mobileState.nodeOrder || [];
+      if (!ids.includes(id)) ids.push(id);
+      mobileState.nodeOrder = ids;
+      mobileState.nodeIndex = Math.max(0, ids.indexOf(id));
+      mobileState.screen = 'node';
+      renderMobileScreen();
+    });
+  });
 
   // Prev / Next navigation buttons
   const prevBtn = document.querySelector('button[data-mob-prev]');
