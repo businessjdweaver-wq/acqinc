@@ -3412,7 +3412,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 function renderSessionPicker() {
-  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.70 · Mobile Placement Review</div>';
+  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.71 · Mobile Placement Overlay</div>';
   const camps = sessionState.campaigns;
   const errs  = sessionState._errors || [];
   const errBanner = errs.length ? `
@@ -5726,9 +5726,9 @@ function addNodeToCanvasGroup(group, node) {
   renderCanvasGroupBar();
 }
 
-// v1.3.70: nodes created from mobile are marked for desktop placement review.
+// v1.3.71: nodes created from mobile are marked for desktop placement review.
 // Batches let a mobile-created brainstorm and all of its newly connected children
-// move together when the user returns to the full canvas.
+// move together as a highlighted placement group when the user returns to desktop.
 function isMobileInterfaceActive() {
   return document.body.classList.contains('mobile-mode') && typeof mobileState !== 'undefined';
 }
@@ -5777,70 +5777,236 @@ function clearMobilePlacementFlags(nodes) {
     }
   });
 }
-function showMobilePlacementBanner(text) {
-  let bar = document.getElementById('mobile-placement-banner');
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.id = 'mobile-placement-banner';
-    document.body.appendChild(bar);
+
+let mobilePlacementReviewActive = false;
+let mobilePlacementCurrentBatchId = null;
+let mobilePlacementDrag = null;
+
+function mobilePlacementEnsureOverlay() {
+  let overlay = document.getElementById('mobile-placement-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'mobile-placement-overlay';
+    overlay.innerHTML = `
+      <div class="mpo-scrim" aria-hidden="true"></div>
+      <div class="mpo-top">
+        <button type="button" id="mpo-cancel">× Cancel & return later</button>
+        <div class="mpo-title">
+          <h2>Place your newly created content</h2>
+          <p id="mpo-summary">Drag the highlighted selection to an open space on the canvas.</p>
+        </div>
+        <button type="button" id="mpo-help">? Need help?</button>
+      </div>
+      <div class="mpo-info">ⓘ All connected nodes in this placement will move together as one.</div>
+      <div class="mpo-bottom">
+        <div class="mpo-card mpo-legend"><b>Yellow dashed outline</b><br><span>Shows all nodes that will move together.</span></div>
+        <div class="mpo-action">
+          <div><b>Drag to move group</b><br><span>The entire group moves as one.</span></div>
+          <button type="button" id="mpo-done">✓</button>
+          <div><b>I’m done</b><br><span>Confirm placement and continue.</span></div>
+        </div>
+        <div class="mpo-card mpo-next"><b>What happens next?</b><br><span>We’ll move to the next group, or return to the full canvas.</span></div>
+      </div>
+      <div class="mpo-progress" id="mpo-progress">Placement 1 of 1</div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#mpo-cancel').addEventListener('click', cancelMobilePlacementReview);
+    overlay.querySelector('#mpo-done').addEventListener('click', confirmCurrentMobilePlacementBatch);
   }
-  bar.innerHTML = '<b>Place mobile node(s):</b> ' + escHtml(text || 'Click an open canvas space.');
-  bar.classList.add('open');
+  return overlay;
+}
+function mobilePlacementOverlayOpen(open) {
+  const overlay = mobilePlacementEnsureOverlay();
+  overlay.classList.toggle('open', !!open);
+  document.body.classList.toggle('mobile-placement-review-active', !!open);
+}
+function mobilePlacementBatchBounds(nodes) {
+  const live = (nodes || []).filter(n => n && n.el && state.nodes.has(n.id));
+  if (!live.length) return null;
+  const rects = live.map(n => ({
+    node: n,
+    left: Number(n.x) || 0,
+    top: Number(n.y) || 0,
+    width: n.el.offsetWidth || n.el.getBoundingClientRect().width || 240,
+    height: n.el.offsetHeight || n.el.getBoundingClientRect().height || 140,
+  }));
+  const minX = Math.min(...rects.map(r => r.left));
+  const minY = Math.min(...rects.map(r => r.top));
+  const maxX = Math.max(...rects.map(r => r.left + r.width));
+  const maxY = Math.max(...rects.map(r => r.top + r.height));
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY, rects };
+}
+function mobilePlacementDrawHull(batch) {
+  let hull = document.getElementById('mobile-placement-hull');
+  if (!batch || !batch.nodes || !batch.nodes.length) {
+    if (hull) hull.remove();
+    return;
+  }
+  const b = mobilePlacementBatchBounds(batch.nodes);
+  if (!b) { if (hull) hull.remove(); return; }
+  if (!hull) {
+    hull = document.createElement('div');
+    hull.id = 'mobile-placement-hull';
+    content.appendChild(hull);
+  }
+  hull.style.left = Math.round(b.minX - 14) + 'px';
+  hull.style.top = Math.round(b.minY - 14) + 'px';
+  hull.style.width = Math.round(b.width + 28) + 'px';
+  hull.style.height = Math.round(b.height + 28) + 'px';
+}
+function mobilePlacementSetCurrentBatch(batch, index, total) {
+  mobilePlacementCurrentBatchId = batch ? batch.id : null;
+  state.selectedNodes.clear();
+  state.nodes.forEach(n => {
+    if (n && n.el) n.el.classList.remove('mobile-placement-current');
+  });
+  if (!batch) {
+    mobilePlacementDrawHull(null);
+    return;
+  }
+  batch.nodes.forEach(n => {
+    state.selectedNodes.add(n.id);
+    if (n.el) {
+      n.el.classList.add('mobile-placement-current');
+      n.el.dataset.mobilePendingPlacement = '1';
+      n.el.dataset.mobilePlacementBatchId = batch.id;
+    }
+  });
+  const overlay = mobilePlacementEnsureOverlay();
+  const count = batch.nodes.length;
+  const summary = overlay.querySelector('#mpo-summary');
+  if (summary) summary.innerHTML = 'You created <b>' + escHtml(batch.label || 'new content') + '</b> on mobile with ' + count + ' connected node' + (count === 1 ? '' : 's') + '.<br>Drag the highlighted selection to any open space on the canvas.';
+  const prog = overlay.querySelector('#mpo-progress');
+  if (prog) prog.textContent = 'Placement ' + index + ' of ' + total;
+  mobilePlacementDrawHull(batch);
+}
+function moveMobilePlacementBatchBy(batch, dx, dy) {
+  if (!batch || !batch.nodes) return;
+  batch.nodes.forEach(node => {
+    if (!node || !node.el || !state.nodes.has(node.id)) return;
+    node.x = Math.round((Number(node.x) || 0) + dx);
+    node.y = Math.round((Number(node.y) || 0) + dy);
+    node.el.style.left = node.x + 'px';
+    node.el.style.top = node.y + 'px';
+  });
+  mobilePlacementDrawHull(batch);
+  redrawEdges();
+}
+function clearMobilePlacementCurrentStyles() {
+  state.nodes.forEach(n => {
+    if (n && n.el) n.el.classList.remove('mobile-placement-current');
+  });
+  const hull = document.getElementById('mobile-placement-hull');
+  if (hull) hull.remove();
 }
 function hideMobilePlacementBanner() {
-  const bar = document.getElementById('mobile-placement-banner');
-  if (bar) bar.classList.remove('open');
+  mobilePlacementOverlayOpen(false);
+  clearMobilePlacementCurrentStyles();
+}
+function showMobilePlacementBanner(text) {
+  // Backward-compatible wrapper retained for older call sites.
+  const overlay = mobilePlacementEnsureOverlay();
+  const summary = overlay.querySelector('#mpo-summary');
+  if (summary) summary.textContent = text || 'Drag the highlighted selection to an open space.';
+  mobilePlacementOverlayOpen(true);
 }
 function moveMobilePlacementBatchToCanvasPoint(batch, point) {
   if (!batch || !batch.nodes || !batch.nodes.length || !point) return;
   const live = batch.nodes.filter(n => n && state.nodes.has(n.id));
   if (!live.length) return;
-  const minX = Math.min(...live.map(n => Number(n.x) || 0));
-  const minY = Math.min(...live.map(n => Number(n.y) || 0));
-  live.forEach(node => {
-    node.x = Math.round(point.x + ((Number(node.x) || 0) - minX));
-    node.y = Math.round(point.y + ((Number(node.y) || 0) - minY));
-    if (node.el) {
-      node.el.style.left = node.x + 'px';
-      node.el.style.top = node.y + 'px';
-    }
-  });
-  clearMobilePlacementFlags(live);
-  redrawEdges();
-  markDirty();
+  const b = mobilePlacementBatchBounds(live);
+  if (!b) return;
+  const dx = Math.round(point.x - b.minX);
+  const dy = Math.round(point.y - b.minY);
+  moveMobilePlacementBatchBy(batch, dx, dy);
 }
-let mobilePlacementReviewActive = false;
+function getCurrentMobilePlacementBatch() {
+  if (!mobilePlacementCurrentBatchId) return null;
+  return getMobilePlacementBatches().find(b => b.id === mobilePlacementCurrentBatchId) || null;
+}
+function confirmCurrentMobilePlacementBatch() {
+  const batch = getCurrentMobilePlacementBatch();
+  if (batch) {
+    clearMobilePlacementFlags(batch.nodes);
+    batch.nodes.forEach(n => { if (n && n.el) n.el.classList.remove('mobile-placement-current'); });
+    markDirty();
+  }
+  mobilePlacementCurrentBatchId = null;
+  setTimeout(runMobilePlacementReviewStep, 0);
+}
+function cancelMobilePlacementReview() {
+  mobilePlacementReviewActive = false;
+  mobilePlacementCurrentBatchId = null;
+  mobilePlacementOverlayOpen(false);
+  clearMobilePlacementCurrentStyles();
+  state.selectedNodes.clear();
+  renderCanvasGroupBar();
+}
+function runMobilePlacementReviewStep() {
+  const remaining = getMobilePlacementBatches();
+  if (!remaining.length) {
+    mobilePlacementReviewActive = false;
+    mobilePlacementCurrentBatchId = null;
+    mobilePlacementOverlayOpen(false);
+    clearMobilePlacementCurrentStyles();
+    state.selectedNodes.clear();
+    renderCanvasGroupBar();
+    redrawEdges();
+    return;
+  }
+  mobilePlacementReviewActive = true;
+  mobilePlacementOverlayOpen(true);
+  mobilePlacementSetCurrentBatch(remaining[0], 1, remaining.length);
+}
 function beginMobilePlacementReviewIfNeeded() {
   if (mobilePlacementReviewActive || document.body.classList.contains('mobile-mode')) return;
-  const batches = getMobilePlacementBatches();
-  if (!batches.length) { hideMobilePlacementBanner(); return; }
-  mobilePlacementReviewActive = true;
-  const next = () => {
-    const remaining = getMobilePlacementBatches();
-    if (!remaining.length) {
-      mobilePlacementReviewActive = false;
-      hideMobilePlacementBanner();
-      renderCanvasGroupBar();
-      return;
-    }
-    const batch = remaining[0];
-    const nodeCount = batch.nodes.length;
-    const label = batch.label || 'Mobile-created node';
-    showMobilePlacementBanner('Click the open canvas space for “' + label + '” (' + nodeCount + ' node' + (nodeCount === 1 ? '' : 's') + ').');
-    const onClick = (e) => {
-      const target = e.target;
-      if (target && target.closest && (target.closest('.topbar') || target.closest('#side-panel') || target.closest('#mobile-placement-banner'))) return;
-      e.preventDefault();
-      e.stopPropagation();
-      document.removeEventListener('click', onClick, true);
-      const point = { x: (e.clientX - VIEW.x) / VIEW.zoom, y: (e.clientY - VIEW.y) / VIEW.zoom };
-      moveMobilePlacementBatchToCanvasPoint(batch, point);
-      setTimeout(next, 0);
-    };
-    setTimeout(() => document.addEventListener('click', onClick, true), 0);
-  };
-  next();
+  if (!getMobilePlacementBatches().length) { hideMobilePlacementBanner(); return; }
+  runMobilePlacementReviewStep();
 }
+function handleMobilePlacementMouseDown(e) {
+  if (!mobilePlacementReviewActive || !mobilePlacementCurrentBatchId) return;
+  const nodeEl = e.target && e.target.closest ? e.target.closest('.node.mobile-placement-current') : null;
+  if (!nodeEl) return;
+  if (e.button !== 0) return;
+  if (e.target.closest && e.target.closest('#mobile-placement-overlay button, .node-anchor, .node-action, input, textarea, select, button')) return;
+  const batch = getCurrentMobilePlacementBatch();
+  if (!batch) return;
+  e.preventDefault();
+  e.stopPropagation();
+  mobilePlacementDrag = {
+    batch,
+    startX: e.clientX,
+    startY: e.clientY,
+    starts: batch.nodes.map(n => ({ node: n, x: Number(n.x) || 0, y: Number(n.y) || 0 }))
+  };
+  document.body.classList.add('mobile-placement-dragging');
+  window.addEventListener('mousemove', handleMobilePlacementMouseMove, true);
+  window.addEventListener('mouseup', handleMobilePlacementMouseUp, true);
+}
+function handleMobilePlacementMouseMove(e) {
+  if (!mobilePlacementDrag) return;
+  e.preventDefault();
+  const dx = (e.clientX - mobilePlacementDrag.startX) / VIEW.zoom;
+  const dy = (e.clientY - mobilePlacementDrag.startY) / VIEW.zoom;
+  mobilePlacementDrag.starts.forEach(({ node, x, y }) => {
+    if (!node || !node.el || !state.nodes.has(node.id)) return;
+    node.x = Math.round(x + dx);
+    node.y = Math.round(y + dy);
+    node.el.style.left = node.x + 'px';
+    node.el.style.top = node.y + 'px';
+  });
+  mobilePlacementDrawHull(mobilePlacementDrag.batch);
+  redrawEdges();
+}
+function handleMobilePlacementMouseUp(e) {
+  if (!mobilePlacementDrag) return;
+  e.preventDefault();
+  mobilePlacementDrag = null;
+  document.body.classList.remove('mobile-placement-dragging');
+  window.removeEventListener('mousemove', handleMobilePlacementMouseMove, true);
+  window.removeEventListener('mouseup', handleMobilePlacementMouseUp, true);
+  markDirty();
+}
+document.addEventListener('mousedown', handleMobilePlacementMouseDown, true);
 
 function createSessionBrainstormNode() {
   if (!sessionState.currentSessionId) { alert('Open a session first.'); return null; }
@@ -18031,7 +18197,7 @@ function wireMobileNodeList() {
 // Renders: editable title, type badge, the canvas-card body (so monsters /
 // brainstorm items / table data render fully and stay interactive), then
 // the side-panel form fields, then prev/next nav buttons.
-// v1.3.70: mobile swipe-to-change-node is disabled; connected-node tags are used instead.
+// v1.3.71: mobile swipe-to-change-node is disabled; connected-node tags are used instead.
 function getConnectedCanvasNodes(nodeId) {
   const out = [];
   const seen = new Set();
@@ -18249,7 +18415,7 @@ function wireMobileNodeView(node) {
   if (prevBtn) prevBtn.addEventListener('click', () => mobileGoNode(-1));
   if (nextBtn) nextBtn.addEventListener('click', () => mobileGoNode(+1));
 
-  // v1.3.70: swipe-to-change-node disabled on mobile.
+  // v1.3.71: swipe-to-change-node disabled on mobile.
   // Navigation remains available through Prev/Next and connected-node tags.
 }
 
