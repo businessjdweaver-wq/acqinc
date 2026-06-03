@@ -1682,6 +1682,7 @@ function buildWrapCarryForwardPayload() {
   })).filter(e => e.from_node && e.to_node);
 
   // v1.3.64: Name Forge collection tab visual refresh; saved-name edits now use an in-app modal.
+  // v1.3.65: Session picker nested arcs open when they contain sessions; opening child arcs also opens ancestors for mobile tap safety.
   // v1.3.60: Canvas Groups are saved in session.blocks.canvas_groups and
   // reference node ids. Since Wrap Session gives copied nodes new ids, group
   // membership must be carried forward through the same source→destination
@@ -3483,12 +3484,20 @@ function getChildArcs(parentArcId, campaignId) {
     .sort((a,b) => (Number(a.sort_order || 0) - Number(b.sort_order || 0)) || String(a.name || '').localeCompare(String(b.name || '')));
 }
 
+function arcHasSessionsInPickerTree(arc) {
+  if (!arc) return false;
+  const direct = (sessionState.sessions || []).some(s => String(s.arc_id) === String(arc.id));
+  if (direct) return true;
+  return getChildArcs(arc.id, arc.campaign_id).some(child => arcHasSessionsInPickerTree(child));
+}
+
 function renderArcInPicker(arc, depth = 0) {
   const arcSessions = sessionState.sessions.filter(s => String(s.arc_id) === String(arc.id));
   const childArcs = getChildArcs(arc.id, arc.campaign_id);
   const pad = Math.max(0, depth) * 18;
+  const shouldOpen = arcSessions.length > 0 || childArcs.some(child => arcHasSessionsInPickerTree(child));
   return `
-    <div class="sp-arc" data-arc-id="${arc.id}" style="margin-left:${pad}px;">
+    <div class="sp-arc${shouldOpen ? ' open' : ''}" data-arc-id="${arc.id}" style="margin-left:${pad}px;">
       <div class="sp-arc-header" onclick="toggleArc('${arc.id}')">
         <span class="sp-arc-caret">▶</span>${escHtml(arc.name || 'Untitled Arc')}
         ${childArcs.length ? `<span style="margin-left:8px;color:var(--steel-pale);font-family:'JetBrains Mono',monospace;font-size:0.52rem;">${childArcs.length} child${childArcs.length===1?'':'ren'}</span>` : ''}
@@ -3601,7 +3610,18 @@ window.toggleCampaign = function(id) {
 };
 window.toggleArc = function(id) {
   const el = document.querySelector(`.sp-arc[data-arc-id="${id}"]`);
-  if (el) el.classList.toggle('open');
+  if (!el) return;
+  el.classList.toggle('open');
+  // v1.3.65: nested picker arcs must remain reachable on mobile.
+  // When a child arc is opened, make sure every ancestor arc is also open;
+  // otherwise the child sessions can exist in the DOM with 0px height and cannot be tapped.
+  if (el.classList.contains('open')) {
+    let parent = el.parentElement;
+    while (parent) {
+      if (parent.classList && parent.classList.contains('sp-arc')) parent.classList.add('open');
+      parent = parent.parentElement;
+    }
+  }
 };
 
 // ── PICKING / CREATING SESSIONS ──
