@@ -3412,7 +3412,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 function renderSessionPicker() {
-  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.69 · Mobile Connected Node Tags</div>';
+  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.70 · Mobile Placement Review</div>';
   const camps = sessionState.campaigns;
   const errs  = sessionState._errors || [];
   const errBanner = errs.length ? `
@@ -3701,6 +3701,14 @@ function serializeCanvas() {
       fields:   fields,
       collapsed: !!n.collapsed,            // whole-node collapse state
     };
+    if (n.mobile_created || n.mobile_pending_placement || n.mobile_placement_batch_id) {
+      base.mobile_created = !!n.mobile_created;
+      base.mobile_created_at = n.mobile_created_at || null;
+      base.mobile_pending_placement = !!n.mobile_pending_placement;
+      base.mobile_placement_batch_id = n.mobile_placement_batch_id || null;
+      base.mobile_placement_label = n.mobile_placement_label || '';
+      base.mobile_placement_kind = n.mobile_placement_kind || '';
+    }
     // Table nodes carry a `table` payload separate from `fields`. Always
     // serialized so empty tables don't decay; absent for non-table nodes.
     if (n.table) {
@@ -3847,6 +3855,14 @@ function deserializeCanvas(data) {
       home_session_id: nd.home_session_id || null,
       collapsed: !!nd.collapsed,               // restore prior collapse state
     };
+    if (nd.mobile_created || nd.mobile_pending_placement || nd.mobile_placement_batch_id) {
+      node.mobile_created = !!nd.mobile_created;
+      node.mobile_created_at = nd.mobile_created_at || null;
+      node.mobile_pending_placement = !!nd.mobile_pending_placement;
+      node.mobile_placement_batch_id = nd.mobile_placement_batch_id || null;
+      node.mobile_placement_label = nd.mobile_placement_label || '';
+      node.mobile_placement_kind = nd.mobile_placement_kind || '';
+    }
     // Restore table data if present (table-type nodes only). For nodes
     // saved before tables were a thing, fall back to the type's default.
     if (def.isTable) {
@@ -3900,6 +3916,10 @@ function deserializeCanvas(data) {
     el.innerHTML = (typeof rqSafeRenderNodeFace === 'function' ? rqSafeRenderNodeFace(node) : renderNodeFace(node));
     content.appendChild(el);
     node.el = el;
+    if (node.mobile_pending_placement) {
+      el.dataset.mobilePendingPlacement = '1';
+      if (node.mobile_placement_batch_id) el.dataset.mobilePlacementBatchId = node.mobile_placement_batch_id;
+    }
     // Sync collapsed class from data
     if (node.collapsed) el.classList.add('collapsed');
     state.nodes.set(nd.id, node);
@@ -5706,12 +5726,131 @@ function addNodeToCanvasGroup(group, node) {
   renderCanvasGroupBar();
 }
 
+// v1.3.70: nodes created from mobile are marked for desktop placement review.
+// Batches let a mobile-created brainstorm and all of its newly connected children
+// move together when the user returns to the full canvas.
+function isMobileInterfaceActive() {
+  return document.body.classList.contains('mobile-mode') && typeof mobileState !== 'undefined';
+}
+function makeMobilePlacementBatchId(node) {
+  return 'mob_batch_' + (node && node.id ? node.id : Date.now()) + '_' + Math.random().toString(36).slice(2, 6);
+}
+function markNodeForMobilePlacement(node, opts = {}) {
+  if (!node || !node.id) return node;
+  const batchId = opts.batchId || node.mobile_placement_batch_id || makeMobilePlacementBatchId(node);
+  node.mobile_created = true;
+  node.mobile_created_at = node.mobile_created_at || new Date().toISOString();
+  node.mobile_pending_placement = true;
+  node.mobile_placement_batch_id = batchId;
+  node.mobile_placement_label = String(opts.label || node.mobile_placement_label || node.title || 'Mobile-created node');
+  node.mobile_placement_kind = String(opts.kind || node.mobile_placement_kind || node.type || 'node');
+  if (node.el) {
+    node.el.dataset.mobilePendingPlacement = '1';
+    node.el.dataset.mobilePlacementBatchId = batchId;
+  }
+  return node;
+}
+function getMobilePlacementBatches() {
+  const map = new Map();
+  state.nodes.forEach(node => {
+    if (!node || !node.mobile_pending_placement) return;
+    const batchId = node.mobile_placement_batch_id || makeMobilePlacementBatchId(node);
+    node.mobile_placement_batch_id = batchId;
+    const label = node.mobile_placement_label || node.title || 'Mobile-created node';
+    if (!map.has(batchId)) {
+      map.set(batchId, { id: batchId, label, nodes: [] });
+    }
+    map.get(batchId).nodes.push(node);
+  });
+  return Array.from(map.values()).filter(b => b.nodes.length);
+}
+function clearMobilePlacementFlags(nodes) {
+  (nodes || []).forEach(node => {
+    if (!node) return;
+    delete node.mobile_pending_placement;
+    delete node.mobile_placement_batch_id;
+    delete node.mobile_placement_label;
+    delete node.mobile_placement_kind;
+    if (node.el) {
+      delete node.el.dataset.mobilePendingPlacement;
+      delete node.el.dataset.mobilePlacementBatchId;
+    }
+  });
+}
+function showMobilePlacementBanner(text) {
+  let bar = document.getElementById('mobile-placement-banner');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'mobile-placement-banner';
+    document.body.appendChild(bar);
+  }
+  bar.innerHTML = '<b>Place mobile node(s):</b> ' + escHtml(text || 'Click an open canvas space.');
+  bar.classList.add('open');
+}
+function hideMobilePlacementBanner() {
+  const bar = document.getElementById('mobile-placement-banner');
+  if (bar) bar.classList.remove('open');
+}
+function moveMobilePlacementBatchToCanvasPoint(batch, point) {
+  if (!batch || !batch.nodes || !batch.nodes.length || !point) return;
+  const live = batch.nodes.filter(n => n && state.nodes.has(n.id));
+  if (!live.length) return;
+  const minX = Math.min(...live.map(n => Number(n.x) || 0));
+  const minY = Math.min(...live.map(n => Number(n.y) || 0));
+  live.forEach(node => {
+    node.x = Math.round(point.x + ((Number(node.x) || 0) - minX));
+    node.y = Math.round(point.y + ((Number(node.y) || 0) - minY));
+    if (node.el) {
+      node.el.style.left = node.x + 'px';
+      node.el.style.top = node.y + 'px';
+    }
+  });
+  clearMobilePlacementFlags(live);
+  redrawEdges();
+  markDirty();
+}
+let mobilePlacementReviewActive = false;
+function beginMobilePlacementReviewIfNeeded() {
+  if (mobilePlacementReviewActive || document.body.classList.contains('mobile-mode')) return;
+  const batches = getMobilePlacementBatches();
+  if (!batches.length) { hideMobilePlacementBanner(); return; }
+  mobilePlacementReviewActive = true;
+  const next = () => {
+    const remaining = getMobilePlacementBatches();
+    if (!remaining.length) {
+      mobilePlacementReviewActive = false;
+      hideMobilePlacementBanner();
+      renderCanvasGroupBar();
+      return;
+    }
+    const batch = remaining[0];
+    const nodeCount = batch.nodes.length;
+    const label = batch.label || 'Mobile-created node';
+    showMobilePlacementBanner('Click the open canvas space for “' + label + '” (' + nodeCount + ' node' + (nodeCount === 1 ? '' : 's') + ').');
+    const onClick = (e) => {
+      const target = e.target;
+      if (target && target.closest && (target.closest('.topbar') || target.closest('#side-panel') || target.closest('#mobile-placement-banner'))) return;
+      e.preventDefault();
+      e.stopPropagation();
+      document.removeEventListener('click', onClick, true);
+      const point = { x: (e.clientX - VIEW.x) / VIEW.zoom, y: (e.clientY - VIEW.y) / VIEW.zoom };
+      moveMobilePlacementBatchToCanvasPoint(batch, point);
+      setTimeout(next, 0);
+    };
+    setTimeout(() => document.addEventListener('click', onClick, true), 0);
+  };
+  next();
+}
+
 function createSessionBrainstormNode() {
   if (!sessionState.currentSessionId) { alert('Open a session first.'); return null; }
   const cx = (wrap.clientWidth / 2 - VIEW.x) / VIEW.zoom;
   const cy = (wrap.clientHeight / 2 - VIEW.y) / VIEW.zoom;
   const jitter = (state.nodes.size % 8) * 30;
   const node = createNode({ type: 'brainstorm', x: Math.round(cx + jitter), y: Math.round(cy + jitter), title: 'New Brainstorm' });
+  if (isMobileInterfaceActive()) {
+    markNodeForMobilePlacement(node, { batchId: makeMobilePlacementBatchId(node), label: node.title || 'New Brainstorm', kind: 'brainstorm' });
+  }
   node._rqPendingBrainstormGroup = true;
   if (!node.brainstorm || typeof node.brainstorm !== 'object') node.brainstorm = { items: [''] };
   if (document.body.classList.contains('mobile-mode') && typeof mobileState !== 'undefined') {
@@ -6753,6 +6892,18 @@ async function createConnectedNodeFromBrainstormLine(brainstormNode, idx) {
     title: brainstormLineTitle(lineText),
     summary: String(lineText || '').trim()
   });
+  if (isMobileInterfaceActive()) {
+    const batchId = brainstormNode.mobile_pending_placement
+      ? (brainstormNode.mobile_placement_batch_id || makeMobilePlacementBatchId(brainstormNode))
+      : makeMobilePlacementBatchId(newNode);
+    const label = brainstormNode.mobile_pending_placement
+      ? (brainstormNode.mobile_placement_label || brainstormNode.title || 'Mobile Brainstorm')
+      : (newNode.title || 'Mobile-created node');
+    markNodeForMobilePlacement(newNode, { batchId, label, kind: brainstormNode.mobile_pending_placement ? 'brainstorm-child' : 'node' });
+    if (brainstormNode.mobile_pending_placement) {
+      markNodeForMobilePlacement(brainstormNode, { batchId, label, kind: 'brainstorm' });
+    }
+  }
   const group = ensureCanvasGroupForBrainstormNode(brainstormNode, brainstormNode.title || 'Brainstorm');
   addNodeToCanvasGroup(group, newNode);
   createEdge(
@@ -17666,6 +17817,8 @@ function applyMobileMode() {
       mobileState.screen = 'sessions';
     }
     renderMobileScreen();
+  } else {
+    setTimeout(beginMobilePlacementReviewIfNeeded, 0);
   }
 }
 
@@ -17878,7 +18031,7 @@ function wireMobileNodeList() {
 // Renders: editable title, type badge, the canvas-card body (so monsters /
 // brainstorm items / table data render fully and stay interactive), then
 // the side-panel form fields, then prev/next nav buttons.
-// v1.3.69: mobile swipe-to-change-node is disabled; connected-node tags are used instead.
+// v1.3.70: mobile swipe-to-change-node is disabled; connected-node tags are used instead.
 function getConnectedCanvasNodes(nodeId) {
   const out = [];
   const seen = new Set();
@@ -18096,7 +18249,7 @@ function wireMobileNodeView(node) {
   if (prevBtn) prevBtn.addEventListener('click', () => mobileGoNode(-1));
   if (nextBtn) nextBtn.addEventListener('click', () => mobileGoNode(+1));
 
-  // v1.3.69: swipe-to-change-node disabled on mobile.
+  // v1.3.70: swipe-to-change-node disabled on mobile.
   // Navigation remains available through Prev/Next and connected-node tags.
 }
 
