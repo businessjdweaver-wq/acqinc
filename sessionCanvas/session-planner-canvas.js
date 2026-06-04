@@ -3412,7 +3412,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 function renderSessionPicker() {
-  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.72 · Mobile Placement Overlay Polish</div>';
+  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.73 · Mobile Placement Launch Fix</div>';
   const camps = sessionState.campaigns;
   const errs  = sessionState._errors || [];
   const errBanner = errs.length ? `
@@ -3980,6 +3980,8 @@ function deserializeCanvas(data) {
     applyTransform();
   }
   updateEmptyHint();
+  const removedEmptyGroups = cleanupEmptyCanvasGroupsOnSessionLaunch();
+  if (removedEmptyGroups) sessionState._emptyCanvasGroupsRemovedOnLaunch = (sessionState._emptyCanvasGroupsRemovedOnLaunch || 0) + removedEmptyGroups;
   renderCanvasGroupBar();
   requestAnimationFrame(() => redrawEdges());
 }
@@ -4064,6 +4066,11 @@ async function loadSessionData(sessionRow) {
   sessionState.arcSaveGen      = sessionState.arcLastSavedGen      = 0;
   setCanvasSavedState('saved');
   updateEmptyHint();
+  if (sessionState._emptyCanvasGroupsRemovedOnLaunch) {
+    delete sessionState._emptyCanvasGroupsRemovedOnLaunch;
+    markDirty();
+  }
+  scheduleMobilePlacementReviewAfterSessionLoad();
   // If we're in mobile mode, jump to the node list for the freshly loaded session.
   if (document.body.classList.contains('mobile-mode')) {
     if (typeof mobileState !== 'undefined') {
@@ -5549,9 +5556,29 @@ function frameNodes(nodes) {
 
 function getCanvasGroupList() {
   if (!Array.isArray(sessionState.canvasGroups)) sessionState.canvasGroups = [];
-  // Prune node ids that no longer exist on the canvas, but keep empty groups
-  // visible so the user understands what happened after deleting nodes.
   return sessionState.canvasGroups;
+}
+
+// v1.3.73: remove empty canvas groups on session launch. A group is empty
+// when none of its node_ids resolves to a live canvas node after deserialize.
+function cleanupEmptyCanvasGroupsOnSessionLaunch() {
+  if (!Array.isArray(sessionState.canvasGroups)) {
+    sessionState.canvasGroups = [];
+    return 0;
+  }
+  const before = sessionState.canvasGroups.length;
+  sessionState.canvasGroups = sessionState.canvasGroups
+    .map(g => ({
+      ...g,
+      node_ids: _cleanGroupNodeIds(g).filter(id => state.nodes.has(id)),
+    }))
+    .filter(g => Array.isArray(g.node_ids) && g.node_ids.length > 0);
+
+  const activeId = String(sessionState.activeCanvasGroupId || '');
+  if (activeId && !sessionState.canvasGroups.some(g => String(g.id) === activeId)) {
+    sessionState.activeCanvasGroupId = sessionState.canvasGroups[0] ? String(sessionState.canvasGroups[0].id) : '';
+  }
+  return before - sessionState.canvasGroups.length;
 }
 function getActiveCanvasGroupIndex() {
   const groups = getCanvasGroupList();
@@ -5726,7 +5753,7 @@ function addNodeToCanvasGroup(group, node) {
   renderCanvasGroupBar();
 }
 
-// v1.3.72: nodes created from mobile are marked for desktop placement review.
+// v1.3.73: nodes created from mobile are marked for desktop placement review.
 // Batches let a mobile-created brainstorm and all of its newly connected children
 // move together as a highlighted placement group when the user returns to desktop.
 function isMobileInterfaceActive() {
@@ -5961,6 +5988,20 @@ function beginMobilePlacementReviewIfNeeded() {
   if (mobilePlacementReviewActive || document.body.classList.contains('mobile-mode')) return;
   if (!getMobilePlacementBatches().length) { hideMobilePlacementBanner(); return; }
   runMobilePlacementReviewStep();
+}
+
+// v1.3.73: session selection should launch the desktop placement review without
+// relying on a resize/focus event, DevTools opening, or another incidental render.
+function scheduleMobilePlacementReviewAfterSessionLoad() {
+  const tryStart = () => {
+    if (!sessionState.currentSessionId) return;
+    if (document.body.classList.contains('mobile-mode')) return;
+    beginMobilePlacementReviewIfNeeded();
+  };
+  setTimeout(tryStart, 0);
+  setTimeout(tryStart, 80);
+  setTimeout(tryStart, 250);
+  requestAnimationFrame(() => requestAnimationFrame(tryStart));
 }
 function handleMobilePlacementMouseDown(e) {
   if (!mobilePlacementReviewActive || !mobilePlacementCurrentBatchId) return;
@@ -18211,7 +18252,7 @@ function wireMobileNodeList() {
 // Renders: editable title, type badge, the canvas-card body (so monsters /
 // brainstorm items / table data render fully and stay interactive), then
 // the side-panel form fields, then prev/next nav buttons.
-// v1.3.72: mobile swipe-to-change-node is disabled; connected-node tags are used instead.
+// v1.3.73: mobile swipe-to-change-node is disabled; connected-node tags are used instead.
 function getConnectedCanvasNodes(nodeId) {
   const out = [];
   const seen = new Set();
@@ -18429,7 +18470,7 @@ function wireMobileNodeView(node) {
   if (prevBtn) prevBtn.addEventListener('click', () => mobileGoNode(-1));
   if (nextBtn) nextBtn.addEventListener('click', () => mobileGoNode(+1));
 
-  // v1.3.72: swipe-to-change-node disabled on mobile.
+  // v1.3.73: swipe-to-change-node disabled on mobile.
   // Navigation remains available through Prev/Next and connected-node tags.
 }
 
