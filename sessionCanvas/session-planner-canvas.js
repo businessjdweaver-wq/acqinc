@@ -3412,7 +3412,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 function renderSessionPicker() {
-  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.75 · Monster Flavor Text Controls</div>';
+  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.76 · Monster Flavor Text Controls</div>';
   const camps = sessionState.campaigns;
   const errs  = sessionState._errors || [];
   const errBanner = errs.length ? `
@@ -5559,7 +5559,7 @@ function getCanvasGroupList() {
   return sessionState.canvasGroups;
 }
 
-// v1.3.75: remove empty canvas groups on session launch. A group is empty
+// v1.3.76: remove empty canvas groups on session launch. A group is empty
 // when none of its node_ids resolves to a live canvas node after deserialize.
 function cleanupEmptyCanvasGroupsOnSessionLaunch() {
   if (!Array.isArray(sessionState.canvasGroups)) {
@@ -5753,7 +5753,7 @@ function addNodeToCanvasGroup(group, node) {
   renderCanvasGroupBar();
 }
 
-// v1.3.75: nodes created from mobile are marked for desktop placement review.
+// v1.3.76: nodes created from mobile are marked for desktop placement review.
 // Batches let a mobile-created brainstorm and all of its newly connected children
 // move together as a highlighted placement group when the user returns to desktop.
 function isMobileInterfaceActive() {
@@ -5990,7 +5990,7 @@ function beginMobilePlacementReviewIfNeeded() {
   runMobilePlacementReviewStep();
 }
 
-// v1.3.75: session selection should launch the desktop placement review without
+// v1.3.76: session selection should launch the desktop placement review without
 // relying on a resize/focus event, DevTools opening, or another incidental render.
 function scheduleMobilePlacementReviewAfterSessionLoad() {
   const tryStart = () => {
@@ -11930,7 +11930,7 @@ function renderOneMonsterCard(m, idx, isSingleton) {
 }
 
 
-// v1.3.75: cloned encounter monsters may share the same imported snapshot object.
+// v1.3.76: cloned encounter monsters may share the same imported snapshot object.
 // Before editing an action/trigger override, detach the selected monster's
 // snapshot so changes apply only to that combatant instance.
 function ensureEncounterMonsterInstanceDetached(node, monIdx) {
@@ -14693,7 +14693,7 @@ function wireMonsterRollClicks(nodeEl, node) {
     const monIdx = parseInt(panel.dataset.monOverride);
     let m = monsters[monIdx];
     if (!m || !m._editingAction) return;
-    // v1.3.75: detach before we read/mutate a._override so cloned siblings
+    // v1.3.76: detach before we read/mutate a._override so cloned siblings
     // can receive different trigger/action themes (fire/ice/lightning, etc.).
     m = ensureEncounterMonsterInstanceDetached(node, monIdx) || m;
     const { kind, i } = m._editingAction;
@@ -18299,7 +18299,7 @@ function wireMobileNodeList() {
 // Renders: editable title, type badge, the canvas-card body (so monsters /
 // brainstorm items / table data render fully and stay interactive), then
 // the side-panel form fields, then prev/next nav buttons.
-// v1.3.75: mobile swipe-to-change-node is disabled; connected-node tags are used instead.
+// v1.3.76: mobile swipe-to-change-node is disabled; connected-node tags are used instead.
 function getConnectedCanvasNodes(nodeId) {
   const out = [];
   const seen = new Set();
@@ -18517,7 +18517,7 @@ function wireMobileNodeView(node) {
   if (prevBtn) prevBtn.addEventListener('click', () => mobileGoNode(-1));
   if (nextBtn) nextBtn.addEventListener('click', () => mobileGoNode(+1));
 
-  // v1.3.75: swipe-to-change-node disabled on mobile.
+  // v1.3.76: swipe-to-change-node disabled on mobile.
   // Navigation remains available through Prev/Next and connected-node tags.
 }
 
