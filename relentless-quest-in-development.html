@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7219</title>
+<title>Relentless Quest v1.7220</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3130,7 +3130,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7219</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7220</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4153,7 +4153,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7219
+      Version 1.7220
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -5055,7 +5055,7 @@ body.dev-active #app{margin-top:36px;}
   </div>
 </div></div>
 
-<!-- v1.7219 — Optional immediate skill grant after a building is dedicated
+<!-- v1.7220 — Optional immediate skill grant after a building is dedicated
      to a skill. Uses territory-filtered candidates, downtime cap gates, and
      the squad coverage calculator to sort by practical benefit. -->
 <div class="ov" id="ov-dt-skillgrant" style="z-index:566"><div class="modal" style="max-width:620px">
@@ -11069,14 +11069,13 @@ function openQuestPreview(setId,qIdx){
 // refreshes the relevant views.
 function finishRealEstateNaming(saveName){
   if(!_rePendingItem){closeOv('ov-cre-name');return;}
+  var _namedAsset=(S.partyAssets||[]).filter(function(a){return a&&a.meta&&a.meta.uid===_rePendingItem.uid;})[0]||null;
+  var _namedItem=_rePendingItem.item||(_namedAsset?{name:_namedAsset.name}:null);
   if(saveName){
     var v=(document.getElementById('ov-cre-name-input').value||'').trim();
-    if(v){
-      var target=(S.partyAssets||[]).filter(function(a){return a&&a.meta&&a.meta.uid===_rePendingItem.uid;})[0];
-      if(target){
-        if(!target.meta)target.meta={};
-        target.meta.customName=v.slice(0,60);
-      }
+    if(v&&_namedAsset){
+      if(!_namedAsset.meta)_namedAsset.meta={};
+      _namedAsset.meta.customName=v.slice(0,60);
     }
   }
   _rePendingItem=null;
@@ -11086,6 +11085,17 @@ function finishRealEstateNaming(saveName){
   renderCycleMapCards();
   if(typeof renderParty==='function')renderParty();
   if(typeof renderStore==='function')renderStore();
+  // v1.7220 safety net: if a purchase path reached naming without having
+  // surfaced the post-dedication skill grant, offer it here after the naming
+  // overlay closes. This covers quest-prereq, store, and future real-estate
+  // purchase paths that reuse the naming modal.
+  if(_namedAsset&&_namedAsset.meta&&!_namedAsset.meta.instantGrantUsed&&!_namedAsset.meta.instantGrantOffered&&typeof _dtMaybeOpenSkillGrantAfterDedication==='function'){
+    _dtMaybeOpenSkillGrantAfterDedication(_namedAsset,_namedItem,function(){
+      if(typeof save==='function')save();
+      if(typeof renderParty==='function')renderParty();
+      if(typeof renderStore==='function')renderStore();
+    });
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -19485,7 +19495,7 @@ function rqDowntimeAudit(opts){
       } else if(p.job.type==='faith'&&p.job.target&&c.rel===p.job.target){
         charStateEvidence='Already follows faith: '+p.job.target;
       } else if(p.job.type==='contacts'&&c.contact){
-        // v1.7219 — contact:true now means this party member IS a recruited
+        // v1.7220 — contact:true now means this party member IS a recruited
         // contact/hireling, not that they already own the contacts reward.
         // Do not treat it as medium evidence that a contacts downtime roll
         // already resolved; contacts jobs spawn a separate new contact.
@@ -21206,7 +21216,7 @@ function _dtApplyBuildingDedication(asset,type,value,itemName){
 
 
 
-// v1.7219 — Immediate territory skill grant from newly dedicated buildings.
+// v1.7220 — Immediate territory skill grant from newly dedicated buildings.
 // This is intentionally separate from normal downtime jobs: the grant is a
 // one-time building establishment benefit, but it records the proficiency in
 // dtEarnedProficiencies so the existing class/level cap remains authoritative.
@@ -21317,15 +21327,33 @@ function _dtRenderSkillGrantModal(){
 function _dtOpenSkillGrantModal(asset,type,skill,itemName,onDone){
   type=_dtNormalizeGrantType(type);
   skill=String(skill||'').trim();
-  if(type!=='skill'||!skill){if(typeof onDone==='function')onDone();return;}
+  if(type!=='skill'||!skill){if(typeof onDone==='function')onDone();return false;}
+  if(!asset)return false;
   if(!asset.meta)asset.meta={};
-  if(asset.meta.instantGrantUsed){if(typeof onDone==='function')onDone();return;}
+  if(asset.meta.instantGrantUsed){if(typeof onDone==='function')onDone();return false;}
   var territory=(asset&&asset.meta&&(asset.meta.ownerRef||asset.meta.owner_ref))||'';
+  asset.meta.instantGrantOffered=true; // remember that the one-time establishment prompt was surfaced
   DOWNTIME_SKILL_GRANT_PENDING={asset:asset,type:type,skill:skill,itemName:itemName||asset.name||'Building',territory:territory,onDone:onDone};
-  _dtRenderSkillGrantModal();
+  try{_dtRenderSkillGrantModal();}
+  catch(e){
+    console.error('[RQ building skill grant] Failed to render grant modal',e,{asset:asset,type:type,skill:skill,territory:territory});
+    if(typeof onDone==='function')onDone();
+    return false;
+  }
   var skip=document.getElementById('ov-dt-sg-skip');
   if(skip)skip.onclick=function(){_dtCloseSkillGrantModal(false);};
   openOv('ov-dt-skillgrant');
+  return true;
+}
+function _dtMaybeOpenSkillGrantAfterDedication(asset,item,onDone){
+  if(!asset||!asset.meta){if(typeof onDone==='function')onDone();return false;}
+  var type=String(asset.meta.unlockType||asset.meta.unlock_type||'').trim();
+  var target=String(asset.meta.unlockValue||asset.meta.unlock_value||'').trim();
+  var itemName=(item&&item.name)||asset.name||'Building';
+  if(type!=='skill'||!target||asset.meta.instantGrantUsed){if(typeof onDone==='function')onDone();return false;}
+  // Defer one tick so closeOv('ov-dt-dedicate') fully clears before opening the next overlay.
+  setTimeout(function(){_dtOpenSkillGrantModal(asset,type,target,itemName,onDone);},0);
+  return true;
 }
 function _dtCloseSkillGrantModal(callDone){
   var cb=DOWNTIME_SKILL_GRANT_PENDING&&DOWNTIME_SKILL_GRANT_PENDING.onDone;
@@ -21428,7 +21456,7 @@ function _dtOpenBuildingDedicationModal(asset,item,onDone){
       var cb=pending.onDone;
       DOWNTIME_DEDICATION_PENDING=null;
       closeOv('ov-dt-dedicate');
-      _dtOpenSkillGrantModal(pending.asset,type,target,(pending.item&&pending.item.name)||'Building',cb);
+      _dtMaybeOpenSkillGrantAfterDedication(pending.asset,pending.item||{name:'Building'},cb);
       return;
     }
     finish();
@@ -21445,7 +21473,7 @@ function _dtPromptBuildingDedication(asset,item){
 // Some browser/debug contexts do not reveal top-level function declarations
 // reliably, so expose the downtime dedication helpers under one stable object.
 window.RQ_DOWNTIME_GATE_DEBUG={
-  version:'v1.7219',
+  version:'v1.7220',
   buildingOptions:_dtBuildingUnlockOptions,
   buildingOverrides:_dtTerritoryBuildingOverrides,
   buildingOverrideList:_dtBuildingOverrideList,
@@ -21484,7 +21512,7 @@ function downtimeProgressKeyIsObsolete(c,key){
   if(!c||!key)return false;
   var p=_downtimeKeyParts(key);
   if(downtimeTargetAlreadyOwned(c,p.type,p.target))return true;
-  // v1.7219 — Do NOT clear contacts progress merely because c.contact is
+  // v1.7220 — Do NOT clear contacts progress merely because c.contact is
   // true. Recruited contacts are characters (hireling:true/contact:true)
   // and are allowed to Network for Contacts; the reward spawns a separate
   // new contact and badges the runner as Franchise Connector.
@@ -24600,8 +24628,11 @@ function renderParty(){
         var sub=(a.meta&&a.meta.customName)?'<div style="font-size:.74em;color:var(--ink-light);margin-top:2px">'+esc(a.name)+'</div>':'';
         var unlock=(typeof _dtAssetUnlockLabel==='function')?_dtAssetUnlockLabel(a):'';
         var unlockHtml=unlock?'<div style="font-size:.74em;color:var(--forest);margin-top:2px">Downtime unlock: '+esc(unlock)+'</div>':'<div style="font-size:.74em;color:var(--ink-light);margin-top:2px;font-style:italic">No downtime unlock assigned.</div>';
-        var btn='<button class="btn bg sm" data-a="dt-rededicate-building" data-uid="'+esc((a.meta&&a.meta.uid)||'')+'" style="font-size:.62em;min-height:22px;padding:1px 6px;white-space:nowrap">Dedicate</button>';
-        return '<div class="inv-item" style="padding:6px 4px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div style="flex:1">'+base+sub+unlockHtml+'</div>'+btn+'</div>';
+        var uidEsc=esc((a.meta&&a.meta.uid)||'');
+        var btn='<button class="btn bg sm" data-a="dt-rededicate-building" data-uid="'+uidEsc+'" style="font-size:.62em;min-height:22px;padding:1px 6px;white-space:nowrap">Dedicate</button>';
+        var canGrant=(a.meta&&String(a.meta.unlockType||a.meta.unlock_type||'')==='skill'&&!a.meta.instantGrantUsed);
+        var grantBtn=canGrant?'<button class="btn bgn sm" data-a="dt-building-skill-grant" data-uid="'+uidEsc+'" style="font-size:.62em;min-height:22px;padding:1px 6px;white-space:nowrap">Grant Skill</button>':'';
+        return '<div class="inv-item" style="padding:6px 4px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div style="flex:1">'+base+sub+unlockHtml+'</div><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">'+grantBtn+btn+'</div></div>';
       }).join('')+
     '</div>';
   });
@@ -37326,7 +37357,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7219',
+    appVersion:'v1.7220',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -37358,7 +37389,7 @@ if(_rqContractsExportBtn){
     var url=URL.createObjectURL(blob);
     var a=document.createElement('a');
     a.href=url;
-    a.download='relentless-quest-contracts-archive-kudos-v1.7219.json';
+    a.download='relentless-quest-contracts-archive-kudos-v1.7220.json';
     a.click();
     URL.revokeObjectURL(url);
   });
@@ -38587,7 +38618,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7180';
+var RQ_CLIENT_VERSION='v1.7220';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -49015,6 +49046,37 @@ function _autoCreateDashCard(quest,scope){
 
 
 
+
+// v1.7220 — Manual recovery/action button for already-dedicated skill buildings.
+// This makes the establishment grant available even if a purchase path skipped
+// the automatic post-dedication chain, or if the user intentionally chose
+// "Not Now" during the initial modal.
+document.addEventListener('click',function(e){
+  var btn=e.target.closest('[data-a="dt-building-skill-grant"]');
+  if(!btn)return;
+  e.preventDefault();
+  e.stopPropagation();
+  var uid=btn.getAttribute('data-uid')||'';
+  var asset=(S.partyAssets||[]).filter(function(a){return a&&a.meta&&a.meta.uid===uid;})[0]||null;
+  if(!asset){alert('Could not find that building asset. Refresh and try again.');return;}
+  var item=(typeof _dtFindPurchasableByName==='function')?_dtFindPurchasableByName(asset.name):{name:asset.name,type:asset.type};
+  if(typeof _dtMaybeOpenSkillGrantAfterDedication==='function'){
+    _dtMaybeOpenSkillGrantAfterDedication(asset,item,function(){
+      if(typeof save==='function')save();
+      if(typeof renderParty==='function')renderParty();
+      if(typeof renderStore==='function')renderStore();
+    });
+  }else if(typeof _dtOpenSkillGrantModal==='function'){
+    _dtOpenSkillGrantModal(asset,asset.meta.unlockType||asset.meta.unlock_type,asset.meta.unlockValue||asset.meta.unlock_value,asset.name,function(){
+      if(typeof save==='function')save();
+      if(typeof renderParty==='function')renderParty();
+      if(typeof renderStore==='function')renderStore();
+    });
+  }else{
+    alert('Building skill grant modal is missing from this loaded file.');
+  }
+});
+
 // v1.7204 — Existing-building dedication editor.
 // If a building was purchased before the dedication modal existed, or if a
 // sync conflict stripped the unlock metadata, the player can repair it in the
@@ -49067,7 +49129,7 @@ document.addEventListener('click',function(e){
       debugKeys:window.RQ_DOWNTIME_GATE_DEBUG?Object.keys(window.RQ_DOWNTIME_GATE_DEBUG):[],
       asset:asset, item:item
     });
-    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7215.');
+    alert('Building dedication modal is missing from this loaded file. Please refresh and confirm RQ_DOWNTIME_GATE_DEBUG.version is v1.7220.');
   }
 });
 
