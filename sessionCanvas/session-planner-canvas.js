@@ -3412,7 +3412,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 function renderSessionPicker() {
-  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.77 · Flavor Text Prefill</div>';
+  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.78 · Flavor VTT Exact Output</div>';
   const camps = sessionState.campaigns;
   const errs  = sessionState._errors || [];
   const errBanner = errs.length ? `
@@ -5559,7 +5559,7 @@ function getCanvasGroupList() {
   return sessionState.canvasGroups;
 }
 
-// v1.3.77: remove empty canvas groups on session launch. A group is empty
+// v1.3.78: remove empty canvas groups on session launch. A group is empty
 // when none of its node_ids resolves to a live canvas node after deserialize.
 function cleanupEmptyCanvasGroupsOnSessionLaunch() {
   if (!Array.isArray(sessionState.canvasGroups)) {
@@ -5753,7 +5753,7 @@ function addNodeToCanvasGroup(group, node) {
   renderCanvasGroupBar();
 }
 
-// v1.3.77: nodes created from mobile are marked for desktop placement review.
+// v1.3.78: nodes created from mobile are marked for desktop placement review.
 // Batches let a mobile-created brainstorm and all of its newly connected children
 // move together as a highlighted placement group when the user returns to desktop.
 function isMobileInterfaceActive() {
@@ -5990,7 +5990,7 @@ function beginMobilePlacementReviewIfNeeded() {
   runMobilePlacementReviewStep();
 }
 
-// v1.3.77: session selection should launch the desktop placement review without
+// v1.3.78: session selection should launch the desktop placement review without
 // relying on a resize/focus event, DevTools opening, or another incidental render.
 function scheduleMobilePlacementReviewAfterSessionLoad() {
   const tryStart = () => {
@@ -11930,7 +11930,7 @@ function renderOneMonsterCard(m, idx, isSingleton) {
 }
 
 
-// v1.3.77: cloned encounter monsters may share the same imported snapshot object.
+// v1.3.78: cloned encounter monsters may share the same imported snapshot object.
 // Before editing an action/trigger override, detach the selected monster's
 // snapshot so changes apply only to that combatant instance.
 function ensureEncounterMonsterInstanceDetached(node, monIdx) {
@@ -14693,7 +14693,7 @@ function wireMonsterRollClicks(nodeEl, node) {
     const monIdx = parseInt(panel.dataset.monOverride);
     let m = monsters[monIdx];
     if (!m || !m._editingAction) return;
-    // v1.3.77: detach before we read/mutate a._override so cloned siblings
+    // v1.3.78: detach before we read/mutate a._override so cloned siblings
     // can receive different trigger/action themes (fire/ice/lightning, etc.).
     m = ensureEncounterMonsterInstanceDetached(node, monIdx) || m;
     const { kind, i } = m._editingAction;
@@ -16307,12 +16307,14 @@ if (resolved.extra) {
 
 b20RollMonsterSave(displayName,  cr,  ac,  hp,  resolved.name,  saveAbility,  saveDC,  saveDamages,  saveDamageTypes);
   if (resolved.desc && String(resolved.desc).trim()) {
-    // Strip standard 5e save-or-half boilerplate (see dispatchMonsterRoll
-    // for full rationale). Falls back to the original prose if stripping
-    // would leave too little. Stage 38: also substitute the skin's source
-    // name with the NPC's title.
-    const cleanDesc = _substituteNpcSkinName(stripSaveBoilerplate(resolved.desc), sn.name, displayName);
-    if (cleanDesc) {
+    // v1.3.78: manual Flavor / Description Text overrides should be sent
+    // exactly as edited; only generated/source prose gets boilerplate
+    // stripping. Stage 38: also substitute the skin's source name with the
+    // NPC's title.
+    const hasManualDescOverride = !!(action && action._override && action._override.desc && String(action._override.desc).trim());
+    const proseForVtt = hasManualDescOverride ? resolved.desc : stripSaveBoilerplate(resolved.desc);
+    const cleanDesc = _substituteNpcSkinName(proseForVtt, sn.name, displayName);
+    if (cleanDesc && String(cleanDesc).trim()) {
       b20SendFlavor(displayName, cr, ac, hp, resolved.name, cleanDesc, 300);
     }
   }
@@ -16389,8 +16391,6 @@ function dispatchMonsterRoll(imported, action, advantage, dispatchNode) {
   const hp = sn.hp || '';
 
   const resolved = resolveAbilityMechanicsForMonster(action, imported);
-console.log("OVERRIDE:", action._override);
-console.log("RESOLVED:", resolved);
   // Order: dice card first (the mechanically important part), then the
   // prose description as one or more flavor cards (chunked so long
   // descriptions don't get visually clipped in the VTT chat bubble).
@@ -16447,12 +16447,15 @@ console.log("RESOLVED:", resolved);
   const dmgType     = resolved.damageType  || 'damage';
   b20RollMonsterSave(displayName, cr, ac, hp, resolved.name, saveAbility, saveDC, dmgFormula, dmgType);
   if (resolved.desc && String(resolved.desc).trim()) {
-    // Stage 38: substitute source name → display name in the cleaned prose
-    // so flavor cards match the renamed group/instance.
-    const cleanDesc = _substituteNpcSkinName(stripSaveBoilerplate(resolved.desc), sn.name, displayName);
-    // Skip flavor entirely if stripping cleared everything (unusual prose
-    // that was 100% save-mechanics, e.g. some bare-bones SRD entries).
-    if (cleanDesc) {
+    // v1.3.78: If the DM typed/edited Flavor / Description Text in the
+    // override editor, send that exact text to VTT. Only auto/generated
+    // source prose should be stripped down to its non-mechanical flavor
+    // sentence. This lets the textarea act as a true editable VTT output
+    // box instead of being silently reduced to one sentence.
+    const hasManualDescOverride = !!(action && action._override && action._override.desc && String(action._override.desc).trim());
+    const proseForVtt = hasManualDescOverride ? resolved.desc : stripSaveBoilerplate(resolved.desc);
+    const cleanDesc = _substituteNpcSkinName(proseForVtt, sn.name, displayName);
+    if (cleanDesc && String(cleanDesc).trim()) {
       // Single damage card + flavor, so delay only by ~300ms (was 600
       // back when b20RollMonsterSave fired two staggered cards).
       b20SendFlavor(displayName, cr, ac, hp, resolved.name, cleanDesc, 300);
@@ -18299,7 +18302,7 @@ function wireMobileNodeList() {
 // Renders: editable title, type badge, the canvas-card body (so monsters /
 // brainstorm items / table data render fully and stay interactive), then
 // the side-panel form fields, then prev/next nav buttons.
-// v1.3.77: mobile swipe-to-change-node is disabled; connected-node tags are used instead.
+// v1.3.78: mobile swipe-to-change-node is disabled; connected-node tags are used instead.
 function getConnectedCanvasNodes(nodeId) {
   const out = [];
   const seen = new Set();
@@ -18517,7 +18520,7 @@ function wireMobileNodeView(node) {
   if (prevBtn) prevBtn.addEventListener('click', () => mobileGoNode(-1));
   if (nextBtn) nextBtn.addEventListener('click', () => mobileGoNode(+1));
 
-  // v1.3.77: swipe-to-change-node disabled on mobile.
+  // v1.3.78: swipe-to-change-node disabled on mobile.
   // Navigation remains available through Prev/Next and connected-node tags.
 }
 
