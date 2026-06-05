@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7218</title>
+<title>Relentless Quest v1.7219</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3130,7 +3130,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7218</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7219</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4153,7 +4153,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7180
+      Version 1.7219
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -5052,6 +5052,19 @@ body.dev-active #app{margin-top:36px;}
   <div class="mbtns">
     <button class="btn bink" id="ov-dt-ded-skip">Skip</button>
     <button class="btn bgn" id="ov-dt-ded-save">Save Dedication</button>
+  </div>
+</div></div>
+
+<!-- v1.7219 — Optional immediate skill grant after a building is dedicated
+     to a skill. Uses territory-filtered candidates, downtime cap gates, and
+     the squad coverage calculator to sort by practical benefit. -->
+<div class="ov" id="ov-dt-skillgrant" style="z-index:566"><div class="modal" style="max-width:620px">
+  <h3 id="ov-dt-sg-title">🏛 Establish Training Program</h3>
+  <p id="ov-dt-sg-msg"></p>
+  <div id="ov-dt-sg-summary" class="hint" style="margin-bottom:10px"></div>
+  <div id="ov-dt-sg-list" style="max-height:360px;overflow-y:auto;border:1px solid var(--parchment-deep);border-radius:8px;background:rgba(255,255,255,.35);padding:6px"></div>
+  <div class="mbtns">
+    <button class="btn bink" id="ov-dt-sg-skip">Not Now</button>
   </div>
 </div></div>
 
@@ -19472,7 +19485,7 @@ function rqDowntimeAudit(opts){
       } else if(p.job.type==='faith'&&p.job.target&&c.rel===p.job.target){
         charStateEvidence='Already follows faith: '+p.job.target;
       } else if(p.job.type==='contacts'&&c.contact){
-        // v1.7218 — contact:true now means this party member IS a recruited
+        // v1.7219 — contact:true now means this party member IS a recruited
         // contact/hireling, not that they already own the contacts reward.
         // Do not treat it as medium evidence that a contacts downtime roll
         // already resolved; contacts jobs spawn a separate new contact.
@@ -21191,6 +21204,161 @@ function _dtApplyBuildingDedication(asset,type,value,itemName){
   return true;
 }
 
+
+
+// v1.7219 — Immediate territory skill grant from newly dedicated buildings.
+// This is intentionally separate from normal downtime jobs: the grant is a
+// one-time building establishment benefit, but it records the proficiency in
+// dtEarnedProficiencies so the existing class/level cap remains authoritative.
+var DOWNTIME_SKILL_GRANT_PENDING=null;
+function _dtSkillGrantBuildingKey(asset){
+  if(!asset)return '';
+  return String(asset.id||asset.key||asset._id||asset.name||'building');
+}
+function _dtNormalizeGrantType(type){
+  return String(type||'').trim();
+}
+function _dtCandidateTerritory(c){
+  try{return downtimeEffectiveTerritory(c)||'';}catch(e){return (c&&c.homeTerritory)||S.originTerritory||'';}
+}
+function _dtSquadForGrantCandidate(ci,territory){
+  var squads=(S.squads||[]).filter(function(sq){return sq&&(sq.memberIdxs||[]).indexOf(ci)!==-1;});
+  for(var i=0;i<squads.length;i++){
+    var st='';
+    try{st=squadTerritory(squads[i])||'';}catch(e){}
+    if((territory||'')?(st===territory):true)return squads[i];
+  }
+  var members=[];
+  (S.party||[]).forEach(function(c,idx){if(c&&_dtCandidateTerritory(c)===territory)members.push(idx);});
+  return {name:territory||'Territory',memberIdxs:members,_virtual:true};
+}
+function _dtSkillCoverageScore(ci,skill,territory){
+  var c=S.party&&S.party[ci];
+  if(!c)return {score:-999,delta:0,beforePct:0,afterPct:0,beforeCovered:0,afterCovered:0,reason:'Missing character'};
+  var sq=_dtSquadForGrantCandidate(ci,territory);
+  var before={pct:0,covered:0,total:0};
+  try{before=squadCoverage(sq);}catch(e){}
+  var original=(c.skills||[]).slice();
+  var already=original.indexOf(skill)!==-1;
+  if(!already){c.skills=original.concat([skill]);}
+  var after={pct:before.pct||0,covered:before.covered||0,total:before.total||0};
+  try{after=squadCoverage(sq);}catch(e){}
+  c.skills=original;
+  var delta=(after.covered||0)-(before.covered||0);
+  var pctDelta=(after.pct||0)-(before.pct||0);
+  var score=(delta*10)+pctDelta;
+  var missingBefore=delta>0;
+  if(missingBefore)score+=5;
+  if(sq&&!sq._virtual)score+=3;
+  if(c.hireling)score-=1;
+  if(c.contact&&!c.hireling)score-=2;
+  score+=Math.max(0,3-downtimeOneTimeCount(c));
+  return {score:score,delta:delta,pctDelta:pctDelta,beforePct:before.pct||0,afterPct:after.pct||0,beforeCovered:before.covered||0,afterCovered:after.covered||0,squadName:(sq&&sq.name)||'',virtual:!!(sq&&sq._virtual)};
+}
+function _dtSkillGrantCandidates(asset,skill,territory){
+  var rows=[];
+  (S.party||[]).forEach(function(c,ci){
+    if(!c)return;
+    var ct=_dtCandidateTerritory(c);
+    if((territory||'')&&ct!==territory)return;
+    var owned=downtimeTargetAlreadyOwned(c,'skill',skill);
+    var capUsed=downtimeOneTimeCount(c);
+    var capMax=downtimeEarnedSlotCount(c);
+    var capBlocked=capUsed>=capMax;
+    var busy=false;
+    try{var b=_buildBusySet(); busy=!!(b&&b[ci]);}catch(e){}
+    var sc=_dtSkillCoverageScore(ci,skill,territory);
+    var disabled=owned||capBlocked;
+    var reason=owned?'Already has skill':(capBlocked?'At earned proficiency cap':'Eligible');
+    rows.push({ci:ci,c:c,territory:ct,owned:owned,capUsed:capUsed,capMax:capMax,capBlocked:capBlocked,busy:busy,disabled:disabled,reason:reason,score:disabled?-999:sc.score,coverage:sc});
+  });
+  rows.sort(function(a,b){
+    if(a.disabled!==b.disabled)return a.disabled?1:-1;
+    if(b.score!==a.score)return b.score-a.score;
+    if((b.coverage.delta||0)!==(a.coverage.delta||0))return (b.coverage.delta||0)-(a.coverage.delta||0);
+    if(a.capUsed!==b.capUsed)return a.capUsed-b.capUsed;
+    return String(a.c.name||'').localeCompare(String(b.c.name||''));
+  });
+  return rows;
+}
+function _dtRenderSkillGrantModal(){
+  var pending=DOWNTIME_SKILL_GRANT_PENDING||{};
+  var asset=pending.asset||{};
+  var skill=pending.skill||'';
+  var territory=pending.territory||'';
+  var title=document.getElementById('ov-dt-sg-title');
+  var msg=document.getElementById('ov-dt-sg-msg');
+  var summary=document.getElementById('ov-dt-sg-summary');
+  var list=document.getElementById('ov-dt-sg-list');
+  if(title)title.textContent='🏛 Establish Training Program';
+  if(msg)msg.textContent='Choose one character in '+(territory||'this territory')+' to immediately gain '+skill+'. This uses a downtime-earned proficiency slot.';
+  var rows=_dtSkillGrantCandidates(asset,skill,territory);
+  var elig=rows.filter(function(r){return !r.disabled;}).length;
+  if(summary)summary.textContent=elig+' eligible character'+(elig===1?'':'s')+' · sorted by squad coverage gain, cap room, and name.';
+  if(!list)return;
+  if(!rows.length){list.innerHTML='<div class="hint" style="padding:10px">No characters are currently assigned to this territory.</div>';return;}
+  list.innerHTML=rows.map(function(r){
+    var c=r.c, cov=r.coverage||{};
+    var gain=(cov.delta>0?('+'+cov.delta+' coverage'):('0 coverage'));
+    var pct=(cov.pctDelta>0?(' · +'+cov.pctDelta+'%'):'' );
+    var cap=r.capUsed+' / '+r.capMax+' slots';
+    var status=r.disabled?('❌ '+r.reason):(r.capUsed>=r.capMax-1?'⚠ Near cap':'✅ Eligible');
+    return '<div class="dt-sg-row" style="display:grid;grid-template-columns:1.2fr .9fr .9fr auto;gap:8px;align-items:center;padding:8px;border-bottom:1px dotted rgba(26,107,138,.25)">'+
+      '<div><b>'+esc(c.name||'Unnamed')+'</b><div class="hint" style="font-size:.74em">'+esc(c.cls||'')+' L'+esc(c.level||1)+(cov.squadName?(' · '+esc(cov.squadName)):'')+'</div></div>'+
+      '<div style="font-size:.82em;color:var(--forest)">'+esc(gain+pct)+'</div>'+
+      '<div style="font-size:.82em">'+esc(status)+'<div class="hint" style="font-size:.74em">'+esc(cap)+'</div></div>'+
+      '<button class="btn bgn sm" data-dt-sg-ci="'+r.ci+'" '+(r.disabled?'disabled':'')+'>Grant</button>'+
+    '</div>';
+  }).join('');
+  list.querySelectorAll('[data-dt-sg-ci]').forEach(function(btn){
+    btn.onclick=function(){_dtApplySkillGrant(parseInt(btn.getAttribute('data-dt-sg-ci'),10));};
+  });
+}
+function _dtOpenSkillGrantModal(asset,type,skill,itemName,onDone){
+  type=_dtNormalizeGrantType(type);
+  skill=String(skill||'').trim();
+  if(type!=='skill'||!skill){if(typeof onDone==='function')onDone();return;}
+  if(!asset.meta)asset.meta={};
+  if(asset.meta.instantGrantUsed){if(typeof onDone==='function')onDone();return;}
+  var territory=(asset&&asset.meta&&(asset.meta.ownerRef||asset.meta.owner_ref))||'';
+  DOWNTIME_SKILL_GRANT_PENDING={asset:asset,type:type,skill:skill,itemName:itemName||asset.name||'Building',territory:territory,onDone:onDone};
+  _dtRenderSkillGrantModal();
+  var skip=document.getElementById('ov-dt-sg-skip');
+  if(skip)skip.onclick=function(){_dtCloseSkillGrantModal(false);};
+  openOv('ov-dt-skillgrant');
+}
+function _dtCloseSkillGrantModal(callDone){
+  var cb=DOWNTIME_SKILL_GRANT_PENDING&&DOWNTIME_SKILL_GRANT_PENDING.onDone;
+  DOWNTIME_SKILL_GRANT_PENDING=null;
+  closeOv('ov-dt-skillgrant');
+  if(callDone!==false&&typeof cb==='function')cb();
+}
+function _dtApplySkillGrant(ci){
+  var pending=DOWNTIME_SKILL_GRANT_PENDING||{};
+  var c=S.party&&S.party[ci];
+  var skill=pending.skill||'';
+  if(!c||!skill)return;
+  if(downtimeTargetAlreadyOwned(c,'skill',skill)||downtimeCapReached(c)){_dtRenderSkillGrantModal();return;}
+  if(!c.skills)c.skills=[];
+  if(c.skills.indexOf(skill)===-1)c.skills.push(skill);
+  recordDowntimeEarnedProficiency(c,'skill',skill);
+  if(pending.asset){
+    if(!pending.asset.meta)pending.asset.meta={};
+    pending.asset.meta.instantGrantUsed=true;
+    pending.asset.meta.instantGrantType='skill';
+    pending.asset.meta.instantGrantTarget=skill;
+    pending.asset.meta.instantGrantCharacter=ci;
+    pending.asset.meta.instantGrantCharacterName=c.name||'';
+    pending.asset.meta.instantGrantDate=Date.now();
+  }
+  try{cleanupObsoleteDowntimeTracks();}catch(e){}
+  try{logAdd('🏛 Training program: '+(pending.itemName||'Building')+' granted '+skill+' to '+(c.name||'character')+'.','buy');}catch(e){}
+  if(typeof save==='function')save();
+  if(typeof renderParty==='function')renderParty();
+  if(typeof renderDowntimeRibbon==='function')renderDowntimeRibbon();
+  _dtCloseSkillGrantModal(true);
+}
+
 function _dtAssetUnlockLabel(asset){
   if(!asset||!asset.meta)return '';
   var t=String(asset.meta.unlockType||asset.meta.unlock_type||'').trim();
@@ -21257,6 +21425,11 @@ function _dtOpenBuildingDedicationModal(asset,item,onDone){
     if(type&&target){
       _dtApplyBuildingDedication(pending.asset,type,target,(pending.item&&pending.item.name)||'Building');
       if(typeof save==='function')save();
+      var cb=pending.onDone;
+      DOWNTIME_DEDICATION_PENDING=null;
+      closeOv('ov-dt-dedicate');
+      _dtOpenSkillGrantModal(pending.asset,type,target,(pending.item&&pending.item.name)||'Building',cb);
+      return;
     }
     finish();
   };
@@ -21272,7 +21445,7 @@ function _dtPromptBuildingDedication(asset,item){
 // Some browser/debug contexts do not reveal top-level function declarations
 // reliably, so expose the downtime dedication helpers under one stable object.
 window.RQ_DOWNTIME_GATE_DEBUG={
-  version:'v1.7218',
+  version:'v1.7219',
   buildingOptions:_dtBuildingUnlockOptions,
   buildingOverrides:_dtTerritoryBuildingOverrides,
   buildingOverrideList:_dtBuildingOverrideList,
@@ -21280,6 +21453,9 @@ window.RQ_DOWNTIME_GATE_DEBUG={
   targetAllowedInTerritory:downtimeTargetAllowedInTerritory,
   openBuildingDedicationModal:_dtOpenBuildingDedicationModal,
   applyBuildingDedication:_dtApplyBuildingDedication,
+  openSkillGrantModal:_dtOpenSkillGrantModal,
+  skillGrantCandidates:_dtSkillGrantCandidates,
+  skillGrantCoverageScore:_dtSkillCoverageScore,
   targetUnlockedByBuilding:downtimeTargetUnlockedByBuilding,
   canStartOneTimeTarget:downtimeCanStartOneTimeTarget,
   classCap:downtimeClassCap,
@@ -21308,7 +21484,7 @@ function downtimeProgressKeyIsObsolete(c,key){
   if(!c||!key)return false;
   var p=_downtimeKeyParts(key);
   if(downtimeTargetAlreadyOwned(c,p.type,p.target))return true;
-  // v1.7218 — Do NOT clear contacts progress merely because c.contact is
+  // v1.7219 — Do NOT clear contacts progress merely because c.contact is
   // true. Recruited contacts are characters (hireling:true/contact:true)
   // and are allowed to Network for Contacts; the reward spawns a separate
   // new contact and badges the runner as Franchise Connector.
@@ -37150,7 +37326,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7218',
+    appVersion:'v1.7219',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -37182,7 +37358,7 @@ if(_rqContractsExportBtn){
     var url=URL.createObjectURL(blob);
     var a=document.createElement('a');
     a.href=url;
-    a.download='relentless-quest-contracts-archive-kudos-v1.7218.json';
+    a.download='relentless-quest-contracts-archive-kudos-v1.7219.json';
     a.click();
     URL.revokeObjectURL(url);
   });
