@@ -1660,7 +1660,7 @@ function makeWrapNodeSnapshot(n, idMap) {
     collapsed: !!n.collapsed,
   };
   if (n.table) rec.table = { headers: Array.isArray(n.table.headers) ? [...n.table.headers] : [], rows: Array.isArray(n.table.rows) ? n.table.rows.map(r => Array.isArray(r) ? [...r] : []) : [] };
-  if (n.brainstorm) rec.brainstorm = { items: Array.isArray(n.brainstorm.items) ? n.brainstorm.items.map(s => String(s || '')) : [] }; if (n.brainstorm.group_id) rec.brainstorm.group_id = n.brainstorm.group_id;
+  if (n.brainstorm) rec.brainstorm = { items: Array.isArray(n.brainstorm.items) ? n.brainstorm.items.map(s => String(s || '')) : [] }; if (n.brainstorm && n.brainstorm.group_id) rec.brainstorm.group_id = n.brainstorm.group_id;
   if (n.image) rec.image = cloneImagePayloadForSessionCopy(n, idMap);
   return rec;
 }
@@ -3308,7 +3308,7 @@ async function confirmCopyToSession() {
         rec.brainstorm = {
           items: Array.isArray(n.brainstorm.items) ? n.brainstorm.items.map(s => String(s || '')) : [],
         };
-        if (n.brainstorm.group_id) rec.brainstorm.group_id = n.brainstorm.group_id;
+        if (n.brainstorm && n.brainstorm.group_id) rec.brainstorm.group_id = n.brainstorm.group_id;
       }
       if (n.image) {
         rec.image = cloneImagePayloadForSessionCopy(n, idMap);
