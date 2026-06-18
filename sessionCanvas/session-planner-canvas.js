@@ -1894,7 +1894,6 @@ async function saveWrapPostSessionNotes(notes) {
         method: 'POST', prefer: 'return=minimal',
         body: JSON.stringify({
           session_id: cid,
-          campaign_id: cur.campaign_id || null,
           arc_id: cur.arc_id || null,
           title: cur.title || 'Session',
           post_session_notes: clean,
