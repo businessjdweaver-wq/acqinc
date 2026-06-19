@@ -1,4 +1,4 @@
-/* Relentless Quest Training Hall contract importer v0.1.11
+/* Relentless Quest Training Hall contract importer v0.1.12
    Loads pending workout-completion rewards from Supabase and local fallback,
    converts them into normal Contracts-screen tasks. Kept outside main app. */
 (function(){
@@ -67,13 +67,27 @@
       }).catch(function(err){console.warn('[RQ Training importer mark]',err);});
     }));
   }
+  function contractExistsForSid(sid){
+    if(!sid||!window.S||!Array.isArray(S.active))return false;
+    return S.active.some(function(t){return t&&String(t._trainingSessionId)===String(sid);});
+  }
   function importLocalFallback(){
     var rows=loadLocalRows();
     LAST_RESULT.localRows=rows.length;
     if(!rows.length)return [];
     var imported=importRows(rows,'local');
-    var importedSids=new Set(imported.map(function(x){return String(x.source_session_id); }));
-    saveLocalRows(rows.filter(function(r){return !importedSids.has(String(r.source_session_id||r.id));}));
+
+    // Safety rule: do not clear a queued Training Hall contract unless the
+    // matching RQ contract is actually present after import. Earlier builds
+    // cleared the queue merely because importRows returned an item, which could
+    // lose the workout reward if RQ was not fully ready or the contract render/save
+    // path failed.
+    var keep=rows.filter(function(r){
+      var sid=String(r.source_session_id||r.id||'');
+      return !contractExistsForSid(sid);
+    });
+    saveLocalRows(keep);
+    LAST_RESULT.localRowsRemaining=keep.length;
     return imported;
   }
   function fetchRemotePending(){
