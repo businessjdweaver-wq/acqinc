@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7230</title>
+<title>Relentless Quest v1.7231</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3130,7 +3130,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7230</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7231</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4153,7 +4153,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7230
+      Version 1.7231
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -31232,6 +31232,17 @@ function collectQuest(qi,pq,q,set){
     qpAward(qpAmt,qType,qLabel+'"'+q.title+'"','quest::'+q.setId+'::'+q.idx+'::'+S.questState.cycleNum);
   }
   saveActiveSetProgress();
+  // v1.7231 — If this completion finished the quest cycle, unlock that
+  // cycle's territory for building purchases immediately. This keeps the
+  // Store → Assets → Buildings territory picker in sync without waiting
+  // for the next content reload / repair pass.
+  if(set&&set.id&&typeof isSetCompleted==='function'&&isSetCompleted(set.id)){
+    var _terrAdded=(typeof _unlockQuestCycleTerritory_v17231==='function')?_unlockQuestCycleTerritory_v17231(set.id,'collectQuest'):[];
+    if(_terrAdded&&_terrAdded.length){
+      if(typeof renderStore==='function')renderStore();
+      if(typeof renderParty==='function')renderParty();
+    }
+  }
   // v1.6969 — defensive heal + cycle map refresh on every quest completion.
   // Rationale: a capstone completion flips isSetCompleted(currentSetId) from
   // false to true, which unlocks any downstream cycle gated on it via
@@ -36948,7 +36959,7 @@ var TUTORIAL_TOPICS=[
       +'<li>Up to <strong>4 chartered squads</strong></li>'
       +'<li>Up to <strong>10 unassigned characters</strong> in its HQ pool</li>'
       +'</ul>'
-      +'<p><strong>To unlock a new territory:</strong> complete a quest cycle that takes place there, then buy a significant building (1000+ gp &mdash; Barracks, Smithy, Tavern, or Library) in that cycle\'s real-estate listing. The territory unlocks immediately when the purchase commits, and a 🗺 entry appears in your adventure log.</p>'
+      +'<p><strong>To unlock a new territory:</strong> complete a quest cycle that takes place there. The territory unlocks immediately when the cycle is completed, and buildings can then be purchased there from Store &rarr; Assets &rarr; Buildings. A 🗺 entry appears in your adventure log.</p>'
       +'<p>Once unlocked, you can:</p>'
       +'<ul style="margin:6px 0 6px 18px;padding:0">'
       +'<li>Charter new squads in that territory (up to its 4-squad cap).</li>'
@@ -37504,7 +37515,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7230',
+    appVersion:'v1.7231',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -45922,6 +45933,12 @@ function mergeCustomContent(){
       });
     });
   }
+  // v1.7231 — After content rows have merged into QUESTSETS, repair legacy
+  // accounts whose completed custom cycles predate the quest-cycle territory
+  // unlock flow. This is idempotent and saves only when it adds something.
+  if(typeof repairQuestCycleTerritoryUnlocks_v17231==='function'){
+    repairQuestCycleTerritoryUnlocks_v17231();
+  }
 }
 
 
@@ -48322,6 +48339,93 @@ function recomputeUnlockedTerritories(){
   S.unlockedTerritories=out;
   return out;
 }
+
+// v1.7231 — Quest-cycle territory unlock helper.
+// Completing a quest cycle should unlock that cycle's territory for building
+// purchases. The building picker reads S.unlockedTerritories, so both the
+// live completion flow and legacy-account repair use this single idempotent
+// helper. It deliberately does NOT unlock every authored territory — only
+// territories tied to quest sets that are completed in the player's state.
+function _unlockQuestCycleTerritory_v17231(setId, sourceLabel){
+  try{
+    if(!setId||!S)return [];
+    if(!S.unlockedTerritories)S.unlockedTerritories=[];
+    if(!S.originTerritory&&typeof computeOriginTerritory==='function')S.originTerritory=computeOriginTerritory();
+
+    var set=null;
+    if(typeof QUESTSETS!=='undefined'&&Array.isArray(QUESTSETS)){
+      set=(QUESTSETS||[]).filter(function(s){return s&&s.id===setId;})[0]||null;
+    }
+    if(!set)return [];
+
+    var terr=String(set.territory||'').trim();
+    if(!terr||terr==='Unspecified')return [];
+
+    // Keep origin present even if a legacy save somehow lost it.
+    if(S.originTerritory&&S.unlockedTerritories.indexOf(S.originTerritory)===-1){
+      S.unlockedTerritories.push(S.originTerritory);
+    }
+
+    if(S.unlockedTerritories.indexOf(terr)!==-1)return [];
+
+    S.unlockedTerritories.push(terr);
+
+    if(typeof logAdd==='function'){
+      logAdd('🗺 Territory unlocked: '+terr+' — quest cycle completed. Buildings can now be purchased there.','adv');
+    }
+    return [terr];
+  }catch(e){
+    console.warn('[v1.7231] quest-cycle territory unlock failed',e);
+    return [];
+  }
+}
+
+// v1.7231 — Legacy account repair.
+// Runs after custom content has been merged into QUESTSETS, then scans all
+// completed quest sets and backfills S.unlockedTerritories. This repairs
+// accounts that completed a territory cycle before v1.7231.
+function repairQuestCycleTerritoryUnlocks_v17231(){
+  try{
+    if(!S||typeof QUESTSETS==='undefined'||!Array.isArray(QUESTSETS))return [];
+    if(!S.unlockedTerritories)S.unlockedTerritories=[];
+    if(!S.originTerritory&&typeof computeOriginTerritory==='function')S.originTerritory=computeOriginTerritory();
+
+    var added=[];
+    (QUESTSETS||[]).forEach(function(set){
+      if(!set||!set.id)return;
+      var terr=String(set.territory||'').trim();
+      if(!terr||terr==='Unspecified')return;
+      var completed=false;
+      if(typeof isSetCompleted==='function'){
+        try{completed=!!isSetCompleted(set.id);}catch(e){completed=false;}
+      }
+      if(!completed){
+        var total=(set.quests||[]).length;
+        (S.questCycles||[]).some(function(cy){
+          if(!cy||cy.setId!==set.id)return false;
+          completed=total?((cy.completed||[]).length>=total):!!((cy.completed||[]).length);
+          return completed;
+        });
+      }
+      if(!completed)return;
+      var newly=_unlockQuestCycleTerritory_v17231(set.id,'repair');
+      newly.forEach(function(t){if(added.indexOf(t)===-1)added.push(t);});
+    });
+
+    if(added.length){
+      if(typeof save==='function')save();
+      if(typeof renderStore==='function')renderStore();
+      if(typeof renderParty==='function')renderParty();
+      if(typeof renderCycleMapCards==='function')renderCycleMapCards();
+    }
+    return added;
+  }catch(e){
+    console.warn('[v1.7231] territory unlock repair failed',e);
+    return [];
+  }
+}
+window.repairQuestCycleTerritoryUnlocks_v17231=repairQuestCycleTerritoryUnlocks_v17231;
+
 
 // Returns true if a territory is currently unlocked. Treats empty-string
 // territory as always-available (legacy / no-territory-configured saves).
