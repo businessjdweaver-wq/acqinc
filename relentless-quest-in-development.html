@@ -4153,7 +4153,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7226
+      Version 1.7227
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -10171,6 +10171,86 @@ function clockOutSquadFromGrinds(squadName){
   });
   return !!removedFrom;
 }
+
+/* v1.7227 — Territory unlock repair migration
+   Repairs accounts created before quest-cycle territory unlock fix.
+   Any territory with a completed quest cycle becomes available for buildings.
+*/
+function repairTerritoryUnlocks_v17227(){
+  try{
+    if(!S) return;
+
+    // Do not rerun after successful migration
+    if(S.migrations && S.migrations.territoryUnlocks_v17227){
+      return;
+    }
+
+    if(!S.unlockedTerritories){
+      S.unlockedTerritories=[];
+    }
+
+    // Always preserve starting territory
+    var origin = S.originTerritory || 'Minsaka';
+    if(S.unlockedTerritories.indexOf(origin)===-1){
+      S.unlockedTerritories.push(origin);
+    }
+
+    var repaired=[];
+
+    // Look through completed cycles
+    (S.questCycles||[]).forEach(function(cycle){
+
+      if(!cycle || !cycle.setId) return;
+
+      var completed =
+        cycle.completed &&
+        cycle.completed.length;
+
+      if(!completed) return;
+
+      // Find the quest set definition
+      var set = (typeof QUESTSETS!=='undefined')
+        ? QUESTSETS.find(function(s){
+            return s.id===cycle.setId;
+          })
+        : null;
+
+      if(!set || !set.territory) return;
+
+      var territory=set.territory;
+
+      if(S.unlockedTerritories.indexOf(territory)===-1){
+        S.unlockedTerritories.push(territory);
+        repaired.push(territory);
+      }
+    });
+
+
+    // Mark migration complete
+    if(!S.migrations){
+      S.migrations={};
+    }
+
+    S.migrations.territoryUnlocks_v17227=true;
+
+
+    if(repaired.length){
+      logAdd(
+        '🏗️ Territory repair unlocked: '+
+        repaired.join(', '),
+        'adv'
+      );
+    }
+
+    save();
+
+  }catch(e){
+    console.warn(
+      'territory unlock repair failed',
+      e
+    );
+  }
+} 
 
 // One-time migration: move legacy bare-key grind clock-ins under the
 // origin territory's key. Pre-v1.7013 saves used map['__grind__'] as a
@@ -31220,6 +31300,19 @@ function collectQuest(qi,pq,q,set){
     awardCapstonReward(set);
   payPassiveGold();
   }
+  // v1.7227 — Completing a quest cycle unlocks that territory for
+  // franchise building purchases. Previously territories could only become
+  // available through building-based unlocks, which created a deadlock:
+  // a player had to already own a building in a territory before the first
+  // building could be purchased there.
+  // A completed cycle is the exploration/progression gate.
+  if(!S.unlockedTerritories)S.unlockedTerritories=[];
+  var _cycleTerritory=(set&&set.territory)?String(set.territory).trim():'';
+  if(_cycleTerritory&&S.unlockedTerritories.indexOf(_cycleTerritory)===-1){
+    S.unlockedTerritories.push(_cycleTerritory);
+    logAdd('🏰 Territory unlocked for franchise development: '+_cycleTerritory,'adv');
+  }
+
   // Award QP for quest completion
   if(qpEnabled()&&!_alreadyDone){
     var cfg=qpCfg();
@@ -40594,6 +40687,7 @@ function sbPull(manual){
           migrateArtificerToRunesmith();
           healOrphanedQuestState();
           healCompletedCycleArchives(); // v1.6948
+          repairTerritoryUnlocks_v17227(); //v1.7227
           if(typeof migrateToTerritoryV1_7006==='function')migrateToTerritoryV1_7006(); // v1.7006
           if(typeof migrateGrindToTerritoriesV1_7013==='function')migrateGrindToTerritoriesV1_7013();
   if(typeof migrateGrindPendingDedupV1_7017==='function')migrateGrindPendingDedupV1_7017(); // v1.7017 // v1.7013
