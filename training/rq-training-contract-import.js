@@ -1,4 +1,4 @@
-/* Relentless Quest Training Hall contract importer v0.1.9
+/* Relentless Quest Training Hall contract importer v0.1.10
    Loads pending workout-completion rewards from Supabase and local fallback,
    converts them into normal Contracts-screen tasks. Kept outside main app. */
 (function(){
@@ -6,7 +6,8 @@
   var BUSY=false;
   var LOCAL_KEY='rq_training_pending_contracts_v1';
   var LAST_RESULT={at:null, ready:false, imported:0, localRows:0, remoteRows:0, error:null};
-  function ready(){return typeof uid==='function'&&uid()&&window.S&&Array.isArray(S.active);}
+  function ready(){return window.S&&Array.isArray(S.active);}
+  function readyReason(){if(!window.S)return 'S state object unavailable'; if(!Array.isArray(S.active))return 'S.active contracts array unavailable'; if(typeof uid!=='function')return 'uid() helper unavailable'; if(!uid())return 'uid() empty; local fallback can still import, remote lookup will wait'; return 'ready';}
   function hasSupabase(){return typeof SB_URL!=='undefined'&&typeof sbHeaders==='function';}
   function taskId(){return 'tfit'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);}
   function makeTask(row){
@@ -76,7 +77,7 @@
     return imported;
   }
   function fetchRemotePending(){
-    if(!hasSupabase())return Promise.resolve([]);
+    if(!hasSupabase()||typeof uid!=='function'||!uid())return Promise.resolve([]);
     var u=uid();
     var q='user_id=eq.'+encodeURIComponent(u)+'&status=eq.pending&select=*';
     if(typeof sbGet==='function')return sbGet('rq_training_contracts',q).then(function(rows){return Array.isArray(rows)?rows:[];});
@@ -107,7 +108,7 @@
   }
   window.RQ_IMPORT_TRAINING_CONTRACTS=importPendingTrainingContracts;
   window.RQ_TRAINING_IMPORT_STATUS=function(){
-    return Object.assign({},LAST_RESULT,{localRowsNow:loadLocalRows().length, activeTrainingContracts:(S&&S.active||[]).filter(function(t){return t&&t._trainingSessionId;}).map(function(t){return {name:t.name,gp:t.gp,session:t._trainingSessionId};})});
+    return Object.assign({},LAST_RESULT,{readyNow:ready(),readyReason:readyReason(),localRowsNow:loadLocalRows().length, activeTrainingContracts:(S&&S.active||[]).filter(function(t){return t&&t._trainingSessionId;}).map(function(t){return {name:t.name,gp:t.gp,session:t._trainingSessionId};})});
   };
   function schedule(delay){setTimeout(function(){importPendingTrainingContracts(false);},delay||800);}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){schedule(1800);}); else schedule(1800);
