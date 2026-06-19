@@ -1,4 +1,4 @@
-/* Relentless Quest Training Hall contract importer v0.1.12
+/* Relentless Quest Training Hall contract importer v0.1.13
    Loads pending workout-completion rewards from Supabase and local fallback,
    converts them into normal Contracts-screen tasks. Kept outside main app. */
 (function(){
@@ -16,7 +16,8 @@
     return {
       _tid:taskId(),
       name:row.title||('🏋️ Completed Workout — '+mins+' min'),
-      gp:Math.max(1,Math.min(100,parseInt(row.gp,10)||25)),
+      gp:Math.max(1,parseInt(row.gp,10)||100),
+      _trainingGoldBypassBudget:true,
       count:0,
       pct:0,
       subtasks:[],
