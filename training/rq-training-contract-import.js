@@ -1,4 +1,4 @@
-/* Relentless Quest Training Hall contract importer v0.1.0
+/* Relentless Quest Training Hall contract importer v0.1.1
    Loads pending workout-completion rewards from rq_training_contracts and
    converts them into normal Contracts-screen tasks. Kept outside the main app
    so future Training Hall updates can target /training only. */
