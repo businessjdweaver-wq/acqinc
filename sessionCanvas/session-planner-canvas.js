@@ -1670,7 +1670,13 @@ function buildWrapCarryForwardPayload() {
   const sourceIds = new Set(nodesToCopy.map(n => n.id));
   const idMap = new Map();
   nodesToCopy.forEach(n => idMap.set(n.id, 'n' + (nodeIdSeq++)));
-  const nodes = nodesToCopy.map(n => makeWrapNodeSnapshot(n, idMap));
+  const nodes = nodesToCopy.map(n => {
+    const snap = makeWrapNodeSnapshot(n, idMap);
+    if (snap && snap.type === 'image' && snap.image && typeof snap.image.dataUrl === 'string' && snap.image.dataUrl.length > 100000) {
+      snap.image = { ...snap.image, dataUrl: '' };
+    }
+    return snap;
+  });
   const edges = state.edges.filter(e => edgeIsCopyableSessionInterior(e, sourceIds)).map(e => ({
     id: 'e' + Date.now() + Math.random().toString(36).slice(2, 8),
     from_node: remapCopiedEndpointForSessionCopy(e.from, sourceIds, idMap),
