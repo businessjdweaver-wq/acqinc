@@ -1,4 +1,4 @@
-/* Relentless Quest Training Hall contract importer v0.1.13
+/* Relentless Quest Training Hall contract importer v0.1.14
    Loads pending workout-completion rewards from Supabase and local fallback,
    converts them into normal Contracts-screen tasks. Kept outside main app. */
 (function(){
