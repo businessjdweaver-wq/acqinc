@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7230</title>
+<title>Relentless Quest v1.7231</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3130,7 +3130,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7230</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7231</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4153,7 +4153,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7230
+      Version 1.7231
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -4840,7 +4840,7 @@ body.dev-active #app{margin-top:36px;}
         <div id="ov-sq-territory-row" style="display:none;margin-bottom:14px">
           <div style="font-size:.78em;color:var(--ink-light);margin-bottom:6px;font-family:'Cinzel',serif;text-transform:uppercase;letter-spacing:.04em">🗺 Home Territory</div>
           <select id="ov-sq-territory" style="width:100%;padding:8px 10px;border:1px solid var(--parchment-deep);border-radius:6px;background:var(--parchment);font-size:.92em"></select>
-          <div style="font-size:.72em;color:var(--ink-light);margin-top:4px;font-style:italic">Squads may take quest cycles in any territory, but cross-territory deployments cost QP to mobilize.</div>
+          <div style="font-size:.72em;color:var(--ink-light);margin-top:4px;font-style:italic">Squads can only take quest cycles in their current territory. Relocate the squad first when a cycle is based elsewhere.</div>
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn bink sm" id="btn-sq-cancel-1">Cancel</button>
@@ -10398,6 +10398,32 @@ function availableSquadsForCycleActivation(setId){
   var used=squadsAssignedToOtherCycles(setId);
   return (S.squads||[]).filter(function(sq){return sq&&sq.name&&!used[sq.name];});
 }
+// v1.7231 — Cycle territory assignment guard. A squad may only be bound to
+// a quest cycle when its current homeTerritory matches that cycle's territory.
+// Mismatched squads still appear in the picker so the user can deliberately
+// choose them and get a clear relocation prompt with the exact QP cost.
+function cycleTerritoryAssignmentCheck(setId,squadName){
+  var out={ok:true,setTerr:'',squadTerr:'',squad:null,squadIndex:-1,memberCount:0,moveCost:0,message:''};
+  out.setTerr=(typeof territoryForCycleSetId==='function')?(territoryForCycleSetId(setId)||''):'';
+  for(var i=0;i<(S.squads||[]).length;i++){
+    var sq=S.squads[i];
+    if(sq&&sq.name===squadName){out.squad=sq;out.squadIndex=i;break;}
+  }
+  if(!out.squad){out.ok=false;out.message='Selected squad could not be found.';return out;}
+  out.squadTerr=out.squad.homeTerritory||S.originTerritory||'';
+  out.memberCount=(out.squad.memberIdxs||[]).filter(function(ci){return S.party&&S.party[ci];}).length;
+  out.moveCost=((typeof qpEnabled==='function'&&qpEnabled())?(qpCfg().costSquadSwap||10):0)*out.memberCount;
+  if(out.setTerr&&out.squadTerr&&out.setTerr!==out.squadTerr){
+    out.ok=false;
+    out.message='⚠ '+out.squad.name+' is based in '+out.squadTerr+', but this quest cycle takes place in '+out.setTerr+'.\n\n'+
+      'Relocate the squad to '+out.setTerr+' first. '+
+      ((typeof qpEnabled==='function'&&qpEnabled())
+        ?('Cost: '+(qpCfg().costSquadSwap||10)+' QP × '+out.memberCount+' member'+(out.memberCount!==1?'s':'')+' = '+out.moveCost+' QP.')
+        :'QP system off — relocation is free.')+
+      '\n\nOpen the squad relocation prompt now?';
+  }
+  return out;
+}
 // v1.6923: Canonical grind-eligibility pool.
 // v1.7013: now territory-scoped. Called with a territory argument, the pool
 // is restricted to (a) members of squads clocked into THIS territory's grind
@@ -10546,7 +10572,8 @@ function openCycleSquadPicker(setId){
   P4.cycleSetId=setId;
   var set=(QUESTSETS||[]).filter(function(s){return s.id===setId;})[0];
   var msg=document.getElementById('ov-cycle-squad-msg');
-  if(msg)msg.textContent='Choose a squad to activate '+(set?('"'+set.name+'"'):'this cycle')+'.';
+  var setTerr=(typeof territoryForCycleSetId==='function')?(territoryForCycleSetId(setId)||''):'';
+  if(msg)msg.textContent='Choose a squad to activate '+(set?('"'+set.name+'"'):'this cycle')+(setTerr?(' in '+setTerr):'')+'. Squads based elsewhere must relocate before assignment.';
   var sel=document.getElementById('ov-cycle-squad-select');
   var av=availableSquadsForCycleActivation(setId);
   if(!av.length){
@@ -10564,7 +10591,12 @@ function openCycleSquadPicker(setId){
   var cur=assignedSquadForSet(setId);
   var opts=['<option value="">— Select squad —</option>'];
   av.forEach(function(sq){
-    opts.push('<option value="'+esc(sq.name)+'">'+esc('⚔ '+sq.name+' ('+((sq.memberIdxs||[]).length||0)+')')+'</option>');
+    var sqTerr=sq.homeTerritory||S.originTerritory||'';
+    var mismatch=setTerr&&sqTerr&&sqTerr!==setTerr;
+    var label='⚔ '+sq.name+' ('+((sq.memberIdxs||[]).length||0)+')';
+    if(sqTerr)label+=' · '+sqTerr;
+    if(mismatch)label+=' → move to '+setTerr+' first';
+    opts.push('<option value="'+esc(sq.name)+'">'+esc(label)+'</option>');
   });
   sel.innerHTML=opts.join('');
   if(cur&&av.some(function(sq){return sq.name===cur;}))sel.value=cur;
@@ -26294,6 +26326,12 @@ function openSquadRelocateModal(sqi){
         closeOv('ov-sq-relocate');
         save();renderParty();
         if(typeof renderSquadManager==='function')renderSquadManager();
+        if(P4&&P4._returnToCycleSquadAfterRelocate){
+          var _returnSetId=P4._returnToCycleSquadAfterRelocate;
+          P4._returnToCycleSquadAfterRelocate=null;
+          if(typeof renderCycleMapCards==='function')renderCycleMapCards();
+          setTimeout(function(){ if(typeof openCycleSquadPicker==='function')openCycleSquadPicker(_returnSetId); },60);
+        }
       });
     });
   }
@@ -32505,6 +32543,19 @@ document.getElementById('ov-cycle-squad-yes').addEventListener('click',function(
     else alert('This cycle is already complete. Open the Quest Log to review it.');
     return;
   }
+  var terrCheck=(typeof cycleTerritoryAssignmentCheck==='function')?cycleTerritoryAssignmentCheck(setId,sel):{ok:true};
+  if(!terrCheck.ok){
+    if(terrCheck.message&&confirm(terrCheck.message)){
+      P4._returnToCycleSquadAfterRelocate=setId;
+      closeOv('ov-cycle-squad');
+      if(typeof openSquadRelocateModal==='function'&&terrCheck.squadIndex>=0){
+        openSquadRelocateModal(terrCheck.squadIndex);
+      } else {
+        alert('Open Squad Manager and relocate '+sel+' to '+(terrCheck.setTerr||'the cycle territory')+' first.');
+      }
+    }
+    return;
+  }
   cycleSquadMap()[setId]=sel;
   activateQuestCycleSet(setId);
   closeOv('ov-cycle-squad');
@@ -37511,7 +37562,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7230',
+    appVersion:'v1.7231',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -38772,7 +38823,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7180';
+var RQ_CLIENT_VERSION='v1.7231';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
