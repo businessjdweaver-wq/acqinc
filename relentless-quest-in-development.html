@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7233</title>
+<title>Relentless Quest v1.7232</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3130,7 +3130,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7233</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7232</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4156,7 +4156,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7233
+      Version 1.7234
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -10401,7 +10401,7 @@ function availableSquadsForCycleActivation(setId){
   var used=squadsAssignedToOtherCycles(setId);
   return (S.squads||[]).filter(function(sq){return sq&&sq.name&&!used[sq.name];});
 }
-// v1.7233 — Cycle territory assignment guard. A squad may only be bound to
+// v1.7232 — Cycle territory assignment guard. A squad may only be bound to
 // a quest cycle when its current homeTerritory matches that cycle's territory.
 // Mismatched squads still appear in the picker so the user can deliberately
 // choose them and get a clear relocation prompt with the exact QP cost.
@@ -28123,7 +28123,7 @@ updateMilestoneControls();
 var recruitCandidates=[];
 var _recruitInProgress=false; // true while user is mid-recruit flow
 
-// v1.7233 — Recruitment placement territory selector. Standard adventurer,
+// v1.7232 — Recruitment placement territory selector. Standard adventurer,
 // hireling, and custom mercenary purchases can now be seated directly in any
 // unlocked territory instead of silently inheriting the active/origin area.
 function recruitTerritoryList(){
@@ -37613,7 +37613,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7233',
+    appVersion:'v1.7234',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -38874,7 +38874,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7233';
+var RQ_CLIENT_VERSION='v1.7234';
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
@@ -42320,7 +42320,7 @@ function populateSquadTerritoryPicker(){
     sel.innerHTML='';
     return;
   }
-  // v1.7233 — Always show the territory selector during squad creation
+  // v1.7232 — Always show the territory selector during squad creation
   // when at least one legal destination exists. Earlier builds hid it for
   // single-territory franchises; showing it makes the placement rule explicit
   // and keeps the creation UI consistent with recruitment placement.
@@ -44095,202 +44095,230 @@ function _rebalanceCost(){
   return anyLocked?locked:base;
 }
 
-// v1.7233 — Rebalance spender asks for a temporary squad-size cap.
-// This affects only the auto-rebalance operation; the broader squad editor
-// still uses SQUAD_MAX_SIZE for ordinary drag/drop and seat-trade behavior.
-function _promptRebalanceMaxSquadSize(){
-  var prior=(S.settings&&S.settings.qp&&S.settings.qp.rebalanceMaxSquadSize)||8;
-  prior=parseInt(prior,10);
-  if(!isFinite(prior)||prior<1)prior=8;
-  var ans=prompt('Maximum characters per squad for this rebalance?\n\nDefault: 8',String(prior||8));
-  if(ans===null)return null;
-  var n=parseInt(ans,10);
-  if(!isFinite(n)||n<1){alert('Please enter a whole number of 1 or higher.');return null;}
-  if(n>SQUAD_MAX_SIZE){
-    if(!confirm('The normal squad hard-cap is '+SQUAD_MAX_SIZE+'. Use '+SQUAD_MAX_SIZE+' instead?'))return null;
-    n=SQUAD_MAX_SIZE;
-  }
-  if(S.settings&&S.settings.qp)S.settings.qp.rebalanceMaxSquadSize=n;
-  return n;
-}
-
 // ── Auto-rebalance optimizer ────────────────────────────────────────
 // Strategy: hill-climbing swap search. Consider every eligible pair of characters
 // (both not busy, both not pinned, neither in a locked squad unless surcharge paid),
 // swap them, measure the change in average coverage, keep if it improves. Repeat
 // until no improvement or pass limit reached.
 function runAutoRebalance(){
-  var cost=_rebalanceCost();
   if(!qpEnabled()){alert('QP system is disabled.');return;}
-  if((S.qpBalance||0)<cost){alert('Not enough QP. Need '+cost+' QP, have '+(S.qpBalance||0)+'.');return;}
-  var squads=(S.squads||[]).slice();
-  if(squads.length<1){alert('No squads to rebalance.');return;}
-  var rebalanceMaxSize=_promptRebalanceMaxSquadSize();
-  if(rebalanceMaxSize===null)return;
-  var busy=_buildBusySet();
-  var pins=S._sqmgrPins||{};
-  var anyLocked=squads.some(function(sq){return squadIsLockedByCycle(sq.name);});
-  // Confirm
-  var msg='Auto-rebalance all squads for '+cost+' QP?';
-  msg+='\n\nMaximum squad size for this rebalance: '+rebalanceMaxSize+'.';
-  msg+='\n\nObjective: maximize average coverage % across all squads.';
-  if(anyLocked)msg+='\n\n⚠ One or more squads are cycle-locked. Their members cannot be moved (surcharge applies to reflect the logistical cost of moving others around them).';
-  var pinCount=Object.keys(pins).length;
-  if(pinCount)msg+='\n\n📌 '+pinCount+' character'+(pinCount===1?'':'s')+' pinned — they will not move.';
-  if(!confirm(msg))return;
-  // Snapshot original state (for revert if result is worse)
-  var snapshot=squads.map(function(sq){return{name:sq.name,mem:(sq.memberIdxs||[]).slice()};});
-  // Coverage helper across all non-locked squads (the eligible set)
-  function avgCoverage(){
-    var eligible=squads.filter(function(sq){return (sq.memberIdxs||[]).length>0;});
-    if(!eligible.length)return 0;
-    var sum=0;
-    eligible.forEach(function(sq){sum+=squadCoverage(sq).pct;});
-    return sum/eligible.length;
+  var allSquads=(S.squads||[]).filter(function(sq){return sq&&sq.name;});
+  if(allSquads.length<1){alert('No squads to rebalance.');return;}
+
+  // v1.7234 — Rebalance is now territory-scoped by default, with an
+  // optional all-territory sweep. The old hill-climber could leave squads at
+  // the hard 10-member cap and park useful characters in HQ because it only
+  // chased coverage %. This flow first asks for a max squad size (default 8),
+  // then packs characters into squads in each selected territory up to that
+  // max. Headquarters receives only true overflow after all squad seats in
+  // that territory are filled.
+  var hardMax=(typeof SQUAD_MAX_SIZE==='number'&&SQUAD_MAX_SIZE>0)?SQUAD_MAX_SIZE:10;
+  var remembered=parseInt(S._rebalanceMaxSquadSize,10);
+  if(!remembered||remembered<1)remembered=8;
+  remembered=Math.min(hardMax,Math.max(1,remembered));
+  var maxRaw=prompt('Maximum characters per squad for this rebalance?\n\nDefault: 8\nHard app maximum: '+hardMax, String(remembered));
+  if(maxRaw===null)return;
+  var maxPerSquad=parseInt(maxRaw,10);
+  if(!maxPerSquad||maxPerSquad<1)maxPerSquad=8;
+  maxPerSquad=Math.min(hardMax,Math.max(1,maxPerSquad));
+  S._rebalanceMaxSquadSize=maxPerSquad;
+
+  function charTerritory(ci){
+    var c=(S.party||[])[ci];
+    return (typeof charHomeTerritory==='function')?charHomeTerritory(c,ci):(c&&c.homeTerritory)||S.originTerritory||'';
   }
-  function canMove(ci,fromSqName){
-    if(busy[ci])return false;
-    if(pins[ci])return false;
-    if(fromSqName&&squadIsLockedByCycle(fromSqName))return false;
+  function squadTerritory(sq){return (sq&&sq.homeTerritory)||S.originTerritory||'';}
+  function territoryLabel(t){
+    if(!t)return 'Unspecified';
+    var h=(typeof territoryHQName==='function')?territoryHQName(t):'Headquarters';
+    return t+' ('+h+')';
+  }
+  function membersOf(sq){return (sq.memberIdxs||[]).filter(function(ci){return (S.party||[])[ci];});}
+  function allAssignedMap(){
+    var map={};
+    allSquads.forEach(function(sq){membersOf(sq).forEach(function(ci){map[ci]=sq.name;});});
+    return map;
+  }
+
+  var terrSeen={};
+  (S.unlockedTerritories||[]).forEach(function(t){if(t)terrSeen[t]=true;});
+  allSquads.forEach(function(sq){var t=squadTerritory(sq);if(t)terrSeen[t]=true;});
+  (S.party||[]).forEach(function(c,ci){if(c){var t=charTerritory(ci);if(t)terrSeen[t]=true;}});
+  var territories=Object.keys(terrSeen);
+  if(!territories.length){territories=[S.originTerritory||''];}
+
+  var choice='';
+  if(territories.length===1){
+    choice='1';
+  }else{
+    var lines=['Choose rebalance scope:', ''];
+    territories.forEach(function(t,i){lines.push((i+1)+'. '+territoryLabel(t));});
+    lines.push('A. Complete reshuffle across all territories');
+    lines.push('');
+    lines.push('Enter a territory number, or A for all territories.');
+    choice=prompt(lines.join('\n'),'1');
+    if(choice===null)return;
+    choice=String(choice).trim();
+  }
+
+  var selectedTerritories=[];
+  if(/^a(ll)?$/i.test(choice)){
+    selectedTerritories=territories.slice();
+  }else{
+    var idx=parseInt(choice,10)-1;
+    if(isNaN(idx)||idx<0||idx>=territories.length){alert('Rebalance cancelled: that was not a valid territory selection.');return;}
+    selectedTerritories=[territories[idx]];
+  }
+  // Charge only for territories that actually have at least one squad or one
+  // character in scope. This matches the grind auto-assignment model: a local
+  // rebalance is the low base price; an all-territory sweep is base × involved
+  // territories, not × every territory name that happens to be unlocked.
+  selectedTerritories=selectedTerritories.filter(function(t){
+    var hasSq=allSquads.some(function(sq){return squadTerritory(sq)===t;});
+    var hasChar=(S.party||[]).some(function(c,ci){return c&&charTerritory(ci)===t;});
+    return hasSq||hasChar;
+  });
+  if(!selectedTerritories.length){alert('No squads or characters found in that scope.');return;}
+
+  var busy=(typeof _buildBusySet==='function')?_buildBusySet():{};
+  var pins=S._sqmgrPins||{};
+  var baseCost=(qpCfg().costAutoRebalance||25);
+  var lockedSurcharge=(qpCfg().costAutoRebalanceLocked||50);
+  var lockedTerritory={};
+  selectedTerritories.forEach(function(t){
+    lockedTerritory[t]=allSquads.some(function(sq){return squadTerritory(sq)===t&&squadIsLockedByCycle(sq.name);});
+  });
+  var totalCost=selectedTerritories.reduce(function(sum,t){return sum+(lockedTerritory[t]?lockedSurcharge:baseCost);},0);
+  if((S.qpBalance||0)<totalCost){alert('Not enough QP. Need '+totalCost+' QP, have '+(S.qpBalance||0)+'.');return;}
+
+  // Snapshot both squad memberships and character territories so failure or
+  // no-op can cleanly restore the pre-rebalance arrangement.
+  var squadSnapshot=allSquads.map(function(sq){return{name:sq.name,mem:membersOf(sq).slice(),homeTerritory:squadTerritory(sq)};});
+  var charTerrSnapshot=(S.party||[]).map(function(c){return c?c.homeTerritory:undefined;});
+
+  function sameArr(a,b){
+    a=(a||[]).slice().sort(function(x,y){return x-y;});
+    b=(b||[]).slice().sort(function(x,y){return x-y;});
+    if(a.length!==b.length)return false;
+    for(var i=0;i<a.length;i++)if(a[i]!==b[i])return false;
     return true;
   }
-  var startAvg=avgCoverage();
-  // Hill-climb: repeatedly find the single best swap or move that increases avg coverage
-  var MAX_PASSES=40;
-  var improved=true;
-  var moveCount=0;
-  var passCount=0;
-  while(improved&&passCount<MAX_PASSES){
-    improved=false;passCount++;
-    var bestGain=0;
-    var bestOp=null;
-    // Evaluate swaps between squad pairs (including with unassigned pool)
-    // Build pool including a virtual unassigned list
-    var allAssigned={};
-    squads.forEach(function(sq){(sq.memberIdxs||[]).forEach(function(ci){allAssigned[ci]=true;});});
-    var unassignedIdxs=(S.party||[]).map(function(_,ci){return ci;}).filter(function(ci){
-      return S.party[ci]&&!allAssigned[ci]&&!busy[ci]&&!pins[ci];
+  function restore(){
+    squadSnapshot.forEach(function(snap){
+      var sq=allSquads.filter(function(s){return s.name===snap.name;})[0];
+      if(sq)sq.memberIdxs=snap.mem.slice();
     });
-    // Consider moving each unassigned char into each squad (no removal)
-    // AND swapping between squad pairs
-    function trySwap(fromIdx,ciA,toIdx,ciB){
-      // from/to are squad indices into `squads`; if fromIdx===-1 means unassigned pool
-      var fromSq=fromIdx>=0?squads[fromIdx]:null;
-      var toSq=toIdx>=0?squads[toIdx]:null;
-      // Skip if either end is locked and that char is a member there
-      if(fromSq&&squadIsLockedByCycle(fromSq.name))return;
-      if(toSq&&squadIsLockedByCycle(toSq.name))return;
-      if(ciA!==null&&!canMove(ciA,fromSq?fromSq.name:''))return;
-      if(ciB!==null&&!canMove(ciB,toSq?toSq.name:''))return;
-      // Capacity check
-      if(toSq&&ciA!==null){
-        var toCount=(toSq.memberIdxs||[]).filter(function(x){return S.party[x];}).length;
-        var isSwap=ciB!==null;
-        if(!isSwap&&toCount>=rebalanceMaxSize)return;
-      }
-      if(fromSq&&ciB!==null){
-        var frCount=(fromSq.memberIdxs||[]).filter(function(x){return S.party[x];}).length;
-        var isSwap2=ciA!==null;
-        if(!isSwap2&&frCount>=rebalanceMaxSize)return;
-      }
-      // Simulate by temporarily mutating and measuring
-      var beforeAvg=avgCoverage();
-      // Remove ciA from fromSq, add to toSq
-      if(ciA!==null){
-        if(fromSq)fromSq.memberIdxs=fromSq.memberIdxs.filter(function(x){return x!==ciA;});
-        if(toSq){if(!toSq.memberIdxs)toSq.memberIdxs=[];toSq.memberIdxs.push(ciA);}
-      }
-      if(ciB!==null){
-        if(toSq)toSq.memberIdxs=toSq.memberIdxs.filter(function(x){return x!==ciB;});
-        if(fromSq){if(!fromSq.memberIdxs)fromSq.memberIdxs=[];fromSq.memberIdxs.push(ciB);}
-      }
-      var afterAvg=avgCoverage();
-      var gain=afterAvg-beforeAvg;
-      // Revert
-      if(ciA!==null){
-        if(toSq)toSq.memberIdxs=toSq.memberIdxs.filter(function(x){return x!==ciA;});
-        if(fromSq){if(!fromSq.memberIdxs)fromSq.memberIdxs=[];fromSq.memberIdxs.push(ciA);}
-      }
-      if(ciB!==null){
-        if(fromSq)fromSq.memberIdxs=fromSq.memberIdxs.filter(function(x){return x!==ciB;});
-        if(toSq){if(!toSq.memberIdxs)toSq.memberIdxs=[];toSq.memberIdxs.push(ciB);}
-      }
-      if(gain>bestGain+0.01){
-        bestGain=gain;
-        bestOp={fromIdx:fromIdx,ciA:ciA,toIdx:toIdx,ciB:ciB};
-      }
-    }
-    // Unassigned → squad (add, no remove)
-    unassignedIdxs.forEach(function(uci){
-      for(var ti=0;ti<squads.length;ti++){
-        if(squadIsLockedByCycle(squads[ti].name))continue;
-        trySwap(-1,uci,ti,null);
-      }
+    (S.party||[]).forEach(function(c,ci){if(c)c.homeTerritory=charTerrSnapshot[ci];});
+  }
+
+  var preview=[];
+  selectedTerritories.forEach(function(t){
+    var sqs=allSquads.filter(function(sq){return squadTerritory(sq)===t;});
+    var capacity=sqs.length*maxPerSquad;
+    var assigned=allAssignedMap();
+    var chars=(S.party||[]).map(function(c,ci){return c?ci:null;}).filter(function(ci){return ci!==null&&charTerritory(ci)===t;});
+    preview.push('• '+t+': '+chars.length+' character'+(chars.length===1?'':'s')+', '+sqs.length+' squad'+(sqs.length===1?'':'s')+', '+capacity+' squad seat'+(capacity===1?'':'s')+' at max '+maxPerSquad);
+  });
+  var msg='Auto-rebalance '+(selectedTerritories.length===1?territoryLabel(selectedTerritories[0]):(selectedTerritories.length+' territories'))+' for '+totalCost+' QP?';
+  msg+='\n\nMax characters per squad: '+maxPerSquad;
+  msg+='\n\nDestination rule: fill squads first; headquarters receives only overflow after squad seats are full.';
+  msg+='\n\nScope:\n'+preview.join('\n');
+  if(Object.keys(pins).length)msg+='\n\n📌 Pinned characters will stay where they are.';
+  if(selectedTerritories.some(function(t){return lockedTerritory[t];}))msg+='\n\n⚠ Cycle-locked / grind-locked squads keep their current members; unlocked characters will be arranged around them.';
+  msg+='\n\nProceed?';
+  if(!confirm(msg))return;
+
+  var movedCount=0;
+  var overflowCount=0;
+  var blockedNotes=[];
+
+  selectedTerritories.forEach(function(t){
+    var sqs=allSquads.filter(function(sq){return squadTerritory(sq)===t;});
+    if(!sqs.length)return;
+    // Stable order: existing squad order. Characters are sorted by current
+    // squad order first, then HQ/unassigned, preserving relative roster order.
+    var assigned=allAssignedMap();
+    var charInfos=[];
+    (S.party||[]).forEach(function(c,ci){
+      if(!c||charTerritory(ci)!==t)return;
+      var curSqName=assigned[ci]||'';
+      var curSq=sqs.filter(function(sq){return sq.name===curSqName;})[0]||null;
+      var lockedHere=curSq&&squadIsLockedByCycle(curSq.name);
+      var fixed=!!busy[ci]||!!pins[ci]||!!lockedHere;
+      charInfos.push({ci:ci,curSq:curSqName,fixed:fixed,locked:!!lockedHere});
     });
-    // Squad → unassigned (remove)
-    for(var fi=0;fi<squads.length;fi++){
-      if(squadIsLockedByCycle(squads[fi].name))continue;
-      var fromMems=(squads[fi].memberIdxs||[]).slice();
-      fromMems.forEach(function(ci){
-        trySwap(fi,ci,-1,null);
+
+    // Start every selected squad empty, except fixed occupants remain. This
+    // avoids using HQ as a normal balancing destination and lets us pack
+    // unlocked characters into actual squad seats first.
+    var remaining=charInfos.filter(function(x){return !x.fixed;}).map(function(x){return x.ci;});
+    // Defensive cleanup: remove movable in-scope characters from any squad
+    // before repacking, even if stale data had them in a cross-territory squad.
+    // Fixed chars are intentionally left in place.
+    allSquads.forEach(function(_sq){
+      if(!_sq||!_sq.memberIdxs)return;
+      _sq.memberIdxs=_sq.memberIdxs.filter(function(ci){return remaining.indexOf(ci)===-1;});
+    });
+    sqs.forEach(function(sq){
+      var fixedMems=membersOf(sq).filter(function(ci){
+        return charInfos.some(function(x){return x.ci===ci&&x.fixed&&x.curSq===sq.name;});
       });
-    }
-    // Squad ↔ squad swap
-    for(var a=0;a<squads.length;a++){
-      if(squadIsLockedByCycle(squads[a].name))continue;
-      for(var b=a+1;b<squads.length;b++){
-        if(squadIsLockedByCycle(squads[b].name))continue;
-        var memsA=(squads[a].memberIdxs||[]).slice();
-        var memsB=(squads[b].memberIdxs||[]).slice();
-        memsA.forEach(function(ciA){
-          memsB.forEach(function(ciB){
-            trySwap(a,ciA,b,ciB);
-          });
+      if(fixedMems.length>maxPerSquad){
+        blockedNotes.push(sq.name+' already has '+fixedMems.length+' fixed member'+(fixedMems.length===1?'':'s')+' and cannot be reduced to '+maxPerSquad+' while locked/busy/pinned.');
+      }
+      sq.memberIdxs=fixedMems.slice();
+    });
+
+    // Prefer filling smaller squads first. This keeps the result even while
+    // still respecting fixed occupants.
+    remaining.forEach(function(ci){
+      var dest=null;
+      for(var pass=0;pass<2&&!dest;pass++){
+        var candidates=sqs.slice().sort(function(a,b){
+          var da=membersOf(a).length, db=membersOf(b).length;
+          if(da!==db)return da-db;
+          return sqs.indexOf(a)-sqs.indexOf(b);
+        });
+        candidates.some(function(sq){
+          if(membersOf(sq).length<maxPerSquad){dest=sq;return true;}
+          return false;
         });
       }
-    }
-    // Apply the best operation
-    if(bestOp){
-      var op=bestOp;
-      var fSq=op.fromIdx>=0?squads[op.fromIdx]:null;
-      var tSq=op.toIdx>=0?squads[op.toIdx]:null;
-      if(op.ciA!==null){
-        if(fSq)fSq.memberIdxs=fSq.memberIdxs.filter(function(x){return x!==op.ciA;});
-        if(tSq){if(!tSq.memberIdxs)tSq.memberIdxs=[];tSq.memberIdxs.push(op.ciA);}
+      if(dest){
+        if(!dest.memberIdxs)dest.memberIdxs=[];
+        dest.memberIdxs.push(ci);
+        if(assigned[ci]!==dest.name)movedCount++;
+        var c=(S.party||[])[ci];
+        if(c)c.homeTerritory=t;
+      }else{
+        // True overflow: no selected squad has an open seat under the chosen
+        // max. Leave character unassigned in this territory's HQ.
+        overflowCount++;
+        var c2=(S.party||[])[ci];
+        if(c2)c2.homeTerritory=t;
       }
-      if(op.ciB!==null){
-        if(tSq)tSq.memberIdxs=tSq.memberIdxs.filter(function(x){return x!==op.ciB;});
-        if(fSq){if(!fSq.memberIdxs)fSq.memberIdxs=[];fSq.memberIdxs.push(op.ciB);}
-      }
-      moveCount++;
-      improved=true;
-    }
-  }
-  var endAvg=avgCoverage();
-  var deltaPct=Math.round((endAvg-startAvg)*10)/10;
-  if(moveCount===0||endAvg<=startAvg+0.01){
-    // Revert to snapshot just in case, show info
-    snapshot.forEach(function(snap){
-      var sq=(S.squads||[]).filter(function(s){return s.name===snap.name;})[0];
-      if(sq)sq.memberIdxs=snap.mem.slice();
     });
-    alert('Squads are already optimally balanced — no improvements found. QP not charged.');
+  });
+
+  var changed=false;
+  squadSnapshot.forEach(function(snap){
+    var sq=allSquads.filter(function(s){return s.name===snap.name;})[0];
+    if(sq&&!sameArr(sq.memberIdxs||[],snap.mem))changed=true;
+  });
+  if(!changed){
+    restore();
+    alert('No rebalance changes were needed in the selected scope. QP not charged.'+(blockedNotes.length?'\n\nNotes:\n'+blockedNotes.join('\n'):''));
     return;
   }
-  // Charge QP
-  if(!qpSpend(cost,'squad_rebalance','Auto-rebalanced squads: '+moveCount+' move'+(moveCount===1?'':'s')+', cap '+rebalanceMaxSize+', +'+deltaPct+'% avg coverage')){
-    // qpSpend failed — revert
-    snapshot.forEach(function(snap){
-      var sq=(S.squads||[]).filter(function(s){return s.name===snap.name;})[0];
-      if(sq)sq.memberIdxs=snap.mem.slice();
-    });
+  if(!qpSpend(totalCost,'squad_rebalance','Auto-rebalanced '+selectedTerritories.length+' territor'+(selectedTerritories.length===1?'y':'ies')+' at max '+maxPerSquad)){
+    restore();
     return;
   }
-  logAdd('⚖ Auto-rebalance: '+moveCount+' move'+(moveCount===1?'':'s')+', cap '+rebalanceMaxSize+', '+Math.round(startAvg)+'% → '+Math.round(endAvg)+'% avg coverage ('+cost+' QP)','quest');
+  logAdd('⚖ Auto-rebalance: '+selectedTerritories.length+' territor'+(selectedTerritories.length===1?'y':'ies')+', max '+maxPerSquad+', '+totalCost+' QP','quest');
   save();
   renderParty();
   renderSquadManager();
-  alert('Rebalance complete!\n\nMaximum squad size: '+rebalanceMaxSize+'\n'+moveCount+' character'+(moveCount===1?'':'s')+' moved.\nAverage coverage: '+Math.round(startAvg)+'% → '+Math.round(endAvg)+'% (+'+deltaPct+'%)');
+  alert('Rebalance complete!\n\nScope: '+selectedTerritories.join(', ')+'\nCost: '+totalCost+' QP\nMax per squad: '+maxPerSquad+'\nMoved/assigned: '+movedCount+'\nHQ overflow: '+overflowCount+(blockedNotes.length?'\n\nNotes:\n'+blockedNotes.join('\n'):''));
 }
 
 // Squad manager event wiring
@@ -48148,7 +48176,7 @@ function computeOriginTerritory(){
 // Those continue to call rnd(DND.species) directly.
 
 function _currentRecruitTerritory(){
-  // v1.7233 — When the Recruitment Office is the active screen, its
+  // v1.7232 — When the Recruitment Office is the active screen, its
   // placement selectors drive local species weighting and final homeTerritory.
   var recScr=document.getElementById('s-recruit');
   if(recScr&&recScr.classList&&recScr.classList.contains('on')){
