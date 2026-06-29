@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7244</title>
+<title>Relentless Quest v1.7245</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4156,7 +4156,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7244
+      Version 1.7245
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -37955,7 +37955,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7244',
+    appVersion:'v1.7245',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39216,7 +39216,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7244';
+var RQ_CLIENT_VERSION='v1.7245';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -46567,21 +46567,35 @@ function qddBuildCharSlots(questLike,isGrind){
         nonChar:true,isPet:false,isAsset:true,isVehicle:true});
     }
   }
-  // Pad with support slots up to minimum 6, but cap at squadReqMax if set
-  var _maxSlots=questLike&&questLike.squadReqMax>0
-    ? Math.max(questLike.squadReqMax, slots.length) // never trim required prereq slots
-    : Infinity;
+  // v1.7245 — Support-slot generation is based on DISTINCT character needs,
+  // not raw visible-slot count. A quest may have two prereq slots that one
+  // versatile character can satisfy, while also declaring squadReqMin:2 and
+  // squadReqMax:2. In that case the UI still needs a + Support slot so the
+  // second distinct character can be assigned. squadReqMax limits the number
+  // of distinct assigned characters at validation time; it must not suppress
+  // required support slots just because prereq slots already fill the grid.
   var _sk=0;
-  while(slots.length<6&&slots.length<_maxSlots){
-    slots.push({type:'support',value:'',label:'+ Support',key:'sup'+(_sk++),support:true});
+  var _charSlotCount=slots.filter(function(s){return !s.nonChar&&!s.support;}).length;
+  var _minDistinct=questLike&&questLike.squadReqMin>0?(parseInt(questLike.squadReqMin,10)||0):0;
+  var _maxDistinct=questLike&&questLike.squadReqMax>0?(parseInt(questLike.squadReqMax,10)||0):0;
+  if(_maxDistinct>0&&_minDistinct>_maxDistinct)_minDistinct=_maxDistinct; // defensive authoring guard
+  var _neededSupportForMin=0;
+  if(_minDistinct>0){
+    // If there is at least one prereq slot, one distinct character can occupy
+    // those prereq slots; support slots provide the remaining distinct bodies.
+    // If there are no character prereqs, every required body needs a support slot.
+    _neededSupportForMin=Math.max(0,_minDistinct-(_charSlotCount>0?1:0));
   }
-  // v1.6960 — Page 2: up to 6 more "+ Support" slots for optional bench members.
-  // Users navigate to page 2 manually (no auto-advance from page 1 fill). The
-  // 12-slot ceiling matches typical D&D adventuring-group expectations and is
-  // further bounded by squadReqMax when that cap is set. A quest with
-  // squadReqMax=4 generates only 4 total slots (no page 2); a quest with
-  // squadReqMax=10 generates 10 (4 on page 2); no cap generates 12 total.
-  while(slots.length<12&&slots.length<_maxSlots){
+  while(slots.filter(function(s){return s.support;}).length<_neededSupportForMin){
+    slots.push({type:'support',value:'',label:'+ Support',key:'sup'+(_sk++),support:true,requiredSupport:true});
+  }
+  // v1.6960 / v1.7245 — Optional bench support. For uncapped quests, keep the
+  // familiar 12-slot ceiling. For capped quests, only add optional supports up
+  // to the distinct-character cap, while never removing the required supports
+  // above. This preserves solo/max-one authoring and makes min/max overlap
+  // like min 2 + max 2 usable.
+  var _supportTarget=_maxDistinct>0?Math.max(_neededSupportForMin,_maxDistinct-(_charSlotCount>0?1:0)):12;
+  while(slots.length<12&&slots.filter(function(s){return s.support;}).length<_supportTarget){
     slots.push({type:'support',value:'',label:'+ Support',key:'sup'+(_sk++),support:true});
   }
   return slots;
