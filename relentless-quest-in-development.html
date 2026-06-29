@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7240</title>
+<title>Relentless Quest v1.7241</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4156,7 +4156,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7240
+      Version 1.7241
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -33337,7 +33337,7 @@ var RQ_MAGIC_QUESTLINE_GATE_ITEMS=[
   'Immovable Rod'
 ];
 function rqMagicQuestlineGateItemForSet(set){
-  // v1.7240 — Prefer the cycle-level requiredAsset metadata. The SQL magic
+  // v1.7241 — Prefer the cycle-level requiredAsset metadata. The SQL magic
   // questlines are authored with cycleGate.requiredAsset on the quest_set row;
   // child quest rows may still be loading, may be private due to an older SQL
   // ownership mistake, or may simply not have merged yet. v1.7239 inferred the
@@ -35333,7 +35333,7 @@ function getStoreItems(){
       if(_magSub==='magic-uncommon')return byR('uncommon');
       return byR('common');
     }
-    if(!S.stock||!S.stock.magicCommon||S.stockDate!==todayStr())buildStock();
+    if(!S.stock||!S.stock.magicCommon||S.stockDate!==todayStr()||S.stockMagicSig!==_storeMagicCatalogSig())buildStock();
     if(_magSub==='magic-uncommon')return S.stock.magicUncommon||[];
     return S.stock.magicCommon||[];
   } else if(storeTab==='adventuring'){
@@ -35388,6 +35388,23 @@ function storeBuildingDowntimeUnlockHtml(item){
   }catch(e){return '';}
 }
 
+function _storeMagicCatalogSig(){
+  // v1.7241 — Stable signature for the magic-store catalog. Previously the
+  // content-library loader cleared S.stockDate on every pull, so any repeated
+  // pull/render cycle rebuilt the uncommon stock rotation again and again.
+  // The store should only rebuild its daily magic stock when the day changes
+  // or when the magic catalog itself changes.
+  try{
+    var _magicTypes=['magic','scroll_book','potion'];
+    return (GEAR||[]).filter(function(g){
+      return g&&_magicTypes.indexOf(g.type)!==-1&&
+        g.rar!=='rare'&&g.rar!=='veryrare'&&g.rar!=='legendary'&&
+        !(g&&g.qmRack);
+    }).map(function(g){
+      return [g.name||'',g.rar||'',g.price||0,g.type||''].join('~');
+    }).sort().join('|');
+  }catch(e){return '';}
+}
 function buildStock(){
   // Magic tab: common and uncommon only — rare/very-rare not sold in store
   // v1.7012 — also exclude qmRack items from rotation stock.
@@ -35398,7 +35415,9 @@ function buildStock(){
     magicCommon:   byR('common').slice(),
     magicUncommon: pick(byR('uncommon'),5)
   };
-  S.stockDate=todayStr();save();
+  S.stockDate=todayStr();
+  S.stockMagicSig=_storeMagicCatalogSig();
+  save();
 }
 
 function renderStore(){
@@ -37933,7 +37952,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7240',
+    appVersion:'v1.7241',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39194,7 +39213,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7240';
+var RQ_CLIENT_VERSION='v1.7241';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -46126,9 +46145,12 @@ function loadContentLibrary(manual){
       var _clKey='rq_content:'+(uid()||'guest');
       localStorage.setItem(_clKey,JSON.stringify(CONTENT_LIB));
     }catch(e){}
-    // Re-render anything that shows content-library data
-    // Also clear gear stock cache so new custom items can appear in today's stock
-    if(S&&S.stockDate)S.stockDate='';
+    // Re-render anything that shows content-library data.
+    // v1.7241 — Do not clear S.stockDate here. Repeated content pulls can
+    // happen while the Store is open; clearing the date forces getStoreItems()
+    // to rebuild the uncommon magic list on every render. buildStock now
+    // tracks a magic-catalog signature and refreshes only when the catalog
+    // actually changes or the calendar date rolls over.
     // Only renderStore if DB items are already loaded; if not,
     // the initSession chain's renderStore() will fire after loadItemsFromDB resolves.
     if(typeof renderStore==='function'&&(DB_GEAR.length||DB_VEHICLES.length||DB_BUILDINGS.length||PETS.length))renderStore();
