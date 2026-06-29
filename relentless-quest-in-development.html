@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7245</title>
+<title>Relentless Quest v1.7247</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4156,7 +4156,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7245
+      Version 1.7247
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -23674,6 +23674,12 @@ function renderParty(){
     var on=!!_attrAxes[d.ax];
     return '<button type="button" class="party-attr-chip'+(on?' party-attr-on':'')+'" data-a="toggle-attr-axis" data-axis="'+d.ax+'" title="'+(on?'Hide':'Show')+' '+esc(d.label)+' column on squad rosters">'+d.label+'</button>';
   }).join('');
+  // v1.7247 — Busy/Free filter. This is intentionally separate from the
+  // attribute-axis chips even though it lives beside them visually: it
+  // filters which roster rows are displayed. Off = free characters only;
+  // On = characters currently on quests/grinds or active downtime.
+  var _busyFilterOn=!!S.partyBusyFilter;
+  var _busyFilterChip='<button type="button" class="party-attr-chip'+(_busyFilterOn?' party-attr-on':'')+'" data-a="toggle-busy-filter" title="'+(_busyFilterOn?'Showing busy characters: on quests/grinds or active downtime':'Showing free characters only: not on quests/grinds or downtime')+'">'+(_busyFilterOn?'⏳ Busy':'✅ Free')+'</button>';
   // v1.7045 — Overlap toggle + three-way scope cycle. The toggle turns
   // overlap coloring on across every visible attribute pill; the scope
   // chip cycles squad → territory → franchise. At least one axis must be
@@ -23729,6 +23735,7 @@ function renderParty(){
   var _rbLabel='\u2696 Rebalance';
   var tagBar='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'+
     _attrChipsHtml+
+    _busyFilterChip+
     '<span style="display:inline-flex;align-items:center;margin-left:4px">'+_overlapHtml+'</span>'+
     (activeFilter?'<button class="btn bink sm" data-a="ptag" data-v="" style="font-size:.65em;padding:.25em .4em">\u2715 Clear filter</button>':'')+
     '</div>';
@@ -24085,8 +24092,17 @@ function renderParty(){
           var _axisColTemplate=_activeAxes.map(function(){return 'minmax(0,1fr)';}).join(' ');
           var _gridTemplate='minmax(90px,auto) minmax(0,auto)'+(_axisColTemplate?' '+_axisColTemplate:'')+' minmax(60px,auto)';
           var memberCis=(sq.memberIdxs||[]).filter(function(ci){return S.party[ci];});
+          // v1.7247 — Apply the Party screen Free/Busy filter at the
+          // roster-row level so squad/HQ containers remain stable while
+          // their visible members change. Busy means active quest/grind or
+          // active downtime; Free means neither.
+          var _busyMode=!!S.partyBusyFilter;
+          memberCis=memberCis.filter(function(ci){
+            var _isBusy=!!questingChars[ci]||!!downtimeChars[ci];
+            return _busyMode?_isBusy:!_isBusy;
+          });
           if(!memberCis.length){
-            return '<div style="font-size:.78em;color:var(--ink-light);font-style:italic;padding:3px 0 6px 0">No members.</div>';
+            return '<div style="font-size:.78em;color:var(--ink-light);font-style:italic;padding:3px 0 6px 0">No '+(S.partyBusyFilter?'busy':'free')+' members.</div>';
           }
           var _nowRoster=Date.now();
           // Helper: shortest ms until this char is free + activity kind.
@@ -25243,6 +25259,13 @@ document.getElementById('party-tagbar').addEventListener('click',function(e){
     if(!axis)return;
     if(!S.partyAttrAxes||typeof S.partyAttrAxes!=='object')S.partyAttrAxes={species:false,skills:true,tools:false,lang:false,rel:false};
     S.partyAttrAxes[axis]=!S.partyAttrAxes[axis];
+    save();renderParty();
+  }
+  else if(a==='toggle-busy-filter'){
+    // v1.7247 — Party screen Free/Busy roster filter. Off shows only
+    // assignable characters; on shows characters committed to quests,
+    // grinds, or active downtime.
+    S.partyBusyFilter=!S.partyBusyFilter;
     save();renderParty();
   }
   else if(a==='toggle-overlap'){
@@ -33402,6 +33425,7 @@ function rqQuestlineUnlockScanSources(){
       id:set.id,
       name:set.name||'Questline',
       territory:set.territory||'',
+      cycleGate:set.cycleGate||null,
       quests:(quests||set.quests||[]).slice()
     });
   }
@@ -33426,22 +33450,24 @@ function rqMagicQuestlinesUnlockedByItem(itemName){
   // Include the just-purchased item even before a deferred save/render path
   // has fully refreshed all views.
   if(itemName&&owned.indexOf(itemName)===-1)owned.push(itemName);
+  var activeSetId=(S&&S.questState&&S.questState.setId)||'';
   var found=[];
   rqQuestlineUnlockScanSources().forEach(function(set){
     if(!set||!set.id||rqIsSetCompleted(set.id))return;
-    var gates=rqQuestlineGateItems(set);
-    if(!gates.length)return;
-    var matchedGate=null;
-    gates.forEach(function(g){
-      if(matchedGate)return;
-      if(itemName&&inventoryHasPrereqItem([itemName],g))matchedGate=g;
-    });
-    if(!matchedGate)return;
-    // Confirm that the item gate is actually owned now, not merely similar
-    // to something in the store catalog.
-    var owns=owned.some(function(n){return inventoryHasPrereqItem([n],matchedGate);});
+    // v1.7246 — Discovery is ONLY for the explicit 400gp-ish magic-item
+    // questline gates. The v1.7238 path walked every child quest item
+    // prerequisite, so ordinary prereq items (e.g. Sending Stones in an
+    // already-active Gojimura questline) could falsely announce a new
+    // questline. Use the canonical cycle-level gate first, then its six-item
+    // whitelist fallback, and skip the active cycle entirely.
+    if(activeSetId&&set.id===activeSetId)return;
+    var gate=rqMagicQuestlineGateItemForSet(set);
+    if(!gate)return;
+    var purchasedMatches=itemName&&(canonicalItemName(itemName)===canonicalItemName(gate)||inventoryHasPrereqItem([itemName],gate)||inventoryHasPrereqItem([gate],itemName));
+    if(!purchasedMatches)return;
+    var owns=owned.some(function(n){return canonicalItemName(n)===canonicalItemName(gate)||inventoryHasPrereqItem([n],gate)||inventoryHasPrereqItem([gate],n);});
     if(!owns)return;
-    found.push({set:set,item:matchedGate});
+    found.push({set:set,item:gate});
   });
   return found;
 }
@@ -33499,7 +33525,16 @@ function rqScanOwnedQuestlineUnlocks(){
   finally{window._rqQuestlineScanInRender=oldFlag;}
 }
 function rqNewQuestlineBannerHtml(){
-  var notices=(S.settings&&S.settings._newQuestlineNotices||[]).filter(function(n){return n&&!n.seen&&!rqIsSetCompleted(n.setId);});
+  var activeSetId=(S&&S.questState&&S.questState.setId)||'';
+  var notices=(S.settings&&S.settings._newQuestlineNotices||[]).filter(function(n){
+    if(!n||n.seen||rqIsSetCompleted(n.setId))return false;
+    if(activeSetId&&n.setId===activeSetId)return false;
+    // v1.7246 — Do not keep displaying stale/invalid notices created by the
+    // pre-fix broad item-prereq scanner.
+    var set=(rqQuestlineUnlockScanSources()||[]).filter(function(s){return s&&s.id===n.setId;})[0];
+    var gate=set?rqMagicQuestlineGateItemForSet(set):'';
+    return !!gate&&canonicalItemName(gate)===canonicalItemName(n.item||'');
+  });
   if(!notices.length)return '';
   return '<div style="background:rgba(26,107,138,.10);border:2px solid var(--teal);border-radius:9px;padding:10px 12px;margin-bottom:12px;box-shadow:0 2px 8px rgba(26,107,138,.12)">'+
     '<div style="font-family:\'Cinzel\',serif;font-size:.9em;color:var(--teal);font-weight:700;margin-bottom:6px">🗺 New Questline Discovered</div>'+ 
@@ -37955,7 +37990,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7245',
+    appVersion:'v1.7247',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39216,7 +39251,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7245';
+var RQ_CLIENT_VERSION='v1.7247';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
