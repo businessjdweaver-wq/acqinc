@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7238</title>
+<title>Relentless Quest v1.7239</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4156,7 +4156,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7238
+      Version 1.7239
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -11507,6 +11507,14 @@ function renderCycleMapCards(){
   var completedByTerritory={}; // territory string -> array of card HTML
   var completedTerritoryOrder=[]; // insertion order for stable rendering
   (QUESTSETS||[]).forEach(function(set){
+    // v1.7239 — Magic-item questlines are discovery-gated. Shared/published
+    // content should not make every item-specific campaign arc visible at
+    // once; a cycle whose prerequisites include one of the authored magic
+    // questline gate items stays hidden until that item is actually owned
+    // somewhere in the franchise inventory/storage/assets. Completed and
+    // currently-active cycles remain visible defensively so old saves do
+    // not strand progress.
+    if(typeof rqShouldHideMagicQuestlineSet==='function'&&rqShouldHideMagicQuestlineSet(set,activeSetId))return;
     var st=cycleGateStatus(set);
     var vis=st.visibility||'fully_visible';
     // 'hidden' and 'obscured' both mean hide until prerequisites met
@@ -33317,6 +33325,42 @@ function rqQuestlineGateItems(set){
   });
   return out;
 }
+// v1.7239 — Canonical item gates for SQL/shared magic-item questlines.
+// These are not ordinary quest prerequisites; they hide the entire cycle
+// until the franchise owns the corresponding magic item.
+var RQ_MAGIC_QUESTLINE_GATE_ITEMS=[
+  'Wand of Web',
+  'Ring of Water Walking',
+  'Headband of Intellect',
+  'Potion of Giant Strength',
+  'Ring of Mind Shielding',
+  'Immovable Rod'
+];
+function rqMagicQuestlineGateItemForSet(set){
+  var gates=rqQuestlineGateItems(set);
+  var found='';
+  (gates||[]).forEach(function(g){
+    if(found||!g)return;
+    (RQ_MAGIC_QUESTLINE_GATE_ITEMS||[]).forEach(function(m){
+      if(found)return;
+      if(canonicalItemName(g)===canonicalItemName(m)||inventoryHasPrereqItem([g],m)||inventoryHasPrereqItem([m],g))found=m;
+    });
+  });
+  return found;
+}
+function rqOwnsMagicQuestlineGateItem(itemName){
+  if(!itemName)return false;
+  var owned=rqOwnedItemNames();
+  return owned.some(function(n){return inventoryHasPrereqItem([n],itemName)||canonicalItemName(n)===canonicalItemName(itemName);});
+}
+function rqShouldHideMagicQuestlineSet(set,activeSetId){
+  if(!set||!set.id)return false;
+  var gate=rqMagicQuestlineGateItemForSet(set);
+  if(!gate)return false;
+  if(activeSetId&&set.id===activeSetId)return false;
+  if(rqIsSetCompleted(set.id))return false;
+  return !rqOwnsMagicQuestlineGateItem(gate);
+}
 function rqIsSetCompleted(setId){
   var set=(QUESTSETS||[]).filter(function(s){return s&&s.id===setId;})[0];
   if(!set)return false;
@@ -37874,7 +37918,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7238',
+    appVersion:'v1.7239',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39135,7 +39179,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7238';
+var RQ_CLIENT_VERSION='v1.7239';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
