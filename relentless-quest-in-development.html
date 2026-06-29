@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7232</title>
+<title>Relentless Quest v1.7236</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4156,7 +4156,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7235
+      Version 1.7236
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -5842,9 +5842,9 @@ function initUsedNames(){
 // Maps gated items (weapons, tools/kits) to the proficiency a character
 // must hold in c.weapons or c.tools to use the item for quest prereq
 // purposes. Mundane gear (rope, rations, tinderbox, etc.) is intentionally
-// ungated — anyone can carry and use such items. Armor is currently
-// ungated as well; the engine doesn't yet track armor proficiency as a
-// distinct field. (TODO: armor gate once c.armorProf or equivalent exists.)
+// ungated — anyone can carry and use such items. Armor proficiency is
+// tracked separately as c.armorProfs for character display and downtime;
+// quest item gates below still only enforce weapon/tool use gates.
 //
 // Lookup priority for gated items:
 //   1. Exact name in ITEM_PROF_OVERRIDE (handles named exceptions like
@@ -22415,10 +22415,11 @@ function _dtCreationSnapshotFromCharacter(c){
     if(v==="Artisan's Tools"||v==='Gaming Set'||v==='Musical Instrument')return;
     add('tool',v);
   });
-  var ess=(typeof classEssentials==='function')?classEssentials(cls):{skills:[],tools:[],weapons:[]};
+  var ess=(typeof classEssentials==='function')?classEssentials(cls):{skills:[],tools:[],weapons:[],armor:[]};
   (ess.skills||[]).forEach(function(v){add('skill',v);});
   (ess.tools||[]).forEach(function(v){add('tool',v);});
   (ess.weapons||[]).forEach(function(v){add('weapon',v);});
+  (ess.armor||[]).forEach(function(v){add('armor',v);});
   add('language','Common');
   var nativeLa=(typeof _speciesLanguage==='function')?_speciesLanguage(c.species):'';
   if(nativeLa)add('language',nativeLa);
@@ -23128,6 +23129,7 @@ function charCardHtml(c,ci,opts){
         return devProfPill(ci,_dtNormalizeProfType('tool',s),s,(exotic?'<span style="color:var(--purple)">':'')+'🔧 '+esc(s)+(exotic?' ✦</span>':''),af);
       }).join('')+
       (c.weapons||[]).map(function(s){return devProfPill(ci,'weapon',s,'⚔ '+esc(s),af);}).join('')+
+      (c.armorProfs||c.armor||[]).map(function(s){return devProfPill(ci,'armor',s,'🛡 '+esc(s),af);}).join('')+
       '</div>'+
       (c.exoticTrait?'<div style="font-size:.75em;color:var(--purple);margin:3px 0 4px;font-style:italic">✦ '+esc(c.exoticTrait)+'</div>':'')+
       (function(){
@@ -23263,6 +23265,7 @@ function charHasTag(c,ci,tag){
   if((c.tools||[]).indexOf(tag)!==-1)return true;
   if((c.lang||[]).indexOf(tag)!==-1)return true;
   if((c.weapons||[]).indexOf(tag)!==-1)return true;
+  if((c.armorProfs||c.armor||[]).indexOf(tag)!==-1)return true;
   if(tag==='Questing'||tag==='__not_questing__'){
     var _now=Date.now();
     var _outQ=false;
@@ -27167,10 +27170,13 @@ document.getElementById('ov-lv-yes').addEventListener('click',function(){
     var wpTopUp=Math.max(0,2-mergedWp.length);
     var newWpRandom=wpTopUp>0?pick(DND.weapons.filter(function(w){return mergedWp.indexOf(w)===-1;}),wpTopUp):[];
     var newWp=(ess.weapons||[]).filter(function(w){return existWp.indexOf(w)===-1;}).concat(newWpRandom);
+    var existArmor=(c.armorProfs||c.armor||[]).slice();
+    var newArmor=(ess.armor||[]).filter(function(a){return a&&existArmor.indexOf(a)===-1;});
     c.skills=mergedSk.slice(0,4);
     c.tools=existTl.concat(newTl);
     c.lang=existLa.concat(newLa);
     c.weapons=existWp.concat(newWp);
+    c.armorProfs=existArmor.concat(newArmor);
     if(!c.rel)c.rel=rnd(DND.rel);
     if(!c.stats)c.stats=rollStats(c.cls||'Fighter'); // assign stats on graduation
     if(!c.inv)c.inv=[];
@@ -27185,6 +27191,8 @@ document.getElementById('ov-lv-yes').addEventListener('click',function(){
       (newSk.length?'\nNew skills: '+newSk.join(', '):'')+
       (newTl.length?'\nNew tools: '+newTl.join(', '):'')+
       (newLa.length?'\nNew languages: '+newLa.join(', '):'')+
+      (newWp.length?'\nNew weapons: '+newWp.join(', '):'')+
+      (newArmor.length?'\nNew armor: '+newArmor.join(', '):'')+
       (newItems.length?'\nClass kit: '+newItems.join(', '):''));
   } else {
     logAdd(c.name+' reached Level '+c.level+'!','hire');
@@ -28249,6 +28257,10 @@ function makeCandidate(){
       }
       return wp;
     })(),
+    armorProfs:(function(){
+      var ess=classEssentials(cls);
+      return (ess.armor||[]).slice();
+    })(),
     stats:rollStats(cls),
     level:1,inv:recruitLoadoutByClassBgAndCost(cls,bg,hireCost),
     hireCost:hireCost
@@ -29197,28 +29209,29 @@ function mercBaseCost(){
 //     pickClassSkills already grants). Use sparingly — adds beyond mandatory.
 // - tools:  tool proficiencies the class always has per PHB.
 // - weapons: weapon proficiency groups / specific weapons per PHB.
+// - armor:  armor/shield proficiencies the class always has per PHB.
 // - items:  concrete inventory items the class starts with. '__bardInstrument'
 //     is a sentinel that resolves to a random pick from {Lute, Drum, Flute}
 //     when classEssentials() is called (so recruitment rolls pick one per
 //     character rather than all three).
 var CLASS_ESSENTIALS_DEF={
-  'Barbarian':{skills:[],tools:[],                               weapons:['Martial Weapons','Simple Weapons'],                                       items:[]},
-  'Bard':     {skills:[],tools:['Musical Instrument'],           weapons:['Simple Weapons','Rapiers','Shortswords','Hand Crossbows','Longswords'], items:['__bardInstrument']},
-  'Cleric':   {skills:[],tools:[],                               weapons:['Simple Weapons'],                                                       items:['Holy Symbol']},
-  'Druid':    {skills:[],tools:['Herbalism Kit'],                weapons:['Simple Weapons','Quarterstaffs'],                                       items:['Druidic Focus']},
-  'Fighter':  {skills:[],tools:[],                               weapons:['Martial Weapons','Simple Weapons'],                                     items:[]},
-  'Monk':     {skills:[],tools:[],                               weapons:['Simple Weapons','Shortswords'],                                         items:[]},
-  'Paladin':  {skills:[],tools:[],                               weapons:['Martial Weapons','Simple Weapons'],                                     items:['Holy Symbol']},
-  'Ranger':   {skills:[],tools:[],                               weapons:['Martial Weapons','Simple Weapons','Bows'],                              items:['Longbow & Quiver']},
-  'Rogue':    {skills:['Sleight of Hand'],tools:["Thieves' Tools"],weapons:['Simple Weapons','Shortswords','Rapiers','Hand Crossbows'],            items:["Thieves' Tools"]},
-  'Sorcerer': {skills:[],tools:[],                               weapons:['Simple Weapons','Daggers','Quarterstaffs'],                             items:['Arcane Focus','Component Pouch']},
-  'Warlock':  {skills:[],tools:[],                               weapons:['Simple Weapons'],                                                       items:['Arcane Focus','Component Pouch']},
-  'Wizard':   {skills:[],tools:[],                               weapons:['Simple Weapons','Daggers','Quarterstaffs'],                             items:['Arcane Focus','Component Pouch']},
-  'Runesmith':{skills:[],tools:["Smith's Tools","Tinker's Tools"],weapons:['Simple Weapons'],                                                      items:[]}
+  'Barbarian':{skills:[],tools:[],                               weapons:['Martial Weapons','Simple Weapons'],                                      armor:['Light Armor','Medium Armor','Shields'],              items:[]},
+  'Bard':     {skills:[],tools:['Musical Instrument'],           weapons:['Simple Weapons','Rapiers','Shortswords','Hand Crossbows','Longswords'], armor:['Light Armor'],                                      items:['__bardInstrument']},
+  'Cleric':   {skills:[],tools:[],                               weapons:['Simple Weapons'],                                                       armor:['Light Armor','Medium Armor','Shields'],              items:['Holy Symbol']},
+  'Druid':    {skills:[],tools:['Herbalism Kit'],                weapons:['Simple Weapons','Quarterstaffs'],                                      armor:['Light Armor','Medium Armor','Shields'],              items:['Druidic Focus']},
+  'Fighter':  {skills:[],tools:[],                               weapons:['Martial Weapons','Simple Weapons'],                                    armor:['Light Armor','Medium Armor','Heavy Armor','Shields'],items:[]},
+  'Monk':     {skills:[],tools:[],                               weapons:['Simple Weapons','Shortswords'],                                        armor:[],                                                   items:[]},
+  'Paladin':  {skills:[],tools:[],                               weapons:['Martial Weapons','Simple Weapons'],                                    armor:['Light Armor','Medium Armor','Heavy Armor','Shields'],items:['Holy Symbol']},
+  'Ranger':   {skills:[],tools:[],                               weapons:['Martial Weapons','Simple Weapons','Bows'],                             armor:['Light Armor','Medium Armor','Shields'],              items:['Longbow & Quiver']},
+  'Rogue':    {skills:['Sleight of Hand'],tools:["Thieves' Tools"],weapons:['Simple Weapons','Shortswords','Rapiers','Hand Crossbows'],           armor:['Light Armor'],                                      items:["Thieves' Tools"]},
+  'Sorcerer': {skills:[],tools:[],                               weapons:['Simple Weapons','Daggers','Quarterstaffs'],                            armor:[],                                                   items:['Arcane Focus','Component Pouch']},
+  'Warlock':  {skills:[],tools:[],                               weapons:['Simple Weapons'],                                                       armor:['Light Armor'],                                      items:['Arcane Focus','Component Pouch']},
+  'Wizard':   {skills:[],tools:[],                               weapons:['Simple Weapons','Daggers','Quarterstaffs'],                            armor:[],                                                   items:['Arcane Focus','Component Pouch']},
+  'Runesmith':{skills:[],tools:["Smith's Tools","Tinker's Tools"],weapons:['Simple Weapons'],                                                     armor:['Light Armor','Medium Armor','Shields'],              items:[]}
 };
 function classEssentials(cls){
   var e=CLASS_ESSENTIALS_DEF[cls];
-  if(!e)return {skills:[],tools:[],weapons:[],items:[]};
+  if(!e)return {skills:[],tools:[],weapons:[],armor:[],items:[]};
   // Resolve __bardInstrument sentinel to a random concrete instrument
   var items=(e.items||[]).map(function(it){
     if(it==='__bardInstrument'){
@@ -29231,6 +29244,7 @@ function classEssentials(cls){
     skills:(e.skills||[]).slice(),
     tools:(e.tools||[]).slice(),
     weapons:(e.weapons||[]).slice(),
+    armor:(e.armor||[]).slice(),
     items:items
   };
 }
@@ -29393,23 +29407,28 @@ function recruitLoadoutByClassBgAndCost(cls,bg,hireCost){
   return inv;
 }
 
+// v1.7236 — Mercenary class/proficiency package now reuses the same
+// CLASS_ESSENTIALS_DEF source of truth as standard adventurer hires and
+// hireling graduation. If the user explicitly chooses a class, honor it.
+// Otherwise, selected skills drive the class through the hireling-graduation
+// resolver; with no selected skills, preserve the old random-class behavior.
+function resolveMercenaryClass(selectedClass,selectedSkills){
+  if(selectedClass)return selectedClass;
+  var sk=(selectedSkills||[]).filter(function(v){return !!v;});
+  if(sk.length&&typeof _resolveGradClass==='function'){
+    var tmp={skills:sk,stats:null};
+    var r=_resolveGradClass(tmp);
+    if(r&&r.cls)return r.cls;
+  }
+  return rnd(DND.cls);
+}
+function mercClassPackage(cls){
+  return (typeof classEssentials==='function')?classEssentials(cls):{skills:[],tools:[],weapons:['Simple Weapons'],armor:[],items:[]};
+}
 function classWeaponsForMerc(cls){
-  var map={
-    'Barbarian':['Greataxe','Martial Weapons'],
-    'Bard':['Daggers','Simple Weapons'],
-    'Cleric':['Simple Weapons','Shield'],
-    'Druid':['Quarterstaffs','Simple Weapons'],
-    'Fighter':['Longswords','Martial Weapons','Shield'],
-    'Monk':['Quarterstaffs','Simple Weapons'],
-    'Paladin':['Longswords','Martial Weapons','Shield'],
-    'Ranger':['Bows','Shortswords','Martial Weapons'],
-    'Rogue':['Daggers','Shortswords','Hand Crossbows'],
-    'Sorcerer':['Daggers','Simple Weapons'],
-    'Warlock':['Daggers','Simple Weapons'],
-    'Wizard':['Daggers','Simple Weapons'],
-    'Runesmith':['Simple Weapons',"Tinker's Tools"]
-  };
-  return (map[cls]||['Simple Weapons']).slice();
+  // Kept as a compatibility wrapper for any older call sites; new mercenary
+  // creation should use mercClassPackage(cls).weapons directly.
+  return (mercClassPackage(cls).weapons||['Simple Weapons']).slice();
 }
 
 function updateMercSelectionCount(key,maxCount){
@@ -29533,7 +29552,7 @@ function initMercenaryUI(){
   document.getElementById('btn-prem-hire').addEventListener('click',function(){
     // v1.7116 — Random fallback uses territorial weights when species is unspecified.
     var species=specSel.value||pickSpeciesForTerritory(_currentRecruitTerritory());
-    var cls=clsSel.value||rnd(DND.cls);
+    var cls=resolveMercenaryClass(clsSel.value,premSelections.skills);
     var bg=bgSel.value||rnd(DND.bg);
     var rel=relSel.value||rnd(DND.rel);
     var first=(document.getElementById('prem-fname').value||'').trim();
@@ -29548,8 +29567,16 @@ function initMercenaryUI(){
     if(!_hqChk.ok){alert(_hqChk.message);return;}
     if(!goldSpend(cost,'Hired custom mercenary '+first+' '+last,'hire'))return;
 
+    var ess=mercClassPackage(cls);
     var skills=premSelections.skills.length?premSelections.skills.slice():pickClassSkills(cls);
-    var tools=premSelections.tools.length?premSelections.tools.slice():pick(DND.tools,2);
+    (ess.skills||[]).forEach(function(s){if(s&&skills.indexOf(s)===-1)skills.push(s);});
+    var tools=premSelections.tools.length?premSelections.tools.slice():(ess.tools||[]).slice();
+    (ess.tools||[]).forEach(function(t){if(t&&tools.indexOf(t)===-1)tools.push(t);});
+    if(!premSelections.tools.length&&tools.length<2){
+      pick(DND.tools.filter(function(t){return tools.indexOf(t)===-1;}),2-tools.length).forEach(function(t){tools.push(t);});
+    }
+    var weapons=(ess.weapons||['Simple Weapons']).slice();
+    var armorProfs=(ess.armor||[]).slice();
     var langs=uniqList(['Common'].concat(premSelections.lang.length?premSelections.lang.slice():pick(DND.lang.filter(function(v){return v!=='Common';}),1)));
     var _mercInv=recruitLoadoutByClassBgAndCost(cls,bg,cost);
     var merc={
@@ -29564,7 +29591,8 @@ function initMercenaryUI(){
       lang:langs,
       skills:uniqList(skills),
       tools:uniqList(tools),
-      weapons:classWeaponsForMerc(cls),
+      weapons:weapons,
+      armorProfs:armorProfs,
       stats:rollStats(cls),
       level:1,
       inv:_mercInv,
@@ -38902,7 +38930,8 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7235';
+var RQ_CLIENT_VERSION='v1.7236';
+// v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
 
