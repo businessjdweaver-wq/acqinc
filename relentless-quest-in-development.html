@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7237</title>
+<title>Relentless Quest v1.7238</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4156,7 +4156,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7237
+      Version 1.7238
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -19273,6 +19273,28 @@ function _collectInboxItems(){
       onClick:function(){closeOv('ov-inbox');openDowntimePendingModal();}
     });
   });
+  // v1.7238 — Magic-item questline discovery notices. v1.7237 lit only the
+  // Quest Map banner and called renderInboxBadge(), but _collectInboxItems()
+  // did not include those notices, so the envelope stayed empty.
+  (S.settings&&S.settings._newQuestlineNotices||[]).forEach(function(n){
+    if(!n||n.seen)return;
+    if(n.setId&&rqIsSetCompleted(n.setId))return;
+    items.push({
+      kind:'questline',
+      icon:'🗺',
+      title:n.setName||'New Questline',
+      sub:'Unlocked by '+(n.item||'magic item')+(n.territory?' · '+n.territory:''),
+      onClick:function(){
+        closeOv('ov-inbox');
+        if(n.setId&&typeof activateQuestCycleSet==='function')activateQuestCycleSet(n.setId);
+        if(S.settings&&S.settings._newQuestlineNotices){
+          S.settings._newQuestlineNotices.forEach(function(x){if(x&&x.setId===n.setId)x.seen=true;});
+          save();
+        }
+        navTo('adventure');
+      }
+    });
+  });
   return items;
 }
 
@@ -33269,7 +33291,7 @@ var advQuestCollapsed=true; // start collapsed on launch
 var advQuestLastSetId=null; // track active set to reset collapse on cycle change
 
 
-// v1.7237 — Magic-item questline discovery protocol.
+// v1.7238 — Magic-item questline discovery protocol.
 // When a purchase satisfies the item gate for one or more quest cycles,
 // surface the newly-opened line immediately and keep a "NEW" banner on
 // the Quest screen until the user opens/dismisses it.
@@ -33306,13 +33328,47 @@ function rqIsSetCompleted(setId){
   if(qs.setId===setId&&(qs.done||[]).length>=total)return true;
   return false;
 }
+function rqQuestlineUnlockScanSources(){
+  // v1.7238 — Unlock notices must see both live QUESTSETS and SQL-loaded
+  // content_items while / before mergeCustomContent has projected them into
+  // QUESTSETS. The prior v1.7237 scan only walked QUESTSETS, so a purchase
+  // made before content library hydration could miss newly inserted DB arcs.
+  var out=[];
+  var seen={};
+  function addSource(set,quests){
+    if(!set||!set.id)return;
+    if(seen[set.id])return;
+    seen[set.id]=true;
+    out.push({
+      id:set.id,
+      name:set.name||'Questline',
+      territory:set.territory||'',
+      quests:(quests||set.quests||[]).slice()
+    });
+  }
+  (QUESTSETS||[]).forEach(function(set){addSource(set,set.quests||[]);});
+  try{
+    if(CONTENT_LIB){
+      ['official','shared','private'].forEach(function(scope){
+        var b=CONTENT_LIB[scope]||{};
+        var qs=b.quests||[];
+        (b.questSets||[]).forEach(function(meta){
+          if(!meta||!meta.id)return;
+          var qForSet=qs.filter(function(q){return q&&q.setId===meta.id;});
+          addSource(meta,qForSet);
+        });
+      });
+    }
+  }catch(e){}
+  return out;
+}
 function rqMagicQuestlinesUnlockedByItem(itemName){
   var owned=rqOwnedItemNames();
   // Include the just-purchased item even before a deferred save/render path
   // has fully refreshed all views.
   if(itemName&&owned.indexOf(itemName)===-1)owned.push(itemName);
   var found=[];
-  (QUESTSETS||[]).forEach(function(set){
+  rqQuestlineUnlockScanSources().forEach(function(set){
     if(!set||!set.id||rqIsSetCompleted(set.id))return;
     var gates=rqQuestlineGateItems(set);
     if(!gates.length)return;
@@ -33358,6 +33414,19 @@ function rqNotifyMagicItemQuestlines(itemName){
       },80);
     }
   }
+  if(!newly.length&&!window._rqQuestlineContentRetry&&typeof loadContentLibrary==='function'&&typeof uid==='function'&&uid()){
+    // v1.7238 — If a purchase happens before SQL content_items have been
+    // hydrated/merged into the live runtime, refresh content once and rescan.
+    // This is intentionally a one-shot guard so renderAdv's owned-item scan
+    // cannot spin a content-load loop.
+    window._rqQuestlineContentRetry=true;
+    try{
+      loadContentLibrary(false).then(function(){
+        window._rqQuestlineContentRetry=false;
+        try{rqNotifyMagicItemQuestlines(itemName);}catch(e){}
+      }).catch(function(){window._rqQuestlineContentRetry=false;});
+    }catch(e){window._rqQuestlineContentRetry=false;}
+  }
   return newly;
 }
 function rqScanOwnedQuestlineUnlocks(){
@@ -33392,6 +33461,7 @@ function renderAdv(){
   var el=document.getElementById('avcontent');
   if(!el)return;
   rqScanOwnedQuestlineUnlocks();
+  try{renderInboxBadge&&renderInboxBadge();}catch(e){}
   // Squad banner
   (function(){
     var banner=document.getElementById('adv-squad-banner');
@@ -37804,7 +37874,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7237',
+    appVersion:'v1.7238',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39065,7 +39135,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7237';
+var RQ_CLIENT_VERSION='v1.7238';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
