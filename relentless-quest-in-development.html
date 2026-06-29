@@ -4156,7 +4156,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7236
+      Version 1.7237
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -33268,9 +33268,130 @@ var advCountdownTimer=null;
 var advQuestCollapsed=true; // start collapsed on launch
 var advQuestLastSetId=null; // track active set to reset collapse on cycle change
 
+
+// v1.7237 — Magic-item questline discovery protocol.
+// When a purchase satisfies the item gate for one or more quest cycles,
+// surface the newly-opened line immediately and keep a "NEW" banner on
+// the Quest screen until the user opens/dismisses it.
+function rqOwnedItemNames(){
+  var out=[];
+  (S.party||[]).forEach(function(c){(c.inv||[]).forEach(function(x){if(typeof x==='string'&&x.indexOf('__meta__')!==0)out.push(x);});});
+  (S.franchiseStorage||[]).forEach(function(x){out.push(typeof x==='string'?x:((x&&x.name)||''));});
+  (S.partyAssets||[]).forEach(function(a){if(a&&a.name)out.push(a.name);});
+  return out.filter(Boolean);
+}
+function rqQuestPreItems(q){
+  if(!q)return [];
+  if(q._prereqs){
+    var pr=prereqRowsToPreObj(q._prereqs);
+    return (pr.items||[]).slice();
+  }
+  return (q.pre&&q.pre.items? q.pre.items.slice():[]);
+}
+function rqQuestlineGateItems(set){
+  var out=[];
+  (set&&set.quests||[]).forEach(function(q){
+    rqQuestPreItems(q).forEach(function(it){if(it&&out.indexOf(it)===-1)out.push(it);});
+  });
+  return out;
+}
+function rqIsSetCompleted(setId){
+  var set=(QUESTSETS||[]).filter(function(s){return s&&s.id===setId;})[0];
+  if(!set)return false;
+  var total=(set.quests||[]).length;
+  if(!total)return false;
+  var qs=S.questState||{};
+  var sp=qs.setProgress&&qs.setProgress[setId];
+  if(sp&&(sp.done||[]).length>=total)return true;
+  if(qs.setId===setId&&(qs.done||[]).length>=total)return true;
+  return false;
+}
+function rqMagicQuestlinesUnlockedByItem(itemName){
+  var owned=rqOwnedItemNames();
+  // Include the just-purchased item even before a deferred save/render path
+  // has fully refreshed all views.
+  if(itemName&&owned.indexOf(itemName)===-1)owned.push(itemName);
+  var found=[];
+  (QUESTSETS||[]).forEach(function(set){
+    if(!set||!set.id||rqIsSetCompleted(set.id))return;
+    var gates=rqQuestlineGateItems(set);
+    if(!gates.length)return;
+    var matchedGate=null;
+    gates.forEach(function(g){
+      if(matchedGate)return;
+      if(itemName&&inventoryHasPrereqItem([itemName],g))matchedGate=g;
+    });
+    if(!matchedGate)return;
+    // Confirm that the item gate is actually owned now, not merely similar
+    // to something in the store catalog.
+    var owns=owned.some(function(n){return inventoryHasPrereqItem([n],matchedGate);});
+    if(!owns)return;
+    found.push({set:set,item:matchedGate});
+  });
+  return found;
+}
+function rqNotifyMagicItemQuestlines(itemName){
+  if(!S||!itemName)return [];
+  if(!S.settings)S.settings={};
+  if(!S.settings._questlineItemUnlocks)S.settings._questlineItemUnlocks={};
+  if(!S.settings._newQuestlineNotices)S.settings._newQuestlineNotices=[];
+  var newly=[];
+  rqMagicQuestlinesUnlockedByItem(itemName).forEach(function(hit){
+    var key=hit.set.id+'::'+canonicalItemName(hit.item);
+    if(S.settings._questlineItemUnlocks[key])return;
+    S.settings._questlineItemUnlocks[key]=Date.now();
+    var notice={setId:hit.set.id,setName:hit.set.name||'Questline',item:hit.item,territory:hit.set.territory||'',seen:false,ts:Date.now()};
+    S.settings._newQuestlineNotices.unshift(notice);
+    newly.push(notice);
+    try{logAdd('🗺 New questline discovered: '+notice.setName+' — unlocked by '+hit.item+(notice.territory?' in '+notice.territory:'')+'.','adv');}catch(e){}
+  });
+  // Keep the list small and current.
+  S.settings._newQuestlineNotices=S.settings._newQuestlineNotices.slice(0,12);
+  if(newly.length){
+    try{renderInboxBadge&&renderInboxBadge();}catch(e){}
+    if(!window._rqQuestlineScanInRender){
+      try{renderAdv&&renderAdv();}catch(e){}
+      setTimeout(function(){
+        try{
+          alert('🗺 New Questline Discovered\n\n'+newly.map(function(n){return n.setName+' — unlocked by '+n.item+(n.territory?' · '+n.territory:'');}).join('\n'));
+        }catch(e){}
+      },80);
+    }
+  }
+  return newly;
+}
+function rqScanOwnedQuestlineUnlocks(){
+  if(!S||!S.settings)return;
+  var oldFlag=window._rqQuestlineScanInRender;
+  window._rqQuestlineScanInRender=true;
+  try{rqOwnedItemNames().forEach(function(n){rqNotifyMagicItemQuestlines(n);});}
+  finally{window._rqQuestlineScanInRender=oldFlag;}
+}
+function rqNewQuestlineBannerHtml(){
+  var notices=(S.settings&&S.settings._newQuestlineNotices||[]).filter(function(n){return n&&!n.seen&&!rqIsSetCompleted(n.setId);});
+  if(!notices.length)return '';
+  return '<div style="background:rgba(26,107,138,.10);border:2px solid var(--teal);border-radius:9px;padding:10px 12px;margin-bottom:12px;box-shadow:0 2px 8px rgba(26,107,138,.12)">'+
+    '<div style="font-family:\'Cinzel\',serif;font-size:.9em;color:var(--teal);font-weight:700;margin-bottom:6px">🗺 New Questline Discovered</div>'+ 
+    notices.slice(0,4).map(function(n){
+      return '<div style="display:flex;gap:8px;align-items:flex-start;justify-content:space-between;border-top:1px dashed rgba(26,107,138,.25);padding-top:7px;margin-top:7px">'+
+        '<div style="flex:1;min-width:0"><div style="font-weight:700;color:var(--ink)">'+esc(n.setName||'Questline')+'</div>'+ 
+        '<div style="font-size:.86em;color:var(--ink-light);font-style:italic">Unlocked by '+esc(n.item||'magic item')+(n.territory?' · '+esc(n.territory):'')+'</div></div>'+ 
+        '<button class="btn bg sm" data-a="newql-map" data-setid="'+esc(n.setId||'')+'" style="white-space:nowrap">Open Map</button>'+ 
+        '<button class="btn bink sm" data-a="newql-dismiss" data-setid="'+esc(n.setId||'')+'" title="Dismiss">✓</button>'+ 
+      '</div>';
+    }).join('')+
+    '</div>';
+}
+function rqDismissQuestlineNotice(setId){
+  if(!S.settings||!S.settings._newQuestlineNotices)return;
+  S.settings._newQuestlineNotices.forEach(function(n){if(!setId||n.setId===setId)n.seen=true;});
+  save();renderAdv();
+}
+
 function renderAdv(){
   var el=document.getElementById('avcontent');
   if(!el)return;
+  rqScanOwnedQuestlineUnlocks();
   // Squad banner
   (function(){
     var banner=document.getElementById('adv-squad-banner');
@@ -33368,7 +33489,7 @@ function renderAdv(){
   // THEME/MAP/LOG chrome is outside #avcontent and stays visible — the
   // user can still navigate to the Quest Map via MAP.
   if(!qs.setId){
-    el.innerHTML=''+
+    el.innerHTML=rqNewQuestlineBannerHtml()+''+
       '<div style="text-align:center;padding:48px 20px;color:var(--ink-light)">'+
         '<div style="font-family:\'Cinzel\',serif;font-size:1.15em;color:var(--gold-dark);margin-bottom:10px">No active quest cycle</div>'+
         '<div style="font-size:.9em;line-height:1.5;margin-bottom:18px">You have no quest cycle underway. Open the Quest Map to pick one.</div>'+
@@ -33408,7 +33529,7 @@ function renderAdv(){
   var pct=totalQ>0?Math.round(doneCount/totalQ*100):0;
 
   var sortMode=getQuestSortMode();
-  var html='<div style="background:rgba(44,26,14,.05);border:1px solid var(--parchment-deep);'+
+  var html=rqNewQuestlineBannerHtml()+'<div style="background:rgba(44,26,14,.05);border:1px solid var(--parchment-deep);'+
     'border-radius:7px;padding:10px 12px;margin-bottom:14px">'+
     '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">'+
     '<div style="flex:1;min-width:180px">'+
@@ -33661,6 +33782,16 @@ document.getElementById('avcontent').addEventListener('change',function(e){
 });
 
 document.getElementById('avcontent').addEventListener('click',function(e){
+  var nqDismiss=e.target.closest('[data-a="newql-dismiss"]');
+  if(nqDismiss){rqDismissQuestlineNotice(nqDismiss.getAttribute('data-setid')||'');return;}
+  var nqMap=e.target.closest('[data-a="newql-map"]');
+  if(nqMap){
+    var sid=nqMap.getAttribute('data-setid')||'';
+    rqDismissQuestlineNotice(sid);
+    var mapBtn=document.getElementById('btn-cycle-map');
+    if(mapBtn)mapBtn.click();
+    return;
+  }
   var qs=S.questState;
   var set=activeQuestSet();
 
@@ -35439,6 +35570,7 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
       if(aq===0){_newAssetUid=meta.uid;if(_isBuildingBuy)_firstBuildingAsset=_assetObj;}
     }
     logAdd('Purchased: '+item.name+' ×'+qty+' ('+total+' gp)','buy');
+    rqNotifyMagicItemQuestlines(item.name);
     P5.item=null;P5.assetMode=false;P5.customItem=null;
     // v1.7068 — Honor the quest-prereq re-open flag for asset-mode
     // purchases too. Without this, buying a pet (or any party-asset
@@ -35508,6 +35640,7 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
     if(!S.party[ci].inv)S.party[ci].inv=[];
     for(var ii=0;ii<qty;ii++)S.party[ci].inv.push(item.name);
     logAdd(item.name+' ×'+qty+' → '+S.party[ci].name,'buy');
+    rqNotifyMagicItemQuestlines(item.name);
     P5.item=null;P5.assetMode=false;P5.customItem=null;
     var _reopen=window._questModalOpenAfterBuy;
     window._questModalOpenAfterBuy=false;
@@ -35549,6 +35682,7 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
     if(!S.franchiseStorage)S.franchiseStorage=[];
     for(var si=0;si<qty;si++)S.franchiseStorage.push(item.name);
     logAdd(item.name+' ×'+qty+' → Franchise Storage (weight)','buy');
+    rqNotifyMagicItemQuestlines(item.name);
     // Clear the _reopen flag — buy succeeded but the char isn't carrying
     // the item, so the quest modal auto-assign logic must not run. If the
     // user still wants to advance the quest modal, they can click Issue
@@ -35617,6 +35751,7 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
     for(var ii=0;ii<qty;ii++)S.party[ci].inv.push(item.name);
     logAdd(item.name+' ×'+qty+' → '+S.party[ci].name,'buy');
   }
+  rqNotifyMagicItemQuestlines(item.name);
   P5.item=null;P5.assetMode=false;P5.customItem=null;
   var _reopen=window._questModalOpenAfterBuy;
   window._questModalOpenAfterBuy=false;
@@ -38930,7 +39065,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7236';
+var RQ_CLIENT_VERSION='v1.7237';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
