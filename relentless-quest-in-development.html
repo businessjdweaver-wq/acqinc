@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7252</title>
+<title>Relentless Quest v1.7253</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4156,7 +4156,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7252
+      Version 1.7253
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -34927,6 +34927,59 @@ window.addEventListener('resize',function(){
   if(m && m.offsetHeight)_adjustQuestModalCompact();
 });
 
+var _qddAutoFillTimer=null;
+var _qddAutoFillCache={};
+function _qddAutoFillSignature(questLike,isGrind){
+  if(!questLike)return '';
+  var qid=(questLike.id||questLike.idx||questLike.title||'quest');
+  var sq=(typeof activeCycleSquadName==='function'?activeCycleSquadName():'')||'';
+  var partySig=(S.party||[]).map(function(c,ci){
+    if(!c)return '';
+    return ci+':' +(c.name||'')+':' +(c.level||0)+':' +(c.hireling?'h':'a')+':' +
+      ((c.skills||[]).join(','))+'|'+((c.tools||[]).join(','))+'|'+((c.lang||[]).join(','))+'|'+
+      (c.rel||'')+'|'+((c.inv||[]).length)+'|'+((c.weapons||[]).join(','));
+  }).join(';');
+  var busySig=((S.questState&&S.questState.pending)||[]).length+'|'+((S.questState&&S.questState.grindPending)||[]).length+'|'+((S.downtimeJobs||[]).length);
+  return (isGrind?'g:':'q:')+qid+'|'+sq+'|'+partySig+'|'+busySig;
+}
+function _qddScheduleAutoFillCheck(questLike,isGrind){
+  var autoBtn=document.getElementById('ov-q-auto');
+  if(!autoBtn)return;
+  if(!questLike){autoBtn.disabled=true;autoBtn.style.opacity='0.4';return;}
+  var sig=_qddAutoFillSignature(questLike,isGrind);
+  function apply(canFill){
+    var b=document.getElementById('ov-q-auto');if(!b)return;
+    b.disabled=!canFill;
+    b.style.opacity=canFill?'':'0.4';
+    var _aaCost=(qpCfg().costAutoAssign||1);
+    b.title=canFill?('Auto-assign ('+_aaCost+' QP)'):'Auto-assign unavailable — squad cannot cover all prerequisites';
+  }
+  if(Object.prototype.hasOwnProperty.call(_qddAutoFillCache,sig)){apply(_qddAutoFillCache[sig]);return;}
+  // v1.7253: canAutoFill can be expensive on large rosters because it repeatedly
+  // checks item/proficiency/trait coverage across the party. Do not run it inside
+  // the tap/click handler that selects quest pegs; schedule/debounce it so mobile
+  // tap handling stays responsive.
+  autoBtn.title='Checking auto-assign availability…';
+  if(_qddAutoFillTimer){clearTimeout(_qddAutoFillTimer);_qddAutoFillTimer=null;}
+  var run=function(){
+    _qddAutoFillTimer=null;
+    var canFill=false;
+    try{canFill=!!canAutoFill(questLike,isGrind);}catch(_){canFill=false;}
+    _qddAutoFillCache[sig]=canFill;
+    apply(canFill);
+  };
+  if(typeof requestIdleCallback==='function'){
+    _qddAutoFillTimer=setTimeout(function(){requestIdleCallback(run,{timeout:900});},120);
+  }else{
+    _qddAutoFillTimer=setTimeout(run,160);
+  }
+}
+var _qddInfoTimer=null;
+function _qddScheduleInfoPrereqRefresh(){
+  if(_qddInfoTimer)clearTimeout(_qddInfoTimer);
+  _qddInfoTimer=setTimeout(function(){_qddInfoTimer=null;qddRefreshInfoPrereqs();},120);
+}
+
 function updateQuestModal(){
   // v1.7000 — schedule post-layout compact check. rAF means this
   // runs after the current sync frame (including any subsequent openOv
@@ -34993,22 +35046,12 @@ function updateQuestModal(){
   if(issues.length){unmet.style.display='block';unmet.textContent='⚠ '+issues.join(' ');}
   else unmet.style.display='none';
   if(beginBtn)beginBtn.disabled=issues.length>0;
-  // Gray out auto button if simulation shows it can't fill all prereq slots
-  var autoBtn=document.getElementById('ov-q-auto');
-  if(autoBtn){
-    var q2=P4.quest!==null?questByIdx(activeQuestSet(),P4.quest):null;
-    var gObj2=P4.grind!==null?GRIND.filter(function(g){return g.id===P4.grind;})[0]:null;
-    var questLike2=q2||gObj2;
-    var canFill=questLike2?canAutoFill(questLike2,P4.grind!==null):false;
-    autoBtn.disabled=!canFill;
-    autoBtn.style.opacity=canFill?'':'0.4';
-    // v1.7050 — was hardcoded 'Auto-assign (1 QP)' even when the QP Manager
-    // changed the cost. Now reads from qpCfg().costAutoAssign. The button
-    // TEXT is still driven by qddRender (line ~34085) which was already
-    // dynamic; this fixes the tooltip path that was stale.
-    var _aaCost=(qpCfg().costAutoAssign||1);
-    autoBtn.title=canFill?('Auto-assign ('+_aaCost+' QP)'):'Auto-assign unavailable — squad cannot cover all prerequisites';
-  }
+  // v1.7253 — Auto-fill availability is checked asynchronously. Running
+  // canAutoFill synchronously here made mobile quest-assignment taps take
+  // multiple seconds on large rosters with item/proficiency/trait checks.
+  var q2=P4.quest!==null?questByIdx(activeQuestSet(),P4.quest):null;
+  var gObj2=P4.grind!==null?GRIND.filter(function(g){return g.id===P4.grind;})[0]:null;
+  _qddScheduleAutoFillCheck(q2||gObj2,P4.grind!==null);
 }
 
 document.getElementById('ov-q-chars').addEventListener('change',updateQuestModal);
@@ -38281,7 +38324,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7252',
+    appVersion:'v1.7253',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39542,7 +39585,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7252';
+var RQ_CLIENT_VERSION='v1.7253';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -48041,7 +48084,7 @@ function qddRender(questLike,isGrind){
   var infoDiv=document.getElementById('qcs-info-prereqs');
   if(infoDiv)infoDiv.innerHTML=qddInfoPrereqHtml(questLike);
   // Also refresh after slot assignment changes
-  setTimeout(qddRefreshInfoPrereqs,50);
+  _qddScheduleInfoPrereqRefresh();
 
   // ── Hole carousel ──
   var holeTrack=document.getElementById('qhole-car-track');
