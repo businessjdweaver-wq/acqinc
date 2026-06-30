@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7249</title>
+<title>Relentless Quest v1.7250</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4156,7 +4156,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7249
+      Version 1.7250
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -33602,6 +33602,41 @@ function rqShouldHideMagicQuestlineSet(set,activeSetId){
   if(rqIsSetCompleted(set.id))return false;
   return !rqOwnsMagicQuestlineGateItem(gate);
 }
+
+// v1.7250 — Magic-item questline discovery is also a territory-access event.
+// Prior builds announced/visible-unlocked the questline but did not append the
+// cycle's territory to S.unlockedTerritories. That left the player able to see
+// or activate the arc but unable to relocate squads or purchase territory-bound
+// real estate there. The order of operations is now:
+//   magic item owned → matching quest-cycle discovered → cycle territory opens.
+function rqUnlockTerritoryFromQuestline(set,reason){
+  if(!S||!set)return false;
+  var terr=(set.territory||'').trim();
+  if(!terr)return false;
+  if(!S.unlockedTerritories)S.unlockedTerritories=[];
+  if(S.unlockedTerritories.indexOf(terr)!==-1)return false;
+  S.unlockedTerritories.push(terr);
+  try{logAdd('🗺 Territory opened: '+terr+(set.name?' via '+set.name:'')+(reason?' ('+reason+')':''),'adv');}catch(e){}
+  return true;
+}
+function rqQuestlineUnlockKey(set,gate){
+  return (set&&set.id?set.id:'')+'::'+canonicalItemName(gate||'');
+}
+function rqTerritoriesUnlockedByMagicQuestlines(){
+  var out=[];
+  var seen={};
+  var unlocked=S&&S.settings&&S.settings._questlineItemUnlocks||{};
+  (rqQuestlineUnlockScanSources()||[]).forEach(function(set){
+    if(!set||!set.id||!set.territory)return;
+    var gate=rqMagicQuestlineGateItemForSet(set);
+    if(!gate)return;
+    var key=rqQuestlineUnlockKey(set,gate);
+    if(!unlocked[key]&&!rqOwnsMagicQuestlineGateItem(gate))return;
+    var terr=(set.territory||'').trim();
+    if(terr&&!seen[terr]){seen[terr]=true;out.push(terr);}
+  });
+  return out;
+}
 function rqIsSetCompleted(setId){
   var set=(QUESTSETS||[]).filter(function(s){return s&&s.id===setId;})[0];
   if(!set)return false;
@@ -33681,7 +33716,10 @@ function rqNotifyMagicItemQuestlines(itemName){
   if(!S.settings._newQuestlineNotices)S.settings._newQuestlineNotices=[];
   var newly=[];
   rqMagicQuestlinesUnlockedByItem(itemName).forEach(function(hit){
-    var key=hit.set.id+'::'+canonicalItemName(hit.item);
+    var key=rqQuestlineUnlockKey(hit.set,hit.item);
+    // Even if the questline notice was already recorded by an earlier build,
+    // make sure its territory is now opened for squad relocation/building buys.
+    rqUnlockTerritoryFromQuestline(hit.set,'magic item unlock');
     if(S.settings._questlineItemUnlocks[key])return;
     S.settings._questlineItemUnlocks[key]=Date.now();
     var notice={setId:hit.set.id,setName:hit.set.name||'Questline',item:hit.item,territory:hit.set.territory||'',seen:false,ts:Date.now()};
@@ -33689,6 +33727,8 @@ function rqNotifyMagicItemQuestlines(itemName){
     newly.push(notice);
     try{logAdd('🗺 New questline discovered: '+notice.setName+' — unlocked by '+hit.item+(notice.territory?' in '+notice.territory:'')+'.','adv');}catch(e){}
   });
+  // Ensure any territory opened by this discovery is reflected before store/squad pickers render.
+  try{if(typeof recomputeUnlockedTerritories==='function')recomputeUnlockedTerritories();}catch(e){}
   // Keep the list small and current.
   S.settings._newQuestlineNotices=S.settings._newQuestlineNotices.slice(0,12);
   if(newly.length){
@@ -38199,7 +38239,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7249',
+    appVersion:'v1.7250',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39460,7 +39500,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7249';
+var RQ_CLIENT_VERSION='v1.7250';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -49097,6 +49137,14 @@ function recomputeUnlockedTerritories(){
   territoriesUnlockedByBuildings().forEach(function(t){
     if(!seen[t]){out.push(t);seen[t]=true;}
   });
+  // v1.7250 — Also append territories unlocked by discovered/owned magic-item
+  // questlines. This makes territory access persist across saves and covers
+  // users who purchased the item before this fix shipped.
+  if(typeof rqTerritoriesUnlockedByMagicQuestlines==='function'){
+    rqTerritoriesUnlockedByMagicQuestlines().forEach(function(t){
+      if(!seen[t]){out.push(t);seen[t]=true;}
+    });
+  }
   S.unlockedTerritories=out;
   return out;
 }
