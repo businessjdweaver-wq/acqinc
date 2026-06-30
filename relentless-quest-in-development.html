@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7250</title>
+<title>Relentless Quest v1.7251</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4156,7 +4156,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7250
+      Version 1.7251
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -33603,7 +33603,7 @@ function rqShouldHideMagicQuestlineSet(set,activeSetId){
   return !rqOwnsMagicQuestlineGateItem(gate);
 }
 
-// v1.7250 — Magic-item questline discovery is also a territory-access event.
+// v1.7251 — Magic-item questline discovery is also a territory-access event.
 // Prior builds announced/visible-unlocked the questline but did not append the
 // cycle's territory to S.unlockedTerritories. That left the player able to see
 // or activate the arc but unable to relocate squads or purchase territory-bound
@@ -33760,11 +33760,34 @@ function rqNotifyMagicItemQuestlines(itemName){
   }
   return newly;
 }
-function rqScanOwnedQuestlineUnlocks(){
+function rqScanOwnedQuestlineUnlocks(force){
   if(!S||!S.settings)return;
+  if(!S.settings._questlineItemUnlocks)S.settings._questlineItemUnlocks={};
+  // v1.7251 — This scan used to walk every owned inventory item on every
+  // Quest Map render. On mobile, large rosters/storage plus SQL questline
+  // sources could make a bottom-nav click spend multiple seconds inside the
+  // render handler. Only the explicit magic questline gate items can unlock
+  // these arcs, and the result only needs to change when gate ownership,
+  // recorded unlock keys, or loaded questline source counts change.
+  var gates=(typeof RQ_MAGIC_QUESTLINE_GATE_ITEMS!=='undefined'?RQ_MAGIC_QUESTLINE_GATE_ITEMS:[]).filter(function(g){
+    return g&&rqOwnsMagicQuestlineGateItem(g);
+  });
+  var unlockKeys=Object.keys(S.settings._questlineItemUnlocks||{}).sort().join('|');
+  var sourceSig='q'+((typeof QUESTSETS!=='undefined'&&QUESTSETS)?QUESTSETS.length:0);
+  try{
+    if(typeof CONTENT_LIB!=='undefined'&&CONTENT_LIB){
+      ['official','shared','private'].forEach(function(scope){
+        var b=CONTENT_LIB[scope]||{};
+        sourceSig+=':'+scope+':' + ((b.questSets||[]).length)+'/'+((b.quests||[]).length);
+      });
+    }
+  }catch(e){}
+  var sig=gates.map(function(g){return canonicalItemName(g);}).sort().join('|')+'::'+unlockKeys+'::'+sourceSig;
+  if(!force&&S.settings._rqQuestlineOwnedScanSig===sig)return;
+  S.settings._rqQuestlineOwnedScanSig=sig;
   var oldFlag=window._rqQuestlineScanInRender;
   window._rqQuestlineScanInRender=true;
-  try{rqOwnedItemNames().forEach(function(n){rqNotifyMagicItemQuestlines(n);});}
+  try{gates.forEach(function(g){rqNotifyMagicItemQuestlines(g);});}
   finally{window._rqQuestlineScanInRender=oldFlag;}
 }
 function rqNewQuestlineBannerHtml(){
@@ -38239,7 +38262,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7250',
+    appVersion:'v1.7251',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39500,7 +39523,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7250';
+var RQ_CLIENT_VERSION='v1.7251';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -49137,7 +49160,7 @@ function recomputeUnlockedTerritories(){
   territoriesUnlockedByBuildings().forEach(function(t){
     if(!seen[t]){out.push(t);seen[t]=true;}
   });
-  // v1.7250 — Also append territories unlocked by discovered/owned magic-item
+  // v1.7251 — Also append territories unlocked by discovered/owned magic-item
   // questlines. This makes territory access persist across saves and covers
   // users who purchased the item before this fix shipped.
   if(typeof rqTerritoriesUnlockedByMagicQuestlines==='function'){
