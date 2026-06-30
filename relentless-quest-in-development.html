@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7253</title>
+<title>Relentless Quest v1.7254</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4156,7 +4156,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7253
+      Version 1.7254
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -35051,8 +35051,103 @@ function updateQuestModal(){
   // multiple seconds on large rosters with item/proficiency/trait checks.
   var q2=P4.quest!==null?questByIdx(activeQuestSet(),P4.quest):null;
   var gObj2=P4.grind!==null?GRIND.filter(function(g){return g.id===P4.grind;})[0]:null;
+
   _qddScheduleAutoFillCheck(q2||gObj2,P4.grind!==null);
 }
+
+// v1.7254 DIAGNOSTIC BUILD — Quest-assignment mobile tap profiler.
+// Temporary in-app panel for mobile testing. It records what the finger hit,
+// what element is visually on top at that point, and approximate handler costs.
+// Remove or gate this before a normal release once the mobile tap issue is found.
+var RQ_TAP_DIAG_ENABLED=true;
+var rqTapDiagState={rows:[],lastPointer:null,clickSeq:0,lastQuestRenderMs:0,lastQuestRenderAt:0};
+function rqTapDiagLabel(el){
+  if(!el)return 'null';
+  var id=el.id?('#'+el.id):'';
+  var cls='';
+  try{
+    if(typeof el.className==='string')cls=el.className.trim().replace(/\s+/g,'.');
+    else if(el.className&&typeof el.className.baseVal==='string')cls=el.className.baseVal.trim().replace(/\s+/g,'.');
+  }catch(_){cls='';}
+  return el.tagName.toLowerCase()+id+(cls?'.'+cls:'');
+}
+function rqTapDiagEnsurePanel(){
+  if(!RQ_TAP_DIAG_ENABLED)return null;
+  var ov=document.getElementById('ov-quest');
+  if(!ov)return null;
+  var p=document.getElementById('rq-tap-diag');
+  if(p)return p;
+  p=document.createElement('div');
+  p.id='rq-tap-diag';
+  p.style.cssText='position:fixed;left:8px;right:8px;bottom:76px;z-index:20000;max-height:34vh;overflow:auto;background:rgba(26,13,4,.94);color:#fff7df;border:2px solid #f0b429;border-radius:8px;padding:8px 10px;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;box-shadow:0 6px 22px rgba(0,0,0,.45);white-space:pre-wrap;';
+  p.innerHTML='Tap Debug: waiting for quest-modal taps…';
+  var close=document.createElement('button');
+  close.textContent='×';
+  close.title='Hide tap debug panel';
+  close.style.cssText='position:absolute;right:5px;top:3px;border:1px solid #f0b429;background:transparent;color:#f0b429;border-radius:4px;font:bold 13px sans-serif;line-height:1;padding:1px 6px;';
+  close.onclick=function(e){e.preventDefault();e.stopPropagation();RQ_TAP_DIAG_ENABLED=false;p.remove();};
+  p.appendChild(close);
+  document.body.appendChild(p);
+  return p;
+}
+function rqTapDiagLog(row){
+  if(!RQ_TAP_DIAG_ENABLED)return;
+  var t=new Date();
+  var stamp=t.toLocaleTimeString([], {hour12:false})+'.'+String(t.getMilliseconds()).padStart(3,'0');
+  rqTapDiagState.rows.push(stamp+' '+row);
+  if(rqTapDiagState.rows.length>14)rqTapDiagState.rows=rqTapDiagState.rows.slice(-14);
+  var p=rqTapDiagEnsurePanel();
+  if(!p)return;
+  var text='Tap Debug · diagnostic build 1.7254\n'+rqTapDiagState.rows.join('\n');
+  var btn=p.querySelector('button');
+  p.textContent=text;
+  if(btn)p.appendChild(btn);
+}
+function rqTapDiagTopAt(x,y){
+  var old=null,p=document.getElementById('rq-tap-diag');
+  if(p){old=p.style.pointerEvents;p.style.pointerEvents='none';}
+  var top=document.elementFromPoint(x,y);
+  if(p)p.style.pointerEvents=old||'';
+  return top;
+}
+(function rqInstallQuestTapDiag(){
+  if(!RQ_TAP_DIAG_ENABLED)return;
+  var ov=document.getElementById('ov-quest');
+  if(!ov)return;
+  var originalUpdateQuestModal=updateQuestModal;
+  updateQuestModal=function(){
+    var t0=performance.now();
+    try{return originalUpdateQuestModal.apply(this,arguments);}finally{
+      rqTapDiagState.lastQuestRenderMs=Math.round(performance.now()-t0);
+      rqTapDiagState.lastQuestRenderAt=Date.now();
+      if(rqTapDiagState.lastQuestRenderMs>120){
+        rqTapDiagLog('updateQuestModal slow '+rqTapDiagState.lastQuestRenderMs+'ms');
+      }
+    }
+  };
+  ov.addEventListener('pointerdown',function(e){
+    var top=rqTapDiagTopAt(e.clientX,e.clientY);
+    rqTapDiagState.lastPointer={
+      x:Math.round(e.clientX),y:Math.round(e.clientY),
+      target:rqTapDiagLabel(e.target),top:rqTapDiagLabel(top),
+      t:performance.now(),type:e.pointerType||'pointer'
+    };
+    rqTapDiagLog('pointer '+rqTapDiagState.lastPointer.type+' target='+rqTapDiagState.lastPointer.target+' top='+rqTapDiagState.lastPointer.top+' @'+rqTapDiagState.lastPointer.x+','+rqTapDiagState.lastPointer.y);
+  },true);
+  ov.addEventListener('click',function(e){
+    var seq=++rqTapDiagState.clickSeq;
+    var t0=performance.now();
+    var clickTarget=rqTapDiagLabel(e.target);
+    setTimeout(function(){
+      var dur=Math.round(performance.now()-t0);
+      var lp=rqTapDiagState.lastPointer;
+      var sinceRender=rqTapDiagState.lastQuestRenderAt?Math.round(Date.now()-rqTapDiagState.lastQuestRenderAt):'n/a';
+      var blocked=(lp&&lp.target!==lp.top)?(' possible-overlay top='+lp.top):'';
+      rqTapDiagLog('click#'+seq+' '+dur+'ms target='+clickTarget+' lastUpdate='+rqTapDiagState.lastQuestRenderMs+'ms '+sinceRender+'msAgo'+blocked);
+    },0);
+  },true);
+  rqTapDiagLog('installed: open quest assignment and tap character/peg');
+})();
 
 document.getElementById('ov-q-chars').addEventListener('change',updateQuestModal);
 document.getElementById('ov-q-squad').addEventListener('change',function(e){
@@ -38324,7 +38419,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7253',
+    appVersion:'v1.7254',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39585,7 +39680,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7253';
+var RQ_CLIENT_VERSION='v1.7254';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
