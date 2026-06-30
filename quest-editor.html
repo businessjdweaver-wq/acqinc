@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Quest Editor v1.7176</title>
+<title>Quest Editor v1.7177</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -386,7 +386,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 <body>
 <div id="login-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--parch);border:2px solid var(--gold);border-radius:10px;padding:24px;width:100%;max-width:360px;box-shadow:0 8px 32px rgba(0,0,0,.5)">
-    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.7176</span></h2>
+    <h2 style="font-family:'Cinzel',serif;color:var(--crimson);margin-bottom:16px;font-size:1.1em">⚔ Quest Editor Login <span style="font-size:.55em;font-weight:normal;color:var(--gold);opacity:.8;letter-spacing:.05em;margin-left:4px">v1.7177</span></h2>
     <div style="margin-bottom:12px">
       <label style="display:block;font-size:.8em;color:var(--ink2);margin-bottom:4px">Email</label>
       <input type="text" id="email" autocomplete="email" style="width:100%;padding:8px;border:1px solid var(--gold);border-radius:5px;background:var(--parch);font-size:.9em;box-sizing:border-box">
@@ -402,7 +402,7 @@ select[multiple] option{padding:3px 6px;border-radius:3px;}
 
 <div id="app">
   <div id="hdr">
-    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.7176</span></h1>
+    <h1>⚔ Quest Editor <span id="qe-version" style="font-family:'Cinzel',serif;font-size:.5em;font-weight:normal;color:var(--gold);opacity:.75;letter-spacing:.05em;margin-left:6px;vertical-align:middle">v1.7177</span></h1>
     <div id="login-area">
       <span id="user-email"></span>
       <button class="hbtn" id="btn-push" style="display:none" title="Push all local changes to Supabase">☁ Push</button>
@@ -1467,7 +1467,7 @@ function pullData() {
           restricted_to_classes: Array.isArray(row.restricted_to_classes)
             ? row.restricted_to_classes.slice()
             : null,
-          // v1.7176 — Building-specific knowledge overrides.
+          // v1.7177 — Building-specific knowledge overrides.
           skill_overrides: Array.isArray(row.skill_overrides) ? row.skill_overrides.slice() : [],
           language_overrides: Array.isArray(row.language_overrides) ? row.language_overrides.slice() : [],
           faith_overrides: Array.isArray(row.faith_overrides) ? row.faith_overrides.slice() : [],
@@ -2080,7 +2080,7 @@ function renderItemList() {
 
 // ── Item CRUD ─────────────────────────────────────────────────────
 function saveItemRow(item) {
-  var body = JSON.stringify({
+  var bodyObj = {
     name:        item.name,
     ic:          item.ic || '📦',
     description: item.desc || '',
@@ -2105,10 +2105,12 @@ function saveItemRow(item) {
     restricted_to_classes: (Array.isArray(item.restricted_to_classes) && item.restricted_to_classes.length)
       ? item.restricted_to_classes
       : null,
-    // v1.7176 — Building-specific knowledge overrides (jsonb arrays).
-    skill_overrides: Array.isArray(item.skill_overrides) ? item.skill_overrides : [],
-    language_overrides: Array.isArray(item.language_overrides) ? item.language_overrides : [],
-    faith_overrides: Array.isArray(item.faith_overrides) ? item.faith_overrides : [],
+    // v1.7177 — Building-specific knowledge overrides are intentionally
+    // not written for ordinary gear. The live items table may not yet have
+    // these optional columns; sending empty faith_overrides/language_overrides
+    // for a grappling hook caused PostgREST PGRST204 schema-cache failures
+    // and blocked unrelated trait saves. Building rows opt in below only when
+    // they actually carry override values.
     // v1.698 — Consumable + uses (SQL migration required:
     //   ALTER TABLE items ADD COLUMN consumable boolean DEFAULT false;
     //   ALTER TABLE items ADD COLUMN uses integer DEFAULT NULL;
@@ -2124,7 +2126,20 @@ function saveItemRow(item) {
     // migration: ALTER TABLE items ADD COLUMN traits jsonb DEFAULT '[]';
     // (or just trust the column was added in an earlier ad-hoc migration).
     traits: Array.isArray(item.traits) ? item.traits : []
-  });
+  };
+  // v1.7177 — Add optional building override columns only when needed.
+  // This lets gear trait edits save correctly on databases that have not run
+  // the building-overrides migration yet. Empty arrays are omitted rather than
+  // sent to absent columns.
+  if (isBuildingItemType(item.type)) {
+    var _sk = Array.isArray(item.skill_overrides) ? item.skill_overrides : [];
+    var _la = Array.isArray(item.language_overrides) ? item.language_overrides : [];
+    var _fa = Array.isArray(item.faith_overrides) ? item.faith_overrides : [];
+    if (_sk.length) bodyObj.skill_overrides = _sk;
+    if (_la.length) bodyObj.language_overrides = _la;
+    if (_fa.length) bodyObj.faith_overrides = _fa;
+  }
+  var body = JSON.stringify(bodyObj);
   if (!item._dbId) {
     return sbFetch(SB_URL + '/rest/v1/items', {
       method: 'POST',
@@ -2216,7 +2231,7 @@ function unlinkItemEffect(itemId, effectId) {
   });
 }
 
-// v1.7176 — Building item knowledge override helpers.
+// v1.7177 — Building item knowledge override helpers.
 // Buildings are stored as ordinary item rows, distinguished by item.type.
 // These fields are optional JSONB columns on items:
 //   skill_overrides, language_overrides, faith_overrides
@@ -2388,7 +2403,7 @@ function showItemForm(id) {
     '<div id="if-traits" style="margin-bottom:4px"></div>' +
     '</div>' +
 
-    // v1.7176 — Building item knowledge overrides.
+    // v1.7177 — Building item knowledge overrides.
     buildingKnowledgeOverridesHtml(item) +
 
     // v1.7146 — Prereq-eligible classes. When at least one class is
@@ -2485,7 +2500,7 @@ function showItemForm(id) {
       // class" (which would be a misconfiguration). The save body normalizes
       // this in saveItemRow.
       restricted_to_classes: _ifClasses.length ? _ifClasses.slice() : null,
-      // v1.7176 — Optional building item knowledge overrides. These are
+      // v1.7177 — Optional building item knowledge overrides. These are
       // meaningful only for building item types, but safe to store as [] for
       // non-buildings. Runtime uses them as additive dedication options.
       skill_overrides: isBuildingItemType(document.getElementById('if-type').value) ? selectedMultiValues('if-skill-overrides') : [],
@@ -4903,7 +4918,7 @@ function showTerritoryForm(key) {
     '</div>';
   // ────────────────────────────────────────────────────────────────────
 
-  // ── v1.7176 — Territory Knowledge Pools ───────────────────────────
+  // ── v1.7177 — Territory Knowledge Pools ───────────────────────────
   // Optional allow-lists for languages and faiths available for study in
   // this territory. Omitted arrays mean unrestricted/default. Empty arrays
   // are permitted and mean no entries of that type are available.
@@ -4940,7 +4955,7 @@ function showTerritoryForm(key) {
   // ────────────────────────────────────────────────────────────────────
 
 
-  // ── v1.7176 — Building-specific knowledge overrides ───────────────
+  // ── v1.7177 — Building-specific knowledge overrides ───────────────
   // Overrides are additive exceptions to territory knowledge pools. They let
   // a specific building teach values that the territory normally does not
   // support, such as a Wizard's Tower teaching Deep Speech in a coastal town.
@@ -5045,7 +5060,7 @@ function showTerritoryForm(key) {
     };
   }
 
-  // ── v1.7176 — Territory knowledge select-all/select-none buttons
+  // ── v1.7177 — Territory knowledge select-all/select-none buttons
   fi.querySelectorAll('[data-know-all]').forEach(function(btn){
     btn.onclick = function() {
       var k = btn.getAttribute('data-know-all');
