@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7262</title>
+<title>Relentless Quest v1.7263</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4163,7 +4163,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7261
+      Version 1.7263
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -12015,14 +12015,26 @@ function claimTaskGold(requested, reason){
   ensureTaskBudgetState(new Date());
   var rem=taskBudgetRemaining();
   var award=Math.min(req,rem);
+  var overflow=Math.max(0,req-award);
   if(award>0){
     S.settings.taskBudgetRemaining=rem-award;
     goldAdd(award,reason,'task');
-    if(award<req){
-      logAdd('Daily task budget capped "'+reason+'" at '+award+' gp.','task');
-      save();
+  }
+  if(overflow>0){
+    // v1.7263 — Once the daily contract-gold budget is exhausted, the
+    // unawarded GP value converts into QP instead of disappearing. This is
+    // intentionally cap-exempt (uses qpCreditDirect rather than qpAward),
+    // matching Training-completion's exemption from daily earning caps.
+    var rate=(typeof qpCfg==='function' && qpCfg().qpToGpRate) ? qpCfg().qpToGpRate : 5; // 5 QP = 1 gp
+    var overflowQp=Math.max(0,Math.floor(overflow*rate));
+    if(overflowQp>0 && typeof qpEnabled==='function' && qpEnabled() && typeof qpCreditDirect==='function'){
+      qpCreditDirect(overflowQp,'task_gold_overflow','⚡ Contract overflow: '+overflow+' gp → '+overflowQp+' QP — '+reason,'task-overflow::'+Date.now()+'::'+Math.random().toString(36).slice(2));
+      logAdd('Daily task budget overflow: '+overflow+' gp converted to '+overflowQp+' QP for "'+reason+'".','task');
+    }else{
+      logAdd('No daily task budget remained for "'+reason+'".','task');
     }
-  }else{
+    save();
+  }else if(award<=0){
     logAdd('No daily task budget remained for "'+reason+'".','task');
     save();
   }
@@ -12987,7 +12999,7 @@ function taskCardHtml(t,showArrows,nbIdxs,pinnedView,inSplitGroup){
       // The name gets the full row width minus pct toggle + checkbox + ⋯ dot.
       // +gp is only shown when the sub-task is unchecked (compromise per user).
       var _gpInline = s.done ? '' :
-        '<span class="stgp"'+(budgetExhausted?' style="text-decoration:line-through;opacity:.55" title="Daily task gold budget reached"':'')+'>+'+subGp+' gp</span>';
+        '<span class="stgp"'+(budgetExhausted?' title="Daily gold exhausted; excess converts to QP"':'')+'>+'+subGp+' gp</span>';
       var _stUpDisabled = (si===0);
       var _stDownDisabled = (si>=subs.length-1);
       return '<div class="strow'+(s.waiting?' strow-waiting':'')+'" data-task-i="'+i+'" data-sub-si="'+si+'" data-sid="'+esc(s._sid||'')+'" data-tid="'+esc(t._tid||'')+'">'+
@@ -13176,7 +13188,7 @@ function renderPinnedSubRow(t, s, budgetExhausted, subGp, pi, pinTotal){
     '</div>'+
     // ── Right drawer (info meta + reorder)
     '<div class="strow-actions">'+
-    '<span class="strow-meta-gp"'+(budgetExhausted?' style="text-decoration:line-through;opacity:.55"':'')+'>+'+subGp+' gp</span>'+
+    '<span class="strow-meta-gp"'+(budgetExhausted?' title="Daily gold exhausted; excess converts to QP"':'')+'>+'+subGp+' gp</span>'+
     '<button type="button" class="strow-meta-from" data-a="pinfromreveal" data-fromname="'+esc(t.name||'')+'" title="Click to see source" aria-label="Source: '+esc(t.name||'')+'">from</button>'+
     '<button type="button" class="strow-drawer-btn sd-supup" data-a="pinsupup" data-pi="'+pi+'" title="Move to top of Pinned Tasks" aria-label="Move to top of pinned"'+(upDisabled?' disabled':'')+'>\u21C8</button>'+
     '<button type="button" class="strow-drawer-btn sd-reord" data-a="pinup" data-pi="'+pi+'" title="Move up in Pinned Tasks" aria-label="Move up"'+(upDisabled?' disabled':'')+'>\u2191</button>'+
@@ -16248,10 +16260,6 @@ document.getElementById('tlist').addEventListener('click',function(e){
     openTaskEditModal(i);
     return;
   } else if(a==='tick'){
-    if(taskBudgetRemaining()<=0){
-      renderTasks();
-      return;
-    }
     var _tickPrevCount=S.active[i].count||0;
     var _tickPrevBudget=(S.settings&&typeof S.settings.taskBudgetRemaining==='number')?S.settings.taskBudgetRemaining:null;
     S.active[i].count++;
@@ -16461,10 +16469,8 @@ document.getElementById('tlist').addEventListener('click',function(e){
       var _ttckGpEarned=0;
       _T.done=true;
       if(_ttckPrevWaiting) _T.waiting=false;
-      if(taskBudgetRemaining()>0 || _T._trainingGoldBypassBudget){
-        _T.count=(_T.count||0)+1;
-        _ttckGpEarned=claimTaskGold(_T.gp,'Completed: "'+(_T.name||'Unnamed contract')+'"')||0;
-      }
+      _T.count=(_T.count||0)+1;
+      _ttckGpEarned=claimTaskGold(_T.gp,'Completed: "'+(_T.name||'Unnamed contract')+'"')||0;
       _pushUndo({kind:'ttck',tid:_T._tid,prevDone:_ttckPrev,prevWaiting:_ttckPrevWaiting,
         prevCount:_ttckPrevCount,gpEarned:_ttckGpEarned,prevBudget:_ttckPrevBudget,
         label:(_ttckGpEarned>0?'Marked done (+'+_ttckGpEarned+' gp)':'Marked done')+' "'+(_T.name||'Unnamed contract')+'" (via pie)'});
@@ -16588,15 +16594,14 @@ document.getElementById('tlist').addEventListener('change',function(e){
     var _ttckName=T.name||'Unnamed contract';
     T.done=tcb.checked;
     if(tcb.checked && _ttckPrevWaiting) T.waiting=false;
-    // Gold claim on fresh check-on (not on uncheck, not on re-check without
-    // intervening uncheck). Budget-gated — if the daily cap is exhausted we
-    // still flip t.done but don't award gold (matching the `tick` button's
-    // budget-disabled behavior). prevBudget snapshot lets tgold revert
-    // restore the cap state.
+    // Reward claim on fresh check-on (not on uncheck, not on re-check without
+    // intervening uncheck). After the daily GP budget is exhausted,
+    // claimTaskGold converts the excess GP value into cap-exempt QP.
+    // prevBudget snapshot lets undo restore the GP cap state.
     var _ttckGpEarned=0;
     var _ttckPrevCount=T.count||0;
     var _ttckPrevBudget=(S.settings&&typeof S.settings.taskBudgetRemaining==='number')?S.settings.taskBudgetRemaining:null;
-    if(tcb.checked && !_ttckPrev && (taskBudgetRemaining()>0 || T._trainingGoldBypassBudget)){
+    if(tcb.checked && !_ttckPrev){
       T.count=(T.count||0)+1;
       _ttckGpEarned=claimTaskGold(T.gp,'Completed: "'+(T.name||'Unnamed contract')+'"')||0;
     }
@@ -17212,7 +17217,7 @@ function renderArchive(){
         var t=entry.t,ai=entry.i;
         var isActive=activeNames.indexOf(t.name)!==-1;
         var canEUp=ei>0,canEDn=ei<entries.length-1;
-        var gpMeta='<span class="ach-gp'+(budgetExhausted?' dead-budget':'')+'" data-a="agp-edit" data-i="'+ai+'" style="cursor:pointer;border-bottom:1px dashed var(--gold-dark);color:var(--gold-dark)" title="Edit gold per tick">'+t.gp+' gp/tick</span>';
+        var gpMeta='<span class="ach-gp" data-a="agp-edit" data-i="'+ai+'" style="cursor:pointer;border-bottom:1px dashed var(--gold-dark);color:var(--gold-dark)" title="Edit gold per tick">'+t.gp+' gp/tick</span>';
         var subMeta=(t.subtasks&&t.subtasks.length)?(' · '+t.subtasks.length+' sub-tasks'):'';
         var freq=(t.freq||'custom');
         var autoMeta='';
@@ -17253,7 +17258,7 @@ function renderArchive(){
             ((freq==='daily'||freq==='custom')?('<button class="fav-btn'+(t.fav?' on':'')+'" data-a="afav" data-i="'+ai+'" title="'+(t.fav?'Unfavorite':'Favorite for auto-activate')+'">'+(t.fav?'★':'☆')+'</button>'):schedCtrl)+
             '<button class="btn bink sm" data-a="aup" data-i="'+ai+'" title="Move up"'+(canEUp?'':' disabled')+'>▲</button>'+
             '<button class="btn bink sm" data-a="adn" data-i="'+ai+'" title="Move down"'+(canEDn?'':' disabled')+'>▼</button>'+
-            '<button class="btn bg sm" data-a="acollect" data-i="'+ai+'" title="'+(budgetExhausted?'Daily task gold budget reached':('Claim +'+t.gp+' gp'))+'"'+(budgetExhausted?' disabled':'')+'>+'+t.gp+'</button>'+
+            '<button class="btn bg sm" data-a="acollect" data-i="'+ai+'" title="'+(budgetExhausted?'Daily gold exhausted; collect as overflow QP':('Claim +'+t.gp+' gp'))+'">+'+t.gp+'</button>'+
             '<button class="btn bink sm" data-a="amove" data-i="'+ai+'" title="Move to group">📂</button>'+
             '<button class="btn'+(isActive?' bink disabled':' bgn')+' sm" data-a="act" data-i="'+ai+'" title="'+(isActive?'Already active':'Send caravan / activate contract')+'"'+(isActive?' disabled':'')+'>'+(isActive?'•':'🐎')+'</button>'+
             '<button class="btn bred sm" data-a="adel" data-i="'+ai+'" title="Delete permanently">🗑</button>'+
@@ -17340,10 +17345,6 @@ document.getElementById('alist').addEventListener('click',function(e){
   } else if(a==='acollect'){
     var tcol=S.archived[ai];
     if(!tcol)return;
-    if(taskBudgetRemaining()<=0){
-      renderArchive();
-      return;
-    }
     claimTaskGold(tcol.gp,'Archived contract: "'+tcol.name+'"');
     renderArchive();
   } else if(a==='amove'){
@@ -36597,7 +36598,7 @@ function renderProjectModal(projId){
         '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">'+
         '<input type="checkbox" data-a="pst-ck" data-proj="'+esc(projId)+'" data-ti="'+ti+'" data-si="'+si+'"'+(s.done?' checked':'')+'>'+
         '<span class="stname'+(s.done?' stdone':'')+'" style="flex:1">'+esc(s.name)+'</span>'+
-        '<span class="stgp"'+(budgetExhausted?' style="text-decoration:line-through;opacity:.5"':'')+'>+'+subGp+' gp</span>'+
+        '<span class="stgp" title="'+(budgetExhausted?'Daily gold exhausted; excess converts to QP':'')+'">+'+subGp+' gp</span>'+
         '</label>'+
         '</div>';
     }).join('');
@@ -36608,7 +36609,7 @@ function renderProjectModal(projId){
         '<span style="flex:1;font-weight:600;font-size:.92em;color:var(--ink)'+(isDone?';text-decoration:line-through':'')+'">'+esc(t.name)+'</span>'+
       '</div>'+
       '<div style="display:flex;align-items:center;gap:2px;margin-bottom:'+(subs.length?'6px':'0')+';padding-left:28px">'+
-        (!subs.length?'<button class="btn bg sm" data-a="p-tick" data-proj="'+esc(projId)+'" data-ti="'+ti+'"'+(budgetExhausted?' disabled':'')+
+        (!subs.length?'<button class="btn bg sm" data-a="p-tick" data-proj="'+esc(projId)+'" data-ti="'+ti+'" title="'+(budgetExhausted?'Daily gold exhausted; excess converts to QP':'Claim project task reward')+'"'+
           ' style="font-size:.72em;padding:1px 7px;margin-right:4px">💰 +'+t.gp+' gp</button>':'')+
         '<button data-a="p-top" data-proj="'+esc(projId)+'" data-ti="'+ti+
           '" style="background:none;border:none;cursor:pointer;color:var(--ink-light);font-size:.75em;padding:0 3px" title="Move to top"'+(ti===0?' disabled':'')+'>⏫</button>'+
@@ -37026,10 +37027,9 @@ document.getElementById('ov-proj-tasks').addEventListener('click',function(e){
   if(!task)return;
 
   if(a==='p-tick'){
-    // Claim gold for a no-subtask task
-    if(taskBudgetRemaining()<=0){renderProjectModal(projId);return;}
+    // Claim reward for a no-subtask task; after the daily GP cap, overflow converts to cap-exempt QP.
     task.count++;
-    goldAdd(task.gp,'Project task: "'+task.name+'"');
+    claimTaskGold(task.gp,'Project task: "'+task.name+'"');
     save();renderProjectModal(projId);
     // Update card in background — pie needs to reflect new state
     if(document.getElementById('proj-list'))renderProjects();
@@ -37096,9 +37096,9 @@ document.getElementById('ov-proj-tasks').addEventListener('change',function(e){
   if(!task||!task.subtasks[si])return;
   var wasDone=task.subtasks[si].done;
   task.subtasks[si].done=!wasDone;
-  if(!wasDone&&taskBudgetRemaining()>0){
+  if(!wasDone){
     var subGp=Math.max(1,Math.floor((task.gp||5)/task.subtasks.length));
-    goldAdd(subGp,'Project subtask: "'+task.subtasks[si].name+'"');
+    claimTaskGold(subGp,'Project subtask: "'+task.subtasks[si].name+'"');
   }
   save();renderProjectModal(projId);
   if(document.getElementById('proj-list'))renderProjects();
@@ -38480,7 +38480,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7262',
+    appVersion:'v1.7263',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39741,7 +39741,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7262';
+var RQ_CLIENT_VERSION='v1.7263';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
