@@ -274,6 +274,96 @@ async function sbFetch(path, opts = {}) {
   return res.json();
 }
 
+
+// ── SESSION IMAGE STORAGE (v1.3.82) ─────────────────────
+// Images must not live as base64 inside sessions.blocks. Store bytes once
+// in Supabase Storage, keep only compact references on image nodes, and let
+// carry-forward/copy duplicate the reference instead of the payload.
+const SESSION_IMAGE_BUCKET = 'session-images';
+
+function _spAuthTokenForStorage() {
+  const auth = rqGetAuth();
+  return auth && auth.access_token ? auth.access_token : SB_KEY;
+}
+function _spSafePathPart(v) {
+  return String(v || 'file').trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'file';
+}
+function _spEncodeStoragePath(path) {
+  return String(path || '').split('/').map(encodeURIComponent).join('/');
+}
+function sessionImagePublicUrl(storagePath) {
+  if (!storagePath) return '';
+  return SB_URL + '/storage/v1/object/public/' + SESSION_IMAGE_BUCKET + '/' + _spEncodeStoragePath(storagePath);
+}
+function imagePayloadDisplaySrc(img) {
+  if (!img || typeof img !== 'object') return '';
+  return String(img.url || img.publicUrl || img.public_url || img.dataUrl || (img.storage_path ? sessionImagePublicUrl(img.storage_path) : '') || '');
+}
+function compactImagePayload(src, idMap) {
+  src = (src && typeof src === 'object') ? src : {};
+  const dataUrl = String(src.dataUrl || '');
+  const keepLegacyDataUrl = dataUrl && !(dataUrl.startsWith('data:image') && dataUrl.length > 100000);
+  return {
+    image_id: String(src.image_id || src.imageId || ''),
+    storage_path: String(src.storage_path || src.storagePath || ''),
+    url: String(src.url || src.publicUrl || src.public_url || (src.storage_path ? sessionImagePublicUrl(src.storage_path) : '') || ''),
+    dataUrl: keepLegacyDataUrl ? dataUrl : '',
+    name: String(src.name || ''),
+    mime_type: String(src.mime_type || src.mimeType || ''),
+    byte_size: Number(src.byte_size || src.byteSize || 0) || 0,
+    disabled: !!src.disabled,
+    pins: Array.isArray(src.pins) ? src.pins.map(pin => ({
+      id: String(pin.id || ('pin_' + Date.now() + Math.random().toString(36).slice(2, 6))),
+      x: Number(pin.x) || 0,
+      y: Number(pin.y) || 0,
+      icon: String(pin.icon || '•'),
+      label: String(pin.label || ''),
+      nodeId: idMap && idMap.has(String(pin.nodeId || '')) ? idMap.get(String(pin.nodeId || '')) : String(pin.nodeId || ''),
+    })) : [],
+  };
+}
+async function uploadSessionImageFile(file, node) {
+  if (!file || !file.type || !file.type.startsWith('image/')) throw new Error('Please choose an image file.');
+  const auth = rqGetAuth();
+  const uid = auth && auth.user && auth.user.id ? String(auth.user.id) : 'anonymous';
+  const sid = sessionState.currentSessionId ? String(sessionState.currentSessionId) : 'unsaved';
+  const ext = (file.name && file.name.includes('.')) ? file.name.split('.').pop() : (file.type.split('/')[1] || 'img');
+  const base = _spSafePathPart((node && node.title) || file.name || 'image');
+  const path = [uid, sid, (node && node.id ? node.id : ('node-' + Date.now())) + '-' + Date.now() + '-' + base + '.' + _spSafePathPart(ext)].join('/');
+  const token = _spAuthTokenForStorage();
+  const res = await fetch(SB_URL + '/storage/v1/object/' + SESSION_IMAGE_BUCKET + '/' + _spEncodeStoragePath(path), {
+    method: 'POST',
+    headers: {
+      'apikey': SB_KEY,
+      'Authorization': 'Bearer ' + token,
+      'Content-Type': file.type || 'application/octet-stream',
+      'x-upsert': 'true',
+      'Cache-Control': '3600'
+    },
+    body: file
+  });
+  if (!res.ok) throw new Error('Storage upload failed: ' + res.status + ': ' + (await res.text()));
+  const publicUrl = sessionImagePublicUrl(path);
+  let imageId = '';
+  try {
+    const row = await sbFetch('session_images', {
+      method: 'POST',
+      prefer: 'return=representation',
+      body: JSON.stringify({
+        title: (node && node.title) || file.name || 'Image',
+        storage_path: path,
+        mime_type: file.type || '',
+        byte_size: file.size || 0
+      })
+    });
+    const rec = Array.isArray(row) ? row[0] : row;
+    imageId = rec && rec.id ? String(rec.id) : '';
+  } catch (e) {
+    console.warn('Image uploaded, but session_images metadata insert failed:', e.message);
+  }
+  return { image_id: imageId, storage_path: path, url: publicUrl, dataUrl: '', name: file.name || 'uploaded image', mime_type: file.type || '', byte_size: file.size || 0 };
+}
+
 // ── SPELL COMPENDIUM CACHE (Stage 46) ─────────────────────
 // Lazy in-memory cache of the user's rq_spells library, used for
 // rendering spell buttons on monster cards and for resolving the
@@ -1493,7 +1583,7 @@ async function loadCampaignsAndArcsAndSessions() {
   const [campsR, arcsR, sessR] = await Promise.allSettled([
     sbFetch('campaigns?select=id,name,system,blocks&order=name.asc'),
     sbFetch('arcs?select=id,campaign_id,name,parent_arc_id,sort_order,blocks&order=campaign_id.asc,parent_arc_id.asc,sort_order.asc'),
-    sbFetch('sessions?select=id,campaign_id,arc_id,title,session_date,status,blocks,sort_order&order=campaign_id.asc,sort_order.asc'),
+    sbFetch('sessions?select=id,campaign_id,arc_id,title,session_date,status,sort_order&order=campaign_id.asc,sort_order.asc'),
   ]);
   const errors = [];
   if (campsR.status === 'fulfilled') sessionState.campaigns = campsR.value || [];
@@ -3208,22 +3298,7 @@ function _refreshCopyConfirmBtn() {
 // synthetic image-pin edge ids (`pin:<imageNodeId>:<pinId>`).
 function cloneImagePayloadForSessionCopy(node, idMap) {
   const src = node && node.image && typeof node.image === 'object' ? node.image : {};
-  return {
-    dataUrl: String(src.dataUrl || ''),
-    name: String(src.name || ''),
-    disabled: !!src.disabled,
-    pins: Array.isArray(src.pins) ? src.pins.map(pin => ({
-      id: String(pin.id || ('pin_' + Date.now() + Math.random().toString(36).slice(2, 6))),
-      x: Number(pin.x) || 0,
-      y: Number(pin.y) || 0,
-      icon: String(pin.icon || '•'),
-      label: String(pin.label || ''),
-      // If the linked node is part of the copied session payload, point the
-      // copied pin at the copied node. Campaign/arc/out-of-scope links keep
-      // their existing ids.
-      nodeId: idMap && idMap.has(String(pin.nodeId || '')) ? idMap.get(String(pin.nodeId || '')) : String(pin.nodeId || ''),
-    })) : [],
-  };
+  return compactImagePayload(src, idMap);
 }
 
 function remapCopiedEndpointForSessionCopy(endpoint, sessionScopeIds, idMap) {
@@ -3417,7 +3492,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 function renderSessionPicker() {
-  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.78 · Flavor VTT Exact Output</div>';
+  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.82 · Flavor VTT Exact Output</div>';
   const camps = sessionState.campaigns;
   const errs  = sessionState._errors || [];
   const errBanner = errs.length ? `
@@ -3729,19 +3804,7 @@ function serializeCanvas() {
       };
     }
     if (n.image) {
-      base.image = {
-        dataUrl: String(n.image.dataUrl || ''),
-        name: String(n.image.name || ''),
-        disabled: !!n.image.disabled,
-        pins: Array.isArray(n.image.pins) ? n.image.pins.map(pin => ({
-          id: String(pin.id || ('pin_' + Date.now())),
-          x: Number(pin.x) || 0,
-          y: Number(pin.y) || 0,
-          icon: String(pin.icon || '•'),
-          label: String(pin.label || ''),
-          nodeId: String(pin.nodeId || ''),
-        })) : [],
-      };
+      base.image = compactImagePayload(n.image);
     }
     if (n.scope === 'campaign') {
       campaignNodesUpdate.push({
@@ -3896,19 +3959,7 @@ function deserializeCanvas(data) {
     // image object after refresh.
     if (def.isImage) {
       const src = nd.image && typeof nd.image === 'object' ? nd.image : {};
-      node.image = {
-        dataUrl: String(src.dataUrl || ''),
-        name: String(src.name || ''),
-        disabled: !!src.disabled,
-        pins: Array.isArray(src.pins) ? src.pins.map(pin => ({
-          id: String(pin.id || ('pin_' + Date.now() + Math.random().toString(36).slice(2,6))),
-          x: Number(pin.x) || 0,
-          y: Number(pin.y) || 0,
-          icon: String(pin.icon || '•'),
-          label: String(pin.label || ''),
-          nodeId: String(pin.nodeId || ''),
-        })) : [],
-      };
+      node.image = compactImagePayload(src);
     }
     const el = document.createElement('div');
     el.className = 'node';
@@ -4039,6 +4090,17 @@ function resolveAnchorEndpoint(nodeId) {
 // ── LOAD A SESSION INTO THE CANVAS ──
 async function loadSessionData(sessionRow) {
   loadingSession = true;
+  // v1.3.82: the session picker deliberately does not fetch blocks, because
+  // image nodes can make blocks multi-megabyte. Fetch the heavy payload only
+  // when the user opens a specific session.
+  if (!sessionRow.blocks || typeof sessionRow.blocks !== 'object') {
+    const rows = await sbFetch('sessions?id=eq.' + encodeURIComponent(sessionRow.id) + '&select=id,campaign_id,arc_id,title,session_date,status,blocks,sort_order&limit=1');
+    if (rows && rows[0]) {
+      Object.assign(sessionRow, rows[0]);
+      const cached = (sessionState.sessions || []).find(s => String(s.id) === String(sessionRow.id));
+      if (cached && cached !== sessionRow) Object.assign(cached, rows[0]);
+    }
+  }
   sessionState.currentSessionId = sessionRow.id;
   sessionState.currentCampaignId = sessionRow.campaign_id || null;
   sessionState.currentArcId = sessionRow.arc_id || null;
@@ -6337,8 +6399,11 @@ function parseImagePinEndpointId(endpointId) {
 }
 
 function ensureImageNodePayload(node) {
-  if (!node.image || typeof node.image !== 'object') node.image = { dataUrl: '', name: '', disabled: false, pins: [] };
+  if (!node.image || typeof node.image !== 'object') node.image = { dataUrl: '', url: '', storage_path: '', image_id: '', name: '', disabled: false, pins: [] };
   if (!Array.isArray(node.image.pins)) node.image.pins = [];
+  if (!node.image.url && node.image.publicUrl) node.image.url = node.image.publicUrl;
+  if (!node.image.url && node.image.public_url) node.image.url = node.image.public_url;
+  if (!node.image.url && node.image.storage_path) node.image.url = sessionImagePublicUrl(node.image.storage_path);
   return node.image;
 }
 function imagePinIconOptions(selected) {
@@ -6393,26 +6458,27 @@ function pinDisplayTitle(imageNode, pin) {
 }
 function renderImageNodeBodyHtml(node) {
   const img = ensureImageNodePayload(node);
+  const imgSrc = imagePayloadDisplaySrc(img);
   const pins = img.pins || [];
   const disabledClass = img.disabled ? ' image-node-disabled' : '';
   return `<div class="image-node-shell${disabledClass}" data-image-node-shell="${escAttr(node.id)}">
     <div class="image-node-toolbar">
       <button type="button" class="image-node-btn" data-image-upload="${escAttr(node.id)}">Upload</button>
-      <button type="button" class="image-node-btn" data-image-add-pin="${escAttr(node.id)}" ${img.dataUrl ? '' : 'disabled'}>Add Pin</button>
+      <button type="button" class="image-node-btn" data-image-add-pin="${escAttr(node.id)}" ${imgSrc ? '' : 'disabled'}>Add Pin</button>
       <button type="button" class="image-node-btn" data-image-toggle-disabled="${escAttr(node.id)}">${img.disabled ? 'Enable Preview' : 'Disable Preview'}</button>
       <span>${img.name ? escHtml(img.name) + ' · ' : ''}${pins.length} pin${pins.length === 1 ? '' : 's'}</span>
       <input type="file" accept="image/*" style="display:none" data-image-file-input="${escAttr(node.id)}">
     </div>
     <div class="image-node-stage${imageAddPinNodeId === node.id ? ' adding-pin' : ''}" data-image-stage="${escAttr(node.id)}">
-      ${img.dataUrl && !img.disabled ? `<img class="image-node-img" src="${escAttr(img.dataUrl)}" alt="${escAttr(img.name || node.title || 'Image')}">` : `<div class="image-node-placeholder">${img.dataUrl ? 'Preview disabled to reduce active rendering.' : 'Upload a map, puzzle, cipher, diagram, or handout image.'}</div>`}
-      ${img.dataUrl && !img.disabled ? pins.map(pin => {
+      ${imgSrc && !img.disabled ? `<img class="image-node-img" src="${escAttr(imgSrc)}" alt="${escAttr(img.name || node.title || 'Image')}">` : `<div class="image-node-placeholder">${imgSrc ? 'Preview disabled to reduce active rendering.' : 'Upload a map, puzzle, cipher, diagram, or handout image.'}</div>`}
+      ${imgSrc && !img.disabled ? pins.map(pin => {
         const linked = isImagePinLinked(node, pin);
         const title = pinDisplayTitle(node, pin);
         return `<button type="button" class="image-map-pin ${linked ? '' : 'unlinked'}" data-image-pin="${escAttr(pin.id)}" data-node-id="${escAttr(node.id)}" style="left:${Number(pin.x)||0}%;top:${Number(pin.y)||0}%" title="${escAttr(title)}" aria-label="${escAttr(title)}"><span class="pin-glyph">${escHtml(pin.icon || '•')}</span><span class="pin-anchor" data-anchor="pin" data-pin-endpoint="${escAttr(makeImagePinEndpointId(node.id, pin.id))}" title="Connect this pin"></span></button>`;
       }).join('') : ''}
     </div>
     <div class="image-node-toolbar-bottom">
-      <button type="button" class="image-node-btn" data-image-add-pin="${escAttr(node.id)}" ${img.dataUrl ? '' : 'disabled'}>Add Pin</button>
+      <button type="button" class="image-node-btn" data-image-add-pin="${escAttr(node.id)}" ${imgSrc ? '' : 'disabled'}>Add Pin</button>
       <button type="button" class="image-node-btn" data-image-toggle-disabled="${escAttr(node.id)}">${img.disabled ? 'Enable Preview' : 'Disable Preview'}</button>
     </div>
   </div>`;
@@ -6437,21 +6503,35 @@ function renderImageSidePanel(node) {
       </div>
     </div>`;
 }
-function handleImageFile(node, file) {
+async function handleImageFile(node, file) {
   if (!file || !file.type || !file.type.startsWith('image/')) { alert('Please choose an image file.'); return; }
-  const reader = new FileReader();
-  reader.onload = () => {
-    const img = ensureImageNodePayload(node);
-    img.dataUrl = String(reader.result || '');
-    img.name = file.name || 'uploaded image';
-    img.disabled = false;
+  const img = ensureImageNodePayload(node);
+  const previous = { ...img };
+  try {
+    img.name = 'Uploading ' + (file.name || 'image') + '…';
     node.summary = img.name;
+    refreshNodeFace(node);
+    if (sidePanel.classList.contains('open') && openNodeId === node.id) renderSidePanelBody(node, BLOCK_TYPES.image);
+    const stored = await uploadSessionImageFile(file, node);
+    node.image = {
+      ...compactImagePayload(previous),
+      ...stored,
+      disabled: false,
+      pins: Array.isArray(previous.pins) ? previous.pins : []
+    };
+    node.summary = node.image.name || 'uploaded image';
     refreshNodeFace(node);
     if (sidePanel.classList.contains('open') && openNodeId === node.id) renderSidePanelBody(node, BLOCK_TYPES.image);
     redrawEdges();
     markDirty();
-  };
-  reader.readAsDataURL(file);
+    if (typeof showToast === 'function') showToast('🖼️ Image stored in Supabase Storage.');
+  } catch (e) {
+    console.warn('Image storage upload failed:', e.message);
+    Object.assign(img, previous);
+    alert('Image upload failed. The image was not saved into session blocks.\n\n' + e.message);
+    refreshNodeFace(node);
+    if (sidePanel.classList.contains('open') && openNodeId === node.id) renderSidePanelBody(node, BLOCK_TYPES.image);
+  }
 }
 
 function openImagePinIconModal(imageNode, pin) {
@@ -18976,3 +19056,55 @@ window.rqNpcMonsterCountsForTeamup = rqNpcMonsterCountsForTeamup;
   }
 })();
 
+
+// v1.3.82 one-time console migration helper.
+// Usage: await window.migrateLegacySessionImages([114,118])
+window.migrateLegacySessionImages = async function migrateLegacySessionImages(sessionIds) {
+  sessionIds = Array.isArray(sessionIds) ? sessionIds : [sessionIds];
+  const report = [];
+  function dataUrlToBlob(dataUrl) {
+    const m = String(dataUrl || '').match(/^data:([^;,]+)?(;base64)?,(.*)$/);
+    if (!m) throw new Error('Invalid data URL');
+    const mime = m[1] || 'application/octet-stream';
+    const isB64 = !!m[2];
+    const body = m[3] || '';
+    if (isB64) {
+      const bin = atob(body);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([bytes], { type: mime });
+    }
+    return new Blob([decodeURIComponent(body)], { type: mime });
+  }
+  for (const sid of sessionIds) {
+    const rows = await sbFetch('sessions?id=eq.' + encodeURIComponent(sid) + '&select=id,title,blocks&limit=1');
+    if (!rows || !rows[0]) { report.push({ session_id: sid, error: 'not found' }); continue; }
+    const row = rows[0];
+    const blocks = row.blocks && typeof row.blocks === 'object' ? row.blocks : {};
+    const nodes = Array.isArray(blocks.nodes) ? blocks.nodes : [];
+    let changed = 0;
+    for (const nd of nodes) {
+      if (!nd || nd.type !== 'image' || !nd.image || typeof nd.image !== 'object') continue;
+      const dataUrl = String(nd.image.dataUrl || '');
+      if (!dataUrl.startsWith('data:image')) continue;
+      const blob = dataUrlToBlob(dataUrl);
+      const ext = (blob.type.split('/')[1] || 'png').replace(/[^a-z0-9]/gi, '') || 'png';
+      const file = new File([blob], _spSafePathPart(nd.image.name || nd.title || nd.id || 'image') + '.' + ext, { type: blob.type });
+      const stored = await uploadSessionImageFile(file, { id: nd.id, title: nd.title || nd.image.name || 'Image' });
+      nd.image = { ...compactImagePayload(nd.image), ...stored, dataUrl: '' };
+      changed++;
+    }
+    if (changed) {
+      await sbFetch('sessions?id=eq.' + encodeURIComponent(row.id), {
+        method: 'PATCH',
+        prefer: 'return=minimal',
+        body: JSON.stringify({ blocks })
+      });
+      const cached = (sessionState.sessions || []).find(s => String(s.id) === String(row.id));
+      if (cached) cached.blocks = blocks;
+    }
+    report.push({ session_id: row.id, title: row.title, migrated_images: changed });
+  }
+  console.table(report);
+  return report;
+};
