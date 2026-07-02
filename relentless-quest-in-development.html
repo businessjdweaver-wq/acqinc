@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7259</title>
+<title>Relentless Quest v1.7260</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4163,7 +4163,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7259
+      Version 1.7260
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -9379,6 +9379,23 @@ function questCyclePrereqMet(q){
   }
   return !!seen[req];
 }
+// v1.7260 — Resolve the effective squad for hard-gate checks. Some modal
+// paths can call the terrain validator with an empty squadName even when
+// all selected characters are members of the same squad. This especially
+// mattered for mountain quests where squad-owned Mules should count once
+// per selected member. Fall back to the single shared squad containing all
+// selected characters, if one exists.
+function effectiveSquadNameForQuestChars(charIdxs,squadName){
+  if(squadName)return squadName;
+  var picked=(charIdxs||[]).filter(function(ci){return !!S.party[ci];});
+  if(!picked.length)return '';
+  var matches=(S.squads||[]).filter(function(sq){
+    if(!sq||!sq.name)return false;
+    var members=sq.memberIdxs||[];
+    return picked.every(function(ci){return members.indexOf(ci)!==-1;});
+  });
+  return matches.length===1?matches[0].name:'';
+}
 function questTerrainRequirementMet(q,charIdxs,squadName){
   if(!q||!q.terrain||q.terrain==='none')return true;
   var chars=(charIdxs||[]).map(function(ci){return S.party[ci];}).filter(Boolean);
@@ -9400,9 +9417,13 @@ function questTerrainRequirementMet(q,charIdxs,squadName){
   if(q.terrain==='mountain'){
     var selected=(charIdxs||[]).filter(function(ci){return !!S.party[ci];});
     if(!selected.length)return false;
-    var squadCount=countAssignedMountByNameForSquad('Mule',squadName||'');
-    if(squadCount>0)return squadCount>=selected.length;
-    return countAssignedMountByNameForChars('Mule',selected)>=selected.length;
+    var effSquadName=effectiveSquadNameForQuestChars(selected,squadName||'');
+    var squadCount=countAssignedMountByNameForSquad('Mule',effSquadName||'');
+    // Squad-owned Mules are a pool: four Mule assets assigned to the squad
+    // satisfy four selected squad members. If the squad pool is absent or
+    // insufficient, allow individually assigned Mule assets to top it up.
+    var charCount=countAssignedMountByNameForChars('Mule',selected);
+    return (squadCount+charCount)>=selected.length;
   }
   return true;
 }
@@ -24595,13 +24616,25 @@ function renderParty(){
           }
           return '<div style="margin-bottom:6px">'+shoppingBannerHtml+headerHtml+rosterRows+'</div>';
         }())+
-        (sqAssets.length?sqAssets.map(function(a){
-          return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.15)">'+
-            '<span style="font-size:1.1em">'+(a.ic||'📦')+'</span>'+
-            '<span style="font-size:.88em">'+esc(a.name)+'</span>'+
-            '<span style="font-size:.7em;opacity:.65;margin-left:auto;font-style:italic">squad only</span>'+
-            '</div>';
-        }).join(''):'')+
+        (sqAssets.length?(function(){
+          // v1.7260 — Group identical squad-owned assets for display. A squad
+          // can legitimately own multiple Mules; show “Mule ×4” instead of a
+          // single ambiguous row or four indistinguishable rows.
+          var groups={};
+          sqAssets.forEach(function(a){
+            var key=(a.name||'')+'|'+(a.ic||'📦');
+            if(!groups[key])groups[key]={name:a.name||'',ic:a.ic||'📦',count:0};
+            groups[key].count++;
+          });
+          return Object.keys(groups).sort(function(a,b){return groups[a].name.localeCompare(groups[b].name);}).map(function(k){
+            var g=groups[k];
+            return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.15)">'+
+              '<span style="font-size:1.1em">'+esc(g.ic)+'</span>'+
+              '<span style="font-size:.88em">'+esc(g.name)+(g.count>1?' <strong>×'+g.count+'</strong>':'')+'</span>'+
+              '<span style="font-size:.7em;opacity:.65;margin-left:auto;font-style:italic">squad only</span>'+
+              '</div>';
+          }).join('');
+        }()):'')+
         (function(){
           // Role kits carried by squad members
           var roleKitRows=[];
@@ -30479,6 +30512,11 @@ function questPrereqHtml(q,charIdxs){
     var squadName=squadSelEl?squadSelEl.value:'';
     var tMet=questTerrainRequirementMet(q,charIdxs,squadName);
     var tTxt=q.terrain==='mountain'?'Terrain: mountain (1 assigned Mule per selected member)':('Terrain: '+q.terrain);
+    if(q.terrain==='mountain'){
+      var effSq=effectiveSquadNameForQuestChars(charIdxs,squadName||'');
+      var muleTotal=countAssignedMountByNameForSquad('Mule',effSq||'')+countAssignedMountByNameForChars('Mule',charIdxs||[]);
+      tTxt+=' · '+muleTotal+' Mule'+(muleTotal===1?'':'s')+' available for '+((charIdxs||[]).filter(function(ci){return !!S.party[ci];}).length)+' selected';
+    }
     rows+='<div class="prerow"><span class="'+(tMet?'pmet':'punmet')+'">'+(tMet?'✓':'✗')+'</span> '+esc(tTxt)+'</div>';
   }
   if(q.difficulty&&q.difficulty!=='standard'){
@@ -38442,7 +38480,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7259',
+    appVersion:'v1.7260',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39703,7 +39741,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7259';
+var RQ_CLIENT_VERSION='v1.7260';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
