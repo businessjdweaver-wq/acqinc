@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7263</title>
+<title>Relentless Quest v1.7264</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3299,6 +3299,9 @@ body.dev-active #app{margin-top:36px;}
         <label style="grid-column:1/-1;font-size:.8em;color:var(--ink-light);font-style:italic">Current streak: <span id="qpm-loyalty-streak">—</span> QP &nbsp;|&nbsp; Last login: <span id="qpm-loyalty-last">—</span></label><span></span>
         <label>Vest delay (seconds)</label><input id="qpm-vest-secs" type="number" min="0" max="3600" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Daily earn cap (QP)</label><input id="qpm-daily-cap" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
+        <label style="border-top:1px solid var(--parchment-deep);padding-top:8px;margin-top:4px;grid-column:1/-1;font-family:'Cinzel',serif;font-size:.8em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em">⚡ Contract GP Overflow</label><span></span>
+        <label>Overflow QP per 1 overflow gp</label><input id="qpm-task-overflow-qp-rate" type="number" min="0" max="100" step="0.1" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
+        <label>Daily overflow QP cap</label><input id="qpm-task-overflow-qp-cap" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
       </div>
     </div>
 
@@ -4163,7 +4166,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7263
+      Version 1.7264
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -7315,6 +7318,12 @@ function normalizeSettings(raw){
   if(cfg.qp.earnGroup===undefined)cfg.qp.earnGroup=3;
   if(cfg.qp.vestSeconds===undefined)cfg.qp.vestSeconds=60;
   if(cfg.qp.dailyCap===undefined)cfg.qp.dailyCap=50;
+  // v1.7264 — Contract GP overflow can become cap-exempt QP after the
+  // daily task-gold budget is exhausted. These knobs are intentionally
+  // separate from qpToGpRate because this is an earn-side conversion, not
+  // a spend-side purchase of gold.
+  if(cfg.qp.taskOverflowQpRate===undefined)cfg.qp.taskOverflowQpRate=0.5; // QP per 1 overflow gp
+  if(cfg.qp.taskOverflowQpDailyCap===undefined)cfg.qp.taskOverflowQpDailyCap=100;
   if(cfg.qp.costQuestSplit===undefined)cfg.qp.costQuestSplit=10;
   if(cfg.qp.costMagicItem===undefined)cfg.qp.costMagicItem=25;
   if(cfg.qp.costRename===undefined)cfg.qp.costRename=5;
@@ -11991,6 +12000,27 @@ function taskBudgetReadoutHtml(){
   var rem=taskBudgetRemaining();
   return (rem<=0?'⚠ ':'')+'Daily task budget: '+rem+' / 400 gp remaining';
 }
+function ensureTaskOverflowQpState(now){
+  now=now||new Date();
+  S.settings=normalizeSettings(S.settings);
+  var dueAt=getLatestDueReset(now);
+  var budgetDay=todayKey(dueAt);
+  if(S.qpTaskOverflowDate!==budgetDay){
+    S.qpTaskOverflowDate=budgetDay;
+    S.qpTaskOverflowEarnedToday=0;
+    return true;
+  }
+  if(typeof S.qpTaskOverflowEarnedToday!=='number' || isNaN(S.qpTaskOverflowEarnedToday) || S.qpTaskOverflowEarnedToday<0){
+    S.qpTaskOverflowEarnedToday=0;
+  }
+  return false;
+}
+function taskOverflowQpRemaining(){
+  ensureTaskOverflowQpState(new Date());
+  var cfg=qpCfg();
+  var cap=(typeof cfg.taskOverflowQpDailyCap==='number')?cfg.taskOverflowQpDailyCap:100;
+  return Math.max(0,Math.floor(cap-(S.qpTaskOverflowEarnedToday||0)));
+}
 function renderBudgetDisplays(){
   var txt=taskBudgetReadoutHtml();
   var t=document.getElementById('task-budget-readout');
@@ -12021,17 +12051,23 @@ function claimTaskGold(requested, reason){
     goldAdd(award,reason,'task');
   }
   if(overflow>0){
-    // v1.7263 — Once the daily contract-gold budget is exhausted, the
+    // v1.7264 — Once the daily contract-gold budget is exhausted, the
     // unawarded GP value converts into QP instead of disappearing. This is
-    // intentionally cap-exempt (uses qpCreditDirect rather than qpAward),
-    // matching Training-completion's exemption from daily earning caps.
-    var rate=(typeof qpCfg==='function' && qpCfg().qpToGpRate) ? qpCfg().qpToGpRate : 5; // 5 QP = 1 gp
-    var overflowQp=Math.max(0,Math.floor(overflow*rate));
+    // intentionally exempt from the normal QP dailyCap (uses qpCreditDirect),
+    // but it has its own editable daily overflow cap.
+    ensureTaskOverflowQpState(new Date());
+    var cfg=(typeof qpCfg==='function')?qpCfg():{};
+    var rate=(typeof cfg.taskOverflowQpRate==='number')?cfg.taskOverflowQpRate:0.5; // QP per 1 overflow gp
+    var rawOverflowQp=Math.max(0,Math.floor(overflow*rate));
+    var overflowCapRemaining=taskOverflowQpRemaining();
+    var overflowQp=Math.min(rawOverflowQp,overflowCapRemaining);
     if(overflowQp>0 && typeof qpEnabled==='function' && qpEnabled() && typeof qpCreditDirect==='function'){
-      qpCreditDirect(overflowQp,'task_gold_overflow','⚡ Contract overflow: '+overflow+' gp → '+overflowQp+' QP — '+reason,'task-overflow::'+Date.now()+'::'+Math.random().toString(36).slice(2));
-      logAdd('Daily task budget overflow: '+overflow+' gp converted to '+overflowQp+' QP for "'+reason+'".','task');
+      S.qpTaskOverflowEarnedToday=(S.qpTaskOverflowEarnedToday||0)+overflowQp;
+      qpCreditDirect(overflowQp,'task_gold_overflow','⚡ Contract overflow: '+overflow+' gp → '+overflowQp+' QP — '+reason,'task-overflow::'+S.qpTaskOverflowDate+'::'+Date.now()+'::'+Math.random().toString(36).slice(2));
+      var capNote=(rawOverflowQp>overflowQp)?' (daily overflow cap reached)':'';
+      logAdd('Daily task budget overflow: '+overflow+' gp converted to '+overflowQp+' QP for "'+reason+'".'+capNote,'task');
     }else{
-      logAdd('No daily task budget remained for "'+reason+'".','task');
+      logAdd('No daily task budget remained for "'+reason+'"'+(rawOverflowQp>0?' (overflow QP cap reached).':'.'),'task');
     }
     save();
   }else if(award<=0){
@@ -32179,6 +32215,10 @@ function openQpManager(){
   if(_llEl)_llEl.textContent=S.qpLastLoginDate||'never';
   document.getElementById('qpm-vest-secs').value=cfg.vestSeconds||60;
   document.getElementById('qpm-daily-cap').value=cfg.dailyCap||50;
+  var _toqRateEl=document.getElementById('qpm-task-overflow-qp-rate');
+  if(_toqRateEl)_toqRateEl.value=(typeof cfg.taskOverflowQpRate==='number'?cfg.taskOverflowQpRate:0.5);
+  var _toqCapEl=document.getElementById('qpm-task-overflow-qp-cap');
+  if(_toqCapEl)_toqCapEl.value=(typeof cfg.taskOverflowQpDailyCap==='number'?cfg.taskOverflowQpDailyCap:100);
   document.getElementById('qpm-cost-split').value=cfg.costQuestSplit||10;
   document.getElementById('qpm-cost-magic').value=cfg.costMagicItem||25;
   document.getElementById('qpm-cost-rename').value=cfg.costRename||5;
@@ -32310,6 +32350,16 @@ document.getElementById('qpm-save').addEventListener('click',function(){
   S.settings.qp.earnGroup=parseInt(document.getElementById('qpm-earn-group').value)||0;
   S.settings.qp.vestSeconds=parseInt(document.getElementById('qpm-vest-secs').value)||60;
   S.settings.qp.dailyCap=parseInt(document.getElementById('qpm-daily-cap').value)||50;
+  var _toqRateSaveEl=document.getElementById('qpm-task-overflow-qp-rate');
+  if(_toqRateSaveEl){
+    var _toqRate=parseFloat(_toqRateSaveEl.value);
+    S.settings.qp.taskOverflowQpRate=(isFinite(_toqRate)&&_toqRate>=0)?_toqRate:0.5;
+  }
+  var _toqCapSaveEl=document.getElementById('qpm-task-overflow-qp-cap');
+  if(_toqCapSaveEl){
+    var _toqCap=parseInt(_toqCapSaveEl.value);
+    S.settings.qp.taskOverflowQpDailyCap=(isFinite(_toqCap)&&_toqCap>=0)?_toqCap:100;
+  }
   S.settings.qp.costQuestSplit=parseInt(document.getElementById('qpm-cost-split').value)||10;
   S.settings.qp.costMagicItem=parseInt(document.getElementById('qpm-cost-magic').value)||25;
   S.settings.qp.costRename=parseInt(document.getElementById('qpm-cost-rename').value)||5;
@@ -38480,7 +38530,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7263',
+    appVersion:'v1.7264',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39741,7 +39791,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7263';
+var RQ_CLIENT_VERSION='v1.7264';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
