@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7264</title>
+<title>Relentless Quest v1.7265</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -4166,7 +4166,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7264
+      Version 1.7265
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -20677,7 +20677,10 @@ function applyDowntimeThreshold(c, type, target){
       unlockMsg='✅ '+c.name+' learned language: '+target+'.';
       recordDowntimeEarnedProficiency(c,'language',target);
     }else if(type==='faith'){
-      c.rel=target;
+      // v1.7265 — Faith research is additive. Preserve c.rel as the legacy
+      // primary faith, and add the researched faith to c.faiths so characters
+      // can hold multiple faiths and quest faith pegs can credit them.
+      _dtAddFaith(c,target);
       addDowntimeBadge(c,'Devoted');
       unlockMsg='✅ '+c.name+' researched faith: '+target+'.';
       recordDowntimeEarnedProficiency(c,'faith',target);
@@ -20854,7 +20857,10 @@ function resolveDowntimeRoll(pending, roll){
       unlockMsg='✅ '+c.name+' learned language: '+job.target+'.';
       recordDowntimeEarnedProficiency(c,'language',job.target);
     }else if(job.type==='faith'){
-      c.rel=job.target;
+      // v1.7265 — Faith research is additive. Preserve c.rel as the legacy
+      // primary faith, and add the researched faith to c.faiths so characters
+      // can hold multiple faiths and quest faith pegs can credit them.
+      _dtAddFaith(c,job.target);
       addDowntimeBadge(c,'Devoted');
       unlockMsg='✅ '+c.name+' researched faith: '+job.target+'.';
       recordDowntimeEarnedProficiency(c,'faith',job.target);
@@ -21478,11 +21484,51 @@ function _dtAddFaith(c,target){
   target=String(target||'').trim();
   if(!c||!target)return false;
   if(!Array.isArray(c.faiths))c.faiths=[];
+  // v1.7265 — Keep the legacy primary faith visible in the additive list too.
+  // This makes the list round-tripable and prevents a fresh c.faiths=[] from
+  // hiding c.rel from code that inspects only c.faiths.
+  if(c.rel&&c.faiths.indexOf(c.rel)===-1)c.faiths.unshift(c.rel);
   var before=_dtHasFaith(c,target);
   if(c.faiths.indexOf(target)===-1)c.faiths.push(target);
   if(!c.rel)c.rel=target; // preserve a primary faith for legacy systems, but never overwrite it
   return !before;
 }
+
+// v1.7265 — One-time repair for faiths lost before additive faith persistence.
+// Sources of truth: downtime roll history rows with unlocked faith rewards, and
+// building assets whose instant faith grant was marked used for a character.
+function rqRepairFaithsFromHistoryAndAssets(){
+  var changed=false;
+  var byName={};
+  (S.party||[]).forEach(function(c){if(c&&c.name)byName[c.name]=c;});
+  function addByName(name,faith){
+    name=String(name||'').trim(); faith=String(faith||'').trim();
+    var c=byName[name];
+    if(!c||!faith)return;
+    if(!Array.isArray(c.faiths))c.faiths=[];
+    var before=_dtFaithList(c).join('');
+    _dtAddFaith(c,faith);
+    var after=_dtFaithList(c).join('');
+    if(before!==after)changed=true;
+  }
+  (S.downtimeRollHistory||[]).forEach(function(r){
+    if(!r||r.type!=='faith'||!r.unlocked)return;
+    addByName(r.name,r.target);
+  });
+  (S.partyAssets||[]).forEach(function(a){
+    var m=a&&a.meta;
+    if(!m||!m.instantGrantUsed)return;
+    var typ=String(m.unlockType||m.unlock_type||'').toLowerCase();
+    if(typ!=='faith')return;
+    addByName(m.instantGrantCharacterName||m.instantGrantCharName||m.grantCharacterName,m.unlockValue||m.unlock_value);
+  });
+  if(changed){
+    try{save();}catch(e){}
+    if(typeof uid==='function'&&uid())setTimeout(function(){try{sbPush(false);}catch(e){}},0);
+  }
+  return changed;
+}
+
 function _dtFaithPills(c,activeFilter){
   var faiths=_dtFaithList(c);
   return faiths.map(function(f){return ptag(relIcon(f)+' '+esc(f),f,activeFilter||null);}).join('');
@@ -38530,7 +38576,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7264',
+    appVersion:'v1.7265',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39791,7 +39837,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7264';
+var RQ_CLIENT_VERSION='v1.7265';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -41157,6 +41203,12 @@ function sbPush(manual){
         if(c.invMeta&&typeof c.invMeta==='object'&&Object.keys(c.invMeta).length>0){
           _statsWithMeta._invMeta=c.invMeta;
         }
+        // v1.7265 — Persist additive faiths without a schema migration.
+        // Supabase party has only legacy rel, so secondary faiths ride in
+        // stats._faiths and are lifted back during sbPull. Include rel so
+        // the list remains complete even for legacy-only characters.
+        var _faithsForMeta=_dtFaithList(c);
+        if(_faithsForMeta.length>0)_statsWithMeta._faiths=_faithsForMeta;
         return {user_id:userId,sort_order:i,
           name:c.name,species:c.species||'',cls:c.cls||'',bg:c.bg||'',
           rel:c.rel||'',age:c.age||0,height:c.height||'',weight:c.weight||'',
@@ -41892,10 +41944,11 @@ function sbPull(manual){
         var _cGradClass='';
         var _cSpecialty=''; // v1.7147
         var _cInvMeta=null; // v1.7148
+        var _cFaiths=null; // v1.7265
         var _rawStats=c.stats||legacyMeta.stats||{};
         var _cleanStats=_rawStats;
         if(_rawStats&&(typeof _rawStats==='object')&&
-           (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined||_rawStats._specialty!==undefined||_rawStats._invMeta!==undefined||_rawStats._armorProfs!==undefined||_rawStats._creationProficiencies!==undefined)){
+           (_rawStats._homeTerritory!==undefined||_rawStats._statsClass!==undefined||_rawStats._gradClass!==undefined||_rawStats._specialty!==undefined||_rawStats._invMeta!==undefined||_rawStats._faiths!==undefined||_rawStats._armorProfs!==undefined||_rawStats._creationProficiencies!==undefined)){
           _cleanStats=Object.assign({},_rawStats);
           if(typeof _cleanStats._homeTerritory==='string'&&_cleanStats._homeTerritory){
             _cHomeTerritory=_cleanStats._homeTerritory;
@@ -41914,11 +41967,16 @@ function sbPull(manual){
           if(_cleanStats._invMeta&&typeof _cleanStats._invMeta==='object'){
             _cInvMeta=_cleanStats._invMeta;
           }
+          // v1.7265 — Lift additive faith list from stats._faiths.
+          if(Array.isArray(_cleanStats._faiths)){
+            _cFaiths=_cleanStats._faiths.map(function(x){return String(x||'').trim();}).filter(Boolean);
+          }
           delete _cleanStats._homeTerritory;
           delete _cleanStats._statsClass;
           delete _cleanStats._gradClass;
           delete _cleanStats._specialty;
           delete _cleanStats._invMeta;
+          delete _cleanStats._faiths;
       delete _cleanStats._armorProfs;
       delete _cleanStats._creationProficiencies;
         }
@@ -41966,6 +42024,11 @@ function sbPull(manual){
         if(_cGradClass)_rebuilt.gradClass=_cGradClass;
         if(_cSpecialty)_rebuilt.specialty=_cSpecialty; // v1.7147
         if(_cInvMeta)_rebuilt.invMeta=_cInvMeta; // v1.7148
+        // v1.7265 — Rehydrate additive faiths. Seed from rel when no
+        // packed list exists so all characters have a stable array shape.
+        _rebuilt.faiths=[];
+        if(Array.isArray(_cFaiths))_cFaiths.forEach(function(f){if(f&&_rebuilt.faiths.indexOf(f)===-1)_rebuilt.faiths.push(f);});
+        if(_rebuilt.rel&&_rebuilt.faiths.indexOf(_rebuilt.rel)===-1)_rebuilt.faiths.unshift(_rebuilt.rel);
         return _rebuilt;
       });
     }
@@ -42114,6 +42177,9 @@ function sbPull(manual){
       ensureAssetMetas();
       logAdd('Recovered assets from franchise settings backup.','buy');
     }
+    // v1.7265 — After party and assets are hydrated, repair any faith unlocks
+    // that predated additive-faith persistence, then push the healed shape.
+    try{rqRepairFaithsFromHistoryAndAssets();}catch(e){console.warn('[v1.7265] faith repair skipped',e);}
     // Safety net: if franchiseStorage contains a bag-of-holding but partyAssets
     // doesn't have one (lost in a failed push), restore it to partyAssets
     (S.franchiseStorage||[]).forEach(function(entry){
