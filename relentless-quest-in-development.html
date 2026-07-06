@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7274</title>
+<title>Relentless Quest v1.7275</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7274</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7275</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4166,7 +4166,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7274
+      Version 1.7275
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -8824,7 +8824,8 @@ function load(){
   if(typeof migrateGrindToTerritoriesV1_7013==='function')migrateGrindToTerritoriesV1_7013();
   if(typeof migrateGrindPendingDedupV1_7017==='function')migrateGrindPendingDedupV1_7017(); // v1.7017
   if(typeof migrateMercPersonalV1_7024==='function')migrateMercPersonalV1_7024(); // v1.7024
-  if(typeof migrateMercClassKitV1_7274==='function')migrateMercClassKitV1_7274(); // v1.7274
+  if(typeof migrateMercClassKitV1_7274==='function')migrateMercClassKitV1_7274(); // v1.7275
+  if(typeof migrateMercClassKitV1_7275==='function')migrateMercClassKitV1_7275(); // v1.7275
   if(typeof migrateSpeciesRenameV1_7114==='function')migrateSpeciesRenameV1_7114(); // v1.7114
   if(typeof migrateMedionToEffigianV1_7118==='function')migrateMedionToEffigianV1_7118(); // v1.7118
   if(typeof migrateEnsureSpeciesNativeLanguagesV1_7204==='function')migrateEnsureSpeciesNativeLanguagesV1_7204(); // v1.7204
@@ -10399,7 +10400,7 @@ function migrateMercPersonalV1_7024(){
 }
 
 
-// v1.7274 — Mercenary class-kit backfill. Phase 2 of the Character Audit.
+// v1.7275 — Mercenary class-kit backfill. Phase 2 of the Character Audit.
 // Some legacy/custom mercenaries could exist as a classed adventurer without
 // the class-essential weapon/armor proficiencies and starter kit that the
 // normal adventurer and graduation pathways expect. This caused Paladin mercs
@@ -10454,6 +10455,62 @@ function migrateMercClassKitV1_7274(){
   S.settings._mercClassKitMigrationV17274=true;
   if(charsTouched>0&&typeof logAdd==='function'){
     logAdd('⭐ Repaired mercenary class kits for '+charsTouched+' merc'+(charsTouched===1?'':'s')+' ('+profsAdded+' proficiencies, '+itemsAdded+' items).','hire');
+  }
+}
+
+
+// v1.7275 — Corrective Paladin armor/proficiency repair.
+// v1.7274 was intentionally conservative: it would not add class starter
+// body armor if a legacy/background body-armor item already existed. That
+// preserved inventories, but it also left real mercenary Paladins with a
+// Mercenary Veteran Chain Shirt and no Heavy Armor proficiency. This repair is
+// idempotent and broader than the merc-only migration: any non-hireling
+// Paladin missing class armor/weapon essentials gets them, and a Paladin with
+// Chain Shirt but no Chain Mail is upgraded to Chain Mail. It is local-only:
+// no fetch/Supabase calls, no timers, and no save()/sbPush() side effects.
+function migrateMercClassKitV1_7275(){
+  if(!Array.isArray(S.party))return;
+  if(!S.settings)S.settings={};
+  if(S.settings._paladinArmorRepairV17275)return;
+  var charsTouched=0, profsAdded=0, itemsAdded=0, itemsRemoved=0;
+  function addUnique(arr,v){if(!v)return false;if(arr.indexOf(v)===-1){arr.push(v);return true;}return false;}
+  function removeAll(arr,v){
+    if(!Array.isArray(arr))return 0;
+    var before=arr.length;
+    for(var i=arr.length-1;i>=0;i--){if(arr[i]===v)arr.splice(i,1);}
+    return before-arr.length;
+  }
+  S.party.forEach(function(c){
+    if(!c||c.hireling||c.cls!=='Paladin')return;
+    var touched=false;
+    var ess=(typeof classEssentials==='function')?classEssentials('Paladin'):{weapons:['Martial Weapons','Simple Weapons'],armor:['Light Armor','Medium Armor','Heavy Armor','Shields'],items:['Holy Symbol']};
+    if(!Array.isArray(c.weapons))c.weapons=[];
+    if(!Array.isArray(c.armorProfs))c.armorProfs=Array.isArray(c.armor)?c.armor.slice():[];
+    (ess.weapons||[]).forEach(function(w){if(addUnique(c.weapons,w)){profsAdded++;touched=true;}});
+    (ess.armor||[]).forEach(function(a){if(addUnique(c.armorProfs,a)){profsAdded++;touched=true;}});
+    if(!Array.isArray(c.inv))c.inv=[];
+    if(!Array.isArray(c.ownedItems))c.ownedItems=[];
+
+    // Upgrade legacy Mercenary Veteran body armor to the Paladin starter suit.
+    if(c.inv.indexOf('Chain Mail')===-1){
+      var removed=removeAll(c.inv,'Chain Shirt');
+      if(removed){itemsRemoved+=removed;touched=true;}
+      if(addUnique(c.inv,'Chain Mail')){itemsAdded++;touched=true;}
+    }
+    // Keep personal ownership semantics for actual mercs/custom recruits while
+    // also harmlessly marking repaired starter armor personal if it already had
+    // an ownedItems roster.
+    if(c.premium||c.ownedItems.length){addUnique(c.ownedItems,'Chain Mail');removeAll(c.ownedItems,'Chain Shirt');}
+
+    ['Longsword','Shield','Holy Symbol'].forEach(function(it){
+      if(addUnique(c.inv,it)){itemsAdded++;touched=true;}
+      if(c.premium||c.ownedItems.length)addUnique(c.ownedItems,it);
+    });
+    if(touched)charsTouched++;
+  });
+  S.settings._paladinArmorRepairV17275=true;
+  if(charsTouched>0&&typeof logAdd==='function'){
+    logAdd('🛡 Repaired Paladin armor/proficiency kits for '+charsTouched+' character'+(charsTouched===1?'':'s')+' ('+profsAdded+' proficiencies, '+itemsAdded+' items added, '+itemsRemoved+' legacy armor removed).','hire');
   }
 }
 
@@ -23052,7 +23109,7 @@ function _cpkOverviewHtml(c,ci){
       );
     }
   }
-  // v1.7274 — Show the read-only runtime audit in the Character Peek Overview tab too.
+  // v1.7275 — Show the read-only runtime audit in the Character Peek Overview tab too.
   // The Party-card version was present in v1.7272, but the Overview tab is the
   // place the user naturally checks when opening a character from the Party list.
   if(typeof charRuntimeAuditHtml==='function'){
@@ -23687,7 +23744,7 @@ function charCardHtml(c,ci,opts){
     )+
     '</div>'+
     dtHtml+
-    // v1.7274 — Dev mode runtime audit panel (read-only/local only).
+    // v1.7275 — Dev mode runtime audit panel (read-only/local only).
     charRuntimeAuditHtml(c,ci)+
     '<div style="display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin-top:8px">'+
     '<button class="btn bink sm" data-a="'+(dtReady?'dt-collect':'dt-start')+'" data-ci="'+ci+'" style="white-space:nowrap;padding:2px 6px;min-height:22px;font-size:.72em"'+((isQuesting||dtBusy)?' disabled':'')+'>'+(dtReady?'Resolve Downtime':'🕯 Downtime')+'</button>'+
@@ -29642,7 +29699,7 @@ function encumbranceState(c){
 }
 
 
-// v1.7274 — Dev-only character runtime audit panel. Read-only/local only:
+// v1.7275 — Dev-only character runtime audit panel. Read-only/local only:
 // it uses the same ITEM_WEIGHT, charCarriedWeight(), and charCapacity()
 // helpers as the existing encumbrance UI and performs no Supabase calls.
 function charRuntimeAuditHtml(c,ci){
@@ -29946,7 +30003,13 @@ function recruitLoadoutByClassBgAndCost(cls,bg,hireCost){
     'Investigator':['Magnifying Glass','Lantern'],
     'Mercenary Veteran':['Chain Shirt','Shield']
   };
-  (bgMap[bg]||[]).forEach(function(it){ if(inv.indexOf(it)===-1)inv.push(it); });
+  (bgMap[bg]||[]).forEach(function(it){
+    // v1.7275 — Do not let the Mercenary Veteran background downgrade or add
+    // duplicate medium armor for classes whose starter kit already includes a
+    // heavier body-armor suit (notably Paladin Chain Mail).
+    if(it==='Chain Shirt'&&inv.indexOf('Chain Mail')!==-1)return;
+    if(inv.indexOf(it)===-1)inv.push(it);
+  });
   var tier=recruitCostTier(hireCost);
   // v1.7026 — Elite-tier recruits previously received a Bag of Holding in
   // their starter kit. Per user direction, no recruited character (merc,
@@ -38726,7 +38789,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7274',
+    appVersion:'v1.7275',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39495,7 +39558,7 @@ window.signIn = async function(){
 // Shows a choice: cancel transfer OR relinquish an item of >= weight to franchise storage
 function encumbranceRelinquishPrompt(destC, destCi, incomingItem, onProceed){
   var incomingWt=ITEM_WEIGHT[incomingItem]||1;
-  // v1.7274 — Multi-drop encumbrance relief. Previously this helper only
+  // v1.7275 — Multi-drop encumbrance relief. Previously this helper only
   // offered items whose individual weight was >= the incoming item, which
   // blocked delivery when several smaller items could collectively make room.
   var giveOptions=(destC.inv||[]).map(function(x,idx){return {name:x,idx:idx,wt:(ITEM_WEIGHT[x]||1)};}).filter(function(o){
@@ -39573,7 +39636,7 @@ function encumbranceRelinquishPrompt(destC, destCi, incomingItem, onProceed){
 //                                    has happened yet in this helper).
 function encumbranceChoicePrompt(destC, destCi, incomingItem, onDrop, onStorage, onCancel){
   var incomingWt=ITEM_WEIGHT[incomingItem]||1;
-  // v1.7274 — Allow several smaller inventory items to satisfy the required
+  // v1.7275 — Allow several smaller inventory items to satisfy the required
   // dropped weight for a heavy quest/prerequisite purchase.
   var giveOptions=(destC.inv||[]).map(function(x,idx){return {name:x,idx:idx,wt:(ITEM_WEIGHT[x]||1)};}).filter(function(o){
     return typeof o.name==='string'&&o.name.indexOf('__meta__')!==0&&o.wt>0;
@@ -40016,7 +40079,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7274';
+var RQ_CLIENT_VERSION='v1.7275';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
