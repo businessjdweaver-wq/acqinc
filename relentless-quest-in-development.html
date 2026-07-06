@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7271</title>
+<title>Relentless Quest v1.7272</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7271</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7272</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4166,7 +4166,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7271
+      Version 1.7272
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -23619,24 +23619,8 @@ function charCardHtml(c,ci,opts){
     )+
     '</div>'+
     dtHtml+
-    // Dev mode: show raw stats
-    (isDevModeActive()&&c.stats?(function(){
-      var st=c.stats;
-      var statNames=['str','dex','con','int','wis','cha'];
-      var statLabels={str:'STR',dex:'DEX',con:'CON',int:'INT',wis:'WIS',cha:'CHA'};
-      return '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;padding:4px 6px;background:rgba(44,26,14,.06);border-radius:4px;border:1px dashed rgba(44,26,14,.18)">'+
-        statNames.map(function(s){
-          var v=st[s]||10;
-          var mod=Math.floor((v-10)/2);
-          var modStr=(mod>=0?'+':'')+mod;
-          return '<div style="text-align:center;flex:1;min-width:32px">'+
-            '<div style="font-size:.58em;color:var(--ink-light);text-transform:uppercase;font-family:\'Cinzel\',serif;letter-spacing:.04em">'+statLabels[s]+'</div>'+
-            '<div style="font-size:.85em;font-weight:700;color:var(--ink)">'+v+'</div>'+
-            '<div style="font-size:.65em;color:var(--ink-light)">'+modStr+'</div>'+
-            '</div>';
-        }).join('')+
-        '</div>';
-    })():'')+
+    // v1.7272 — Dev mode runtime audit panel (read-only/local only).
+    charRuntimeAuditHtml(c,ci)+
     '<div style="display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin-top:8px">'+
     '<button class="btn bink sm" data-a="'+(dtReady?'dt-collect':'dt-start')+'" data-ci="'+ci+'" style="white-space:nowrap;padding:2px 6px;min-height:22px;font-size:.72em"'+((isQuesting||dtBusy)?' disabled':'')+'>'+(dtReady?'Resolve Downtime':'🕯 Downtime')+'</button>'+
     '<button class="btn bink sm" data-a="lv" data-ci="'+ci+'" style="white-space:nowrap;padding:2px 6px;min-height:22px;font-size:.72em">Level Up</button>'+
@@ -29587,6 +29571,92 @@ function encumbranceState(c){
   if(carried>str*10)return 'heavy';
   if(carried>str*5) return 'encumbered';
   return 'normal';
+}
+
+
+// v1.7272 — Dev-only character runtime audit panel. Read-only/local only:
+// it uses the same ITEM_WEIGHT, charCarriedWeight(), and charCapacity()
+// helpers as the existing encumbrance UI and performs no Supabase calls.
+function charRuntimeAuditHtml(c,ci){
+  if(!isDevModeActive()||!c)return '';
+  var st=c.stats||{};
+  var statNames=['str','dex','con','int','wis','cha'];
+  var statLabels={str:'STR',dex:'DEX',con:'CON',int:'INT',wis:'WIS',cha:'CHA'};
+  function score(k){return Number(st[k]||10);}
+  function mod(v){var m=Math.floor((v-10)/2);return (m>=0?'+':'')+m;}
+  var lvl=Number(c.level||0);
+  var pb=2+Math.floor((Math.max(1,lvl)-1)/4);
+  var capacity=(typeof charCapacity==='function')?charCapacity(c):(score('str')*15);
+  var carried=(typeof charCarriedWeight==='function')?charCarriedWeight(c):0;
+  var remaining=Math.round((capacity-carried)*10)/10;
+  var enc=(typeof encumbranceState==='function')?encumbranceState(c):'normal';
+  var inv=(c.inv||[]).filter(function(x){return typeof x==='string'&&x.indexOf('__meta__')!==0;});
+  var hasBag=inv.indexOf('Bag of Holding')!==-1;
+  var total=0;
+  var ledger=inv.map(function(item,idx){
+    var raw=ITEM_WEIGHT[item];
+    var w=(raw===undefined)?1:raw;
+    var note=(raw===undefined)?'unknown default':'';
+    if(hasBag&&item!=='Bag of Holding'){
+      var gEntry=(GEAR||[]).filter(function(g){return g.name===item;})[0];
+      if(gEntry&&gEntry.type!=='armor'&&gEntry.type!=='weapon'){
+        w=0;
+        note=note?(note+'; bag-held'):'bag-held';
+      }
+    }
+    total+=w;
+    return {name:item,idx:idx+1,wt:Math.round(w*10)/10,note:note};
+  });
+  var sqs=(S.squads||[]).filter(function(s){return s&&s.memberIdxs&&s.memberIdxs.indexOf(ci)!==-1;}).map(function(s){return s.name;});
+  var questing=false;
+  var now=Date.now();
+  function scanPending(list){(list||[]).forEach(function(pq){if(pq&&(pq.doneAt||0)>now&&(pq.chars||[]).indexOf(ci)!==-1)questing=true;});}
+  var qs=S.questState||{};
+  scanPending(qs.pending);scanPending(qs.grindPending);
+  Object.keys(qs.setProgress||{}).forEach(function(sid){var sp=qs.setProgress[sid]||{};scanPending(sp.pending);scanPending(sp.grindPending);});
+  var dtJob=(typeof downtimeJobForChar==='function')?downtimeJobForChar(ci):null;
+  var dtLabel=dtJob?(downtimeTrackLabel(dtJob.type,dtJob.target)+' · '+((dtJob.endsAt||0)<=now?'ready':downtimeRemainingLabel(dtJob))):'none';
+  var statGrid='<div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;margin-top:6px">'+statNames.map(function(k){
+    var v=score(k);
+    return '<div style="text-align:center;background:rgba(255,255,255,.35);border:1px solid rgba(44,26,14,.12);border-radius:4px;padding:4px 2px">'+
+      '<div style="font-size:.58em;color:var(--ink-light);text-transform:uppercase;font-family:\'Cinzel\',serif;letter-spacing:.04em">'+statLabels[k]+'</div>'+ 
+      '<div style="font-size:.92em;font-weight:700;color:var(--ink)">'+v+'</div>'+ 
+      '<div style="font-size:.68em;color:var(--ink-light)">'+mod(v)+'</div>'+ 
+      '</div>';
+  }).join('')+'</div>';
+  var carryGrid='<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-top:6px">'+
+    [['Lv',lvl],['PB','+'+pb],['Capacity',capacity+' lb'],['Carried',carried+' lb']].map(function(pair){return '<div style="background:rgba(44,26,14,.04);border:1px solid rgba(44,26,14,.12);border-radius:4px;padding:4px;text-align:center"><div style="font-size:.58em;color:var(--ink-light);font-family:\'Cinzel\',serif;text-transform:uppercase">'+pair[0]+'</div><div style="font-size:.82em;font-weight:700;color:var(--ink)">'+pair[1]+'</div></div>';}).join('')+
+    '</div>';
+  var encCol=enc==='heavy'?'var(--crimson)':(enc==='encumbered'?'var(--gold-dark)':'var(--forest)');
+  var metaRows=[
+    ['Remaining',remaining+' lb'],
+    ['Encumbrance',enc],
+    ['Territory',(typeof charHomeTerritory==='function'?charHomeTerritory(c,ci):(c.homeTerritory||S.originTerritory||''))||'—'],
+    ['Squad(s)',sqs.length?sqs.join(', '):'unassigned'],
+    ['Quest State',questing?'quest/grind pending':'free'],
+    ['Downtime',dtLabel],
+    ['Character ID',String(ci)],
+    ['DB ID',c._dbId||'—'],
+    ['Inventory Count',String(inv.length)]
+  ].map(function(r){return '<div style="display:flex;gap:8px;border-bottom:1px dotted rgba(44,26,14,.12);padding:2px 0"><span style="width:92px;flex-shrink:0;color:var(--ink-light);font-family:\'Cinzel\',serif;font-size:.62em;text-transform:uppercase">'+esc(r[0])+'</span><span style="flex:1;color:'+(r[0]==='Encumbrance'?encCol:'var(--ink)')+'">'+esc(String(r[1]))+'</span></div>';}).join('');
+  var profRows=[
+    ['Skills',(c.skills||[]).join(', ')||'—'],
+    ['Languages',(c.lang||[]).join(', ')||'—'],
+    ['Faiths',(typeof _dtFaithList==='function'?_dtFaithList(c):(c.rel?[c.rel]:[])).join(', ')||'—'],
+    ['Tools',(c.tools||[]).join(', ')||'—'],
+    ['Weapons',(c.weapons||[]).join(', ')||'—'],
+    ['Armor',(c.armorProfs||c.armor||[]).join(', ')||'—']
+  ].map(function(r){return '<div style="display:flex;gap:8px;border-bottom:1px dotted rgba(44,26,14,.12);padding:2px 0"><span style="width:92px;flex-shrink:0;color:var(--ink-light);font-family:\'Cinzel\',serif;font-size:.62em;text-transform:uppercase">'+esc(r[0])+'</span><span style="flex:1;color:var(--ink)">'+esc(r[1])+'</span></div>';}).join('');
+  var ledgerHtml=ledger.length?ledger.map(function(row){return '<div style="display:grid;grid-template-columns:38px 1fr auto;gap:6px;border-bottom:1px dotted rgba(44,26,14,.12);padding:2px 0"><span style="color:var(--ink-light);font-size:.72em">#'+row.idx+'</span><span>'+esc(row.name)+(row.note?' <span style="font-size:.78em;color:var(--teal);font-style:italic">'+esc(row.note)+'</span>':'')+'</span><span style="font-family:\'Cinzel\',serif;color:var(--gold-dark);font-size:.72em">'+row.wt+' lb</span></div>';}).join(''):'<div style="font-style:italic;color:var(--ink-light)">No inventory.</div>';
+  ledgerHtml+='<div style="display:flex;justify-content:flex-end;font-family:\'Cinzel\',serif;color:var(--gold-dark);font-size:.78em;margin-top:3px">Ledger total: '+(Math.round(total*10)/10)+' lb</div>';
+  return '<details class="dev-runtime-audit" style="margin-top:8px;background:rgba(44,26,14,.055);border:1px dashed rgba(44,26,14,.22);border-radius:6px;overflow:hidden">'+
+    '<summary style="cursor:pointer;list-style:none;padding:6px 8px;font-family:\'Cinzel\',serif;font-size:.72em;color:var(--purple);text-transform:uppercase;letter-spacing:.05em">🧪 Dev Runtime Data</summary>'+ 
+    '<div style="padding:0 8px 8px;font-size:.78em;color:var(--ink);line-height:1.35">'+
+      statGrid+carryGrid+
+      '<div style="margin-top:6px">'+metaRows+'</div>'+ 
+      '<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--gold-dark);font-family:\'Cinzel\',serif;font-size:.85em">Proficiencies</summary><div style="margin-top:3px">'+profRows+'</div></details>'+ 
+      '<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--gold-dark);font-family:\'Cinzel\',serif;font-size:.85em">Weight Ledger</summary><div style="margin-top:3px">'+ledgerHtml+'</div></details>'+ 
+    '</div></details>';
 }
 
 function pickClassSkills(cls){
@@ -38588,7 +38658,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7271',
+    appVersion:'v1.7272',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39357,7 +39427,7 @@ window.signIn = async function(){
 // Shows a choice: cancel transfer OR relinquish an item of >= weight to franchise storage
 function encumbranceRelinquishPrompt(destC, destCi, incomingItem, onProceed){
   var incomingWt=ITEM_WEIGHT[incomingItem]||1;
-  // v1.7271 — Multi-drop encumbrance relief. Previously this helper only
+  // v1.7272 — Multi-drop encumbrance relief. Previously this helper only
   // offered items whose individual weight was >= the incoming item, which
   // blocked delivery when several smaller items could collectively make room.
   var giveOptions=(destC.inv||[]).map(function(x,idx){return {name:x,idx:idx,wt:(ITEM_WEIGHT[x]||1)};}).filter(function(o){
@@ -39435,7 +39505,7 @@ function encumbranceRelinquishPrompt(destC, destCi, incomingItem, onProceed){
 //                                    has happened yet in this helper).
 function encumbranceChoicePrompt(destC, destCi, incomingItem, onDrop, onStorage, onCancel){
   var incomingWt=ITEM_WEIGHT[incomingItem]||1;
-  // v1.7271 — Allow several smaller inventory items to satisfy the required
+  // v1.7272 — Allow several smaller inventory items to satisfy the required
   // dropped weight for a heavy quest/prerequisite purchase.
   var giveOptions=(destC.inv||[]).map(function(x,idx){return {name:x,idx:idx,wt:(ITEM_WEIGHT[x]||1)};}).filter(function(o){
     return typeof o.name==='string'&&o.name.indexOf('__meta__')!==0&&o.wt>0;
@@ -39878,7 +39948,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7271';
+var RQ_CLIENT_VERSION='v1.7272';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
