@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7273</title>
+<title>Relentless Quest v1.7274</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7273</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7274</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4166,7 +4166,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7273
+      Version 1.7274
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -8824,6 +8824,7 @@ function load(){
   if(typeof migrateGrindToTerritoriesV1_7013==='function')migrateGrindToTerritoriesV1_7013();
   if(typeof migrateGrindPendingDedupV1_7017==='function')migrateGrindPendingDedupV1_7017(); // v1.7017
   if(typeof migrateMercPersonalV1_7024==='function')migrateMercPersonalV1_7024(); // v1.7024
+  if(typeof migrateMercClassKitV1_7274==='function')migrateMercClassKitV1_7274(); // v1.7274
   if(typeof migrateSpeciesRenameV1_7114==='function')migrateSpeciesRenameV1_7114(); // v1.7114
   if(typeof migrateMedionToEffigianV1_7118==='function')migrateMedionToEffigianV1_7118(); // v1.7118
   if(typeof migrateEnsureSpeciesNativeLanguagesV1_7204==='function')migrateEnsureSpeciesNativeLanguagesV1_7204(); // v1.7204
@@ -10394,6 +10395,65 @@ function migrateMercPersonalV1_7024(){
   S.settings._mercPersonalMigrationDone=true;
   if(itemsMarked>0&&typeof logAdd==='function'){
     logAdd('\u2B50 Marked '+itemsMarked+' mercenary-kit item'+(itemsMarked===1?'':'s')+' as personal across '+mercsTouched+' merc'+(mercsTouched===1?'':'s')+'.','hire');
+  }
+}
+
+
+// v1.7274 — Mercenary class-kit backfill. Phase 2 of the Character Audit.
+// Some legacy/custom mercenaries could exist as a classed adventurer without
+// the class-essential weapon/armor proficiencies and starter kit that the
+// normal adventurer and graduation pathways expect. This caused Paladin mercs
+// like Jade River Brightmantle to show no armor proficiency and no armor, so
+// buying quest-required heavy armor looked like an encumbrance problem when it
+// was actually a creation/loadout drift problem.
+//
+// This migration is local/save-state only: it does not read Supabase, does not
+// start timers, and does not call save() or sbPush() by itself. The next normal
+// user save/push will persist the corrected roster.
+function migrateMercClassKitV1_7274(){
+  if(!Array.isArray(S.party))return;
+  if(!S.settings)S.settings={};
+  if(S.settings._mercClassKitMigrationV17274)return;
+  var charsTouched=0, profsAdded=0, itemsAdded=0;
+  function addUnique(arr,v){if(!v)return false;if(arr.indexOf(v)===-1){arr.push(v);return true;}return false;}
+  function isBodyArmorName(n){
+    n=String(n||'');
+    if(!n||n==='Shield')return false;
+    var it=(typeof marketItemByName==='function')?marketItemByName(n):null;
+    return !!(it&&it.type==='armor');
+  }
+  S.party.forEach(function(c){
+    if(!c||!c.premium||c.hireling||!c.cls)return;
+    var ess=(typeof classEssentials==='function')?classEssentials(c.cls):null;
+    if(!ess)return;
+    var touched=false;
+    if(!Array.isArray(c.weapons))c.weapons=[];
+    if(!Array.isArray(c.armorProfs))c.armorProfs=Array.isArray(c.armor)?c.armor.slice():[];
+    (ess.weapons||[]).forEach(function(w){if(addUnique(c.weapons,w)){profsAdded++;touched=true;}});
+    (ess.armor||[]).forEach(function(a){if(addUnique(c.armorProfs,a)){profsAdded++;touched=true;}});
+
+    if(!Array.isArray(c.inv))c.inv=[];
+    if(!Array.isArray(c.ownedItems))c.ownedItems=[];
+    var starter=(typeof classStarterItems==='function')?classStarterItems(c.cls):[];
+    var hasBodyArmor=c.inv.some(isBodyArmorName);
+    starter.forEach(function(it){
+      if(!it)return;
+      // Avoid giving a second suit of body armor to mercs who already have one
+      // from an older starter map/background combination. Shields are allowed
+      // separately because they are not body armor.
+      if(isBodyArmorName(it)&&hasBodyArmor&&c.inv.indexOf(it)===-1)return;
+      if(addUnique(c.inv,it)){
+        itemsAdded++;touched=true;
+        if(isBodyArmorName(it))hasBodyArmor=true;
+      }
+      // These are repaired mercenary starter-kit items, so keep them personal.
+      addUnique(c.ownedItems,it);
+    });
+    if(touched)charsTouched++;
+  });
+  S.settings._mercClassKitMigrationV17274=true;
+  if(charsTouched>0&&typeof logAdd==='function'){
+    logAdd('⭐ Repaired mercenary class kits for '+charsTouched+' merc'+(charsTouched===1?'':'s')+' ('+profsAdded+' proficiencies, '+itemsAdded+' items).','hire');
   }
 }
 
@@ -22992,7 +23052,7 @@ function _cpkOverviewHtml(c,ci){
       );
     }
   }
-  // v1.7273 — Show the read-only runtime audit in the Character Peek Overview tab too.
+  // v1.7274 — Show the read-only runtime audit in the Character Peek Overview tab too.
   // The Party-card version was present in v1.7272, but the Overview tab is the
   // place the user naturally checks when opening a character from the Party list.
   if(typeof charRuntimeAuditHtml==='function'){
@@ -23627,7 +23687,7 @@ function charCardHtml(c,ci,opts){
     )+
     '</div>'+
     dtHtml+
-    // v1.7273 — Dev mode runtime audit panel (read-only/local only).
+    // v1.7274 — Dev mode runtime audit panel (read-only/local only).
     charRuntimeAuditHtml(c,ci)+
     '<div style="display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin-top:8px">'+
     '<button class="btn bink sm" data-a="'+(dtReady?'dt-collect':'dt-start')+'" data-ci="'+ci+'" style="white-space:nowrap;padding:2px 6px;min-height:22px;font-size:.72em"'+((isQuesting||dtBusy)?' disabled':'')+'>'+(dtReady?'Resolve Downtime':'🕯 Downtime')+'</button>'+
@@ -29582,7 +29642,7 @@ function encumbranceState(c){
 }
 
 
-// v1.7273 — Dev-only character runtime audit panel. Read-only/local only:
+// v1.7274 — Dev-only character runtime audit panel. Read-only/local only:
 // it uses the same ITEM_WEIGHT, charCarriedWeight(), and charCapacity()
 // helpers as the existing encumbrance UI and performs no Supabase calls.
 function charRuntimeAuditHtml(c,ci){
@@ -29847,7 +29907,7 @@ function classStarterItems(cls){
     'Druid':['Quarterstaff','Herbalism Kit',"Traveler's Clothes"],
     'Fighter':['Longsword','Shield','Leather Armor',"Adventurer's Pack"],
     'Monk':['Quarterstaff',"Traveler's Clothes",'Waterskin'],
-    'Paladin':['Longsword','Shield','Chain Shirt',"Adventurer's Pack"],
+    'Paladin':['Longsword','Shield','Chain Mail',"Adventurer's Pack"],
     'Ranger':['Shortbow & Quiver','Shortsword','Rations (1 week)','Rope 50ft'],
     'Rogue':['Dagger',"Burglar's Pack",'Leather Armor'],
     'Sorcerer':['Dagger',"Traveler's Clothes",'Potion of Healing'],
@@ -38666,7 +38726,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7273',
+    appVersion:'v1.7274',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39435,7 +39495,7 @@ window.signIn = async function(){
 // Shows a choice: cancel transfer OR relinquish an item of >= weight to franchise storage
 function encumbranceRelinquishPrompt(destC, destCi, incomingItem, onProceed){
   var incomingWt=ITEM_WEIGHT[incomingItem]||1;
-  // v1.7273 — Multi-drop encumbrance relief. Previously this helper only
+  // v1.7274 — Multi-drop encumbrance relief. Previously this helper only
   // offered items whose individual weight was >= the incoming item, which
   // blocked delivery when several smaller items could collectively make room.
   var giveOptions=(destC.inv||[]).map(function(x,idx){return {name:x,idx:idx,wt:(ITEM_WEIGHT[x]||1)};}).filter(function(o){
@@ -39513,7 +39573,7 @@ function encumbranceRelinquishPrompt(destC, destCi, incomingItem, onProceed){
 //                                    has happened yet in this helper).
 function encumbranceChoicePrompt(destC, destCi, incomingItem, onDrop, onStorage, onCancel){
   var incomingWt=ITEM_WEIGHT[incomingItem]||1;
-  // v1.7273 — Allow several smaller inventory items to satisfy the required
+  // v1.7274 — Allow several smaller inventory items to satisfy the required
   // dropped weight for a heavy quest/prerequisite purchase.
   var giveOptions=(destC.inv||[]).map(function(x,idx){return {name:x,idx:idx,wt:(ITEM_WEIGHT[x]||1)};}).filter(function(o){
     return typeof o.name==='string'&&o.name.indexOf('__meta__')!==0&&o.wt>0;
@@ -39956,7 +40016,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7273';
+var RQ_CLIENT_VERSION='v1.7274';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
