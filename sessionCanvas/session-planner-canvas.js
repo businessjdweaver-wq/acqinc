@@ -1,4 +1,5 @@
 
+// v1.3.83 — session PDF export for readable offline backups.
 // v1.3.42 — safe NPC HP state badge helper.
 function rqNpcHpStateBadge(currentHp, maxHp) {
   try {
@@ -3492,7 +3493,7 @@ document.addEventListener('click', (e) => {
 }, true);
 
 function renderSessionPicker() {
-  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.82 · Flavor VTT Exact Output</div>';
+  const pickerVersionHtml = '<div class="sp-version-line">Session Planner Canvas v1.3.83 · Flavor VTT Exact Output</div>';
   const camps = sessionState.campaigns;
   const errs  = sessionState._errors || [];
   const errBanner = errs.length ? `
@@ -4085,6 +4086,123 @@ function resolveAnchorEndpoint(nodeId) {
   const an = (sessionState.arcBlocks.nodes || []).find(n => n.id === nodeId);
   if (an) return { nodeId, scope: 'arc' };
   return null;
+}
+
+
+
+// ── SESSION PDF EXPORT (v1.3.83) ─────────────────────────────
+// Creates a print/PDF backup of the currently opened session.  The export is
+// intentionally client-side and dependency-free: it opens a print document that
+// the browser can save as PDF.  Connected components are rendered together in
+// their own printable sections so linked nodes usually stay on the same page.
+function exportFocusedSessionPdf() {
+  try {
+    if (!sessionState.currentSessionId) { alert('Open a session first.'); return; }
+    if (typeof saveOpenNode === 'function' && openNodeId) {
+      try { saveOpenNode(); } catch (_) {}
+    }
+    const current = (sessionState.sessions || []).find(s => String(s.id) === String(sessionState.currentSessionId)) || {};
+    const nodes = Array.from(state.nodes.values()).filter(n => n && n.id && n.el);
+    if (!nodes.length) { alert('This session has no canvas nodes to export.'); return; }
+
+    const nodeIds = new Set(nodes.map(n => String(n.id)));
+    const cleanEndpoint = (ep) => {
+      const raw = (ep && ep.nodeId) || ep || '';
+      const id = String(raw);
+      const pin = (typeof parseImagePinEndpointId === 'function') ? parseImagePinEndpointId(id) : null;
+      return pin ? String(pin.imageNodeId) : id;
+    };
+    const adjacency = new Map(nodes.map(n => [String(n.id), new Set()]));
+    (state.edges || []).forEach(e => {
+      const a = cleanEndpoint(e.from);
+      const b = cleanEndpoint(e.to);
+      if (!nodeIds.has(a) || !nodeIds.has(b) || a === b) return;
+      adjacency.get(a).add(b);
+      adjacency.get(b).add(a);
+    });
+
+    const byId = new Map(nodes.map(n => [String(n.id), n]));
+    const seen = new Set();
+    const groups = [];
+    nodes.slice().sort((a,b)=>(a.y-b.y)||(a.x-b.x)).forEach(n => {
+      const start = String(n.id);
+      if (seen.has(start)) return;
+      const q = [start]; seen.add(start);
+      const ids = [];
+      while (q.length) {
+        const id = q.shift(); ids.push(id);
+        (adjacency.get(id) || []).forEach(next => { if (!seen.has(next)) { seen.add(next); q.push(next); } });
+      }
+      groups.push(ids.map(id => byId.get(id)).filter(Boolean).sort((a,b)=>(a.y-b.y)||(a.x-b.x)));
+    });
+
+    const esc = (v) => String(v == null ? '' : v).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+    const title = current.title || document.getElementById('topbarSession')?.textContent || 'Canvas Session';
+    const dateLine = current.session_date ? ('Session date: ' + current.session_date) : '';
+
+    function cloneNodeForPrint(n) {
+      const clone = n.el.cloneNode(true);
+      clone.querySelectorAll('button,input,textarea,select,.anchor,.node-anchor,.resize-handle,.collapse-toggle,.magnify-btn,.edge-hover-target').forEach(el => el.remove());
+      clone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+      clone.querySelectorAll('[style]').forEach(el => {
+        // Keep image src/background styles but drop canvas placement transforms.
+        const keep = el.style && (el.style.backgroundImage || el.style.objectFit || el.style.maxHeight);
+        if (!keep) el.removeAttribute('style');
+      });
+      clone.classList.remove('selected','dragging','collapsed');
+      const label = document.createElement('div');
+      label.className = 'pdf-node-meta';
+      label.textContent = (BLOCK_TYPES[n.type]?.label || n.type || 'Node') + (n.scope && n.scope !== 'session' ? ' · ' + n.scope : '');
+      clone.insertBefore(label, clone.firstChild);
+      return clone.outerHTML;
+    }
+
+    function groupHtml(group, index) {
+      const minX = Math.min(...group.map(n => Number(n.x) || 0));
+      const minY = Math.min(...group.map(n => Number(n.y) || 0));
+      const maxX = Math.max(...group.map(n => (Number(n.x) || 0) + (n.el.offsetWidth || 260)));
+      const maxY = Math.max(...group.map(n => (Number(n.y) || 0) + (n.el.offsetHeight || 180)));
+      const w = Math.max(1, maxX - minX);
+      const h = Math.max(1, maxY - minY);
+      const scale = Math.min(1, 720 / w, 930 / h);
+      const renderedW = Math.ceil(w * scale) + 32;
+      const renderedH = Math.ceil(h * scale) + 48;
+      const ids = new Set(group.map(n => String(n.id)));
+      const lines = (state.edges || []).map(e => {
+        const a = cleanEndpoint(e.from), b = cleanEndpoint(e.to);
+        if (!ids.has(a) || !ids.has(b)) return '';
+        const na = byId.get(a), nb = byId.get(b);
+        if (!na || !nb) return '';
+        const ax = ((na.x + (na.el.offsetWidth || 260)/2) - minX) * scale + 16;
+        const ay = ((na.y + (na.el.offsetHeight || 180)/2) - minY) * scale + 34;
+        const bx = ((nb.x + (nb.el.offsetWidth || 260)/2) - minX) * scale + 16;
+        const by = ((nb.y + (nb.el.offsetHeight || 180)/2) - minY) * scale + 34;
+        return `<line x1="${ax.toFixed(1)}" y1="${ay.toFixed(1)}" x2="${bx.toFixed(1)}" y2="${by.toFixed(1)}" />`;
+      }).join('');
+      const cards = group.map(n => {
+        const x = ((Number(n.x)||0) - minX) * scale + 16;
+        const y = ((Number(n.y)||0) - minY) * scale + 34;
+        return `<div class="pdf-node" style="left:${x.toFixed(1)}px;top:${y.toFixed(1)}px;transform:scale(${scale.toFixed(4)});transform-origin:top left;">${cloneNodeForPrint(n)}</div>`;
+      }).join('');
+      return `<section class="pdf-group"><h2>Connected group ${index + 1} <span>${group.length} node${group.length===1?'':'s'}</span></h2><div class="pdf-map" style="width:${renderedW}px;min-height:${renderedH}px"><svg class="pdf-edges" width="${renderedW}" height="${renderedH}">${lines}</svg>${cards}</div></section>`;
+    }
+
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} PDF Export</title><style>
+      @page{size:letter;margin:.45in}*{box-sizing:border-box}body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1d1b17;background:white;margin:0;font-size:12px}.pdf-cover{border-bottom:2px solid #9c7a2d;margin-bottom:14px;padding-bottom:10px}h1{font-size:24px;margin:0 0 4px}h2{font-size:14px;margin:0 0 8px;color:#4a3514}h2 span{font-weight:400;color:#776b5a}.pdf-muted{color:#6b6258}.pdf-group{break-inside:avoid;page-break-inside:avoid;margin:0 0 18px;padding:10px;border:1px solid #d8cfbd;border-radius:10px;background:#fffdf8}.pdf-map{position:relative;overflow:visible;background:#fff;border-radius:8px}.pdf-edges{position:absolute;inset:0;z-index:1;overflow:visible}.pdf-edges line{stroke:#a07925;stroke-width:2;opacity:.65}.pdf-node{position:absolute;z-index:2}.node{position:relative!important;left:auto!important;top:auto!important;width:260px!important;max-width:260px!important;min-height:80px!important;border:1px solid #c9baa0!important;border-radius:10px!important;padding:8px!important;background:#fff!important;color:#1d1b17!important;box-shadow:none!important;overflow:visible!important}.node *{max-width:100%;white-space:normal!important;color:inherit!important}.node img{max-width:100%;height:auto}.pdf-node-meta{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#80642b;margin-bottom:4px}.node-title,.title,h3,h4{font-weight:700!important}.collapsed .node-body{display:block!important}@media print{.pdf-group{break-inside:avoid;page-break-inside:avoid}a{color:inherit;text-decoration:none}}
+    </style></head><body><div class="pdf-cover"><h1>${esc(title)}</h1><div class="pdf-muted">${esc(dateLine)} · Exported ${esc(new Date().toLocaleString())} · ${nodes.length} nodes · ${state.edges.length} connectors</div><div class="pdf-muted">Backup export: connected nodes are grouped together where possible. Very large connected groups may continue onto another page.</div></div>${groups.map(groupHtml).join('')}</body></html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) { alert('Popup blocked. Allow popups for this site, then try Export Session PDF again.'); return; }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { try { win.print(); } catch (_) {} }, 350);
+    if (typeof showToast === 'function') showToast('PDF export opened. Choose “Save as PDF” in the print dialog.');
+  } catch (err) {
+    console.error('[PDF Export] failed', err);
+    alert('PDF export failed: ' + (err && err.message ? err.message : err));
+  }
 }
 
 // ── LOAD A SESSION INTO THE CANVAS ──
