@@ -1,4 +1,5 @@
 
+// v1.3.84 — offline rescue: local JSON backups/import and Supabase-failure fallback.
 // v1.3.83 — session PDF export for readable offline backups.
 // v1.3.42 — safe NPC HP state badge helper.
 function rqNpcHpStateBadge(currentHp, maxHp) {
@@ -265,12 +266,14 @@ async function sbFetch(path, opts = {}) {
   }
   if (!res.ok) {
     const txt = await res.text();
+    try { window.SPC_SUPABASE_OFFLINE = true; window.SPC_LAST_SUPABASE_ERROR = res.status + ': ' + txt; } catch (_) {}
     if (res.status === 401) {
       rqClearAuth();
       rqShowLogin();
     }
     throw new Error(res.status + ': ' + txt);
   }
+  try { window.SPC_SUPABASE_OFFLINE = false; } catch (_) {}
   if (res.status === 204) return null;
   return res.json();
 }
@@ -1498,14 +1501,17 @@ async function attemptAutosave() {
     }
   } catch (e) {
     inFlightGen = 0;
+    try { saveOfflineSessionSnapshot('autosave_failed'); } catch (_) {}
     setCanvasSavedState('error');
     console.warn('Autosave failed:', e.message);
-    // Try again in a moment if the user keeps editing or just sits idle.
+    // Try again less aggressively during an outage so the app remains usable
+    // and does not hammer a disabled Supabase project.
+    const retryMs = window.SPC_SUPABASE_OFFLINE ? 30000 : 2500;
     setTimeout(() => {
       if (saveGen > lastSavedGen && !saveTimer4c) {
         saveTimer4c = setTimeout(attemptAutosave, AUTOSAVE_DEBOUNCE_MS);
       }
-    }, 2500);
+    }, retryMs);
     // If a queued save came in during the failed attempt, drain it via the
     // same retry timer (don't fire another immediate attempt that would
     // likely also fail).
@@ -19226,3 +19232,176 @@ window.migrateLegacySessionImages = async function migrateLegacySessionImages(se
   console.table(report);
   return report;
 };
+
+
+// ── v1.3.84 OFFLINE RESCUE BACKUP / RESTORE ─────────────────────────────
+// Local-first emergency layer for Supabase egress lockouts. This does not
+// replace Supabase sync; it gives the currently focused session a file-backed
+// restore path and a browser-local autosnapshot when network saves fail.
+const SPC_OFFLINE_BACKUP_PREFIX = 'spc_offline_session_backup:';
+function spcCurrentOfflineBackupKey() {
+  const sid = sessionState && sessionState.currentSessionId ? String(sessionState.currentSessionId) : 'unsaved';
+  return SPC_OFFLINE_BACKUP_PREFIX + sid;
+}
+function spcDownloadText(filename, text, mime) {
+  const blob = new Blob([text], { type: mime || 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch (_) {} }, 1000);
+}
+function spcCanvasImageToDataUrl(imgEl) {
+  return new Promise(resolve => {
+    try {
+      if (!imgEl || !imgEl.src) return resolve('');
+      if (String(imgEl.src).startsWith('data:image')) return resolve(imgEl.src);
+      const im = new Image();
+      im.crossOrigin = 'anonymous';
+      im.onload = function() {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = im.naturalWidth || im.width || 1;
+          canvas.height = im.naturalHeight || im.height || 1;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(im, 0, 0);
+          resolve(canvas.toDataURL('image/png'));
+        } catch (_) { resolve(''); }
+      };
+      im.onerror = () => resolve('');
+      im.src = imgEl.src;
+    } catch (_) { resolve(''); }
+  });
+}
+async function serializeCanvasForOfflineBackup() {
+  const blocks = serializeCanvas();
+  // Best-effort image embedding: if the rendered image is accessible, bake it
+  // into the export so an offline Mac can still show maps/artwork. If CORS
+  // prevents it, the export keeps the existing Supabase URL/path reference.
+  for (const n of blocks.nodes || []) {
+    if (!n || n.type !== 'image' || !n.image) continue;
+    if (String(n.image.dataUrl || '').startsWith('data:image')) continue;
+    const live = state.nodes && state.nodes.get ? state.nodes.get(n.id) : null;
+    const imgEl = live && live.el ? live.el.querySelector('img') : null;
+    const dataUrl = await spcCanvasImageToDataUrl(imgEl);
+    if (dataUrl) n.image = { ...n.image, dataUrl };
+  }
+  return blocks;
+}
+async function buildOfflineSessionBackup(reason) {
+  const blocks = await serializeCanvasForOfflineBackup();
+  const row = (sessionState.sessions || []).find(s => String(s.id) === String(sessionState.currentSessionId)) || {};
+  return {
+    app: 'Session Canvas Planner',
+    offline_rescue: true,
+    version: '1.3.84',
+    reason: reason || 'manual_export',
+    exported_at: new Date().toISOString(),
+    session: {
+      id: sessionState.currentSessionId || row.id || null,
+      title: row.title || document.getElementById('topbarSession')?.textContent || 'Offline Session',
+      session_date: row.session_date || null,
+      campaign_id: sessionState.currentCampaignId || row.campaign_id || null,
+      arc_id: sessionState.currentArcId || row.arc_id || null,
+      status: row.status || null,
+      sort_order: row.sort_order || null,
+      blocks
+    },
+    campaignBlocks: sessionState.campaignBlocks || { nodes: [], collections: [], edges: [] },
+    arcBlocks: sessionState.arcBlocks || { nodes: [], collections: [], edges: [] }
+  };
+}
+async function saveOfflineSessionSnapshot(reason) {
+  if (!sessionState || !sessionState.currentSessionId) return false;
+  const backup = await buildOfflineSessionBackup(reason || 'local_snapshot');
+  localStorage.setItem(spcCurrentOfflineBackupKey(), JSON.stringify(backup));
+  localStorage.setItem('spc_offline_last', backup.exported_at);
+  return true;
+}
+async function exportFocusedSessionJsonOffline() {
+  if (!sessionState.currentSessionId) { alert('Open a session before exporting an offline backup.'); return; }
+  const backup = await buildOfflineSessionBackup('manual_export');
+  const title = String(backup.session.title || 'session').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '') || 'session';
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const text = JSON.stringify(backup, null, 2);
+  try { localStorage.setItem(spcCurrentOfflineBackupKey(), text); } catch (_) {}
+  spcDownloadText(title + '-offline-backup-' + stamp + '.json', text, 'application/json');
+  if (typeof showToast === 'function') showToast('Offline JSON backup exported.');
+}
+function importFocusedSessionJsonOffline(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async function() {
+    try {
+      const payload = JSON.parse(String(reader.result || ''));
+      const sess = payload.session || payload;
+      const blocks = sess.blocks || payload.blocks || payload;
+      if (!blocks || !Array.isArray(blocks.nodes)) throw new Error('This file does not look like a Session Canvas backup.');
+      if (!confirm('Import this offline backup into the current browser session? This replaces the currently visible canvas.')) return;
+      loadingSession = true;
+      sessionState.currentSessionId = sess.id || sessionState.currentSessionId || ('offline-' + Date.now());
+      sessionState.currentCampaignId = sess.campaign_id || sessionState.currentCampaignId || null;
+      sessionState.currentArcId = sess.arc_id || sessionState.currentArcId || null;
+      if (payload.campaignBlocks) sessionState.campaignBlocks = payload.campaignBlocks;
+      if (payload.arcBlocks) sessionState.arcBlocks = payload.arcBlocks;
+      const existing = (sessionState.sessions || []).find(s => String(s.id) === String(sessionState.currentSessionId));
+      const row = existing || { id: sessionState.currentSessionId };
+      row.title = sess.title || row.title || 'Imported Offline Session';
+      row.session_date = sess.session_date || row.session_date || null;
+      row.campaign_id = sessionState.currentCampaignId;
+      row.arc_id = sessionState.currentArcId;
+      row.blocks = blocks;
+      if (!existing) sessionState.sessions.push(row);
+      document.getElementById('topbarSession').textContent = row.title;
+      deserializeCanvas(blocks);
+      renderCampaignFrame();
+      renderArcFrame();
+      renderCanvasGroupBar();
+      loadingSession = false;
+      saveGen = lastSavedGen = 0;
+      setCanvasSavedState('dirty');
+      updateEmptyHint();
+      await saveOfflineSessionSnapshot('imported_backup');
+      alert('Offline backup imported locally. Use Save/Sync only after Supabase is healthy.');
+    } catch (err) {
+      loadingSession = false;
+      alert('Import failed: ' + (err && err.message ? err.message : err));
+    }
+  };
+  reader.readAsText(file);
+}
+function installOfflineRescueControls() {
+  if (document.getElementById('spcOfflineImportFile')) return;
+  const menu = document.getElementById('overflow-menu');
+  if (menu) {
+    const div = document.createElement('div');
+    div.className = 'overflow-divider';
+    menu.appendChild(div);
+    const exportBtn = document.createElement('button');
+    exportBtn.className = 'overflow-item';
+    exportBtn.type = 'button';
+    exportBtn.innerHTML = '<span class="overflow-item-icon">🛟</span> Export Offline JSON';
+    exportBtn.addEventListener('click', () => { hideOverflowMenu(); exportFocusedSessionJsonOffline(); });
+    menu.appendChild(exportBtn);
+    const importBtn = document.createElement('button');
+    importBtn.className = 'overflow-item';
+    importBtn.type = 'button';
+    importBtn.innerHTML = '<span class="overflow-item-icon">📥</span> Import Offline JSON';
+    importBtn.addEventListener('click', () => { hideOverflowMenu(); document.getElementById('spcOfflineImportFile').click(); });
+    menu.appendChild(importBtn);
+  }
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.id = 'spcOfflineImportFile';
+  input.style.display = 'none';
+  input.addEventListener('change', function() { importFocusedSessionJsonOffline(this.files && this.files[0]); this.value = ''; });
+  document.body.appendChild(input);
+}
+window.exportFocusedSessionJsonOffline = exportFocusedSessionJsonOffline;
+window.importFocusedSessionJsonOffline = importFocusedSessionJsonOffline;
+window.saveOfflineSessionSnapshot = saveOfflineSessionSnapshot;
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installOfflineRescueControls);
+else installOfflineRescueControls();
