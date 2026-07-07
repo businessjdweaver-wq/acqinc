@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7275</title>
+<title>Relentless Quest v1.7276 Offline Rescue</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -40079,7 +40079,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7275';
+var RQ_CLIENT_VERSION='v1.7276-offline-rescue';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -50775,6 +50775,136 @@ document.addEventListener('click',function(e){
 });
 
 </script>
+
+<script>
+/* v1.7276 Offline Rescue Layer — local-first survival mode for Supabase outages.
+   Adds visible manual JSON backup/restore, captures local state before every sync,
+   and prevents failed Supabase calls from blocking play. */
+(function(){
+  'use strict';
+  var OFFLINE_KEY_PREFIX='rq_offline_backup:';
+  var PENDING_KEY_PREFIX='rq_offline_pending:';
+  function safeUid(){ try{return (typeof uid==='function'&&uid())||'guest';}catch(e){return 'guest';} }
+  function nowIso(){ return new Date().toISOString(); }
+  function localKey(){ return OFFLINE_KEY_PREFIX+safeUid(); }
+  function pendingKey(){ return PENDING_KEY_PREFIX+safeUid(); }
+  function cloneState(){
+    var out={};
+    try{ out.state=JSON.parse(JSON.stringify(window.S||{})); }catch(e){ out.state=window.S||{}; }
+    try{ out.content_lib=JSON.parse(JSON.stringify(window.CONTENT_LIB||{})); }catch(e){ out.content_lib=window.CONTENT_LIB||{}; }
+    out.meta={app:'Relentless Quest',version:(window.RQ_CLIENT_VERSION||'unknown'),exported_at:nowIso(),user_id:safeUid(),offline_rescue:true};
+    return out;
+  }
+  function saveEmergencySnapshot(reason){
+    try{
+      var payload=cloneState();
+      payload.meta.reason=reason||'snapshot';
+      localStorage.setItem(localKey(),JSON.stringify(payload));
+      localStorage.setItem('rq_offline_last:'+safeUid(),payload.meta.exported_at);
+      return true;
+    }catch(e){ console.warn('[offline rescue] snapshot failed',e); return false; }
+  }
+  function downloadText(filename,text){
+    var blob=new Blob([text],{type:'application/json'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url; a.download=filename; document.body.appendChild(a); a.click();
+    setTimeout(function(){ try{URL.revokeObjectURL(url);a.remove();}catch(e){} },1000);
+  }
+  function exportBackup(){
+    var payload=cloneState();
+    var stamp=new Date().toISOString().replace(/[:.]/g,'-');
+    var text=JSON.stringify(payload,null,2);
+    try{ localStorage.setItem(localKey(),text); }catch(e){}
+    downloadText('relentless-quest-offline-backup-'+stamp+'.json',text);
+    if(typeof syncStatus==='function')syncStatus('Offline backup exported '+new Date().toLocaleTimeString(),'var(--forest)');
+  }
+  function importBackupFile(file){
+    if(!file)return;
+    var reader=new FileReader();
+    reader.onload=function(){
+      try{
+        var payload=JSON.parse(String(reader.result||''));
+        var newState=payload.state||payload.S||payload;
+        if(!newState||typeof newState!=='object')throw new Error('No state object found in backup.');
+        if(!confirm('Import this Relentless Quest backup and replace the current local state?'))return;
+        window.S=newState;
+        if(payload.content_lib&&typeof payload.content_lib==='object')window.CONTENT_LIB=payload.content_lib;
+        try{ if(typeof saveLocalState==='function')saveLocalState(); else localStorage.setItem((typeof localSaveKey==='function'?localSaveKey():'acqv7:'+safeUid()),JSON.stringify(window.S)); }catch(e){}
+        try{ if(typeof _markUnpushed==='function')_markUnpushed(); }catch(e){}
+        try{ if(typeof renderAll==='function')renderAll(); else if(typeof render==='function')render(); }catch(e){}
+        saveEmergencySnapshot('imported_backup');
+        alert('Backup imported into local storage. Supabase has not been overwritten; use Sync Push later when you are ready.');
+      }catch(err){ alert('Import failed: '+(err&&err.message?err.message:err)); }
+    };
+    reader.readAsText(file);
+  }
+  function setOfflineBadge(text){
+    var b=document.getElementById('rq-offline-rescue-badge');
+    if(!b)return;
+    var last='';
+    try{ last=localStorage.getItem('rq_offline_last:'+safeUid())||''; }catch(e){}
+    b.textContent=text||(last?'Offline backup: '+new Date(last).toLocaleString():'Offline backup ready');
+  }
+  function installPanel(){
+    if(document.getElementById('rq-offline-rescue-panel'))return;
+    var css=document.createElement('style');
+    css.textContent='#rq-offline-rescue-panel{position:fixed;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 88px);z-index:99996;background:rgba(44,26,14,.94);color:#f4e8c1;border:1px solid #c9922a;border-radius:10px;padding:8px;box-shadow:0 4px 18px rgba(0,0,0,.35);font-family:Georgia,serif;max-width:260px}#rq-offline-rescue-panel.collapsed .rq-offline-body{display:none}#rq-offline-rescue-panel button{font:inherit;font-size:13px;border:1px solid #c9922a;background:#f4e8c1;color:#2c1a0e;border-radius:6px;padding:5px 7px;margin:2px;cursor:pointer}#rq-offline-rescue-panel .rq-offline-head{display:flex;align-items:center;gap:6px;font-size:13px}#rq-offline-rescue-panel .rq-offline-title{font-weight:bold;flex:1}#rq-offline-rescue-panel .rq-offline-body{margin-top:6px;font-size:12px;line-height:1.3}#rq-offline-rescue-panel input{display:none}';
+    document.head.appendChild(css);
+    var panel=document.createElement('div');
+    panel.id='rq-offline-rescue-panel';
+    panel.className='collapsed';
+    panel.innerHTML='<div class="rq-offline-head"><span>🛟</span><span class="rq-offline-title">Offline Rescue</span><button type="button" id="rq-offline-toggle">Open</button></div><div class="rq-offline-body"><div id="rq-offline-rescue-badge">Offline backup ready</div><div style="margin-top:6px"><button type="button" id="rq-export-backup">Export JSON</button><button type="button" id="rq-save-snapshot">Save Local</button><button type="button" id="rq-import-backup">Import JSON</button><input type="file" id="rq-import-file" accept="application/json,.json"></div><div style="opacity:.8;margin-top:4px">Use Export before Supabase outage. Import restores this device locally; push later.</div></div>';
+    document.body.appendChild(panel);
+    document.getElementById('rq-offline-toggle').addEventListener('click',function(){ panel.classList.toggle('collapsed'); this.textContent=panel.classList.contains('collapsed')?'Open':'Hide'; setOfflineBadge(); });
+    document.getElementById('rq-export-backup').addEventListener('click',exportBackup);
+    document.getElementById('rq-save-snapshot').addEventListener('click',function(){ saveEmergencySnapshot('manual_panel'); setOfflineBadge('Local snapshot saved '+new Date().toLocaleTimeString()); });
+    document.getElementById('rq-import-backup').addEventListener('click',function(){ document.getElementById('rq-import-file').click(); });
+    document.getElementById('rq-import-file').addEventListener('change',function(){ importBackupFile(this.files&&this.files[0]); this.value=''; });
+    setOfflineBadge();
+  }
+  function wrapSync(){
+    if(window.__RQ_OFFLINE_RESCUE_WRAPPED)return;
+    window.__RQ_OFFLINE_RESCUE_WRAPPED=true;
+    var origSave=window.save;
+    if(typeof origSave==='function'){
+      window.save=function(){
+        var r=origSave.apply(this,arguments);
+        saveEmergencySnapshot('save');
+        setOfflineBadge();
+        return r;
+      };
+    }
+    var origPush=window.sbPush;
+    if(typeof origPush==='function'){
+      window.sbPush=function(manual){
+        saveEmergencySnapshot('before_push');
+        return Promise.resolve(origPush.apply(this,arguments)).catch(function(err){
+          try{ localStorage.setItem(pendingKey(),JSON.stringify({ts:Date.now(),reason:'push_failed',message:(err&&err.message)||String(err)})); }catch(e){}
+          try{ if(typeof _markUnpushed==='function')_markUnpushed(); }catch(e){}
+          try{ if(typeof notifySupabaseOffline==='function')notifySupabaseOffline('push',err); }catch(e){}
+          return false;
+        });
+      };
+    }
+    var origPull=window.sbPull;
+    if(typeof origPull==='function'){
+      window.sbPull=function(manual){
+        return Promise.resolve(origPull.apply(this,arguments)).catch(function(err){
+          saveEmergencySnapshot('pull_failed_using_local');
+          try{ if(typeof notifySupabaseOffline==='function')notifySupabaseOffline('pull',err); }catch(e){}
+          return false;
+        });
+      };
+    }
+    window.RQ_EXPORT_OFFLINE_BACKUP=exportBackup;
+    window.RQ_SAVE_OFFLINE_SNAPSHOT=saveEmergencySnapshot;
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){installPanel();wrapSync();saveEmergencySnapshot('boot');});
+  else { installPanel(); wrapSync(); saveEmergencySnapshot('boot'); }
+})();
+</script>
+
 <script src="./training/rq-training-contract-import.js?v=0.1.13"></script>
 
 </body>
