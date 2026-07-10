@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7284 Quest Runtime Restore</title>
+<title>Relentless Quest v1.7285 Web Cycle Recovery</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7284 Quest Runtime Restore</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7285 Web Cycle Recovery</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -38793,7 +38793,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7284',
+    appVersion:'v1.7285',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -40094,7 +40094,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7284-quest-runtime-content-restore';
+var RQ_CLIENT_VERSION='v1.7285-web-cycle-recovery';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -51013,6 +51013,52 @@ document.addEventListener('click',function(e){
             console.warn('[offline rescue] Post-load content merge warning',_clErr);
           }
         }
+
+        // v1.7285 — A runtime backup may contain quest progress without the
+        // Supabase-backed quest definitions. When the saved active set is absent
+        // from QUESTSETS, create a recovery-only set so activeQuestSet() does not
+        // silently fall back to the first built-in cycle and mislabel Web-cycle
+        // pendings as quests from an older cycle. The placeholders preserve index,
+        // assignment, reward, and collection behavior until the real content JSON
+        // is imported later.
+        (function ensureOfflineRecoveryQuestSet(){
+          var qstate=(authoritative.questState&&typeof authoritative.questState==='object')
+            ?authoritative.questState:(S.questState||null);
+          if(!qstate||!qstate.setId||!Array.isArray(QUESTSETS))return;
+          var exists=QUESTSETS.some(function(set){return set&&set.id===qstate.setId;});
+          if(exists)return;
+          var sp=(qstate.setProgress&&qstate.setProgress[qstate.setId])||qstate;
+          var maxIdx=-1;
+          ['revealed','done'].forEach(function(k){(sp[k]||[]).forEach(function(v){v=Number(v);if(isFinite(v)&&v>maxIdx)maxIdx=v;});});
+          (sp.pending||[]).forEach(function(v){var n=Number(v&&v.idx);if(isFinite(n)&&n>maxIdx)maxIdx=n;});
+          Object.keys(sp.assigned||{}).forEach(function(v){var n=Number(v);if(isFinite(n)&&n>maxIdx)maxIdx=n;});
+          if(maxIdx<0)maxIdx=9;
+          var pretty=qstate.setId.split('-').map(function(w){return w?w.charAt(0).toUpperCase()+w.slice(1):'';}).join(' ');
+          var recovered={
+            id:qstate.setId,
+            name:pretty.replace(/ Cycle$/,'')+' Cycle',
+            theme:'Recovered offline quest cycle. Import the content-library JSON to restore full quest names and descriptions.',
+            dndTier:3,
+            territory:'',
+            capstoneIdx:maxIdx,
+            _offlineRecovery:true,
+            quests:[]
+          };
+          for(var qi=0;qi<=maxIdx;qi++){
+            var pend=(sp.pending||[]).filter(function(x){return x&&Number(x.idx)===qi;})[0]||null;
+            recovered.quests.push({
+              idx:qi,
+              title:'Recovered Web Quest '+(qi+1),
+              desc:'Quest definition unavailable offline; saved progress and rewards are preserved.',
+              reward:pend&&pend.reward!=null?pend.reward:0,
+              duration:0,
+              pre:{},
+              _offlineRecovery:true
+            });
+          }
+          QUESTSETS.push(recovered);
+          console.warn('[offline rescue] Created recovery quest set for',qstate.setId);
+        })();
 
         // v1.7284 — Rehydrate the active cycle from the authoritative imported
         // questState after every load/content migration. Keep both the live arrays
