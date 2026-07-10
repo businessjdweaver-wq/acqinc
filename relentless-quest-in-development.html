@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7285 Web Cycle Recovery</title>
+<title>Relentless Quest v1.7286 Quest Catalog Bridge</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7285 Web Cycle Recovery</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7286 Quest Catalog Bridge</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -38793,7 +38793,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7285',
+    appVersion:'v1.7286',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -40094,7 +40094,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7285-web-cycle-recovery';
+var RQ_CLIENT_VERSION='v1.7286-questsets-bridge';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -50859,6 +50859,26 @@ document.addEventListener('click',function(e){
   }
 });
 
+/* v1.7286 — Explicit bridge for the later offline-rescue script. Safari can
+   isolate top-level var bindings between script blocks in this large single-file
+   app, so the rescue layer must not refer to QUESTSETS directly. Keeping these
+   operations here also gives the future offline catalog importer a stable API. */
+window.RQ_CONTENT_BRIDGE={
+  getQuestSets:function(){return QUESTSETS;},
+  hasQuestSet:function(id){return (QUESTSETS||[]).some(function(set){return set&&set.id===id;});},
+  addQuestSet:function(set){
+    if(!set||!set.id)return false;
+    if((QUESTSETS||[]).some(function(x){return x&&x.id===set.id;}))return false;
+    QUESTSETS.push(set);
+    return true;
+  },
+  mergeCustomContent:function(){
+    if(typeof mergeCustomContent==='function')mergeCustomContent();
+    return QUESTSETS;
+  },
+  getContentLib:function(){return (typeof CONTENT_LIB==='object'&&CONTENT_LIB)?CONTENT_LIB:null;}
+};
+
 </script>
 
 <script>
@@ -51024,9 +51044,9 @@ document.addEventListener('click',function(e){
         (function ensureOfflineRecoveryQuestSet(){
           var qstate=(authoritative.questState&&typeof authoritative.questState==='object')
             ?authoritative.questState:(S.questState||null);
-          if(!qstate||!qstate.setId||!Array.isArray(QUESTSETS))return;
-          var exists=QUESTSETS.some(function(set){return set&&set.id===qstate.setId;});
-          if(exists)return;
+          var bridge=window.RQ_CONTENT_BRIDGE||null;
+          if(!qstate||!qstate.setId||!bridge||typeof bridge.hasQuestSet!=='function'||typeof bridge.addQuestSet!=='function')return;
+          if(bridge.hasQuestSet(qstate.setId))return;
           var sp=(qstate.setProgress&&qstate.setProgress[qstate.setId])||qstate;
           var maxIdx=-1;
           ['revealed','done'].forEach(function(k){(sp[k]||[]).forEach(function(v){v=Number(v);if(isFinite(v)&&v>maxIdx)maxIdx=v;});});
@@ -51056,7 +51076,7 @@ document.addEventListener('click',function(e){
               _offlineRecovery:true
             });
           }
-          QUESTSETS.push(recovered);
+          bridge.addQuestSet(recovered);
           console.warn('[offline rescue] Created recovery quest set for',qstate.setId);
         })();
 
