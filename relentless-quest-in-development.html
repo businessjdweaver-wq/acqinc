@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7283 Local Import Mutation Fix</title>
+<title>Relentless Quest v1.7284 Quest Runtime Restore</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7283 Local Import Fix</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7284 Quest Runtime Restore</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4170,7 +4170,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7283
+      Version 1.7284
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -8750,7 +8750,7 @@ function saveLocalState(){
   try{ RQ_SYNCDIAG.log('save', {}); }catch(e){}
   // Also persist CONTENT_LIB locally so custom content survives page reload
   try{
-    var _clKey='rq_content:'+(uid()||'guest');
+    var _clUid='guest'; try{_clUid=(typeof uid==='function'&&uid())||localStorage.getItem('rq_last_local_uid')||'guest';}catch(_uidErr){try{_clUid=localStorage.getItem('rq_last_local_uid')||'guest';}catch(_uidErr2){}} var _clKey='rq_content:'+_clUid;
     localStorage.setItem(_clKey,JSON.stringify(CONTENT_LIB));
   }catch(e){}
 }
@@ -8873,7 +8873,7 @@ function load(){
   // Walking keys dynamically keeps the cache restore in lockstep with
   // CONTENT_LIB's evolving schema without per-type maintenance.
   try{
-    var _clKey='rq_content:'+(uid()||'guest');
+    var _clUid='guest'; try{_clUid=(typeof uid==='function'&&uid())||localStorage.getItem('rq_last_local_uid')||'guest';}catch(_uidErr){try{_clUid=localStorage.getItem('rq_last_local_uid')||'guest';}catch(_uidErr2){}} var _clKey='rq_content:'+_clUid;
     var _clRaw=localStorage.getItem(_clKey);
     if(_clRaw){
       var _cl=JSON.parse(_clRaw);
@@ -38793,7 +38793,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7283',
+    appVersion:'v1.7284',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -40094,7 +40094,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7283-offline-state-dev-fix';
+var RQ_CLIENT_VERSION='v1.7284-quest-runtime-content-restore';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -47148,7 +47148,7 @@ function loadContentLibrary(manual){
       return _prereqPromise.then(function(){
         mergeCustomContent();
         try{
-          var _clKey='rq_content:'+(uid()||'guest');
+          var _clUid='guest'; try{_clUid=(typeof uid==='function'&&uid())||localStorage.getItem('rq_last_local_uid')||'guest';}catch(_uidErr){try{_clUid=localStorage.getItem('rq_last_local_uid')||'guest';}catch(_uidErr2){}} var _clKey='rq_content:'+_clUid;
           localStorage.setItem(_clKey,JSON.stringify(CONTENT_LIB));
         }catch(e){}
 
@@ -50957,10 +50957,34 @@ document.addEventListener('click',function(e){
           imported.settings.devModeOverride=true;
         }
 
+        // v1.7284 — Install and merge the backup content library BEFORE loading
+        // quest state. Custom cycles such as wand-of-web-cycle do not exist in
+        // BUILTIN_QUESTSETS; if load()/initQuestState runs first, activeQuestSet()
+        // falls back to an older built-in cycle and can rebuild the live quest and
+        // inbox arrays from the wrong set.
+        if(payload.content_lib&&typeof payload.content_lib==='object'){
+          try{
+            var importedLib=JSON.parse(JSON.stringify(payload.content_lib));
+            if(typeof CONTENT_LIB==='object'&&CONTENT_LIB){
+              Object.keys(CONTENT_LIB).forEach(function(k){delete CONTENT_LIB[k];});
+              Object.assign(CONTENT_LIB,importedLib);
+            }else if(typeof window.CONTENT_LIB==='object'&&window.CONTENT_LIB){
+              Object.keys(window.CONTENT_LIB).forEach(function(k){delete window.CONTENT_LIB[k];});
+              Object.assign(window.CONTENT_LIB,importedLib);
+            }else{
+              window.CONTENT_LIB=importedLib;
+            }
+            try{localStorage.setItem('rq_content:'+safeUid(),JSON.stringify(importedLib));}catch(_preCl1){}
+            try{localStorage.setItem('rq_content_lib:'+safeUid(),JSON.stringify(importedLib));}catch(_preCl2){}
+            try{localStorage.setItem('rq_content:guest',JSON.stringify(importedLib));}catch(_preCl3){}
+            if(typeof mergeCustomContent==='function')mergeCustomContent();
+          }catch(_preClErr){
+            console.warn('[offline rescue] Pre-load content merge warning',_preClErr);
+          }
+        }
+
         // Put the imported save into the exact active namespace, then route it
-        // through the app's normal load/migration bootstrap. This unifies JSON
-        // restore with ordinary local startup rather than maintaining a second
-        // incomplete initialization path.
+        // through the app's normal load/migration bootstrap.
         var targetKey=(typeof localSaveKey==='function'?localSaveKey():'acqv7:'+safeUid());
         localStorage.setItem(targetKey,JSON.stringify(imported));
         if(typeof load==='function'){
@@ -50982,17 +51006,36 @@ document.addEventListener('click',function(e){
 
         if(payload.content_lib&&typeof payload.content_lib==='object'){
           try{
-            var liveContentLib=(typeof window.CONTENT_LIB==='object'&&window.CONTENT_LIB)?window.CONTENT_LIB:null;
-            if(liveContentLib){
-              Object.keys(liveContentLib).forEach(function(k){delete liveContentLib[k];});
-              Object.assign(liveContentLib,payload.content_lib);
-            }else{
-              window.CONTENT_LIB=JSON.parse(JSON.stringify(payload.content_lib));
-            }
-            try{localStorage.setItem('rq_content_lib:'+safeUid(),JSON.stringify(payload.content_lib));}catch(_clSaveErr){}
-            try{localStorage.setItem('rq_content:'+safeUid(),JSON.stringify(payload.content_lib));}catch(_clSaveErr2){}
+            // Re-merge after load() because load-time migrations may rebuild the
+            // live QUESTSETS/GRIND arrays from defaults.
+            if(typeof mergeCustomContent==='function')mergeCustomContent();
           }catch(_clErr){
-            console.warn('[offline rescue] Content library restore skipped; core state import continues.',_clErr);
+            console.warn('[offline rescue] Post-load content merge warning',_clErr);
+          }
+        }
+
+        // v1.7284 — Rehydrate the active cycle from the authoritative imported
+        // questState after every load/content migration. Keep both the live arrays
+        // and setProgress[setId] synchronized so renderAdv() and the inbox read the
+        // same Web-cycle runtime.
+        if(authoritative.questState&&typeof authoritative.questState==='object'){
+          S.questState=JSON.parse(JSON.stringify(authoritative.questState));
+          var _aqs=S.questState;
+          if(!_aqs.setProgress)_aqs.setProgress={};
+          if(_aqs.setId){
+            var _asp=_aqs.setProgress[_aqs.setId];
+            if(_asp&&typeof _asp==='object'){
+              _aqs.revealed=JSON.parse(JSON.stringify(_asp.revealed||_aqs.revealed||[]));
+              _aqs.done=JSON.parse(JSON.stringify(_asp.done||_aqs.done||[]));
+              _aqs.pending=JSON.parse(JSON.stringify(_asp.pending||_aqs.pending||[]));
+              _aqs.assigned=JSON.parse(JSON.stringify(_asp.assigned||_aqs.assigned||{}));
+              _aqs.grindPending=JSON.parse(JSON.stringify(_asp.grindPending||_aqs.grindPending||[]));
+              _asp.revealed=JSON.parse(JSON.stringify(_aqs.revealed));
+              _asp.done=JSON.parse(JSON.stringify(_aqs.done));
+              _asp.pending=JSON.parse(JSON.stringify(_aqs.pending));
+              _asp.assigned=JSON.parse(JSON.stringify(_aqs.assigned));
+              _asp.grindPending=JSON.parse(JSON.stringify(_aqs.grindPending));
+            }
           }
         }
 
@@ -51004,9 +51047,15 @@ document.addEventListener('click',function(e){
           // startup from reading an older blank guest save.
           if(safeUid()==='guest')localStorage.setItem('acqv7',serializedImportedState);
           if(typeof saveLocalState==='function')saveLocalState();
-          // saveLocalState may choose a namespace based on auth state; reassert
-          // the exact import target afterward so it remains authoritative.
+          // saveLocalState may mirror/rebuild active quest progress. Reassert the
+          // authoritative imported quest runtime after it, then persist that exact
+          // final object to the import namespace.
+          if(authoritative.questState&&typeof authoritative.questState==='object'){
+            S.questState=JSON.parse(JSON.stringify(authoritative.questState));
+          }
+          serializedImportedState=JSON.stringify(S);
           localStorage.setItem(targetKey,serializedImportedState);
+          if(safeUid()==='guest')localStorage.setItem('acqv7',serializedImportedState);
         }catch(e){throw new Error('State loaded, but local save failed: '+(e&&e.message?e.message:e));}
         try{if(typeof _markUnpushed==='function')_markUnpushed();}catch(e){}
         try{
