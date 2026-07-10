@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7281 Local Import Mutation Fix</title>
+<title>Relentless Quest v1.7282 Local Import Mutation Fix</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7281 Local Import Fix</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7282 Local Import Fix</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4170,7 +4170,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7281
+      Version 1.7282
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -38793,7 +38793,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7281',
+    appVersion:'v1.7282',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -39223,7 +39223,7 @@ var ADMIN_UIDS=[
   '8191ddb8-2594-4e3d-8591-57f579216f06' //v1.7125; may23@dev.com
 ];
 function isAdmin(){
-  // v1.7281 — Local-only mode is an explicitly device-local rescue session.
+  // v1.7282 — Local-only mode is an explicitly device-local rescue session.
   // Permit the sole device user to enable developer tools without Supabase
   // authentication. Server-side admin/RLS permissions are unchanged because
   // cloud calls remain disabled in local-only mode.
@@ -40094,7 +40094,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7281-offline-state-dev-fix';
+var RQ_CLIENT_VERSION='v1.7282-offline-state-dev-fix';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -50914,7 +50914,7 @@ document.addEventListener('click',function(e){
         if(!newState||typeof newState!=='object')throw new Error('No state object found in backup.');
         if(!confirm('Import this Relentless Quest backup and replace the current local state?'))return;
 
-        // v1.7281 — Deep-clone the source so runtime migrations cannot mutate
+        // v1.7282 — Deep-clone the source so runtime migrations cannot mutate
         // the parsed backup object that we use for authoritative restoration.
         var imported=JSON.parse(JSON.stringify(newState));
 
@@ -50997,20 +50997,40 @@ document.addEventListener('click',function(e){
         }
 
         try{
-          localStorage.setItem(targetKey,JSON.stringify(S));
+          var serializedImportedState=JSON.stringify(S);
+          localStorage.setItem(targetKey,serializedImportedState);
+          // Also maintain the legacy guest fallback used by load() when an
+          // offline session has no authenticated uid. This prevents the next
+          // startup from reading an older blank guest save.
+          if(!uid())localStorage.setItem('acqv7',serializedImportedState);
           if(typeof saveLocalState==='function')saveLocalState();
+          // saveLocalState may choose a namespace based on auth state; reassert
+          // the exact import target afterward so it remains authoritative.
+          localStorage.setItem(targetKey,serializedImportedState);
         }catch(e){throw new Error('State loaded, but local save failed: '+(e&&e.message?e.message:e));}
         try{if(typeof _markUnpushed==='function')_markUnpushed();}catch(e){}
         try{
+          // Update the real live views used by this build. There is no global
+          // renderAll()/render() function; the quest map is renderAdv().
+          var _gpEl=document.getElementById('gamt');
+          if(_gpEl)_gpEl.textContent=Number(S.gold||0).toLocaleString();
+          var _qpEl=document.getElementById('qp-balance-disp');
+          if(_qpEl)_qpEl.textContent=Number(S.qpBalance||0).toLocaleString();
           if(typeof setGold==='function')setGold();
           if(typeof updateQpDisplay==='function')updateQpDisplay();
-          if(typeof renderAll==='function')renderAll();
-          else if(typeof render==='function')render();
+          if(typeof renderAdv==='function')renderAdv();
+          if(typeof renderQuestLog==='function')renderQuestLog();
+          if(typeof renderParty==='function')renderParty();
           if(typeof renderSettings==='function')renderSettings();
           if(typeof updateDevBar==='function')updateDevBar();
         }catch(e){console.warn('[offline rescue] Post-import render warning',e);}
         saveEmergencySnapshot('imported_backup');
-        alert('Backup imported locally. Restored '+(S.gold||0)+' GP, '+(S.qpBalance||0)+' QP, and preserved quest-cycle progress. Dev Mode is enabled for this local-only session.');
+        alert('Backup imported locally. Restored '+(S.gold||0)+' GP, '+(S.qpBalance||0)+' QP, and preserved quest-cycle progress. The app will now reload from that imported local state.');
+        // A reload is intentional: many older subsystems cache references to
+        // nested quest arrays during boot. Reloading guarantees every renderer
+        // and timer binds to the imported state rather than stale pre-import
+        // objects.
+        location.reload();
       }catch(err){
         console.error('[offline rescue] Import failed',err);
         alert('Import failed: '+(err&&err.message?err.message:err));
