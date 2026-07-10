@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7291 Harvesthome Unlock</title>
+<title>Relentless Quest v1.7292 Harvesthome Unlock</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7291 Harvesthome Unlock</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7292 Harvesthome Unlock</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -6370,6 +6370,36 @@ function _consumeItemFromChar(c,itemName,reason){
 // Returns the list of all items in the live registries that carry the
 // given trait key. Used by both the gate evaluator and the failure-
 // message hover hint that lists qualifying items.
+// v1.7292 — Local/offline compatibility trait aliases for built-in items.
+// These mappings supplement item.traits without changing item names or adding
+// duplicate store entries. They also cover pack-granted inventory strings
+// (Torch, Piton, Lantern (hooded)) that are not always represented in GEAR.
+var RQ_ITEM_TRAIT_OVERRIDES={
+  'Torch':['light-source','light_source'],
+  'Torch x10':['light-source','light_source'],
+  'Hooded Lantern':['light-source','light_source'],
+  'Lantern':['light-source','light_source'],
+  'Lantern (hooded)':['light-source','light_source'],
+  'Lantern (Hooded)':['light-source','light_source'],
+  'Lantern (bullseye)':['light-source','light_source'],
+  'Lantern (Bullseye)':['light-source','light_source'],
+  'Lantern of Revealing':['light-source','light_source'],
+  'Goggles of Night':['light-source','light_source'],
+  'Grappling Hook':['climbing_kit','climbing-kit','climbing'],
+  "Climber's Kit":['climbing_kit','climbing-kit','climbing'],
+  'Climbing Kit':['climbing_kit','climbing-kit','climbing'],
+  'Piton':['climbing_kit','climbing-kit','climbing']
+};
+function _rqEffectiveItemTraits(itemName,itemDef){
+  var out=[];
+  if(itemDef&&Array.isArray(itemDef.traits))itemDef.traits.forEach(function(t){if(t&&out.indexOf(t)===-1)out.push(t);});
+  (RQ_ITEM_TRAIT_OVERRIDES[String(itemName||'')]||[]).forEach(function(t){if(t&&out.indexOf(t)===-1)out.push(t);});
+  return out;
+}
+function _rqItemCarriesTrait(itemName,itemDef,traitKey){
+  return _rqEffectiveItemTraits(itemName,itemDef).indexOf(traitKey)!==-1;
+}
+
 function _itemsCarryingTrait(traitKey){
   if(!traitKey)return [];
   var out=[];
@@ -6382,10 +6412,13 @@ function _itemsCarryingTrait(traitKey){
     var reg=registries[i];if(!reg)continue;
     for(var j=0;j<reg.length;j++){
       var it=reg[j];
-      if(!it||!Array.isArray(it.traits))continue;
-      if(it.traits.indexOf(traitKey)!==-1)out.push(it.name);
+      if(!it)continue;
+      if(_rqItemCarriesTrait(it.name,it,traitKey))out.push(it.name);
     }
   }
+  Object.keys(RQ_ITEM_TRAIT_OVERRIDES).forEach(function(name){
+    if(_rqItemCarriesTrait(name,_itemRegistryLookup(name),traitKey)&&out.indexOf(name)===-1)out.push(name);
+  });
   return out;
 }
 
@@ -6399,8 +6432,7 @@ function charHasItemWithTrait(c,traitKey){
   for(var i=0;i<inv.length;i++){
     var name=inv[i];
     var it=_itemRegistryLookup(name);
-    if(!it||!Array.isArray(it.traits))continue;
-    if(it.traits.indexOf(traitKey)===-1)continue;
+    if(!_rqItemCarriesTrait(name,it,traitKey))continue;
     // Layer the proficiency + class + specialty gates so a longbow with
     // a 'light-source'-equivalent trait still doesn't qualify if the
     // character can't actually use it. (Edge case but possible: an
@@ -21941,7 +21973,7 @@ function _rqStaffMakeCharacter(spec,territory,assetUid){
   var themeCls=spec.cls||'Fighter';
   var lvl=spec.level||0;
   var c={
-    name:(typeof pickName==='function'?pickName(species):('Staff '+rndInt(100,999))),species:species,cls:(lvl>0?themeCls:''),bg:(spec.bg||'Staff'),rel:rnd(DND.rel),
+    name:(lvl<=0&&typeof rollUniqueHirelingFirstName==='function'?rollUniqueHirelingFirstName(species):(typeof pickName==='function'?pickName(species):('Staff '+rndInt(100,999)))),species:species,cls:(lvl>0?themeCls:''),bg:(spec.bg||'Staff'),rel:rnd(DND.rel),
     age:rndInt(18,90),height:rndInt(4,7)+"'"+rndInt(0,11)+'"',weight:rndInt(90,260)+' lbs',
     lang:['Common'],skills:[],tools:[],weapons:[],armorProfs:[],stats:rollStats(themeCls),level:lvl,inv:[],hireCost:0,
     staff:true,staffOfAssetUid:assetUid,homeTerritory:territory||S.originTerritory||''
@@ -35988,8 +36020,7 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit,skipContactWarn){
         for(var j=0;j<ccInv.length;j++){
           var nm=ccInv[j];
           var def=_itemRegistryLookup(nm);
-          if(!def||!Array.isArray(def.traits))continue;
-          if(def.traits.indexOf(traitKey)===-1)continue;
+          if(!_rqItemCarriesTrait(nm,def,traitKey))continue;
           // Layer the gates again to be safe.
           if(!charHasProficiencyForItem(cc,nm))continue;
           if(!_charCanUseItemByClass(cc,nm))continue;
@@ -38793,7 +38824,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7291',
+    appVersion:'v1.7292',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -40094,7 +40125,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7291-harvesthome-unlock';
+var RQ_CLIENT_VERSION='v1.7292-harvesthome-unlock';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -49893,7 +49924,7 @@ function resolveBackToHQDestination(ci){
 window.resolveBackToHQDestination=resolveBackToHQDestination;
 
 
-// v1.7291 — Return territories whose adventure content is already unlocked.
+// v1.7292 — Return territories whose adventure content is already unlocked.
 // "Unlocked" here deliberately ignores the 24-hour cycle pause: once all
 // actual gate requirements are met, the player may establish a foothold by
 // purchasing a building and assigning its free recruit there. Completed and
@@ -49952,7 +49983,7 @@ function recomputeUnlockedTerritories(){
       if(!seen[t]){out.push(t);seen[t]=true;}
     });
   }
-  // v1.7291 — A territory becomes available for franchise expansion as soon
+  // v1.7292 — A territory becomes available for franchise expansion as soon
   // as at least one adventure cycle there is unlocked (its non-pause gate
   // prerequisites are met), even before the user relocates a squad or starts
   // the first quest. This breaks the former catch-22 where the player could
@@ -51259,7 +51290,7 @@ function rqOfflineCatalogPostBoot(){
         ['revealed','done','pending','assigned','grindPending'].forEach(function(k){if(sp[k]!=null)S.questState[k]=JSON.parse(JSON.stringify(sp[k]));});
       }
     }
-    // v1.7291 — The Night Went Out was already completed before the
+    // v1.7292 — The Night Went Out was already completed before the
     // offline transition. Preserve that authoritative history and make the
     // first Harvesthome cycle immediately available rather than starting or
     // restarting a new 24-hour pause.
