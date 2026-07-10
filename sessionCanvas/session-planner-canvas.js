@@ -1,5 +1,5 @@
 
-// v1.3.84 — offline rescue: local JSON backups/import and Supabase-failure fallback.
+// v1.3.85 — local-only authentication rescue: local JSON backups/import and Supabase-failure fallback.
 // v1.3.83 — session PDF export for readable offline backups.
 // v1.3.42 — safe NPC HP state badge helper.
 function rqNpcHpStateBadge(currentHp, maxHp) {
@@ -1483,6 +1483,16 @@ async function attemptAutosave() {
   setCanvasSavedState('saving');
   try {
     const payload = serializeCanvas();
+    if (window.SPC_LOCAL_ONLY) {
+      const row = sessionState.sessions.find(s => String(s.id) === String(sessionState.currentSessionId));
+      if (row) row.blocks = payload;
+      await saveOfflineSessionSnapshot('local_only_autosave');
+      lastSavedGen = inFlightGen;
+      inFlightGen = 0;
+      setCanvasSavedState(saveGen === lastSavedGen ? 'saved' : 'dirty');
+      if (savePending) { savePending = false; setTimeout(attemptAutosave, 50); }
+      return;
+    }
     await sbFetch('sessions?id=eq.' + sessionState.currentSessionId, {
       method: 'PATCH',
       prefer: 'return=minimal',
@@ -18775,8 +18785,66 @@ window.addEventListener('DOMContentLoaded', () => {
 // usable. The app-content parts (live in Stage 4b: load session, restore
 // nodes/edges) only run once we have an auth token.
 
+function spcLatestLocalBackupText() {
+  let newest = null;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith('spc_offline_session_backup:')) continue;
+      const text = localStorage.getItem(key);
+      if (!text) continue;
+      let payload = null;
+      try { payload = JSON.parse(text); } catch (_) { continue; }
+      const ts = Date.parse(payload.exported_at || '') || 0;
+      if (!newest || ts > newest.ts) newest = { text, payload, ts };
+    }
+  } catch (_) {}
+  return newest;
+}
+function spcOpenBlankLocalSession() {
+  const id = 'offline-' + Date.now();
+  const row = { id, title: 'Offline Session', session_date: new Date().toISOString().slice(0,10), blocks: {nodes:[],edges:[],groups:[]} };
+  sessionState.sessions = [row];
+  sessionState.currentSessionId = id;
+  sessionState.currentCampaignId = null;
+  sessionState.currentArcId = null;
+  document.getElementById('topbarSession').textContent = row.title;
+  deserializeCanvas(row.blocks);
+  setCanvasSavedState('saved');
+  updateEmptyHint();
+}
+function spcEnterLocalOnlyMode() {
+  window.SPC_LOCAL_ONLY = true;
+  window.SPC_SUPABASE_OFFLINE = true;
+  try { localStorage.setItem('spc_local_only_enabled','1'); } catch (_) {}
+  rqHideLogin();
+  setCanvasSavedState('idle');
+  const latest = spcLatestLocalBackupText();
+  if (latest && latest.text) {
+    try {
+      const file = new File([latest.text], 'latest-offline-backup.json', {type:'application/json'});
+      importFocusedSessionJsonOffline(file, true);
+      return;
+    } catch (_) {}
+  }
+  spcOpenBlankLocalSession();
+  if (typeof showToast === 'function') showToast('Local-only mode: new offline session opened.');
+}
+function spcExitLocalOnlyMode() {
+  try { localStorage.removeItem('spc_local_only_enabled'); } catch (_) {}
+  location.reload();
+}
+window.spcEnterLocalOnlyMode = spcEnterLocalOnlyMode;
+window.spcExitLocalOnlyMode = spcExitLocalOnlyMode;
+
 function boot() {
   applyTransform();
+  try {
+    if (localStorage.getItem('spc_local_only_enabled') === '1') {
+      spcEnterLocalOnlyMode();
+      return;
+    }
+  } catch (_) {}
   // Decide whether to show login or proceed straight to the app.
   const auth = rqGetAuth();
   if (auth && auth.access_token) {
@@ -19296,7 +19364,7 @@ async function buildOfflineSessionBackup(reason) {
   return {
     app: 'Session Canvas Planner',
     offline_rescue: true,
-    version: '1.3.84',
+    version: '1.3.85',
     reason: reason || 'manual_export',
     exported_at: new Date().toISOString(),
     session: {
@@ -19330,7 +19398,7 @@ async function exportFocusedSessionJsonOffline() {
   spcDownloadText(title + '-offline-backup-' + stamp + '.json', text, 'application/json');
   if (typeof showToast === 'function') showToast('Offline JSON backup exported.');
 }
-function importFocusedSessionJsonOffline(file) {
+function importFocusedSessionJsonOffline(file, skipConfirm) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = async function() {
@@ -19339,7 +19407,7 @@ function importFocusedSessionJsonOffline(file) {
       const sess = payload.session || payload;
       const blocks = sess.blocks || payload.blocks || payload;
       if (!blocks || !Array.isArray(blocks.nodes)) throw new Error('This file does not look like a Session Canvas backup.');
-      if (!confirm('Import this offline backup into the current browser session? This replaces the currently visible canvas.')) return;
+      if (!skipConfirm && !confirm('Import this offline backup into the current browser session? This replaces the currently visible canvas.')) return;
       loadingSession = true;
       sessionState.currentSessionId = sess.id || sessionState.currentSessionId || ('offline-' + Date.now());
       sessionState.currentCampaignId = sess.campaign_id || sessionState.currentCampaignId || null;
@@ -19405,3 +19473,25 @@ window.importFocusedSessionJsonOffline = importFocusedSessionJsonOffline;
 window.saveOfflineSessionSnapshot = saveOfflineSessionSnapshot;
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installOfflineRescueControls);
 else installOfflineRescueControls();
+
+
+// v1.3.85 local-only login controls
+window.addEventListener('DOMContentLoaded', () => {
+  const localBtn = document.getElementById('rqLocalOnlyBtn');
+  if (localBtn) localBtn.addEventListener('click', spcEnterLocalOnlyMode);
+  const importBtn = document.getElementById('rqLocalImportBtn');
+  const importInput = document.getElementById('rqLocalImportFile');
+  if (importBtn && importInput) {
+    importBtn.addEventListener('click', () => importInput.click());
+    importInput.addEventListener('change', function() {
+      const file = this.files && this.files[0];
+      this.value = '';
+      if (!file) return;
+      window.SPC_LOCAL_ONLY = true;
+      window.SPC_SUPABASE_OFFLINE = true;
+      try { localStorage.setItem('spc_local_only_enabled','1'); } catch (_) {}
+      rqHideLogin();
+      importFocusedSessionJsonOffline(file, true);
+    });
+  }
+});
