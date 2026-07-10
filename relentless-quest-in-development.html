@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7296 Known-Good Quest Baseline</title>
+<title>Relentless Quest v1.7297 Storage Quota Fix</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7296 Known-Good Quest Baseline</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7297 Storage Quota Fix</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -8801,14 +8801,13 @@ setTimeout(function(){
 }, 800);
 
 function saveLocalState(){
-  try{localStorage.setItem(localSaveKey(),JSON.stringify(S));}catch(e){}
-  // v1.7052 — log every save for forensic reconstruction
+  try{localStorage.setItem(localSaveKey(),JSON.stringify(S));}catch(e){
+    console.warn('[local save] failed',e);
+    throw e;
+  }
   try{ RQ_SYNCDIAG.log('save', {}); }catch(e){}
-  // Also persist CONTENT_LIB locally so custom content survives page reload
-  try{
-    var _clUid='guest'; try{_clUid=(typeof uid==='function'&&uid())||localStorage.getItem('rq_last_local_uid')||'guest';}catch(_uidErr){try{_clUid=localStorage.getItem('rq_last_local_uid')||'guest';}catch(_uidErr2){}} var _clKey='rq_content:'+_clUid;
-    localStorage.setItem(_clKey,JSON.stringify(CONTENT_LIB));
-  }catch(e){}
+  // v1.7297 — The complete catalog is embedded in the app and separately
+  // exportable. Do not duplicate CONTENT_LIB into localStorage on every save.
 }
 // v1.7054 — helpers for the unpushed-changes flag. The flag is set ONLY
 // by save() (genuine user-action save path), NOT by saveLocalState()
@@ -38848,7 +38847,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7296',
+    appVersion:'v1.7297',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -40149,7 +40148,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7296-known-good-quest-baseline';
+var RQ_CLIENT_VERSION='v1.7297-storage-quota-fix';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -47248,11 +47247,8 @@ function loadContentLibrary(manual){
 
       return _prereqPromise.then(function(){
         mergeCustomContent();
-        try{
-          var _clUid='guest'; try{_clUid=(typeof uid==='function'&&uid())||localStorage.getItem('rq_last_local_uid')||'guest';}catch(_uidErr){try{_clUid=localStorage.getItem('rq_last_local_uid')||'guest';}catch(_uidErr2){}} var _clKey='rq_content:'+_clUid;
-          localStorage.setItem(_clKey,JSON.stringify(CONTENT_LIB));
-        }catch(e){}
-
+        // v1.7297 — CONTENT_LIB is embedded; do not duplicate it into
+        // localStorage after refresh. Preserve quota for the runtime save.
         window._rqContentLibraryLoaded=true;
 
         // Manual refresh may repaint content-library screens. Boot/init callers
@@ -51036,10 +51032,25 @@ window.RQ_CONTENT_BRIDGE={
   function nowIso(){ return new Date().toISOString(); }
   function localKey(){ return OFFLINE_KEY_PREFIX+safeUid(); }
   function pendingKey(){ return PENDING_KEY_PREFIX+safeUid(); }
+  function clearRedundantStorageCopies(){
+    try{
+      var doomed=[];
+      for(var i=0;i<localStorage.length;i++){
+        var k=localStorage.key(i)||'';
+        if(k.indexOf('rq_content:')===0 ||
+           k.indexOf('rq_content_lib:')===0 ||
+           k.indexOf('rq_offline_backup:')===0){ doomed.push(k); }
+      }
+      doomed.forEach(function(k){ try{localStorage.removeItem(k);}catch(_e){} });
+      return doomed.length;
+    }catch(e){ console.warn('[offline rescue] redundant-storage cleanup failed',e); return 0; }
+  }
   function cloneState(){
     var out={};
     try{ out.state=JSON.parse(JSON.stringify(window.S||{})); }catch(e){ out.state=window.S||{}; }
-    try{ out.content_lib=JSON.parse(JSON.stringify(window.CONTENT_LIB||{})); }catch(e){ out.content_lib=window.CONTENT_LIB||{}; }
+    // v1.7297 — Runtime backups omit the embedded catalog. Keep catalog
+    // updates in their separate JSON package rather than duplicating megabytes.
+    out.catalog_reference={embedded:true,version:(window.RQ_CLIENT_VERSION||'unknown')};
     try{
       out.contracts={
         active:JSON.parse(JSON.stringify((window.S&&window.S.active)||[])),
@@ -51056,13 +51067,12 @@ window.RQ_CONTENT_BRIDGE={
     return out;
   }
   function saveEmergencySnapshot(reason){
+    // v1.7297 — Avoid a second multi-megabyte runtime copy in localStorage.
     try{
-      var payload=cloneState();
-      payload.meta.reason=reason||'snapshot';
-      localStorage.setItem(localKey(),JSON.stringify(payload));
-      localStorage.setItem('rq_offline_last:'+safeUid(),payload.meta.exported_at);
+      localStorage.setItem('rq_offline_last:'+safeUid(),nowIso());
+      localStorage.setItem('rq_offline_last_reason:'+safeUid(),reason||'snapshot');
       return true;
-    }catch(e){ console.warn('[offline rescue] snapshot failed',e); return false; }
+    }catch(e){ console.warn('[offline rescue] snapshot marker failed',e); return false; }
   }
   function downloadText(filename,text){
     var blob=new Blob([text],{type:'application/json'});
@@ -51075,7 +51085,7 @@ window.RQ_CONTENT_BRIDGE={
     var payload=cloneState();
     var stamp=new Date().toISOString().replace(/[:.]/g,'-');
     var text=JSON.stringify(payload,null,2);
-    try{ localStorage.setItem(localKey(),text); }catch(e){}
+    // v1.7297 — Download only; do not retain a duplicate backup in localStorage.
     downloadText('relentless-quest-offline-backup-'+stamp+'.json',text);
     if(typeof syncStatus==='function')syncStatus('Offline backup exported '+new Date().toLocaleTimeString(),'var(--forest)');
   }
@@ -51092,7 +51102,7 @@ window.RQ_CONTENT_BRIDGE={
         // v1.7283 — Deep-clone the source so runtime migrations cannot mutate
         // the parsed backup object that we use for authoritative restoration.
         var imported=JSON.parse(JSON.stringify(newState));
-        // v1.7296 — Restore contracts explicitly without touching quest state.
+        // v1.7297 — Restore contracts explicitly without touching quest state.
         if(payload.contracts&&typeof payload.contracts==='object'){
           ['active','archived','archGroups','archCollapsed','taskGroups','projects','kudos','lastFavCheck'].forEach(function(k){
             if(Object.prototype.hasOwnProperty.call(payload.contracts,k)){
@@ -51172,6 +51182,7 @@ window.RQ_CONTENT_BRIDGE={
         // Put the imported save into the exact active namespace, then route it
         // through the app's normal load/migration bootstrap.
         var targetKey=(typeof localSaveKey==='function'?localSaveKey():'acqv7:'+safeUid());
+        clearRedundantStorageCopies();
         localStorage.setItem(targetKey,JSON.stringify(imported));
         // v1.7289 — Do not invoke load() during import. Some quest-engine
         // functions reached from load() reference the main script's QUESTSETS
@@ -51427,9 +51438,10 @@ function setOfflineBadge(text){
     }
     window.RQ_EXPORT_OFFLINE_BACKUP=exportBackup;
     window.RQ_SAVE_OFFLINE_SNAPSHOT=saveEmergencySnapshot;
+    window.RQ_CLEAR_REDUNDANT_STORAGE=clearRedundantStorageCopies;
   }
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){installPanel();wrapSync();saveEmergencySnapshot('boot');});
-  else { installPanel(); wrapSync(); saveEmergencySnapshot('boot'); }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){clearRedundantStorageCopies();installPanel();wrapSync();saveEmergencySnapshot('boot');});
+  else { clearRedundantStorageCopies(); installPanel(); wrapSync(); saveEmergencySnapshot('boot'); }
 })();
 </script>
 
