@@ -1,4 +1,5 @@
 
+// v1.3.86 — cache-bust and direct login-control fallback;
 // v1.3.85 — local-only authentication rescue: local JSON backups/import and Supabase-failure fallback.
 // v1.3.83 — session PDF export for readable offline backups.
 // v1.3.42 — safe NPC HP state badge helper.
@@ -19474,6 +19475,19 @@ window.saveOfflineSessionSnapshot = saveOfflineSessionSnapshot;
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installOfflineRescueControls);
 else installOfflineRescueControls();
 
+
+// v1.3.86 direct import handler, also callable from HTML when cached/late event wiring is unreliable.
+function spcHandleLoginImport(input) {
+  const file = input && input.files && input.files[0];
+  if (input) input.value = '';
+  if (!file) return;
+  window.SPC_LOCAL_ONLY = true;
+  window.SPC_SUPABASE_OFFLINE = true;
+  try { localStorage.setItem('spc_local_only_enabled','1'); } catch (_) {}
+  rqHideLogin();
+  importFocusedSessionJsonOffline(file, true);
+}
+window.spcHandleLoginImport = spcHandleLoginImport;
 
 // v1.3.85 local-only login controls
 window.addEventListener('DOMContentLoaded', () => {
