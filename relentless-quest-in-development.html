@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7298 Transactional Storage Fix</title>
+<title>Relentless Quest v1.7299 Transactional Storage Fix</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7298 Transactional Storage Fix</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7299 Transactional Storage Fix</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -8564,6 +8564,14 @@ setTimeout(function(){
 },500);
 
 function localSaveKey(){
+  // v1.7299 — An offline import may occur while authentication/local-only
+  // identity is changing. Persist the exact verified runtime key and prefer it
+  // on subsequent boots so the app cannot flash the imported state and then
+  // fall back to an empty guest/default namespace.
+  try{
+    var forced=localStorage.getItem('rq_offline_runtime_key');
+    if(forced&&forced.indexOf('acqv7:')===0)return forced;
+  }catch(e){}
   return 'acqv7:'+(uid()||'guest');
 }
 
@@ -8801,7 +8809,7 @@ setTimeout(function(){
 }, 800);
 
 function saveLocalState(){
-  // v1.7298 — Runtime only. The offline catalog is embedded in the HTML and
+  // v1.7299 — Runtime only. The offline catalog is embedded in the HTML and
   // must not be duplicated into localStorage on every save.
   try{localStorage.setItem(localSaveKey(),JSON.stringify(S));}
   catch(e){console.warn('[local save] failed; existing stored runtime left intact',e);}
@@ -38845,7 +38853,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7298',
+    appVersion:'v1.7299',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -40146,7 +40154,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7298-known-good-quest-baseline';
+var RQ_CLIENT_VERSION='v1.7299-known-good-quest-baseline';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -51036,7 +51044,7 @@ window.RQ_CONTENT_BRIDGE={
   function cloneState(){
     var out={};
     try{ out.state=JSON.parse(JSON.stringify(window.S||{})); }catch(e){ out.state=window.S||{}; }
-    // v1.7298 — Catalog is embedded/separately exportable; runtime backups omit it.
+    // v1.7299 — Catalog is embedded/separately exportable; runtime backups omit it.
     out.catalog_reference={embedded:true,version:(window.RQ_CLIENT_VERSION||'unknown')};
     try{
       out.contracts={
@@ -51054,7 +51062,7 @@ window.RQ_CONTENT_BRIDGE={
     return out;
   }
   function saveEmergencySnapshot(reason){
-    // v1.7298 — Keep only a tiny health marker. Never store a duplicate full
+    // v1.7299 — Keep only a tiny health marker. Never store a duplicate full
     // runtime or catalog snapshot in localStorage.
     try{
       localStorage.setItem('rq_offline_last:'+safeUid(),JSON.stringify({
@@ -51078,7 +51086,7 @@ window.RQ_CONTENT_BRIDGE={
     if(typeof syncStatus==='function')syncStatus('Offline backup exported '+new Date().toLocaleTimeString(),'var(--forest)');
   }
   function transactionalWriteRuntime(targetKey,serialized){
-    // v1.7298 — Free only redundant catalog/rescue copies, hold them in memory,
+    // v1.7299 — Free only redundant catalog/rescue copies, hold them in memory,
     // write+verify the imported runtime, and roll back the removed keys if the
     // write does not succeed. The current target runtime is never deleted first.
     var removed=[];
@@ -51118,7 +51126,7 @@ window.RQ_CONTENT_BRIDGE={
         // v1.7283 — Deep-clone the source so runtime migrations cannot mutate
         // the parsed backup object that we use for authoritative restoration.
         var imported=JSON.parse(JSON.stringify(newState));
-        // v1.7298 — Restore contracts explicitly without touching quest state.
+        // v1.7299 — Restore contracts explicitly without touching quest state.
         if(payload.contracts&&typeof payload.contracts==='object'){
           ['active','archived','archGroups','archCollapsed','taskGroups','projects','kudos','lastFavCheck'].forEach(function(k){
             if(Object.prototype.hasOwnProperty.call(payload.contracts,k)){
@@ -51197,7 +51205,18 @@ window.RQ_CONTENT_BRIDGE={
 
         // Put the imported save into the exact active namespace, then route it
         // through the app's normal load/migration bootstrap.
-        var targetKey=(typeof localSaveKey==='function'?localSaveKey():'acqv7:'+safeUid());
+        // v1.7299 — Resolve a stable device/account namespace explicitly.
+        // localSaveKey() may itself be influenced by stale auth state, so prefer
+        // the remembered local UID and persist the chosen key for the next boot.
+        var rememberedUid='';
+        try{rememberedUid=localStorage.getItem('rq_last_local_uid')||'';}catch(_e){}
+        var resolvedUid=safeUid();
+        if(!resolvedUid||resolvedUid==='guest')resolvedUid=rememberedUid||'local-primary-device';
+        var targetKey='acqv7:'+resolvedUid;
+        try{
+          localStorage.setItem('rq_last_local_uid',resolvedUid);
+          localStorage.setItem('rq_offline_runtime_key',targetKey);
+        }catch(_e2){}
         var importedText=JSON.stringify(imported);
         transactionalWriteRuntime(targetKey,importedText);
         // v1.7289 — Do not invoke load() during import. Some quest-engine
@@ -51307,7 +51326,9 @@ window.RQ_CONTENT_BRIDGE={
           // Also maintain the legacy guest fallback used by load() when an
           // offline session has no authenticated uid. This prevents the next
           // startup from reading an older blank guest save.
-          if(safeUid()==='guest')localStorage.setItem('acqv7',serializedImportedState);
+          // Keep the legacy unscoped fallback only as a best-effort copy; the
+          // authoritative key is rq_offline_runtime_key -> targetKey.
+          try{localStorage.setItem('acqv7',serializedImportedState);}catch(_legacyErr){}
           // v1.7289: direct localStorage persistence only; avoid quest-engine side effects during import.
           // saveLocalState may mirror/rebuild active quest progress. Reassert the
           // authoritative imported quest runtime after it, then persist that exact
@@ -51317,7 +51338,9 @@ window.RQ_CONTENT_BRIDGE={
           }
           serializedImportedState=JSON.stringify(S);
           localStorage.setItem(targetKey,serializedImportedState);
-          if(safeUid()==='guest')localStorage.setItem('acqv7',serializedImportedState);
+          // Keep the legacy unscoped fallback only as a best-effort copy; the
+          // authoritative key is rq_offline_runtime_key -> targetKey.
+          try{localStorage.setItem('acqv7',serializedImportedState);}catch(_legacyErr){}
         }catch(e){throw new Error('State loaded, but local save failed: '+(e&&e.message?e.message:e));}
         try{if(typeof _markUnpushed==='function')_markUnpushed();}catch(e){}
         try{
