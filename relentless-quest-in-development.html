@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7276 Offline Rescue</title>
+<title>Relentless Quest v1.7278 Local Import Fix</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -46460,6 +46460,28 @@ function enterLocalOnlyMode(){
       rememberedId=old&&old.user&&old.user.id?String(old.user.id):'';
       rememberedEmail=old&&old.user&&old.user.email?String(old.user.email):'';
     }
+    // v1.7278 — If the rescue build never recorded the prior authenticated UID,
+    // recover it by selecting the largest valid existing acqv7:* save. This avoids
+    // opening an empty local-primary-device namespace while the real save remains
+    // on the same browser under its former Supabase UUID.
+    var currentKey=rememberedId?'acqv7:'+rememberedId:'';
+    var currentHasSave=currentKey&&localStorage.getItem(currentKey);
+    if(!currentHasSave){
+      var bestId='',bestSize=-1;
+      for(var i=0;i<localStorage.length;i++){
+        var k=localStorage.key(i)||'';
+        if(k.indexOf('acqv7:')!==0)continue;
+        var rawSave=localStorage.getItem(k)||'';
+        if(rawSave.length<=bestSize)continue;
+        try{
+          var parsed=JSON.parse(rawSave);
+          if(parsed&&typeof parsed==='object'&&(parsed.active||parsed.party||parsed.gold!==undefined)){
+            bestId=k.slice(6);bestSize=rawSave.length;
+          }
+        }catch(ignore){}
+      }
+      if(bestId)rememberedId=bestId;
+    }
   }catch(e){}
   if(!rememberedId)rememberedId='local-primary-device';
   currentUser={
@@ -50886,9 +50908,15 @@ document.addEventListener('click',function(e){
         var newState=payload.state||payload.S||payload;
         if(!newState||typeof newState!=='object')throw new Error('No state object found in backup.');
         if(!confirm('Import this Relentless Quest backup and replace the current local state?'))return;
-        window.S=newState;
-        if(payload.content_lib&&typeof payload.content_lib==='object')window.CONTENT_LIB=payload.content_lib;
-        try{ if(typeof saveLocalState==='function')saveLocalState(); else localStorage.setItem((typeof localSaveKey==='function'?localSaveKey():'acqv7:'+safeUid()),JSON.stringify(window.S)); }catch(e){}
+        // v1.7278 — window.S is intentionally exposed through a getter with no
+        // setter, so assigning window.S throws on Safari/iOS. Rebind the actual
+        // global state variable instead, then persist it under the active local UID.
+        S=newState;
+        if(payload.content_lib&&typeof payload.content_lib==='object')CONTENT_LIB=payload.content_lib;
+        try{
+          localStorage.setItem((typeof localSaveKey==='function'?localSaveKey():'acqv7:'+safeUid()),JSON.stringify(S));
+          if(typeof saveLocalState==='function')saveLocalState();
+        }catch(e){ throw new Error('State loaded, but local save failed: '+(e&&e.message?e.message:e)); }
         try{ if(typeof _markUnpushed==='function')_markUnpushed(); }catch(e){}
         try{ if(typeof renderAll==='function')renderAll(); else if(typeof render==='function')render(); }catch(e){}
         saveEmergencySnapshot('imported_backup');
