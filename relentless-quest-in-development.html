@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7275</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7277 Local-Only Rescue</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3157,6 +3157,10 @@ body.dev-active #app{margin-top:36px;}
       <div class="mbtns" style="justify-content:space-between;gap:10px;flex-wrap:wrap;">
         <button class="btn bink" onclick="signUp()">Register</button>
         <button class="btn bg" onclick="signIn()">Log In</button>
+      </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--parchment-deep);text-align:center">
+        <button class="btn bgn full" type="button" id="btn-local-only" onclick="enterLocalOnlyMode()">📱 Use This Device Offline — No Login</button>
+        <div class="hint" style="margin-top:6px">Uses the last account data stored on this device. No Supabase connection is attempted.</div>
       </div>
       <!-- v1.7014 — test-account quick-fill pills. Tapping a pill populates
            the email field only; password still required. Grayed styling so
@@ -39373,7 +39377,13 @@ async function login(email,password){
 function restoreLogin(){
   try{
     var raw = localStorage.getItem('acq_auth');
-    if(raw) currentUser = JSON.parse(raw);
+    if(raw){
+      currentUser = JSON.parse(raw);
+      var rememberedId=currentUser&&currentUser.user&&currentUser.user.id;
+      var rememberedEmail=currentUser&&currentUser.user&&currentUser.user.email;
+      if(rememberedId)localStorage.setItem('rq_last_local_uid',String(rememberedId));
+      if(rememberedEmail)localStorage.setItem('rq_last_local_email',String(rememberedEmail));
+    }
   }catch(e){}
 }
 function applyStarterLoadout(force){
@@ -40079,7 +40089,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7276-offline-rescue';
+var RQ_CLIENT_VERSION='v1.7277-local-auth-rescue';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -41170,6 +41180,11 @@ window._presencePollNow = _presencePollOthers; // for debugging
 
 /* ── PUSH ── */
 function sbPush(manual){
+  if(currentUser&&currentUser._localOnly){
+    saveLocalState();
+    try{if(typeof syncStatus==='function')syncStatus('📱 Saved locally','var(--forest)');}catch(e){}
+    return Promise.resolve(true);
+  }
   if(!uid()){
     if(manual)syncStatus('Log in to sync with Supabase.','var(--crimson)');
     return Promise.resolve(false);
@@ -41887,6 +41902,11 @@ function dedupePartyAssets(){
 }
 
 function sbPull(manual){
+  if(currentUser&&currentUser._localOnly){
+    load();
+    try{if(typeof syncStatus==='function')syncStatus('📱 Local-only mode','var(--forest)');}catch(e){}
+    return Promise.resolve(true);
+  }
   if(!uid()){
     if(manual)syncStatus('Log in to pull from Supabase.','var(--crimson)');
     return Promise.resolve(false);
@@ -46427,7 +46447,45 @@ if(_cwarnGo && !_cwarnGo.dataset.bound){
   });
 }
 
+// v1.7277 — Authentication-independent local-only mode.
+function isLocalOnlyMode(){return !!(currentUser&&currentUser._localOnly);}
+function enterLocalOnlyMode(){
+  var rememberedId=''; var rememberedEmail='';
+  try{
+    rememberedId=localStorage.getItem('rq_last_local_uid')||'';
+    rememberedEmail=localStorage.getItem('rq_last_local_email')||'';
+    if(!rememberedId){
+      var raw=localStorage.getItem('acq_auth');
+      var old=raw?JSON.parse(raw):null;
+      rememberedId=old&&old.user&&old.user.id?String(old.user.id):'';
+      rememberedEmail=old&&old.user&&old.user.email?String(old.user.email):'';
+    }
+  }catch(e){}
+  if(!rememberedId)rememberedId='local-primary-device';
+  currentUser={
+    _localOnly:true,
+    user:{id:rememberedId,email:rememberedEmail||'Local-only device'},
+    access_token:'',refresh_token:'',expires_at:0
+  };
+  try{
+    localStorage.setItem('rq_local_only_enabled','1');
+    localStorage.setItem('rq_last_local_uid',rememberedId);
+    if(rememberedEmail)localStorage.setItem('rq_last_local_email',rememberedEmail);
+    localStorage.setItem('acq_auth',JSON.stringify(currentUser));
+  }catch(e){}
+  closeOv('loginBox');
+  setLoginStatus('Local-only mode active. Supabase login and sync are disabled.',false);
+  initSession(false);
+  return Promise.resolve(true);
+}
+window.enterLocalOnlyMode=enterLocalOnlyMode;
+
 async function bootApp(){
+  try{
+    if(localStorage.getItem('rq_local_only_enabled')==='1'){
+      return enterLocalOnlyMode();
+    }
+  }catch(e){}
   if(DEV_MODE_URL){
     try{
       document.getElementById('email').value=DEV_LOGIN_EMAIL;
@@ -50854,12 +50912,13 @@ document.addEventListener('click',function(e){
     var panel=document.createElement('div');
     panel.id='rq-offline-rescue-panel';
     panel.className='collapsed';
-    panel.innerHTML='<div class="rq-offline-head"><span>🛟</span><span class="rq-offline-title">Offline Rescue</span><button type="button" id="rq-offline-toggle">Open</button></div><div class="rq-offline-body"><div id="rq-offline-rescue-badge">Offline backup ready</div><div style="margin-top:6px"><button type="button" id="rq-export-backup">Export JSON</button><button type="button" id="rq-save-snapshot">Save Local</button><button type="button" id="rq-import-backup">Import JSON</button><input type="file" id="rq-import-file" accept="application/json,.json"></div><div style="opacity:.8;margin-top:4px">Use Export before Supabase outage. Import restores this device locally; push later.</div></div>';
+    panel.innerHTML='<div class="rq-offline-head"><span>🛟</span><span class="rq-offline-title">Offline Rescue</span><button type="button" id="rq-offline-toggle">Open</button></div><div class="rq-offline-body"><div id="rq-offline-rescue-badge">Offline backup ready</div><div style="margin-top:6px"><button type="button" id="rq-export-backup">Export JSON</button><button type="button" id="rq-save-snapshot">Save Local</button><button type="button" id="rq-import-backup">Import JSON</button><button type="button" id="rq-return-cloud">Cloud Login</button><input type="file" id="rq-import-file" accept="application/json,.json"></div><div style="opacity:.8;margin-top:4px">Use Export before Supabase outage. Import restores this device locally; push later.</div></div>';
     document.body.appendChild(panel);
     document.getElementById('rq-offline-toggle').addEventListener('click',function(){ panel.classList.toggle('collapsed'); this.textContent=panel.classList.contains('collapsed')?'Open':'Hide'; setOfflineBadge(); });
     document.getElementById('rq-export-backup').addEventListener('click',exportBackup);
     document.getElementById('rq-save-snapshot').addEventListener('click',function(){ saveEmergencySnapshot('manual_panel'); setOfflineBadge('Local snapshot saved '+new Date().toLocaleTimeString()); });
     document.getElementById('rq-import-backup').addEventListener('click',function(){ document.getElementById('rq-import-file').click(); });
+    document.getElementById('rq-return-cloud').addEventListener('click',function(){ try{localStorage.removeItem('rq_local_only_enabled');localStorage.removeItem('acq_auth');}catch(e){} location.reload(); });
     document.getElementById('rq-import-file').addEventListener('change',function(){ importBackupFile(this.files&&this.files[0]); this.value=''; });
     setOfflineBadge();
   }
