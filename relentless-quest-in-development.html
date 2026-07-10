@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7293 Harvesthome Unlock</title>
+<title>Relentless Quest v1.7294 Harvesthome Unlock</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7293 Harvesthome Unlock</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7294 Harvesthome Unlock</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -6370,7 +6370,7 @@ function _consumeItemFromChar(c,itemName,reason){
 // Returns the list of all items in the live registries that carry the
 // given trait key. Used by both the gate evaluator and the failure-
 // message hover hint that lists qualifying items.
-// v1.7293 — Local/offline compatibility trait aliases for built-in items.
+// v1.7294 — Local/offline compatibility trait aliases for built-in items.
 // These mappings supplement item.traits without changing item names or adding
 // duplicate store entries. They also cover pack-granted inventory strings
 // (Torch, Piton, Lantern (hooded)) that are not always represented in GEAR.
@@ -27365,7 +27365,7 @@ document.addEventListener('click',function(e){
         set=(QUESTSETS||[]).filter(function(s){return s.id===matchSetId;})[0]||null;
       }
       if(!set&&typeof activeQuestSet==='function')set=activeQuestSet();
-      var q=(set&&set.quests&&typeof match.idx==='number')?set.quests[match.idx]:null;
+      var q=(set&&typeof match.idx==='number')?questByIdx(set,match.idx):null;
       // Cycle number only makes sense for the currently-active cycle. Omit it for
       // other cycles since setProgress entries don't carry a comparable counter.
       var isActiveCycle=(matchSetId&&qs.setId===matchSetId);
@@ -38848,7 +38848,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7293',
+    appVersion:'v1.7294',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -40149,7 +40149,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7293-harvesthome-unlock';
+var RQ_CLIENT_VERSION='v1.7294-harvesthome-unlock';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -47456,8 +47456,38 @@ function mergeCustomContent(){
       });
     }
     var capIdx=-1;
-    set.quests.forEach(function(q,idx){if(q.capstone)capIdx=idx;});
+    // v1.7294 — capstoneIdx is a quest identity, not an array position.
+    // Custom questOrder can reorder set.quests, so storing the loop index
+    // causes the capstone and adjacent quests to resolve incorrectly.
+    set.quests.forEach(function(q){if(q&&q.capstone&&q.idx!=null)capIdx=q.idx;});
     if(capIdx>=0)set.capstoneIdx=capIdx;
+  });
+
+
+  // v1.7294 — Quest identity integrity pass. Array order is presentation only;
+  // persisted state, pending rewards, assignments, and prerequisites all use q.idx.
+  // Remove duplicate idx entries deterministically and ensure every quest keeps its
+  // explicit numeric identity after questOrder sorting.
+  QUESTSETS.forEach(function(set){
+    var byIdx={};
+    (set.quests||[]).forEach(function(q){
+      if(!q)return;
+      var n=Number(q.idx);
+      if(!isFinite(n))return;
+      q.idx=n;
+      byIdx[n]=q; // later/higher-priority merged content wins
+    });
+    set.quests=Object.keys(byIdx).map(function(k){return byIdx[k];});
+    if(set._questOrder&&Array.isArray(set._questOrder)&&set._questOrder.length){
+      var order={};set._questOrder.forEach(function(qIdx,pos){order[Number(qIdx)]=pos;});
+      set.quests.sort(function(a,b){
+        var pa=order[a.idx]!==undefined?order[a.idx]:1000+a.idx;
+        var pb=order[b.idx]!==undefined?order[b.idx]:1000+b.idx;
+        return pa-pb;
+      });
+    }else{
+      set.quests.sort(function(a,b){return a.idx-b.idx;});
+    }
   });
 
   var allGrind=[].concat(CONTENT_LIB.official.grind,CONTENT_LIB.shared.grind,CONTENT_LIB.private.grind);
@@ -49961,7 +49991,7 @@ function resolveBackToHQDestination(ci){
 window.resolveBackToHQDestination=resolveBackToHQDestination;
 
 
-// v1.7293 — Return territories whose adventure content is already unlocked.
+// v1.7294 — Return territories whose adventure content is already unlocked.
 // "Unlocked" here deliberately ignores the 24-hour cycle pause: once all
 // actual gate requirements are met, the player may establish a foothold by
 // purchasing a building and assigning its free recruit there. Completed and
@@ -50020,7 +50050,7 @@ function recomputeUnlockedTerritories(){
       if(!seen[t]){out.push(t);seen[t]=true;}
     });
   }
-  // v1.7293 — A territory becomes available for franchise expansion as soon
+  // v1.7294 — A territory becomes available for franchise expansion as soon
   // as at least one adventure cycle there is unlocked (its non-pause gate
   // prerequisites are met), even before the user relocates a squad or starts
   // the first quest. This breaks the former catch-22 where the player could
@@ -51105,7 +51135,7 @@ window.RQ_CONTENT_BRIDGE={
         // v1.7283 — Deep-clone the source so runtime migrations cannot mutate
         // the parsed backup object that we use for authoritative restoration.
         var imported=JSON.parse(JSON.stringify(newState));
-        // v1.7293 — Full offline backups carry an explicit contract bundle in
+        // v1.7294 — Full offline backups carry an explicit contract bundle in
         // addition to state. Reapply it here because older startup migrations
         // may replace contract collections while normalizing the save.
         if(payload.contracts&&typeof payload.contracts==='object'){
@@ -51350,7 +51380,7 @@ function rqOfflineCatalogPostBoot(){
         ['revealed','done','pending','assigned','grindPending'].forEach(function(k){if(sp[k]!=null)S.questState[k]=JSON.parse(JSON.stringify(sp[k]));});
       }
     }
-    // v1.7293 — The Night Went Out was already completed before the
+    // v1.7294 — The Night Went Out was already completed before the
     // offline transition. Preserve that authoritative history and make the
     // first Harvesthome cycle immediately available rather than starting or
     // restarting a new 24-hour pause.
