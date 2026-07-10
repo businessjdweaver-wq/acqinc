@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest v1.7299 Transactional Storage Fix</title>
+<title>Relentless Quest in Development v1.7300 Grind Inbox Persistence Fix</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7299 Transactional Storage Fix</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7300 Grind Inbox Persistence Fix</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -8564,7 +8564,7 @@ setTimeout(function(){
 },500);
 
 function localSaveKey(){
-  // v1.7299 — An offline import may occur while authentication/local-only
+  // v1.7300 — An offline import may occur while authentication/local-only
   // identity is changing. Persist the exact verified runtime key and prefer it
   // on subsequent boots so the app cannot flash the imported state and then
   // fall back to an empty guest/default namespace.
@@ -8809,7 +8809,7 @@ setTimeout(function(){
 }, 800);
 
 function saveLocalState(){
-  // v1.7299 — Runtime only. The offline catalog is embedded in the HTML and
+  // v1.7300 — Runtime only. The offline catalog is embedded in the HTML and
   // must not be duplicated into localStorage on every save.
   try{localStorage.setItem(localSaveKey(),JSON.stringify(S));}
   catch(e){console.warn('[local save] failed; existing stored runtime left intact',e);}
@@ -33795,6 +33795,10 @@ document.addEventListener('click',function(e){
       qpAward(_gqp,'grind_complete','⚙ Grind: "'+gpEntry.title+'"','grind::'+gid+'::'+Date.now());
     }
     qs.grindPending.splice(gpIdx,1);
+    // v1.7300 — Persist the shrink into setProgress immediately. Without this,
+    // the live array is empty but the archived active-cycle copy still contains
+    // the collected grind; export/import or cycle reactivation resurrects it.
+    if(typeof saveActiveSetProgress==='function')saveActiveSetProgress();
     save();setGold();renderAdv();
     if(typeof renderGrindsList==='function'&&document.getElementById('ov-grinds-list')&&document.getElementById('ov-grinds-list').classList.contains('on'))renderGrindsList();
     if(typeof renderInboxBadge==='function')renderInboxBadge();
@@ -38853,7 +38857,7 @@ function rqContractsArchiveKudosExportPayload(){
   var st=S.settings||{};
   return {
     exportType:'relentless-quest-contracts-archive-kudos',
-    appVersion:'v1.7299',
+    appVersion:'v1.7300',
     exportedAt:new Date().toISOString(),
     data:{
       active:clone(S.active||[]),
@@ -40154,7 +40158,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7299-known-good-quest-baseline';
+var RQ_CLIENT_VERSION='v1.7300-grind-inbox-persistence-fix';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -51041,10 +51045,50 @@ window.RQ_CONTENT_BRIDGE={
   function nowIso(){ return new Date().toISOString(); }
   function localKey(){ return OFFLINE_KEY_PREFIX+safeUid(); }
   function pendingKey(){ return PENDING_KEY_PREFIX+safeUid(); }
+
+  // v1.7300 — Remove stale collected grind returns from both the live quest
+  // state and archived setProgress copies. Older builds removed a collected
+  // grind only from questState.grindPending; the active cycle archive retained
+  // it and later export/import resurrected it. Matching is deliberately
+  // conservative: title + reward + a collection log at/after doneAt.
+  function scrubCollectedGrindGhosts(state){
+    if(!state||typeof state!=='object')return 0;
+    var logs=Array.isArray(state.questLog)?state.questLog:[];
+    var grindLogs=logs.filter(function(e){return e&&e.type==='grind';}).map(function(e){
+      var title=String(e.questTitle||'').replace(/\s*\[Grind\]\s*$/,'');
+      var when=Date.parse(e.completedAt||'')||0;
+      return {title:title,reward:Number(e.reward)||0,when:when};
+    });
+    function isCollected(gp){
+      if(!gp||(gp.doneAt||0)>Date.now())return false;
+      var title=String(gp.title||'');
+      var reward=Number(gp.reward)||0;
+      var doneAt=Number(gp.doneAt)||0;
+      return grindLogs.some(function(l){
+        if(l.title!==title||l.reward!==reward)return false;
+        // Collection normally follows completion. Allow undated legacy logs,
+        // and a generous 31-day window for rewards collected much later.
+        return !l.when||!doneAt||(l.when>=doneAt&&l.when-doneAt<=31*86400000);
+      });
+    }
+    var removed=0;
+    function scrubHolder(holder){
+      if(!holder||!Array.isArray(holder.grindPending))return;
+      var before=holder.grindPending.length;
+      holder.grindPending=holder.grindPending.filter(function(gp){return !isCollected(gp);});
+      removed+=before-holder.grindPending.length;
+    }
+    scrubHolder(state.questState);
+    var sp=state.questState&&state.questState.setProgress;
+    if(sp&&typeof sp==='object')Object.keys(sp).forEach(function(k){scrubHolder(sp[k]);});
+    return removed;
+  }
+
   function cloneState(){
     var out={};
     try{ out.state=JSON.parse(JSON.stringify(window.S||{})); }catch(e){ out.state=window.S||{}; }
-    // v1.7299 — Catalog is embedded/separately exportable; runtime backups omit it.
+    try{scrubCollectedGrindGhosts(out.state);}catch(_scrubExportErr){}
+    // v1.7300 — Catalog is embedded/separately exportable; runtime backups omit it.
     out.catalog_reference={embedded:true,version:(window.RQ_CLIENT_VERSION||'unknown')};
     try{
       out.contracts={
@@ -51062,7 +51106,7 @@ window.RQ_CONTENT_BRIDGE={
     return out;
   }
   function saveEmergencySnapshot(reason){
-    // v1.7299 — Keep only a tiny health marker. Never store a duplicate full
+    // v1.7300 — Keep only a tiny health marker. Never store a duplicate full
     // runtime or catalog snapshot in localStorage.
     try{
       localStorage.setItem('rq_offline_last:'+safeUid(),JSON.stringify({
@@ -51086,7 +51130,7 @@ window.RQ_CONTENT_BRIDGE={
     if(typeof syncStatus==='function')syncStatus('Offline backup exported '+new Date().toLocaleTimeString(),'var(--forest)');
   }
   function transactionalWriteRuntime(targetKey,serialized){
-    // v1.7299 — Free only redundant catalog/rescue copies, hold them in memory,
+    // v1.7300 — Free only redundant catalog/rescue copies, hold them in memory,
     // write+verify the imported runtime, and roll back the removed keys if the
     // write does not succeed. The current target runtime is never deleted first.
     var removed=[];
@@ -51126,7 +51170,11 @@ window.RQ_CONTENT_BRIDGE={
         // v1.7283 — Deep-clone the source so runtime migrations cannot mutate
         // the parsed backup object that we use for authoritative restoration.
         var imported=JSON.parse(JSON.stringify(newState));
-        // v1.7299 — Restore contracts explicitly without touching quest state.
+        // v1.7300 — Repair stale collected-grind archive entries created by
+        // older builds before any authoritative quest-state snapshot is taken.
+        var scrubbedGrinds=0;
+        try{scrubbedGrinds=scrubCollectedGrindGhosts(imported);}catch(_scrubImportErr){}
+        // v1.7300 — Restore contracts explicitly without touching quest state.
         if(payload.contracts&&typeof payload.contracts==='object'){
           ['active','archived','archGroups','archCollapsed','taskGroups','projects','kudos','lastFavCheck'].forEach(function(k){
             if(Object.prototype.hasOwnProperty.call(payload.contracts,k)){
@@ -51205,7 +51253,7 @@ window.RQ_CONTENT_BRIDGE={
 
         // Put the imported save into the exact active namespace, then route it
         // through the app's normal load/migration bootstrap.
-        // v1.7299 — Resolve a stable device/account namespace explicitly.
+        // v1.7300 — Resolve a stable device/account namespace explicitly.
         // localSaveKey() may itself be influenced by stale auth state, so prefer
         // the remembered local UID and persist the chosen key for the next boot.
         var rememberedUid='';
@@ -51360,7 +51408,7 @@ window.RQ_CONTENT_BRIDGE={
         }catch(e){console.warn('[offline rescue] Post-import render warning',e);}
         saveEmergencySnapshot('imported_backup');
         // The serialized runtime was read back successfully before live state was changed.
-        alert('Backup imported locally. Restored '+(S.gold||0)+' GP, '+(S.qpBalance||0)+' QP, and preserved quest-cycle progress. The app will now reload from that imported local state.');
+        alert('Backup imported locally. Restored '+(S.gold||0)+' GP, '+(S.qpBalance||0)+' QP, and preserved quest-cycle progress.'+(scrubbedGrinds?' Removed '+scrubbedGrinds+' previously collected grind inbox ghost'+(scrubbedGrinds===1?'':'s')+'.':'')+' The app will now reload from that imported local state.');
         // A reload is intentional: many older subsystems cache references to
         // nested quest arrays during boot. Reloading guarantees every renderer
         // and timer binds to the imported state rather than stale pre-import
