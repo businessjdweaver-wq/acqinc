@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7306 Offline Grind Recovery</title>
+<title>Relentless Quest in Development v1.7307 Offline Grind Diagnostics</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7305 Fast-Level Downtime Refresh</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7307 Offline Grind Diagnostics</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4159,6 +4159,17 @@ body.dev-active #app{margin-top:36px;}
     <div id="cc-list" style="font-size:.85em;max-height:300px;overflow-y:auto"></div>
   </div>
 
+  <div class="set-sec" id="settings-runtime-diagnostics-sec">
+    <div class="set-sec-ttl">🧪 Runtime Diagnostics</div>
+    <div id="rq-runtime-diag-summary" style="font-family:monospace;font-size:.78em;line-height:1.55;white-space:pre-wrap;background:rgba(44,26,14,.06);border:1px solid var(--parchment-deep);border-radius:6px;padding:9px;margin-bottom:8px">Diagnostics not yet refreshed.</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn bink sm" type="button" id="btn-rq-diag-refresh">↻ Refresh</button>
+      <button class="btn bpur sm" type="button" id="btn-rq-grind-recover">⚒ Run Grind Recovery</button>
+      <button class="btn bink sm" type="button" id="btn-rq-grind-scan">✉ Force Inbox Scan</button>
+    </div>
+    <div class="hint" style="margin-top:7px">Recovery reads the legacy <code>acqv7</code> save, restores only elapsed unpaid grinds, deduplicates mirrored cycle copies, and leaves active future shifts untouched.</div>
+  </div>
+
   <div class="set-sec" id="settings-branding-zone" style="text-align:center;padding:8px 0 4px">
     <div style="font-family:\'Cinzel\',serif;font-size:1.1em;color:var(--gold-dark);font-weight:700">
       Relentless Quest
@@ -4170,7 +4181,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7305 — Fast-Level Downtime Refresh
+      Version 1.7307 — Offline Grind Diagnostics
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -5497,6 +5508,14 @@ body.dev-active #app{margin-top:36px;}
 </nav>
 
 <script>
+// v1.7307 — single source of truth for release identity.
+var BUILD={
+  version:'1.7307',
+  codename:'Offline Grind Diagnostics',
+  built:'2026-07-12'
+};
+window.BUILD=BUILD;
+console.log('[Relentless Quest build]',BUILD);
 
 // === PATCH: Monster Name Resolver ===
 function resolveMonsterName(monsterId) {
@@ -40199,7 +40218,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7305-fastlevel-downtime-refresh';
+var RQ_CLIENT_VERSION='v1.7307-offline-grind-diagnostics';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -45971,6 +45990,152 @@ function qddAutoAssignAndSubmit(){
   }
 }
 
+
+/* ═══════════════════════ v1.7307 OFFLINE GRIND DIAGNOSTICS / RECOVERY ═══════════════════════ */
+var RQ_GRIND_RECOVERY_KEY='rq_grind_recovery_v17307';
+var RQ_GRIND_RECOVERY_LAST={ran:false,found:0,eligible:0,restored:0,skippedPaid:0,skippedDuplicate:0,error:''};
+
+function rqGrindCharNamesFromState(state,gp){
+  return (gp&&gp.chars||[]).map(function(ci){
+    var c=state&&state.party&&state.party[ci];
+    return c&&c.name?String(c.name):('#'+ci);
+  }).sort();
+}
+function rqGrindEntryKey(state,gp){
+  return [String(gp&&gp.title||''),rqGrindCharNamesFromState(state,gp).join('|'),String(parseInt(gp&&gp.reward)||0),String(parseInt(gp&&gp.doneAt)||0)].join('::');
+}
+function rqGrindPaidSignature(state,gp){
+  return [String(gp&&gp.title||'').replace(/\s*\[Grind\]\s*$/i,''),rqGrindCharNamesFromState(state,gp).join('|')].join('::');
+}
+function rqPaidGrindSignatures(state){
+  var paid={};
+  (state&&state.questLog||[]).forEach(function(row){
+    if(!row||row.type!=='grind')return;
+    var title=String(row.questTitle||'').replace(/\s*\[Grind\]\s*$/i,'');
+    var names=(row.chars||[]).map(function(c){return String(c&&c.name||'');}).filter(Boolean).sort();
+    paid[title+'::'+names.join('|')]=true;
+  });
+  return paid;
+}
+function rqReadLegacyState(){
+  try{
+    var raw=localStorage.getItem('acqv7');
+    return raw?JSON.parse(raw):null;
+  }catch(e){RQ_GRIND_RECOVERY_LAST.error='Legacy parse failed: '+(e&&e.message||e);return null;}
+}
+function rqCollectLegacyGrinds(legacy){
+  var out=[],seen={};
+  function add(arr,src){
+    (arr||[]).forEach(function(gp){
+      if(!gp)return;
+      var key=rqGrindEntryKey(legacy,gp);
+      if(seen[key])return;
+      seen[key]=true;
+      out.push({gp:gp,src:src,key:key});
+    });
+  }
+  add(legacy&&legacy.questState&&legacy.questState.grindPending,'questState.grindPending');
+  var sp=legacy&&legacy.questState&&legacy.questState.setProgress||{};
+  Object.keys(sp).forEach(function(sid){add(sp[sid]&&sp[sid].grindPending,'setProgress.'+sid);});
+  return out;
+}
+function rqRunOfflineGrindRecovery(opts){
+  opts=opts||{};
+  var report={ran:true,found:0,eligible:0,restored:0,skippedPaid:0,skippedDuplicate:0,error:'',at:new Date().toISOString()};
+  try{
+    var legacy=rqReadLegacyState();
+    if(!legacy){report.error=RQ_GRIND_RECOVERY_LAST.error||'No readable legacy acqv7 save found.';RQ_GRIND_RECOVERY_LAST=report;rqRenderRuntimeDiagnostics();return report;}
+    var all=rqCollectLegacyGrinds(legacy); report.found=all.length;
+    var now=Date.now();
+    var paid=rqPaidGrindSignatures(S);
+    if(!S.questState)S.questState={};
+    if(!Array.isArray(S.questState.grindPending))S.questState.grindPending=[];
+    var liveKeys={};
+    S.questState.grindPending.forEach(function(gp){liveKeys[rqGrindEntryKey(S,gp)]=true;});
+    all.forEach(function(item){
+      var gp=item.gp;
+      if(!gp||!gp.doneAt||Number(gp.doneAt)>now)return;
+      report.eligible++;
+      if(paid[rqGrindPaidSignature(legacy,gp)]){report.skippedPaid++;return;}
+      var liveEquivalentKey=rqGrindEntryKey(S,gp);
+      if(liveKeys[liveEquivalentKey]){report.skippedDuplicate++;return;}
+      var restored=JSON.parse(JSON.stringify(gp));
+      restored._recoveredOffline=true;
+      restored._recoveredAt=Date.now();
+      restored._recoveredFrom=item.src;
+      delete restored._inboxDismissed;
+      S.questState.grindPending.push(restored);
+      liveKeys[liveEquivalentKey]=true;
+      report.restored++;
+    });
+    if(report.restored){
+      if(typeof saveLocalState==='function')saveLocalState();
+      if(typeof renderInboxBadge==='function')renderInboxBadge();
+      if(typeof renderAdventure==='function')try{renderAdventure();}catch(_e){}
+    }
+    try{localStorage.setItem(RQ_GRIND_RECOVERY_KEY,JSON.stringify(report));}catch(_e){}
+  }catch(e){report.error=String(e&&e.stack||e);}
+  RQ_GRIND_RECOVERY_LAST=report;
+  rqRenderRuntimeDiagnostics();
+  console.log('[RQ grind recovery]',report);
+  return report;
+}
+function rqRuntimeDiagnosticsData(){
+  var legacy=rqReadLegacyState();
+  var legacyGrinds=legacy?rqCollectLegacyGrinds(legacy):[];
+  var now=Date.now();
+  var eligible=legacyGrinds.filter(function(x){return x.gp&&Number(x.gp.doneAt)<=now;});
+  var readyLive=((S&&S.questState&&S.questState.grindPending)||[]).filter(function(gp){return gp&&Number(gp.doneAt)<=now;});
+  var marker=null;try{marker=JSON.parse(localStorage.getItem(RQ_GRIND_RECOVERY_KEY)||'null');}catch(e){}
+  var inboxCount=null;try{inboxCount=typeof _collectInboxItems==='function'?_collectInboxItems().length:null;}catch(e){}
+  return {
+    build:BUILD.version+' — '+BUILD.codename,
+    runtimeKey:typeof localSaveKey==='function'?localSaveKey():'unknown',
+    legacySavePresent:!!legacy,
+    legacyUniqueGrinds:legacyGrinds.length,
+    legacyElapsedGrinds:eligible.length,
+    liveGrinds:((S&&S.questState&&S.questState.grindPending)||[]).length,
+    liveReadyGrinds:readyLive.length,
+    inboxItems:inboxCount,
+    lastRecovery:marker||RQ_GRIND_RECOVERY_LAST
+  };
+}
+function rqRenderRuntimeDiagnostics(){
+  var el=document.getElementById('rq-runtime-diag-summary');
+  if(!el)return;
+  var d=rqRuntimeDiagnosticsData();
+  var r=d.lastRecovery||{};
+  el.textContent=[
+    'Build: '+d.build,
+    'Runtime key: '+d.runtimeKey,
+    'Legacy acqv7 present: '+(d.legacySavePresent?'yes':'no'),
+    'Legacy unique grinds: '+d.legacyUniqueGrinds,
+    'Legacy elapsed grinds: '+d.legacyElapsedGrinds,
+    'Live grinds: '+d.liveGrinds+' (ready: '+d.liveReadyGrinds+')',
+    'Inbox items: '+(d.inboxItems===null?'unavailable':d.inboxItems),
+    'Last recovery: found '+(r.found||0)+', eligible '+(r.eligible||0)+', restored '+(r.restored||0)+', paid '+(r.skippedPaid||0)+', duplicate '+(r.skippedDuplicate||0)+(r.error?'\nError: '+r.error:'')
+  ].join('\n');
+}
+function rqInstallRuntimeDiagnostics(){
+  var refresh=document.getElementById('btn-rq-diag-refresh');
+  var recover=document.getElementById('btn-rq-grind-recover');
+  var scan=document.getElementById('btn-rq-grind-scan');
+  if(refresh&&!refresh._wired){refresh.addEventListener('click',rqRenderRuntimeDiagnostics);refresh._wired=true;}
+  if(recover&&!recover._wired){recover.addEventListener('click',function(){
+    var r=rqRunOfflineGrindRecovery({manual:true});
+    alert(r.error?('Recovery failed: '+r.error):('Recovery complete. Restored '+r.restored+' elapsed grind'+(r.restored===1?'':'s')+'.'));
+  });recover._wired=true;}
+  if(scan&&!scan._wired){scan.addEventListener('click',function(){
+    if(typeof renderInboxBadge==='function')renderInboxBadge();
+    rqRenderRuntimeDiagnostics();
+    if(typeof openOv==='function')openOv('ov-inbox');
+  });scan._wired=true;}
+  rqRenderRuntimeDiagnostics();
+}
+window.rqRunOfflineGrindRecovery=rqRunOfflineGrindRecovery;
+window.rqRuntimeDiagnosticsData=rqRuntimeDiagnosticsData;
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',rqInstallRuntimeDiagnostics);else rqInstallRuntimeDiagnostics();
+
 /* ═══════════════════════ INIT ═══════════════════════ */
 restoreLogin();
 load();
@@ -46007,6 +46172,7 @@ function initSession(pullFromCloud){
     if(isNaN(r)||r<=0){var gDef=GRIND.filter(function(g){return g.id===gp.id;})[0];r=gDef?Math.floor(gDef.baseGp*0.9):20;}
     return Object.assign({},gp,{reward:r,chars:gp.chars||[]});
   });
+  if(typeof rqRunOfflineGrindRecovery==='function')rqRunOfflineGrindRecovery({boot:true}); // v1.7307
   if(S.questState.cycleNum===undefined)S.questState.cycleNum=0;
   checkQuestCycleReset();
   if(!S.archGroups)S.archGroups=[];
@@ -51466,95 +51632,6 @@ window.RQ_CONTENT_BRIDGE={
 // is bound to the embedded catalog and that already-elapsed cycle pauses remain
 // expired. This does not mark quests complete; it only prevents stale pause
 // timestamps from being restarted during the offline transition.
-// v1.7306 — Recover elapsed, unpaid grind missions stranded in the legacy
-// unnamespaced `acqv7` save during the local-only/offline transition. The
-// offline runtime now writes to `acqv7:<local uid>`, so older completed shifts
-// can remain invisible even though their QP cost and full pending records are
-// still present on this device. Recovery is conservative and idempotent:
-//   • only already-elapsed entries are considered;
-//   • mirrors inside setProgress are ignored (live legacy grindPending only);
-//   • exact duplicates already live are skipped;
-//   • entries with a matching grind collection record in questLog are skipped;
-//   • a marker prevents repeated migration after a successful save.
-function rqRecoverLegacyOfflineGrinds(){
-  try{
-    if(!S||!S.questState)return {recovered:0,reason:'state unavailable'};
-    var runtimeKey=(typeof localSaveKey==='function')?localSaveKey():'';
-    if(!runtimeKey||runtimeKey==='acqv7')return {recovered:0,reason:'legacy runtime'};
-    var marker='rq_legacy_grind_recovery_v17306:'+runtimeKey;
-    if(localStorage.getItem(marker)==='1')return {recovered:0,reason:'already checked'};
-    var raw=localStorage.getItem('acqv7');
-    if(!raw){localStorage.setItem(marker,'1');return {recovered:0,reason:'no legacy save'};}
-    var legacy=JSON.parse(raw);
-    var oldQs=legacy&&legacy.questState;
-    var candidates=oldQs&&Array.isArray(oldQs.grindPending)?oldQs.grindPending:[];
-    if(!candidates.length){localStorage.setItem(marker,'1');return {recovered:0,reason:'no legacy grinds'};}
-
-    var now=Date.now();
-    var live=S.questState.grindPending;
-    if(!Array.isArray(live))live=S.questState.grindPending=[];
-    var normNames=function(chars){
-      return (chars||[]).map(function(ci){
-        var c=S.party&&S.party[parseInt(ci,10)];return c&&c.name?String(c.name):'';
-      }).filter(Boolean).sort().join('|').toLowerCase();
-    };
-    var sig=function(g){
-      return [String(g.id||''),Number(g.doneAt)||0,Number(g.reward)||0,
-        (g.chars||[]).map(function(ci){return parseInt(ci,10);}).sort(function(a,b){return a-b;}).join(','),
-        String(g.territory||'')].join('::');
-    };
-    var liveSigs={};
-    live.forEach(function(g){if(g)liveSigs[sig(g)]=true;});
-    var logs=(S.questLog||[]).filter(function(x){return x&&x.type==='grind';});
-    var seen={};
-    var recovered=[];
-
-    candidates.forEach(function(g){
-      if(!g||(Number(g.doneAt)||0)>now)return;
-      var key=sig(g);
-      if(seen[key]||liveSigs[key])return;
-      seen[key]=true;
-      var title=String(g.title||'').replace(/\s*\[Grind\]\s*$/i,'').trim().toLowerCase();
-      var names=normNames(g.chars);
-      var paid=logs.some(function(row){
-        var logTitle=String(row.questTitle||'').replace(/\s*\[Grind\]\s*$/i,'').trim().toLowerCase();
-        if(title&&logTitle!==title)return false;
-        if(Number(row.reward)||0){if((Number(row.reward)||0)!==(Number(g.reward)||0))return false;}
-        var rowNames='';
-        if(Array.isArray(row.chars))rowNames=row.chars.map(function(c){return c&&c.name?String(c.name):'';}).filter(Boolean).sort().join('|').toLowerCase();
-        return !names||!rowNames||names===rowNames;
-      });
-      if(paid)return;
-      var copy={
-        id:g.id,title:g.title||'Grind Mission',
-        chars:(g.chars||[]).map(function(ci){return parseInt(ci,10);}).filter(function(ci){return !isNaN(ci);}),
-        squadName:g.squadName||'',reward:parseInt(g.reward,10)||20,
-        territory:g.territory||S.originTerritory||'',doneAt:Number(g.doneAt)||0,
-        _offlineRecovered:true
-      };
-      live.push(copy);liveSigs[key]=true;recovered.push(copy);
-    });
-
-    if(recovered.length){
-      // Keep the active set mirror coherent without copying into unrelated archives.
-      var sid=S.questState.setId||'';
-      if(sid&&S.questState.setProgress&&S.questState.setProgress[sid]){
-        S.questState.setProgress[sid].grindPending=JSON.parse(JSON.stringify(live));
-      }
-      if(typeof saveLocalState==='function')saveLocalState();
-      else if(typeof save==='function')save();
-      if(typeof renderInboxBadge==='function')renderInboxBadge();
-      console.warn('[offline grind recovery] restored '+recovered.length+' elapsed unpaid grind mission(s) from legacy acqv7 save.');
-    }
-    localStorage.setItem(marker,'1');
-    return {recovered:recovered.length,items:recovered};
-  }catch(e){
-    console.warn('[offline grind recovery] failed',e);
-    return {recovered:0,error:String(e&&e.message||e)};
-  }
-}
-window.rqRecoverLegacyOfflineGrinds=rqRecoverLegacyOfflineGrinds;
-
 function rqOfflineCatalogPostBoot(){
   try{
     if(typeof rqInstallEmbeddedOfflineCatalog==='function')rqInstallEmbeddedOfflineCatalog(false);
@@ -51588,9 +51665,6 @@ function rqOfflineCatalogPostBoot(){
       S.cyclePauseStarts['cantica-hh-01']=expired;
     }
     if(typeof mergeCustomContent==='function')mergeCustomContent();
-    // v1.7306 — Run after the offline catalog/state binding is stable, before
-    // the normal post-boot save. Recovered rows immediately light the Inbox.
-    if(typeof rqRecoverLegacyOfflineGrinds==='function')rqRecoverLegacyOfflineGrinds();
     if(typeof saveLocalState==='function')saveLocalState();
     if(typeof renderAdv==='function')renderAdv();
     if(typeof renderInbox==='function')renderInbox();
@@ -51853,6 +51927,24 @@ function setOfflineBadge(text){
       return r;
     };
   }
+})();
+</script>
+
+
+<script>
+(function(){
+  function applyBuildIdentity(){
+    try{
+      document.title='Relentless Quest';
+      var badge=document.getElementById('app-version-badge');
+      if(badge)badge.textContent='Version '+BUILD.version+' — '+BUILD.codename;
+      var login=document.querySelector('#ov-login div[style*="font-family:monospace"]');
+      if(login)login.textContent='v'+BUILD.version+' '+BUILD.codename;
+      var dev=document.getElementById('dev-bar-version');
+      if(dev)dev.textContent='v'+BUILD.version+' '+BUILD.codename;
+    }catch(e){console.warn('[build identity]',e);}
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',applyBuildIdentity);else applyBuildIdentity();
 })();
 </script>
 
