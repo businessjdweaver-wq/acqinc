@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7305 Fast-Level Downtime Refresh</title>
+<title>Relentless Quest in Development v1.7306 Offline Grind Recovery</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -51466,6 +51466,95 @@ window.RQ_CONTENT_BRIDGE={
 // is bound to the embedded catalog and that already-elapsed cycle pauses remain
 // expired. This does not mark quests complete; it only prevents stale pause
 // timestamps from being restarted during the offline transition.
+// v1.7306 — Recover elapsed, unpaid grind missions stranded in the legacy
+// unnamespaced `acqv7` save during the local-only/offline transition. The
+// offline runtime now writes to `acqv7:<local uid>`, so older completed shifts
+// can remain invisible even though their QP cost and full pending records are
+// still present on this device. Recovery is conservative and idempotent:
+//   • only already-elapsed entries are considered;
+//   • mirrors inside setProgress are ignored (live legacy grindPending only);
+//   • exact duplicates already live are skipped;
+//   • entries with a matching grind collection record in questLog are skipped;
+//   • a marker prevents repeated migration after a successful save.
+function rqRecoverLegacyOfflineGrinds(){
+  try{
+    if(!S||!S.questState)return {recovered:0,reason:'state unavailable'};
+    var runtimeKey=(typeof localSaveKey==='function')?localSaveKey():'';
+    if(!runtimeKey||runtimeKey==='acqv7')return {recovered:0,reason:'legacy runtime'};
+    var marker='rq_legacy_grind_recovery_v17306:'+runtimeKey;
+    if(localStorage.getItem(marker)==='1')return {recovered:0,reason:'already checked'};
+    var raw=localStorage.getItem('acqv7');
+    if(!raw){localStorage.setItem(marker,'1');return {recovered:0,reason:'no legacy save'};}
+    var legacy=JSON.parse(raw);
+    var oldQs=legacy&&legacy.questState;
+    var candidates=oldQs&&Array.isArray(oldQs.grindPending)?oldQs.grindPending:[];
+    if(!candidates.length){localStorage.setItem(marker,'1');return {recovered:0,reason:'no legacy grinds'};}
+
+    var now=Date.now();
+    var live=S.questState.grindPending;
+    if(!Array.isArray(live))live=S.questState.grindPending=[];
+    var normNames=function(chars){
+      return (chars||[]).map(function(ci){
+        var c=S.party&&S.party[parseInt(ci,10)];return c&&c.name?String(c.name):'';
+      }).filter(Boolean).sort().join('|').toLowerCase();
+    };
+    var sig=function(g){
+      return [String(g.id||''),Number(g.doneAt)||0,Number(g.reward)||0,
+        (g.chars||[]).map(function(ci){return parseInt(ci,10);}).sort(function(a,b){return a-b;}).join(','),
+        String(g.territory||'')].join('::');
+    };
+    var liveSigs={};
+    live.forEach(function(g){if(g)liveSigs[sig(g)]=true;});
+    var logs=(S.questLog||[]).filter(function(x){return x&&x.type==='grind';});
+    var seen={};
+    var recovered=[];
+
+    candidates.forEach(function(g){
+      if(!g||(Number(g.doneAt)||0)>now)return;
+      var key=sig(g);
+      if(seen[key]||liveSigs[key])return;
+      seen[key]=true;
+      var title=String(g.title||'').replace(/\s*\[Grind\]\s*$/i,'').trim().toLowerCase();
+      var names=normNames(g.chars);
+      var paid=logs.some(function(row){
+        var logTitle=String(row.questTitle||'').replace(/\s*\[Grind\]\s*$/i,'').trim().toLowerCase();
+        if(title&&logTitle!==title)return false;
+        if(Number(row.reward)||0){if((Number(row.reward)||0)!==(Number(g.reward)||0))return false;}
+        var rowNames='';
+        if(Array.isArray(row.chars))rowNames=row.chars.map(function(c){return c&&c.name?String(c.name):'';}).filter(Boolean).sort().join('|').toLowerCase();
+        return !names||!rowNames||names===rowNames;
+      });
+      if(paid)return;
+      var copy={
+        id:g.id,title:g.title||'Grind Mission',
+        chars:(g.chars||[]).map(function(ci){return parseInt(ci,10);}).filter(function(ci){return !isNaN(ci);}),
+        squadName:g.squadName||'',reward:parseInt(g.reward,10)||20,
+        territory:g.territory||S.originTerritory||'',doneAt:Number(g.doneAt)||0,
+        _offlineRecovered:true
+      };
+      live.push(copy);liveSigs[key]=true;recovered.push(copy);
+    });
+
+    if(recovered.length){
+      // Keep the active set mirror coherent without copying into unrelated archives.
+      var sid=S.questState.setId||'';
+      if(sid&&S.questState.setProgress&&S.questState.setProgress[sid]){
+        S.questState.setProgress[sid].grindPending=JSON.parse(JSON.stringify(live));
+      }
+      if(typeof saveLocalState==='function')saveLocalState();
+      else if(typeof save==='function')save();
+      if(typeof renderInboxBadge==='function')renderInboxBadge();
+      console.warn('[offline grind recovery] restored '+recovered.length+' elapsed unpaid grind mission(s) from legacy acqv7 save.');
+    }
+    localStorage.setItem(marker,'1');
+    return {recovered:recovered.length,items:recovered};
+  }catch(e){
+    console.warn('[offline grind recovery] failed',e);
+    return {recovered:0,error:String(e&&e.message||e)};
+  }
+}
+window.rqRecoverLegacyOfflineGrinds=rqRecoverLegacyOfflineGrinds;
+
 function rqOfflineCatalogPostBoot(){
   try{
     if(typeof rqInstallEmbeddedOfflineCatalog==='function')rqInstallEmbeddedOfflineCatalog(false);
@@ -51499,6 +51588,9 @@ function rqOfflineCatalogPostBoot(){
       S.cyclePauseStarts['cantica-hh-01']=expired;
     }
     if(typeof mergeCustomContent==='function')mergeCustomContent();
+    // v1.7306 — Run after the offline catalog/state binding is stable, before
+    // the normal post-boot save. Recovered rows immediately light the Inbox.
+    if(typeof rqRecoverLegacyOfflineGrinds==='function')rqRecoverLegacyOfflineGrinds();
     if(typeof saveLocalState==='function')saveLocalState();
     if(typeof renderAdv==='function')renderAdv();
     if(typeof renderInbox==='function')renderInbox();
