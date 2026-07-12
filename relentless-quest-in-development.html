@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7307 Offline Grind Diagnostics</title>
+<title>Relentless Quest in Development v1.7308 Offline Grind Recovery Fix</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7307 Offline Grind Diagnostics</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7308 Offline Grind Recovery Fix</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4181,7 +4181,7 @@ body.dev-active #app{margin-top:36px;}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7307 — Offline Grind Diagnostics
+      Version 1.7308 — Offline Grind Recovery Fix
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -5510,8 +5510,8 @@ body.dev-active #app{margin-top:36px;}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7307',
-  codename:'Offline Grind Diagnostics',
+  version:'1.7308',
+  codename:'Offline Grind Recovery Fix',
   built:'2026-07-12'
 };
 window.BUILD=BUILD;
@@ -40218,7 +40218,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7307-offline-grind-diagnostics';
+var RQ_CLIENT_VERSION='v1.7308-offline-grind-recovery-fix';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -45991,8 +45991,8 @@ function qddAutoAssignAndSubmit(){
 }
 
 
-/* ═══════════════════════ v1.7307 OFFLINE GRIND DIAGNOSTICS / RECOVERY ═══════════════════════ */
-var RQ_GRIND_RECOVERY_KEY='rq_grind_recovery_v17307';
+/* ═══════════════════════ v1.7308 OFFLINE GRIND RECOVERY FIX / DIAGNOSTICS ═══════════════════════ */
+var RQ_GRIND_RECOVERY_KEY='rq_grind_recovery_v17308';
 var RQ_GRIND_RECOVERY_LAST={ran:false,found:0,eligible:0,restored:0,skippedPaid:0,skippedDuplicate:0,error:''};
 
 function rqGrindCharNamesFromState(state,gp){
@@ -46008,12 +46008,18 @@ function rqGrindPaidSignature(state,gp){
   return [String(gp&&gp.title||'').replace(/\s*\[Grind\]\s*$/i,''),rqGrindCharNamesFromState(state,gp).join('|')].join('::');
 }
 function rqPaidGrindSignatures(state){
+  // v1.7308 — Keep the latest actual payout timestamp for each recurring
+  // title + party signature. A historical payout for the same recurring
+  // grind must not suppress a later assignment of that grind.
   var paid={};
   (state&&state.questLog||[]).forEach(function(row){
     if(!row||row.type!=='grind')return;
     var title=String(row.questTitle||'').replace(/\s*\[Grind\]\s*$/i,'');
     var names=(row.chars||[]).map(function(c){return String(c&&c.name||'');}).filter(Boolean).sort();
-    paid[title+'::'+names.join('|')]=true;
+    var key=title+'::'+names.join('|');
+    var paidAt=Date.parse(row.completedAt||row.collectedAt||row.at||'');
+    if(!isFinite(paidAt))paidAt=0;
+    paid[key]=Math.max(Number(paid[key]||0),paidAt);
   });
   return paid;
 }
@@ -46056,7 +46062,10 @@ function rqRunOfflineGrindRecovery(opts){
       var gp=item.gp;
       if(!gp||!gp.doneAt||Number(gp.doneAt)>now)return;
       report.eligible++;
-      if(paid[rqGrindPaidSignature(legacy,gp)]){report.skippedPaid++;return;}
+      var paidAt=Number(paid[rqGrindPaidSignature(legacy,gp)]||0);
+      // Only a payout recorded at or after this assignment became due can
+      // prove this specific recurring assignment was already collected.
+      if(paidAt&&paidAt>=Number(gp.doneAt||0)){report.skippedPaid++;return;}
       var liveEquivalentKey=rqGrindEntryKey(S,gp);
       if(liveKeys[liveEquivalentKey]){report.skippedDuplicate++;return;}
       var restored=JSON.parse(JSON.stringify(gp));
@@ -46172,7 +46181,7 @@ function initSession(pullFromCloud){
     if(isNaN(r)||r<=0){var gDef=GRIND.filter(function(g){return g.id===gp.id;})[0];r=gDef?Math.floor(gDef.baseGp*0.9):20;}
     return Object.assign({},gp,{reward:r,chars:gp.chars||[]});
   });
-  if(typeof rqRunOfflineGrindRecovery==='function')rqRunOfflineGrindRecovery({boot:true}); // v1.7307
+  if(typeof rqRunOfflineGrindRecovery==='function')rqRunOfflineGrindRecovery({boot:true}); // v1.7308
   if(S.questState.cycleNum===undefined)S.questState.cycleNum=0;
   checkQuestCycleReset();
   if(!S.archGroups)S.archGroups=[];
