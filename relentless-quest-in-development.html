@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7308 Offline Grind Recovery Fix</title>
+<title>Relentless Quest in Development v1.7309 Offline Grind Timestamp Fix</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7308 Offline Grind Recovery Fix</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7309 Offline Grind Timestamp Fix</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5510,8 +5510,8 @@ body.dev-active #app{margin-top:36px;}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7308',
-  codename:'Offline Grind Recovery Fix',
+  version:'1.7309',
+  codename:'Offline Grind Timestamp Fix',
   built:'2026-07-12'
 };
 window.BUILD=BUILD;
@@ -40218,7 +40218,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7308-offline-grind-recovery-fix';
+var RQ_CLIENT_VERSION='v1.7309-offline-grind-timestamp-fix';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -45991,8 +45991,8 @@ function qddAutoAssignAndSubmit(){
 }
 
 
-/* ═══════════════════════ v1.7308 OFFLINE GRIND RECOVERY FIX / DIAGNOSTICS ═══════════════════════ */
-var RQ_GRIND_RECOVERY_KEY='rq_grind_recovery_v17308';
+/* ═══════════════════════ v1.7309 OFFLINE GRIND TIMESTAMP FIX / DIAGNOSTICS ═══════════════════════ */
+var RQ_GRIND_RECOVERY_KEY='rq_grind_recovery_v17309';
 var RQ_GRIND_RECOVERY_LAST={ran:false,found:0,eligible:0,restored:0,skippedPaid:0,skippedDuplicate:0,error:''};
 
 function rqGrindCharNamesFromState(state,gp){
@@ -46007,18 +46007,37 @@ function rqGrindEntryKey(state,gp){
 function rqGrindPaidSignature(state,gp){
   return [String(gp&&gp.title||'').replace(/\s*\[Grind\]\s*$/i,''),rqGrindCharNamesFromState(state,gp).join('|')].join('::');
 }
+function rqParseQuestLogTime(value){
+  // v1.7309 — Safari can parse locale-formatted date strings inconsistently.
+  // Parse the exact RQ log format ourselves: M/D/YYYY, h:mm:ss AM/PM.
+  if(typeof value==='number'&&isFinite(value))return value;
+  var str=String(value||'').trim();
+  if(!str)return 0;
+  var m=str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}),?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+  if(m){
+    var mon=Number(m[1])-1,day=Number(m[2]),yr=Number(m[3]);
+    var hr=Number(m[4]),min=Number(m[5]),sec=Number(m[6]||0),ap=String(m[7]||'').toUpperCase();
+    if(ap==='PM'&&hr<12)hr+=12;
+    if(ap==='AM'&&hr===12)hr=0;
+    var ts=new Date(yr,mon,day,hr,min,sec,0).getTime();
+    return isFinite(ts)?ts:0;
+  }
+  // ISO timestamps remain safe and unambiguous.
+  if(/^\d{4}-\d{2}-\d{2}T/.test(str)){
+    var iso=Date.parse(str);return isFinite(iso)?iso:0;
+  }
+  return 0;
+}
 function rqPaidGrindSignatures(state){
-  // v1.7308 — Keep the latest actual payout timestamp for each recurring
-  // title + party signature. A historical payout for the same recurring
-  // grind must not suppress a later assignment of that grind.
+  // v1.7309 — Keep the latest actual payout timestamp for each recurring
+  // title + party signature, using strict timestamp parsing.
   var paid={};
   (state&&state.questLog||[]).forEach(function(row){
     if(!row||row.type!=='grind')return;
     var title=String(row.questTitle||'').replace(/\s*\[Grind\]\s*$/i,'');
     var names=(row.chars||[]).map(function(c){return String(c&&c.name||'');}).filter(Boolean).sort();
     var key=title+'::'+names.join('|');
-    var paidAt=Date.parse(row.completedAt||row.collectedAt||row.at||'');
-    if(!isFinite(paidAt))paidAt=0;
+    var paidAt=rqParseQuestLogTime(row.completedAt||row.collectedAt||row.at||'');
     paid[key]=Math.max(Number(paid[key]||0),paidAt);
   });
   return paid;
