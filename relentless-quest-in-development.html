@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7310 Preserve Completed Grinds</title>
+<title>Relentless Quest in Development v1.7311 Grind Test Controls</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7310 Preserve Completed Grinds</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7311 Grind Test Controls</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4166,6 +4166,8 @@ body.dev-active #app{margin-top:36px;}
       <button class="btn bink sm" type="button" id="btn-rq-diag-refresh">↻ Refresh</button>
       <button class="btn bpur sm" type="button" id="btn-rq-grind-recover">⚒ Run Grind Recovery</button>
       <button class="btn bink sm" type="button" id="btn-rq-grind-scan">✉ Force Inbox Scan</button>
+      <button class="btn bgn sm" type="button" id="btn-rq-grind-recreate">⚡ Recreate Grind Shift (5 min)</button>
+      <button class="btn bred sm" type="button" id="btn-rq-grind-force-complete">⏱ Force Complete Active Grinds</button>
     </div>
     <div class="hint" style="margin-top:7px">Recovery reads the legacy <code>acqv7</code> save, restores only elapsed unpaid grinds, deduplicates mirrored cycle copies, and leaves active future shifts untouched.</div>
   </div>
@@ -5510,8 +5512,8 @@ body.dev-active #app{margin-top:36px;}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7310',
-  codename:'Preserve Completed Grinds',
+  version:'1.7311',
+  codename:'Grind Test Controls',
   built:'2026-07-12'
 };
 window.BUILD=BUILD;
@@ -40218,7 +40220,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7310-preserve-completed-grinds';
+var RQ_CLIENT_VERSION='v1.7311-grind-test-controls';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -45991,7 +45993,7 @@ function qddAutoAssignAndSubmit(){
 }
 
 
-/* ═══════════════════════ v1.7310 PRESERVE COMPLETED GRINDS / DIAGNOSTICS ═══════════════════════ */
+/* ═══════════════════════ v1.7311 GRIND TEST CONTROLS / DIAGNOSTICS ═══════════════════════ */
 // v1.7310 — Quest-set reloads now retain elapsed grinds until collection.
 var RQ_GRIND_RECOVERY_KEY='rq_grind_recovery_v17310';
 var RQ_GRIND_RECOVERY_LAST={ran:false,found:0,eligible:0,restored:0,skippedPaid:0,skippedDuplicate:0,error:''};
@@ -46145,10 +46147,50 @@ function rqRenderRuntimeDiagnostics(){
     'Last recovery: found '+(r.found||0)+', eligible '+(r.eligible||0)+', restored '+(r.restored||0)+', paid '+(r.skippedPaid||0)+', duplicate '+(r.skippedDuplicate||0)+(r.error?'\nError: '+r.error:'')
   ].join('\n');
 }
+function rqRecreateGrindShiftFiveMinutes(){
+  var qs=S&&S.questState;
+  if(!qs)throw new Error('Quest state is unavailable.');
+  if(!Array.isArray(qs.grindPending))qs.grindPending=[];
+  var territories=_grindAutoEligibleTerritories();
+  if(!territories.length)return {territories:[],perTerritory:[],assigned:0,readyAt:0};
+  var before=qs.grindPending.length;
+  var perTerritory=[];
+  territories.forEach(function(terr){
+    perTerritory.push({territory:terr,assigned:_grindAutoAssignForTerritory(terr)});
+  });
+  var readyAt=Date.now()+5*60*1000;
+  var added=qs.grindPending.slice(before);
+  added.forEach(function(gp){gp.doneAt=readyAt;gp._debugFiveMinuteShift=true;});
+  if(typeof saveActiveSetProgress==='function')saveActiveSetProgress();
+  if(typeof save==='function')save();else if(typeof saveLocalState==='function')saveLocalState();
+  if(typeof renderAdv==='function')renderAdv();
+  if(typeof renderCycleMapCards==='function')renderCycleMapCards();
+  if(typeof renderGrindsList==='function'&&document.getElementById('ov-grinds-list')&&document.getElementById('ov-grinds-list').classList.contains('on'))renderGrindsList();
+  if(typeof renderInboxBadge==='function')renderInboxBadge();
+  rqRenderRuntimeDiagnostics();
+  return {territories:territories,perTerritory:perTerritory,assigned:added.length,readyAt:readyAt};
+}
+function rqForceCompleteActiveGrinds(){
+  var qs=S&&S.questState;
+  if(!qs||!Array.isArray(qs.grindPending))return {changed:0};
+  var now=Date.now()-1,changed=0;
+  qs.grindPending.forEach(function(gp){if(gp&&Number(gp.doneAt)>Date.now()){gp.doneAt=now;changed++;}});
+  if(changed){
+    if(typeof saveActiveSetProgress==='function')saveActiveSetProgress();
+    if(typeof save==='function')save();else if(typeof saveLocalState==='function')saveLocalState();
+    if(typeof renderAdv==='function')renderAdv();
+    if(typeof renderGrindsList==='function'&&document.getElementById('ov-grinds-list')&&document.getElementById('ov-grinds-list').classList.contains('on'))renderGrindsList();
+    if(typeof renderInboxBadge==='function')renderInboxBadge();
+  }
+  rqRenderRuntimeDiagnostics();
+  return {changed:changed};
+}
 function rqInstallRuntimeDiagnostics(){
   var refresh=document.getElementById('btn-rq-diag-refresh');
   var recover=document.getElementById('btn-rq-grind-recover');
   var scan=document.getElementById('btn-rq-grind-scan');
+  var recreate=document.getElementById('btn-rq-grind-recreate');
+  var forceComplete=document.getElementById('btn-rq-grind-force-complete');
   if(refresh&&!refresh._wired){refresh.addEventListener('click',rqRenderRuntimeDiagnostics);refresh._wired=true;}
   if(recover&&!recover._wired){recover.addEventListener('click',function(){
     var r=rqRunOfflineGrindRecovery({manual:true});
@@ -46159,10 +46201,25 @@ function rqInstallRuntimeDiagnostics(){
     rqRenderRuntimeDiagnostics();
     if(typeof openOv==='function')openOv('ov-inbox');
   });scan._wired=true;}
+  if(recreate&&!recreate._wired){recreate.addEventListener('click',function(){
+    if(!confirm('Recreate one full eligible grind shift with a 5-minute timer and no QP charge?'))return;
+    try{
+      var r=rqRecreateGrindShiftFiveMinutes();
+      var lines=(r.perTerritory||[]).map(function(x){return '• '+x.territory+': '+x.assigned;}).join('\n');
+      alert(r.assigned?('Created '+r.assigned+' grind assignment'+(r.assigned===1?'':'s')+' ready at '+new Date(r.readyAt).toLocaleTimeString()+'.'+(lines?'\n\n'+lines:'')):'No eligible grind assignments could be created.');
+    }catch(e){alert('Could not recreate grind shift: '+(e&&e.message||e));}
+  });recreate._wired=true;}
+  if(forceComplete&&!forceComplete._wired){forceComplete.addEventListener('click',function(){
+    if(!confirm('Set every currently active grind timer to complete now?'))return;
+    try{var r=rqForceCompleteActiveGrinds();alert('Force-completed '+r.changed+' active grind'+(r.changed===1?'':'s')+'.');}
+    catch(e){alert('Could not force-complete grinds: '+(e&&e.message||e));}
+  });forceComplete._wired=true;}
   rqRenderRuntimeDiagnostics();
 }
 window.rqRunOfflineGrindRecovery=rqRunOfflineGrindRecovery;
 window.rqRuntimeDiagnosticsData=rqRuntimeDiagnosticsData;
+window.rqRecreateGrindShiftFiveMinutes=rqRecreateGrindShiftFiveMinutes;
+window.rqForceCompleteActiveGrinds=rqForceCompleteActiveGrinds;
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',rqInstallRuntimeDiagnostics);else rqInstallRuntimeDiagnostics();
 
 /* ═══════════════════════ INIT ═══════════════════════ */
