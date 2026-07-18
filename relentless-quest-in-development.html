@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7319 Wizard Tower Languages & Halcyon Balance</title>
+<title>Relentless Quest in Development v1.7320 Training Rewards & Quest Unlock Descriptions</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7319 Wizard Tower Languages & Halcyon Balance</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7320 Training Rewards & Quest Unlock Descriptions</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -3306,6 +3306,9 @@ body.dev-active #app{margin-top:36px;}
         <label style="border-top:1px solid var(--parchment-deep);padding-top:8px;margin-top:4px;grid-column:1/-1;font-family:'Cinzel',serif;font-size:.8em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em">⚡ Contract GP Overflow</label><span></span>
         <label>Overflow QP per 1 overflow gp</label><input id="qpm-task-overflow-qp-rate" type="number" min="0" max="100" step="0.1" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
         <label>Daily overflow QP cap</label><input id="qpm-task-overflow-qp-cap" type="number" min="0" max="9999" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center">
+        <label style="border-top:1px solid var(--parchment-deep);padding-top:8px;margin-top:4px;grid-column:1/-1;font-family:'Cinzel',serif;font-size:.8em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em">🏋️ Training Hall Completion</label><span></span>
+        <label>Training reward</label><select id="qpm-training-reward" style="padding:6px;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment);text-align:center"><option value="">Ask on next completion</option><option value="gold">100 GP</option><option value="qp">100 QP</option></select>
+        <label style="grid-column:1/-1;font-size:.8em;color:var(--ink-light);font-style:italic">Both choices are credited from unrestricted funds and do not count toward daily earn caps.</label><span></span>
       </div>
     </div>
 
@@ -5512,8 +5515,8 @@ body.dev-active #app{margin-top:36px;}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7319',
-  codename:'Wizard Tower Languages & Halcyon Balance',
+  version:'1.7320',
+  codename:'Training Rewards & Quest Unlock Descriptions',
   built:'2026-07-12'
 };
 window.BUILD=BUILD;
@@ -7407,6 +7410,9 @@ function normalizeSettings(raw){
   // a spend-side purchase of gold.
   if(cfg.qp.taskOverflowQpRate===undefined)cfg.qp.taskOverflowQpRate=0.5; // QP per 1 overflow gp
   if(cfg.qp.taskOverflowQpDailyCap===undefined)cfg.qp.taskOverflowQpDailyCap=100;
+  // v1.7320 — Training completion reward is selected once, then retained.
+  // Empty means the next completed workout will ask the player.
+  if(cfg.qp.trainingRewardPreference!=='gold'&&cfg.qp.trainingRewardPreference!=='qp')cfg.qp.trainingRewardPreference='';
   if(cfg.qp.costQuestSplit===undefined)cfg.qp.costQuestSplit=10;
   if(cfg.qp.costMagicItem===undefined)cfg.qp.costMagicItem=25;
   if(cfg.qp.costRename===undefined)cfg.qp.costRename=5;
@@ -12238,7 +12244,32 @@ function claimTaskGold(requested, reason){
   var req=Math.max(0,Math.floor(Number(requested)||0));
   if(!isTrainingGold)req=Math.min(100,req);
   if(isTrainingGold){
-    if(req>0)goldAdd(req,reason,'task');
+    // v1.7320 — The first completed workout asks which unrestricted reward
+    // fund to use. That choice is retained and can be changed later in
+    // QP Manager → Settings → Training Hall Completion.
+    var _trainCfg=(typeof qpCfg==='function')?qpCfg():{};
+    var _trainPref=_trainCfg.trainingRewardPreference;
+    if(_trainPref!=='gold'&&_trainPref!=='qp'){
+      var chooseQp=confirm(
+        '🏋️ Training routine complete!\n\nChoose the default reward for completed training routines.\n\n'+
+        'OK — '+req+' QP (unrestricted)\nCancel — '+req+' GP (unrestricted)\n\n'+
+        'You can change this later in QP Settings.'
+      );
+      _trainPref=chooseQp?'qp':'gold';
+      S.settings=normalizeSettings(S.settings);
+      S.settings.qp.trainingRewardPreference=_trainPref;
+      save();
+    }
+    if(req>0&&_trainPref==='qp'){
+      if(typeof qpCreditDirect==='function'){
+        qpCreditDirect(req,'training_completion','🏋️ Completed Workout — '+req+' unrestricted QP','training::'+Date.now()+'::'+Math.random().toString(36).slice(2));
+        logAdd('+'+req+' QP — '+reason+' (unrestricted training reward)','task');
+      }else{
+        goldAdd(req,reason,'task');
+      }
+    }else if(req>0){
+      goldAdd(req,reason,'task');
+    }
     renderBudgetDisplays();
     return req;
   }
@@ -32651,6 +32682,8 @@ function openQpManager(){
   if(_toqRateEl)_toqRateEl.value=(typeof cfg.taskOverflowQpRate==='number'?cfg.taskOverflowQpRate:0.5);
   var _toqCapEl=document.getElementById('qpm-task-overflow-qp-cap');
   if(_toqCapEl)_toqCapEl.value=(typeof cfg.taskOverflowQpDailyCap==='number'?cfg.taskOverflowQpDailyCap:100);
+  var _trainingRewardEl=document.getElementById('qpm-training-reward');
+  if(_trainingRewardEl)_trainingRewardEl.value=(cfg.trainingRewardPreference==='gold'||cfg.trainingRewardPreference==='qp')?cfg.trainingRewardPreference:'';
   document.getElementById('qpm-cost-split').value=cfg.costQuestSplit||10;
   document.getElementById('qpm-cost-magic').value=cfg.costMagicItem||25;
   document.getElementById('qpm-cost-rename').value=cfg.costRename||5;
@@ -32791,6 +32824,11 @@ document.getElementById('qpm-save').addEventListener('click',function(){
   if(_toqCapSaveEl){
     var _toqCap=parseInt(_toqCapSaveEl.value);
     S.settings.qp.taskOverflowQpDailyCap=(isFinite(_toqCap)&&_toqCap>=0)?_toqCap:100;
+  }
+  var _trainingRewardSaveEl=document.getElementById('qpm-training-reward');
+  if(_trainingRewardSaveEl){
+    var _trainingRewardValue=_trainingRewardSaveEl.value;
+    S.settings.qp.trainingRewardPreference=(_trainingRewardValue==='gold'||_trainingRewardValue==='qp')?_trainingRewardValue:'';
   }
   S.settings.qp.costQuestSplit=parseInt(document.getElementById('qpm-cost-split').value)||10;
   S.settings.qp.costMagicItem=parseInt(document.getElementById('qpm-cost-magic').value)||25;
@@ -36428,6 +36466,40 @@ function buildStock(){
   save();
 }
 
+
+// v1.7320 — Describe quest-cycle unlocks on magic items in the Store.
+// A capstone item opens the cycles whose cycleGate.requiredCycleSetId points
+// to the item-awarding source cycle. Territory is shown so the player knows
+// where the newly opened work will occur before pursuing or equipping it.
+function storeQuestCycleUnlockHtml(item){
+  if(!item||!item.name||typeof QUESTSETS==='undefined')return '';
+  var sourceIds=[];
+  (QUESTSETS||[]).forEach(function(set){
+    (set.quests||[]).forEach(function(q){
+      var cr=q&&q.capstoneReward;
+      if(!cr||cr.type!=='item'||!cr.name)return;
+      if(String(cr.name).trim().toLowerCase()===String(item.name).trim().toLowerCase()){
+        if(sourceIds.indexOf(set.id)===-1)sourceIds.push(set.id);
+      }
+    });
+  });
+  if(!sourceIds.length)return '';
+  var opened=[];
+  (QUESTSETS||[]).forEach(function(set){
+    var gate=set&&set.cycleGate;
+    if(!gate||sourceIds.indexOf(gate.requiredCycleSetId)===-1)return;
+    opened.push({
+      name:set.name||'Unnamed Quest Cycle',
+      territory:set.territory||'Unspecified territory'
+    });
+  });
+  if(!opened.length)return '';
+  return '<div style="font-size:.76em;color:var(--teal-dark);margin-top:5px;padding:5px 7px;border-left:3px solid var(--gold);background:rgba(201,146,42,.08)">'+
+    '<strong>📜 Quest-cycle unlock:</strong> '+
+    opened.map(function(x){return esc(x.name)+' <span style="color:var(--ink-light)">('+esc(x.territory)+')</span>';}).join(' · ')+
+    '</div>';
+}
+
 function renderStore(){
   renderQpToGpBar();
   var el=document.getElementById('slist');if(!el)return;
@@ -36472,6 +36544,7 @@ function renderStore(){
       '<span style="font-size:1.4em">'+item.ic+'</span>'+
       '<div style="flex:1"><div style="font-weight:700;font-size:.88em">'+esc(item.name)+devUid('i',i)+devUid('db',item._dbId||'')+'</div>'+
       '<div style="font-size:.78em;color:var(--ink-light);margin-top:2px">'+esc(item.desc)+'</div>'+
+      storeQuestCycleUnlockHtml(item)+
       storeBuildingDowntimeUnlockHtml(item)+
       (item.rar?'<span class="rarity r-'+item.rar+'">'+item.rar+'</span>':'')+
       '</div>'+
@@ -40266,7 +40339,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7319-wizard-tower-languages-and-halcyon-balance';
+var RQ_CLIENT_VERSION='v1.7320-training-rewards-and-quest-unlock-descriptions';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
