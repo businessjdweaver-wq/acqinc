@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7325 Beatudo Title Update</title>
+<title>Relentless Quest in Development v1.7326 Cooldown and Grind Protection</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7325 Beatudo Title Update</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7326 Cooldown and Grind Protection</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5516,8 +5516,8 @@ body.dev-active #app{margin-top:36px;}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7325',
-  codename:'Beatudo Title Update',
+  version:'1.7326',
+  codename:'Cooldown and Grind Protection',
   built:'2026-07-12'
 };
 window.BUILD=BUILD;
@@ -10061,10 +10061,13 @@ function tickCyclePauseStarts(){
       S.cyclePauseStarts[set.id]=stampValue;
       changed=true;
     } else if(!raw&&has){
-      // Prereqs no longer met — clear the stamp so a future re-meet
-      // starts a fresh 24h countdown.
-      delete S.cyclePauseStarts[set.id];
-      changed=true;
+      // v1.7326 — Preserve the first discovery timestamp permanently.
+      // A cycle's pause is a one-time discovery delay, not an ownership
+      // counter. Temporary inventory/catalog transitions (including buying
+      // a second copy of a required magic item) must never delete and restart
+      // an already-earned cooldown. If the prerequisite later becomes unmet,
+      // cycleGateStatus will still lock activation through its normal issue
+      // checks; when the prerequisite returns, the original timer remains.
     }
   });
   if(!S._cyclePauseInit){
@@ -19044,6 +19047,52 @@ function downtimeBadgeForJob(job){
   if(job.type==='intel')return 'Rune Sleuth';
   return 'Downtime Mark';
 }
+// v1.7326 — Downtime/grind isolation guard. Downtime collection is not
+// allowed to add, remove, or replace grind missions. Snapshot both the live
+// territory-scoped grind queue and any legacy/archive queues, then restore
+// missing entries by stable signature if another renderer/normalizer mutates
+// questState during the downtime batch.
+function _rqGrindSignature(gp){
+  if(!gp)return '';
+  return [gp.id||'',gp.title||'',gp.territory||'',gp.doneAt||0,(gp.chars||[]).join(',')].join('::');
+}
+function _rqSnapshotGrinds(){
+  var qs=S.questState||{};
+  var snap={live:(qs.grindPending||[]).slice(),archives:{}};
+  Object.keys(qs.setProgress||{}).forEach(function(sid){
+    var sp=qs.setProgress[sid]||{};
+    if(Array.isArray(sp.grindPending)&&sp.grindPending.length)snap.archives[sid]=sp.grindPending.slice();
+  });
+  return snap;
+}
+function _rqRestoreMissingGrinds(snap,context){
+  if(!snap)return 0;
+  var qs=S.questState||(S.questState={});
+  if(!Array.isArray(qs.grindPending))qs.grindPending=[];
+  var restored=0;
+  var liveSeen={};
+  qs.grindPending.forEach(function(gp){liveSeen[_rqGrindSignature(gp)]=true;});
+  (snap.live||[]).forEach(function(gp){
+    var sig=_rqGrindSignature(gp);
+    if(sig&&!liveSeen[sig]){qs.grindPending.push(gp);liveSeen[sig]=true;restored++;}
+  });
+  if(!qs.setProgress)qs.setProgress={};
+  Object.keys(snap.archives||{}).forEach(function(sid){
+    var sp=qs.setProgress[sid]||(qs.setProgress[sid]={});
+    if(!Array.isArray(sp.grindPending))sp.grindPending=[];
+    var seen={};sp.grindPending.forEach(function(gp){seen[_rqGrindSignature(gp)]=true;});
+    (snap.archives[sid]||[]).forEach(function(gp){
+      var sig=_rqGrindSignature(gp);
+      if(sig&&!seen[sig]){sp.grindPending.push(gp);seen[sig]=true;restored++;}
+    });
+  });
+  if(restored){
+    try{console.warn('[GrindGuard] restored '+restored+' grind entr'+(restored===1?'y':'ies')+' after '+(context||'downtime'));}catch(e){}
+    try{logAdd('🛡 Grind guard restored '+restored+' mission'+(restored===1?'':'s')+' after '+(context||'downtime')+'.','adv');}catch(e){}
+  }
+  return restored;
+}
+
 function processCompletedDowntimeJobs(){
   ensureDowntimeState();
   if(downtimeResolveLock)return false;
@@ -19059,8 +19108,10 @@ function processCompletedDowntimeJobs(){
   // pass. Older builds moved only one job per second, which fragmented a
   // shared return wave into repeated inbox opens and roll sessions.
   downtimeResolveLock=true;
+  var _grindGuard=_rqSnapshotGrinds();
   S.downtimeJobs=remaining;
   completed.forEach(function(job){runDowntimeCompletion(job,true);});
+  _rqRestoreMissingGrinds(_grindGuard,'downtime completion digest');
   renderDowntimeRibbon();
   if(typeof renderInboxBadge==='function')renderInboxBadge();
   save();
@@ -19328,6 +19379,7 @@ function openDowntimePendingModal(){
         ensureDowntimeState();
         var pending=(S.pendingDowntimeRolls||[]).slice(); // snapshot
         if(!pending.length)return;
+        var _grindGuard=_rqSnapshotGrinds();
         var list=document.getElementById('ov-dtp-list');
         var svg=document.getElementById('ov-dtp-svg');
         var results=document.getElementById('ov-dtp-results');
@@ -19342,6 +19394,7 @@ function openDowntimePendingModal(){
           });
           // Empty the real pending list (it was only a snapshot).
           S.pendingDowntimeRolls=[];
+          _rqRestoreMissingGrinds(_grindGuard,'downtime roll collection');
           if(typeof save==='function')save();
           renderDowntimeRibbon();
           if(typeof renderInboxBadge==='function')renderInboxBadge();
@@ -40374,7 +40427,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7325-beatudo-title-update';
+var RQ_CLIENT_VERSION='v1.7326-cooldown-and-grind-protection';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
