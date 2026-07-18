@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7326 Cooldown and Grind Protection</title>
+<title>Relentless Quest in Development v1.7327 Dev Cooldown and Magic Storage Fix</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3137,7 +3137,7 @@ body.dev-active #app{margin-top:36px;}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7326 Cooldown and Grind Protection</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7327 Dev Cooldown and Magic Storage Fix</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5516,8 +5516,8 @@ body.dev-active #app{margin-top:36px;}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7326',
-  codename:'Cooldown and Grind Protection',
+  version:'1.7327',
+  codename:'Dev Cooldown and Magic Storage Fix',
   built:'2026-07-12'
 };
 window.BUILD=BUILD;
@@ -11863,7 +11863,11 @@ function renderCycleMapCards(){
                   '<button class="btn sm" data-a="cycle-paused" data-setid="'+esc(set.id)+'" '+
                   'style="background:rgba(201,146,42,.08);border:1px solid var(--gold-dark);color:var(--gold-dark);cursor:not-allowed;opacity:.85" '+
                   'title="New cycle cooldown — wait, grind on an unlocked territory, or use a quest expansion item">'+
-                  '\u23f3 Available in '+esc(formatCyclePauseRemaining(st.pausedMs))+'</button>'
+                  '\u23f3 Available in '+esc(formatCyclePauseRemaining(st.pausedMs))+'</button>'+
+                  ((typeof isDevModeActive==='function'&&isDevModeActive())
+                    ?'<button class="btn bpur sm" data-a="cycle-dev-skip" data-setid="'+esc(set.id)+'" '+
+                      'title="Developer mode: expire this quest-cycle cooldown immediately">\u23e9 Dev: Skip Cooldown</button>'
+                    :'')
                 :
                   '<button class="btn bg sm" data-a="cycle-activate" data-setid="'+esc(set.id)+'">'+
                   (isActive?'\u2713 Active Cycle':'\u2694 Activate Cycle')+'</button>'
@@ -25560,7 +25564,9 @@ function renderParty(){
   });
 
   // Franchise Storage section
-  var storage=S.franchiseStorage||[];
+  var storage=(S.franchiseStorage||[]).map(function(x){
+    return typeof x==='string'?x:((x&&x.name)||'');
+  }).filter(function(x){return !!x;});
   var storageUnlocked=hasAnyOwnedBuildingAsset();
   html+='<div class="card" style="margin-top:14px;padding:9px 12px">'+
     '<div style="font-family:\'Cinzel\',serif;font-size:.78em;text-transform:uppercase;letter-spacing:.05em;color:var(--gold-dark);margin-bottom:7px">'+
@@ -33365,6 +33371,29 @@ document.getElementById('ov-cycle-map-cards').addEventListener('click',function(
     if(setId)openCycleAbandon(setId);
     return;
   }
+  // v1.7327 — Developer-only cycle cooldown shortcut. The button is emitted
+  // only while dev mode is active, but the handler re-checks authorization
+  // so stale DOM cannot bypass the developer-mode gate.
+  var devSkipBtn=e.target.closest('[data-a="cycle-dev-skip"]');
+  if(devSkipBtn){
+    if(typeof isDevModeActive!=='function'||!isDevModeActive()){
+      alert('Developer mode is required to skip a quest-cycle cooldown.');
+      renderCycleMapCards();
+      return;
+    }
+    var devSetId=devSkipBtn.getAttribute('data-setid');
+    if(devSetId){
+      if(!S.cyclePauseStarts||typeof S.cyclePauseStarts!=='object')S.cyclePauseStarts={};
+      S.cyclePauseStarts[devSetId]=Date.now()-CYCLE_PAUSE_DURATION_MS-1000;
+      try{
+        var devSet=(QUESTSETS||[]).filter(function(s){return s&&s.id===devSetId;})[0];
+        logAdd('\u23e9 Dev: Quest-cycle cooldown skipped'+(devSet&&devSet.name?' for '+devSet.name:'')+'.','adv');
+      }catch(err){}
+      save();
+      renderCycleMapCards();
+    }
+    return;
+  }
   // v1.7156 — Tap on the disabled ⏳ button. Show a toast/alert explaining
   // the cooldown rather than letting the click fall through silently. The
   // button itself is rendered with cursor:not-allowed so the tap is
@@ -36816,6 +36845,26 @@ document.getElementById('slist').addEventListener('click',function(e){
 });
 
 document.getElementById('ov-bi-no').addEventListener('click',function(){P5.item=null;P5.assetMode=false;P5.customItem=null;closeOv('ov-buyitem');});
+
+// v1.7327 — Canonical franchise-storage write path. Quest-unlocking magic
+// items can enter the purchase modal through asset mode, where a "storage"
+// destination previously produced an ownerless partyAssets object. The Party
+// → Assets screen renders franchise storage from S.franchiseStorage, so those
+// purchases appeared to vanish. Gate-item storage now always uses this array.
+function rqStorePurchasedItem(itemName,qty){
+  if(!S.franchiseStorage||!Array.isArray(S.franchiseStorage))S.franchiseStorage=[];
+  qty=Math.max(1,parseInt(qty,10)||1);
+  for(var i=0;i<qty;i++)S.franchiseStorage.push(itemName);
+}
+function rqIsMagicQuestlineGatePurchase(itemName){
+  if(!itemName)return false;
+  return (RQ_MAGIC_QUESTLINE_GATE_ITEMS||[]).some(function(g){
+    return canonicalItemName(g)===canonicalItemName(itemName)
+      ||inventoryHasPrereqItem([g],itemName)
+      ||inventoryHasPrereqItem([itemName],g);
+  });
+}
+
 document.getElementById('ov-bi-yes').addEventListener('click',function(){
   var items;
   if(storeTab==='magic'){
@@ -36865,6 +36914,21 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
   if(P5.assetMode){
     var petName=(document.getElementById('ov-bi-petname').value||'').trim();
     if(!S.partyAssets)S.partyAssets=[];
+
+    // v1.7327 — A magic questline gate item selected for Franchise Storage
+    // belongs in the canonical string inventory, even if its catalog type
+    // caused the modal to open in asset mode.
+    if((ownerVal==='storage'||ownerVal==='__storage__')&&rqIsMagicQuestlineGatePurchase(item.name)){
+      rqStorePurchasedItem(item.name,qty);
+      logAdd(item.name+' ×'+qty+' → Franchise Storage','buy');
+      rqNotifyMagicItemQuestlines(item.name);
+      P5.item=null;P5.assetMode=false;P5.customItem=null;
+      window._questModalOpenAfterBuy=false;
+      closeOv('ov-buyitem');
+      save();renderParty();renderStore();
+      if(uid())setTimeout(function(){try{sbPush(false);}catch(e){}},0);
+      return;
+    }
     // v1.7158 — Detect building purchases up front. Buildings have a
     // territory:: ownerVal and feed straight into the naming modal after
     // the asset is created (mirrors the old Quest Map real estate flow).
@@ -37002,8 +37066,7 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
     }
   };
   var _finalizeToStorage=function(){
-    if(!S.franchiseStorage)S.franchiseStorage=[];
-    for(var si=0;si<qty;si++)S.franchiseStorage.push(item.name);
+    rqStorePurchasedItem(item.name,qty);
     logAdd(item.name+' ×'+qty+' → Franchise Storage (weight)','buy');
     rqNotifyMagicItemQuestlines(item.name);
     // Clear the _reopen flag — buy succeeded but the char isn't carrying
@@ -37056,8 +37119,7 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
     return;
   }
   if(ownerVal==='storage'||ownerVal==='__storage__'){
-    if(!S.franchiseStorage)S.franchiseStorage=[];
-    for(var ss=0;ss<qty;ss++)S.franchiseStorage.push(item.name);
+    rqStorePurchasedItem(item.name,qty);
     logAdd(item.name+' ×'+qty+' → Franchise Storage','buy');
   }else if(ownerVal.indexOf('building::')===0||ownerVal.indexOf('vehicle::')===0||ownerVal.indexOf('squad::')===0){
     if(!S.partyAssets)S.partyAssets=[];
@@ -40427,7 +40489,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7326-cooldown-and-grind-protection';
+var RQ_CLIENT_VERSION='v1.7327-dev-cooldown-and-magic-storage-fix';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
