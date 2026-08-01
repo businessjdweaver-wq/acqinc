@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7341 Leadership Editor Access Fix</title>
+<title>Relentless Quest in Development v1.7342 Inline Leadership Kit Purchase</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7341 Leadership Editor Access Fix</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7342 Inline Leadership Kit Purchase</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5525,8 +5525,8 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7341',
-  codename:'Leadership Editor Access Fix',
+  version:'1.7342',
+  codename:'Inline Leadership Kit Purchase',
   built:'2026-08-01'
 };
 window.BUILD=BUILD;
@@ -40743,7 +40743,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7341-leadership-editor-access-fix';
+var RQ_CLIENT_VERSION='v1.7342-inline-leadership-kit-purchase';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -44298,6 +44298,35 @@ function openSquadEdit(sqi){
   openOv('ov-squad');
 }
 
+
+function purchaseLeadershipKitForSquad(sq,roleId){
+  ensureSquadLeadership(sq);
+  var kit=roleKitFor(roleId);
+  if(!kit){alert('Leadership kit definition not found.');return false;}
+  if(squadHasRoleKit(sq,roleId)){alert(sq.name+' already owns '+kit.name+'.');return false;}
+  var price=Number(kit.price)||100;
+  if(!goldSpend(price,'Purchased '+kit.name+' for '+sq.name,'buy'))return false;
+  sq.leadershipKits.push(kit.name);
+  logAdd('📦 '+kit.name+' assigned to squad "'+sq.name+'".','buy');
+  save();setGold();renderParty();
+  return true;
+}
+function purchaseAllMissingLeadershipKits(sq){
+  ensureSquadLeadership(sq);
+  var missing=SQUAD_ROLES.filter(function(r){return !squadHasRoleKit(sq,r.id);});
+  if(!missing.length){alert(sq.name+' already owns all five leadership kits.');return false;}
+  var total=missing.reduce(function(sum,r){var k=roleKitFor(r.id);return sum+(k?Number(k.price)||100:100);},0);
+  if(!confirm('Purchase '+missing.length+' missing leadership kit'+(missing.length===1?'':'s')+' for '+sq.name+'?\n\nTotal: '+total+' gp'))return false;
+  if(!goldSpend(total,'Purchased '+missing.length+' leadership kit'+(missing.length===1?'':'s')+' for '+sq.name,'buy'))return false;
+  missing.forEach(function(r){
+    var k=roleKitFor(r.id);
+    if(k&&sq.leadershipKits.indexOf(k.name)===-1)sq.leadershipKits.push(k.name);
+  });
+  logAdd('📦 '+sq.name+' purchased '+missing.length+' leadership kit'+(missing.length===1?'':'s')+' ('+total+' gp).','buy');
+  save();setGold();renderParty();
+  return true;
+}
+
 function renderSqRoles(sq){
   var el=document.getElementById('sq-roles-section');
   if(!el||!sq)return;
@@ -44326,7 +44355,11 @@ function renderSqRoles(sq){
     html+='<select class="sq-role-sel" data-role="'+r.id+'" '+(hasKit?'':'disabled')+' style="flex:1;padding:4px 6px;font-size:.8em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">';
     html+='<option value="">'+(hasKit?'(unassigned)':'(kit required)')+'</option>'+memberOpts;
     html+='</select>';
-    html+='<span style="font-size:.68em;min-width:76px;color:'+(hasKit?'var(--forest)':'var(--crimson)')+'">'+(hasKit?'✓ kit owned':'✗ '+esc(kit?kit.name:'kit'))+'</span>';
+    if(hasKit){
+      html+='<span style="font-size:.68em;min-width:86px;color:var(--forest)">✓ kit owned</span>';
+    }else{
+      html+='<button type="button" class="btn bg sm sq-role-buy-kit" data-role-buy="'+r.id+'" style="font-size:.62em;padding:4px 7px;min-width:92px">Buy '+(kit?kit.price:100)+' gp</button>';
+    }
     html+='</div>';
   });
 
@@ -44339,10 +44372,26 @@ function renderSqRoles(sq){
   html+='<div style="font-size:.76em;margin-top:4px">Current Territory: <strong>'+esc(curTerr)+'</strong></div>';
   html+='<div style="font-size:.76em;margin-top:3px">Relocation: 250 gp mobilization + 50 gp × '+move.members+' member'+(move.members===1?'':'s')+' = <strong>'+move.total+' gp</strong></div>';
   if(status.missing.length)html+='<div style="font-size:.68em;color:var(--crimson);margin-top:4px">Missing: '+esc(status.missing.join(', '))+'</div>';
+  var missingKits=SQUAD_ROLES.filter(function(r){return !squadHasRoleKit(sq,r.id);});
+  if(missingKits.length){
+    var allCost=missingKits.reduce(function(sum,r){var k=roleKitFor(r.id);return sum+(k?Number(k.price)||100:100);},0);
+    html+='<button type="button" id="sq-ops-buy-all-kits" class="btn bg sm" style="margin-top:8px;margin-right:6px">Buy All Missing Kits ('+allCost+' gp)</button>';
+  }
   html+='<button type="button" id="sq-ops-relocate" class="btn bink sm" style="margin-top:8px" '+(status.ready?'':'disabled title="Requires 5/5 active leadership"')+'>⇄ Relocate Squad</button>';
   html+='</div>';
 
   el.innerHTML=html;
+
+  el.querySelectorAll('.sq-role-buy-kit').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var roleId=btn.getAttribute('data-role-buy');
+      if(purchaseLeadershipKitForSquad(sq,roleId))renderSqRoles(sq);
+    });
+  });
+  var buyAll=document.getElementById('sq-ops-buy-all-kits');
+  if(buyAll)buyAll.addEventListener('click',function(){
+    if(purchaseAllMissingLeadershipKits(sq))renderSqRoles(sq);
+  });
 
   el.querySelectorAll('.sq-role-sel').forEach(function(sel){
     sel.addEventListener('change',function(){
