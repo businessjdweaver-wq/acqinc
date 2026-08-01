@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7337 Wish Scope Fix</title>
+<title>Relentless Quest in Development v1.7338 Quest Unlock + Wish Report Fix</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7337 Wish Scope Fix</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7338 Quest Unlock + Wish Report Fix</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5523,8 +5523,8 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7337',
-  codename:'Wish Scope Fix',
+  version:'1.7338',
+  codename:'Quest Unlock + Wish Report Fix',
   built:'2026-08-01'
 };
 window.BUILD=BUILD;
@@ -7326,8 +7326,10 @@ var QUESTSETS=[
     name:'Hasufan in the Eastern Juxians',
     theme:'The franchise pushes into the icy Eastern Juxian mountains to secure terms with Hasufan, a giant runesmith. Tectonic shifts from western Jux make routes unstable and logistics essential.',
     dndTier:2,
-    territory:'Minsaka', // v1.7007 — see changelog note: stamped Minsaka to keep it legal for existing saves; treat as a candidate to swap to a different territory if Juxian-based territory progression is desired later
-    cycleGate:{visibility:'obscured',requiredCycleSetId:'drowned-temple-of-dicentis',requiredMountType:'Mule',requiredMountCount:4,minAvgSquadLevel:2,minSquadSize:4},
+    // v1.7338 — Hasufan is explicitly legacy Jux content now that Jux is a
+    // real unlockable territory. It no longer leaks onto the Minsaka map.
+    territory:'Jux',
+    cycleGate:{visibility:'obscured',requiredCycleSetId:'drowned-temple-of-dicentis',requiredAsset:'Carpet of Flying',requiredMountType:'Mule',requiredMountCount:4,minAvgSquadLevel:2,minSquadSize:4},
     capstoneIdx:7,
     quests:[
       {idx:0,tier:'rare',type:'explore',title:'Find the Fracture Pass',
@@ -10045,6 +10047,17 @@ function _cyclePrereqsRawMet(set){
   return true;
 }
 function cyclePauseRemainingMs(setId){
+  // v1.7338 — An item-opened distant-territory cycle is immediately usable.
+  // Keep this in the core function instead of a later script wrapper so Safari
+  // cannot lose the behavior across script-scope boundaries.
+  var _immediateSet=(QUESTSETS||[]).filter(function(s){return s&&s.id===setId;})[0];
+  if(_immediateSet&&_immediateSet.cycleGate&&_immediateSet.cycleGate.immediateOnAsset&&_immediateSet.cycleGate.requiredAsset){
+    var _need=_immediateSet.cycleGate.requiredAsset;
+    var _ownsImmediate=(S.partyAssets||[]).some(function(a){return a&&a.name===_need;})
+      ||(S.franchiseStorage||[]).some(function(x){return (typeof x==='string'?x:(x&&x.name)||'')===_need;})
+      ||(S.party||[]).some(function(c){return c&&(c.inv||[]).indexOf(_need)!==-1;});
+    if(_ownsImmediate)return 0;
+  }
   if(!S.cyclePauseStarts)return 0;
   var t=S.cyclePauseStarts[setId];
   if(typeof t!=='number'||t<=0)return 0;
@@ -34316,7 +34329,12 @@ var RQ_MAGIC_QUESTLINE_GATE_ITEMS=[
   'Headband of Intellect',
   'Potion of Giant Strength',
   'Ring of Mind Shielding',
-  'Immovable Rod'
+  'Immovable Rod',
+  // v1.7338 — Tier III distant-territory access items.
+  'Carpet of Flying',
+  'Well of Many Worlds',
+  'Helm of Teleportation',
+  'Cubic Gate'
 ];
 function rqMagicQuestlineGateItemForSet(set){
   // v1.7241 — Prefer the cycle-level requiredAsset metadata. The SQL magic
@@ -40554,7 +40572,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7337-wish-scope-fix';
+var RQ_CLIENT_VERSION='v1.7338-quest-unlock-and-wish-report-fix';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -52449,10 +52467,28 @@ function setOfflineBadge(text){
     for(var lv=oldLevel+1;lv<=newLevel;lv++)asiAt(lv);
     c.level=newLevel;
   }
+  function wishEarnedSlotCount(c,lvl){
+    lvl=Math.max(1,Math.min(20,parseInt(lvl||c&&c.level||1,10)||1));
+    var bonusByClass={'Sorcerer':0,'Monk':0,'Wizard':1,'Fighter':1,'Paladin':1,'Barbarian':1,'Cleric':2,'Druid':2,'Warlock':2,'Artificer':2,'Ranger':3,'Rogue':6,'Bard':8};
+    var bonus=bonusByClass[(c&&c.cls)||'']||0;
+    return Math.ceil(lvl/4)+Math.floor((bonus*lvl)/20);
+  }
+  function wishEarnedUsed(c){
+    var seen={};
+    (c&&c.dtEarnedProficiencies||[]).forEach(function(e){
+      if(!e||!e.type||!e.target)return;
+      seen[String(e.type)+'::'+String(e.target).trim()]=1;
+    });
+    return Object.keys(seen).length;
+  }
   function freeLevelForSlot(c){
-    if(typeof downtimeCapReached!=='function'||!downtimeCapReached(c))return {from:Number(c.level)||0,to:Number(c.level)||0};
-    var from=Number(c.level)||0;
-    var target=(typeof downtimeNextLevelForSlot==='function')?downtimeNextLevelForSlot(c):null;
+    var from=Number(c&&c.level)||0;
+    if(!c||wishEarnedUsed(c)<wishEarnedSlotCount(c,from))return {from:from,to:from};
+    var target=null;
+    var current=wishEarnedSlotCount(c,from);
+    for(var lv=Math.max(1,from+1);lv<=20;lv++){
+      if(wishEarnedSlotCount(c,lv)>current){target=lv;break;}
+    }
     if(target&&target>from)applyFreeLevelConsequences(c,from,target);
     return {from:from,to:Number(c.level)||from};
   }
@@ -52491,19 +52527,54 @@ function setOfflineBadge(text){
       ]
     };
   }
+  function wishFaithList(c){
+    var out=[],seen={};
+    function add(v){v=String(v||'').trim();if(v&&!seen[v]){seen[v]=1;out.push(v);}}
+    if(!c)return out;
+    if(Array.isArray(c.faiths))c.faiths.forEach(add);
+    else if(Array.isArray(c.faith))c.faith.forEach(add);
+    else if(typeof c.faith==='string')add(c.faith);
+    add(c.rel);
+    return out;
+  }
   function charHas(c,axis,v){
     if(axis==='skills')return (c.skills||[]).indexOf(v)!==-1;
     if(axis==='tools')return (c.tools||[]).indexOf(v)!==-1;
-    if(axis==='faith')return (typeof _dtFaithList==='function'?_dtFaithList(c):([c.rel].filter(Boolean))).indexOf(v)!==-1;
+    if(axis==='faith')return wishFaithList(c).indexOf(v)!==-1;
     return false;
   }
+  function wishRecordEarned(c,type,target){
+    if(!c||!type||!target)return;
+    if(!Array.isArray(c.dtEarnedProficiencies))c.dtEarnedProficiencies=[];
+    var key=type+'::'+String(target).trim();
+    var exists=c.dtEarnedProficiencies.some(function(e){
+      return e&&((String(e.type||'')+'::'+String(e.target||'').trim())===key);
+    });
+    if(!exists)c.dtEarnedProficiencies.push({type:type,target:String(target).trim(),earnedAt:Date.now(),source:'limited_wish'});
+  }
   function grantAttr(c,axis,v){
-    var t=axis==='skills'?'skill':axis==='tools'?'tool':'faith';
-    if(typeof _dtApplyGrantToCharacter==='function')return _dtApplyGrantToCharacter(c,t,v);
-    if(axis==='skills'){c.skills=c.skills||[];if(c.skills.indexOf(v)===-1)c.skills.push(v);}
-    else if(axis==='tools'){c.tools=c.tools||[];if(c.tools.indexOf(v)===-1)c.tools.push(v);}
-    else if(typeof _dtAddFaith==='function')_dtAddFaith(c,v);
-    return true;
+    if(!c||!v)return false;
+    if(axis==='skills'){
+      c.skills=c.skills||[];
+      if(c.skills.indexOf(v)===-1)c.skills.push(v);
+      wishRecordEarned(c,'skill',v);
+      return c.skills.indexOf(v)!==-1;
+    }
+    if(axis==='tools'){
+      c.tools=c.tools||[];
+      if(c.tools.indexOf(v)===-1)c.tools.push(v);
+      wishRecordEarned(c,'tool',v);
+      return c.tools.indexOf(v)!==-1;
+    }
+    if(axis==='faith'){
+      if(!Array.isArray(c.faiths))c.faiths=[];
+      if(c.rel&&c.faiths.indexOf(c.rel)===-1)c.faiths.unshift(c.rel);
+      if(c.faiths.indexOf(v)===-1)c.faiths.push(v);
+      if(!c.rel)c.rel=v;
+      wishRecordEarned(c,'faith',v);
+      return wishFaithList(c).indexOf(v)!==-1;
+    }
+    return false;
   }
   function coverageState(sq){
     var pools=axisPools(), covered={skills:{},tools:{},faith:{}};
@@ -52538,7 +52609,7 @@ function setOfflineBadge(text){
     return null;
   }
   function performMassIncrease(sq){
-    var before=coverageState(sq), state=before, report=[];
+    var before=coverageState(sq), state=coverageState(sq), report=[];
     (sq.memberIdxs||[]).forEach(function(ci){
       var c=S.party[ci]; if(!c)return;
       var lev=freeLevelForSlot(c);
@@ -52547,12 +52618,13 @@ function setOfflineBadge(text){
         report.push(c.name+': no unowned skill/tool/faith remained.');
         return;
       }
-      grantAttr(c,pick.axis,pick.value);
-      state.covered[pick.axis][pick.value]=1;
-      state.have+=pick.coverageGain;
+      var ok=grantAttr(c,pick.axis,pick.value);
+      var refreshed=coverageState(sq);
+      var gained=refreshed.have>state.have;
+      state=refreshed;
       var label=pick.axis==='skills'?'Skill':pick.axis==='tools'?'Tool':'Faith';
       var levTxt=lev.to>lev.from?' · FREE level '+lev.from+'→'+lev.to:'';
-      report.push(c.name+': '+label+' — '+pick.value+levTxt+(pick.coverageGain?'':' (already covered by squad)'));
+      report.push(c.name+': '+label+' — '+pick.value+levTxt+(ok?(gained?'':' (already covered by squad)'):' (grant failed)'));
     });
     var after=coverageState(sq);
     var w=st(); w.choice='mass_skill'; w.completedAt=Date.now(); w.massSkillSquad=sq.name;
@@ -52560,8 +52632,8 @@ function setOfflineBadge(text){
     if(typeof logAdd==='function')logAdd('💍 Limited Wish: mass proficiency increase for '+sq.name+' ('+before.pct+'% → '+after.pct+'% coverage).','adv');
     if(typeof save==='function')save();
     if(typeof renderParty==='function')renderParty();
-    alert('💍 MASS SKILL INCREASE COMPLETE\\n\\nSquad: '+sq.name+
-      '\\nCoverage: '+before.have+'/'+before.total+' ('+before.pct+'%) → '+after.have+'/'+after.total+' ('+after.pct+'%)\\n\\n'+report.join('\\n'));
+    alert('💍 MASS SKILL INCREASE COMPLETE\n\nSquad: '+sq.name+
+      '\nCoverage: '+before.have+'/'+before.total+' ('+before.pct+'%) → '+after.have+'/'+after.total+' ('+after.pct+'%)\n\n'+report.join('\n'));
   }
 
   // v1.7335 — Native prompt() proved unreliable in the installed iOS/PWA
