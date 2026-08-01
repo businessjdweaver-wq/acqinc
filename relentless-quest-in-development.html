@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7339 Authoritative Distant Content Merge</title>
+<title>Relentless Quest in Development v1.7340 Squad Leadership + GP Relocation</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7339 Authoritative Distant Content Merge</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7340 Squad Leadership + GP Relocation</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5523,8 +5523,8 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7339',
-  codename:'Authoritative Distant Content Merge',
+  version:'1.7340',
+  codename:'Squad Leadership + GP Relocation',
   built:'2026-08-01'
 };
 window.BUILD=BUILD;
@@ -6790,11 +6790,78 @@ var SQUAD_ROLES=[
 var ROLE_KITS=SQUAD_ROLES.map(function(r){
   return {name:r.label+"'s Kit",ic:r.ic,
     desc:'Equips a squad member for the '+r.label+' role. '+r.desc,
-    rar:'uncommon',type:'kit',price:75,wt:5,squadRole:r.id,effect:r.effect};
+    rar:'uncommon',type:'kit',price:100,wt:5,squadRole:r.id,effect:r.effect};
 });
+
 ROLE_KITS.forEach(function(kit){
   if(!GEAR.some(function(g){return g.name===kit.name;}))GEAR.push(kit);
 });
+
+/* v1.7340 — Squad-owned leadership and GP relocation. */
+function ensureSquadLeadership(sq){
+  if(!sq)return;
+  if(!Array.isArray(sq.leadershipKits))sq.leadershipKits=[];
+  if(!sq.roles||typeof sq.roles!=='object')sq.roles={};
+}
+function roleKitFor(roleId){
+  return ROLE_KITS.filter(function(k){return k.squadRole===roleId;})[0]||null;
+}
+function squadHasRoleKit(sq,roleId){
+  ensureSquadLeadership(sq);
+  var kit=roleKitFor(roleId);
+  return !!(kit&&sq.leadershipKits.indexOf(kit.name)!==-1);
+}
+function characterMeetsSquadRolePrereqs(c,roleId){
+  if(!c)return false;
+  var role=SQUAD_ROLES.filter(function(r){return r.id===roleId;})[0]||null;
+  var pre=role&&(role.prereq||role.pre);
+  if(!pre)return true; // current five roles have no explicit character prereqs
+  if(pre.minLevel&&Number(c.level||0)<Number(pre.minLevel))return false;
+  if((pre.skills||[]).some(function(s){return (c.skills||[]).indexOf(s)===-1;}))return false;
+  if((pre.tools||[]).some(function(t){return (c.tools||[]).indexOf(t)===-1;}))return false;
+  return true;
+}
+function squadLeadershipStatus(sq){
+  ensureSquadLeadership(sq);
+  var missing=[],active=0;
+  SQUAD_ROLES.forEach(function(r){
+    var ci=sq.roles[r.id];
+    var c=(typeof ci==='number'&&S.party)?S.party[ci]:null;
+    var kit=squadHasRoleKit(sq,r.id);
+    var eligible=!!(c&&characterMeetsSquadRolePrereqs(c,r.id));
+    if(kit&&eligible)active++;
+    else{
+      var bits=[];
+      if(!kit)bits.push('kit');
+      if(!c)bits.push('officer');
+      else if(!eligible)bits.push('prerequisite');
+      missing.push(r.label+' ('+bits.join(' + ')+')');
+    }
+  });
+  return {active:active,total:SQUAD_ROLES.length,ready:active===SQUAD_ROLES.length,missing:missing};
+}
+function squadRelocationGpCost(sq){
+  var n=(sq&&sq.memberIdxs||[]).filter(function(ci){return S.party&&S.party[ci];}).length;
+  return {mobilization:250,perMember:50,members:n,total:250+50*n};
+}
+function migrateLegacyLeadershipKits(){
+  try{
+    (S.squads||[]).forEach(function(sq){
+      ensureSquadLeadership(sq);
+      (sq.memberIdxs||[]).forEach(function(ci){
+        var c=S.party&&S.party[ci]; if(!c||!Array.isArray(c.inv))return;
+        ROLE_KITS.forEach(function(k){
+          var ix=c.inv.indexOf(k.name);
+          if(ix!==-1&&sq.leadershipKits.indexOf(k.name)===-1){
+            sq.leadershipKits.push(k.name);
+            c.inv.splice(ix,1);
+          }
+        });
+      });
+    });
+  }catch(e){console.warn('[v1.7340 leadership migration]',e);}
+}
+
 // v1.7330 — Offline fallbacks for prerequisite items that may ordinarily
 // arrive from the connected store catalog. Exact-name dedupe prevents
 // duplicates when Supabase reconnects and supplies them again.
@@ -10787,14 +10854,14 @@ function cycleTerritoryAssignmentCheck(setId,squadName){
   if(!out.squad){out.ok=false;out.message='Selected squad could not be found.';return out;}
   out.squadTerr=out.squad.homeTerritory||S.originTerritory||'';
   out.memberCount=(out.squad.memberIdxs||[]).filter(function(ci){return S.party&&S.party[ci];}).length;
-  out.moveCost=((typeof qpEnabled==='function'&&qpEnabled())?(qpCfg().costSquadSwap||10):0)*out.memberCount;
+  var _moveInfo=squadRelocationGpCost(out.squad); out.moveCost=_moveInfo.total; out.leadership=squadLeadershipStatus(out.squad);
   if(out.setTerr&&out.squadTerr&&out.setTerr!==out.squadTerr){
     out.ok=false;
     out.message='⚠ '+out.squad.name+' is based in '+out.squadTerr+', but this quest cycle takes place in '+out.setTerr+'.\n\n'+
       'Relocate the squad to '+out.setTerr+' first. '+
-      ((typeof qpEnabled==='function'&&qpEnabled())
-        ?('Cost: '+(qpCfg().costSquadSwap||10)+' QP × '+out.memberCount+' member'+(out.memberCount!==1?'s':'')+' = '+out.moveCost+' QP.')
-        :'QP system off — relocation is free.')+
+      (out.leadership&&out.leadership.ready
+        ?('Cost: 250 gp mobilization + 50 gp × '+out.memberCount+' member'+(out.memberCount!==1?'s':'')+' = '+out.moveCost+' gp.')
+        :('Leadership '+(out.leadership?out.leadership.active:0)+'/5 — complete command staff before relocation.'))+
       '\n\nOpen the squad relocation prompt now?';
   }
   return out;
@@ -27171,66 +27238,55 @@ function openSquadRelocateModal(sqi){
   var sq=(S.squads||[])[sqi];
   if(!sq)return;
   if(typeof squadIsLockedByCycle==='function'&&squadIsLockedByCycle(sq.name)){
-    alert('\u26A0 "'+sq.name+'" is cycle-locked \u2014 finish or abandon the current cycle before relocating.');
+    alert('⚠ "'+sq.name+'" is cycle-locked — finish or abandon the current cycle before relocating.');
+    return;
+  }
+  var leadership=squadLeadershipStatus(sq);
+  if(!leadership.ready){
+    alert('⚠ "'+sq.name+'" is not deployment ready.\n\nLeadership: '+leadership.active+'/5\nMissing: '+leadership.missing.join(', ')+'\n\nPurchase the missing kits and appoint officers in the Squad Editor.');
     return;
   }
   var unlocked=(S.unlockedTerritories||[]).slice();
   if(unlocked.length<2){
-    alert('Only one territory is unlocked \u2014 nothing to relocate to yet. Buy a 1000+ gp building in a new territory to unlock it.');
+    alert('Only one territory is unlocked — nothing to relocate to yet.');
     return;
   }
   var curTerr=sq.homeTerritory||S.originTerritory||unlocked[0];
-  var memberCnt=(sq.memberIdxs||[]).filter(function(ci){return S.party[ci];}).length;
-  var swapCost=(qpCfg().costSquadSwap||10);
-  var totalCost=swapCost*memberCnt;
-  var qpOn=qpEnabled();
-  var bal=S.qpBalance||0;
+  var move=squadRelocationGpCost(sq);
+  var bal=Number(S.gold)||0;
   var titleEl=document.getElementById('ov-sq-relocate-title');
   var msgEl=document.getElementById('ov-sq-relocate-msg');
   var listEl=document.getElementById('ov-sq-relocate-list');
-  if(titleEl)titleEl.textContent='\u21C4 Relocate "'+sq.name+'"';
-  if(msgEl){
-    msgEl.innerHTML=
-      'Currently in <strong>'+esc(curTerr)+'</strong>. Moving relocates all '+memberCnt+' member'+(memberCnt!==1?'s':'')+
-      ' and updates each character\'s home territory.'+
-      (qpOn?'<br>Cost: <strong>'+swapCost+' QP \u00d7 '+memberCnt+' = '+totalCost+' QP</strong>. Current balance: '+bal+' QP.':
-            '<br><em>QP system off \u2014 relocation is free.</em>');
-  }
+  if(titleEl)titleEl.textContent='⇄ Relocate "'+sq.name+'"';
+  if(msgEl)msgEl.innerHTML=
+    'Currently in <strong>'+esc(curTerr)+'</strong>. Leadership: <strong>5/5</strong>.'+
+    '<br>Mobilization: 250 gp + personnel: 50 gp × '+move.members+' = <strong>'+move.total+' gp</strong>.'+
+    '<br>Franchise gold: '+Math.floor(bal).toLocaleString()+' gp.';
   if(listEl){
     var cap=(typeof SQUADS_PER_TERRITORY_MAX==='number')?SQUADS_PER_TERRITORY_MAX:4;
     listEl.innerHTML=unlocked.filter(function(t){return t!==curTerr;}).map(function(t){
       var cnt=(typeof squadCountInTerritory==='function')?squadCountInTerritory(t):0;
-      var full=cnt>=cap;
-      var cantAfford=qpOn&&bal<totalCost;
-      var disabled=full||cantAfford;
-      var hint=full?' \u2014 <em>'+cnt+'/'+cap+' squads (full)</em>':(cantAfford?' \u2014 <em>need '+(totalCost-bal)+' more QP</em>':'');
+      var full=cnt>=cap, cantAfford=bal<move.total, disabled=full||cantAfford;
+      var hint=full?' — <em>'+cnt+'/'+cap+' squads (full)</em>':(cantAfford?' — <em>need '+Math.ceil(move.total-bal)+' more gp</em>':'');
       return '<button type="button" class="btn '+(disabled?'bink':'bgn')+' sm" data-relocate-to="'+esc(t)+'" '+(disabled?'disabled':'')+
         ' style="justify-content:flex-start;padding:8px 10px;font-size:.82em;text-align:left;'+(disabled?'opacity:.5':'')+'">'+
-        '\uD83D\uDDFA '+esc(t)+' ('+cnt+'/'+cap+' squads)'+hint+'</button>';
+        '🗺 '+esc(t)+' ('+cnt+'/'+cap+' squads)'+hint+'</button>';
     }).join('');
     Array.prototype.forEach.call(listEl.querySelectorAll('[data-relocate-to]'),function(btn){
       btn.addEventListener('click',function(){
         if(btn.hasAttribute('disabled'))return;
-        var target=btn.getAttribute('data-relocate-to');
-        if(!target)return;
-        if(!confirm('Relocate "'+sq.name+'" from '+curTerr+' to '+target+
-                    (qpOn?' for '+totalCost+' QP':'')+'?'))return;
-        if(qpOn){
-          if(!qpSpend(totalCost,'squad-relocate','Relocate squad "'+sq.name+'" to '+target))return;
-        }
+        var target=btn.getAttribute('data-relocate-to'); if(!target)return;
+        if(!confirm('Relocate "'+sq.name+'" from '+curTerr+' to '+target+' for '+move.total+' gp?\n\n250 gp mobilization + '+move.members+' × 50 gp personnel'))return;
+        if(!goldSpend(move.total,'Relocate squad "'+sq.name+'" '+curTerr+' → '+target,'hire'))return;
         sq.homeTerritory=target;
-        (sq.memberIdxs||[]).forEach(function(ci){
-          if(S.party[ci])S.party[ci].homeTerritory=target;
-        });
-        logAdd('\uD83D\uDDFA Squad "'+sq.name+'" relocated: '+curTerr+' \u2192 '+target+(qpOn?' ('+totalCost+' QP)':''),'hire');
-        closeOv('ov-sq-relocate');
-        save();renderParty();
+        (sq.memberIdxs||[]).forEach(function(ci){if(S.party[ci])S.party[ci].homeTerritory=target;});
+        logAdd('🗺 Squad "'+sq.name+'" relocated: '+curTerr+' → '+target+' ('+move.total+' gp)','hire');
+        closeOv('ov-sq-relocate');save();renderParty();
         if(typeof renderSquadManager==='function')renderSquadManager();
         if(P4&&P4._returnToCycleSquadAfterRelocate){
-          var _returnSetId=P4._returnToCycleSquadAfterRelocate;
-          P4._returnToCycleSquadAfterRelocate=null;
+          var rs=P4._returnToCycleSquadAfterRelocate;P4._returnToCycleSquadAfterRelocate=null;
           if(typeof renderCycleMapCards==='function')renderCycleMapCards();
-          setTimeout(function(){ if(typeof openCycleSquadPicker==='function')openCycleSquadPicker(_returnSetId); },60);
+          setTimeout(function(){if(typeof openCycleSquadPicker==='function')openCycleSquadPicker(rs);},60);
         }
       });
     });
@@ -32442,7 +32498,7 @@ function healMissingCapstoneRewards(){
   });
  }catch(e){console.warn('healMissingCapstoneRewards failed',e);}
 }
-window.addEventListener('load',function(){setTimeout(healMissingCapstoneRewards,1500);});
+window.addEventListener('load',function(){setTimeout(function(){migrateLegacyLeadershipKits();try{save();}catch(e){}},900);setTimeout(healMissingCapstoneRewards,1500);});
 
 function awardCapstonReward(set){
   // v1.6945: idempotency guard — don't re-award a capstone that's already been
@@ -36917,6 +36973,29 @@ document.getElementById('slist').addEventListener('click',function(e){
     openOv('ov-plusweapon');
     return;
   }
+  // v1.7340 — Leadership kits are purchased for a squad, never a character.
+  if(item.squadRole&&ROLE_KITS.some(function(k){return k.name===item.name;})){
+    if(!(S.squads||[]).length){alert('Create a squad before purchasing a leadership kit.');return;}
+    P5.item=item.name;
+    P5.assetMode=false;
+    document.getElementById('ov-bi-qty').value='1';
+    var _leadQty=document.getElementById('ov-bi-qtyrow'); if(_leadQty)_leadQty.style.display='none';
+    document.getElementById('ov-bi-ownerlbl').textContent='Assign leadership kit to squad';
+    document.getElementById('ov-bi-sel').innerHTML=(S.squads||[]).map(function(sq,i){
+      ensureSquadLeadership(sq);
+      var owned=sq.leadershipKits.indexOf(item.name)!==-1;
+      return '<option value="leadership-squad::'+i+'"'+(owned?' disabled':'')+'>'+esc(sq.name)+(owned?' — already owned':'')+'</option>';
+    }).join('');
+    document.getElementById('ov-bi-charrow').style.display='block';
+    document.getElementById('ov-bi-namerow').style.display='none';
+    document.getElementById('ov-bi-weaponrow').style.display='none';
+    document.getElementById('ov-bi-partynote').style.display='block';
+    document.getElementById('ov-bi-partynote').textContent='The kit belongs to the squad. Appoint an eligible officer in the Squad Editor.';
+    document.getElementById('ov-bi-msg').textContent=item.name+' — 🪙 '+item.price+' gp';
+    openOv('ov-buyitem');
+    return;
+  }
+
   P5.item=item.name; // name-based — search-safe
   P5.assetMode=false;
   document.getElementById('ov-bi-qty').value='1';
@@ -37038,6 +37117,23 @@ document.getElementById('ov-bi-yes').addEventListener('click',function(){
   if(!item)return;
   var qty=Math.max(1,parseInt(document.getElementById('ov-bi-qty').value,10)||1);
   var ownerVal=document.getElementById('ov-bi-sel').value||'';
+
+  // v1.7340 — Commit squad-owned leadership kit.
+  if(item.squadRole&&ROLE_KITS.some(function(k){return k.name===item.name;})){
+    var _lm=ownerVal.match(/^leadership-squad::(\d+)$/);
+    if(!_lm){alert('Choose a squad for this leadership kit.');return;}
+    var _lsq=(S.squads||[])[parseInt(_lm[1],10)];
+    if(!_lsq){alert('Selected squad could not be found.');return;}
+    ensureSquadLeadership(_lsq);
+    if(_lsq.leadershipKits.indexOf(item.name)!==-1){alert(_lsq.name+' already owns '+item.name+'.');return;}
+    if(!goldSpend(Number(item.price)||100,'Purchased '+item.name+' for '+_lsq.name,'buy'))return;
+    _lsq.leadershipKits.push(item.name);
+    logAdd('📦 '+item.name+' assigned to squad "'+_lsq.name+'".','buy');
+    P5.item=null;P5.assetMode=false;P5.customItem=null;
+    closeOv('ov-buyitem');save();setGold();renderParty();renderStore();
+    return;
+  }
+
   if(!P5.assetMode){
     var isStructuredOwner=ownerVal==='storage'||ownerVal==='__storage__'||ownerVal.indexOf('building::')===0||ownerVal.indexOf('vehicle::')===0||ownerVal.indexOf('squad::')===0||ownerVal.indexOf('territory::')===0; // v1.7158
     var ciCheck=parseInt(ownerVal,10);
@@ -40641,7 +40737,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7339-authoritative-distant-content-merge';
+var RQ_CLIENT_VERSION='v1.7340-squad-leadership-gp-relocation';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -44194,62 +44290,64 @@ function openSquadEdit(sqi){
 function renderSqRoles(sq){
   var el=document.getElementById('sq-roles-section');
   if(!el||!sq)return;
+  ensureSquadLeadership(sq);
   var members=(sq.memberIdxs||[]).filter(function(ci){return S.party[ci];});
   var roles=sq.roles||{};
+  var status=squadLeadershipStatus(sq);
+  var move=squadRelocationGpCost(sq);
+  var curTerr=sq.homeTerritory||S.originTerritory||'—';
+
   var html='<div style="border:1px solid var(--parchment-deep);border-radius:7px;padding:10px 12px;background:rgba(44,26,14,.03)">';
   html+='<div style="font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">🎖 Squad Roles</div>';
-  // Check which roles this squad has kits available for
-  var kitNames=ROLE_KITS.map(function(k){return k.name;});
-  // Find chars who own a role kit (in their inv)
-  var kitOwners={}; // roleId -> [ci]
-  members.forEach(function(ci){
-    var c=S.party[ci];if(!c)return;
-    (c.inv||[]).forEach(function(item){
-      var kit=ROLE_KITS.filter(function(k){return k.name===item;})[0];
-      if(kit){
-        if(!kitOwners[kit.squadRole])kitOwners[kit.squadRole]=[];
-        kitOwners[kit.squadRole].push(ci);
-      }
-    });
-  });
+
   SQUAD_ROLES.forEach(function(r){
+    var kit=roleKitFor(r.id);
+    var hasKit=squadHasRoleKit(sq,r.id);
     var assignedCi=roles[r.id]!==undefined?roles[r.id]:null;
-    var assignedC=assignedCi!==null?S.party[assignedCi]:null;
-    var candidates=kitOwners[r.id]||[];
     var memberOpts=members.map(function(ci){
       var c=S.party[ci];if(!c)return '';
-      var hasKit=(c.inv||[]).some(function(it){return ROLE_KITS.some(function(k){return k.name===it&&k.squadRole===r.id;});});
-      return '<option value="'+ci+'"'+(assignedCi===ci?' selected':'')+
-        (hasKit?' style="font-weight:700"':'')+'>'+esc(c.name)+(hasKit?' ✓':'')+'</option>';
+      var eligible=characterMeetsSquadRolePrereqs(c,r.id);
+      return '<option value="'+ci+'"'+(assignedCi===ci?' selected':'')+(eligible?'':' disabled')+'>'+esc(c.name)+(eligible?'':' — ineligible')+'</option>';
     }).join('');
     html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
     html+='<span style="font-size:1em;width:22px;text-align:center;flex-shrink:0">'+r.ic+'</span>';
-    html+='<div style="font-size:.75em;font-weight:600;width:90px;flex-shrink:0;color:var(--ink)">'+esc(r.label)+'</div>';
-    html+='<select class="sq-role-sel" data-role="'+r.id+'" style="flex:1;padding:4px 6px;font-size:.8em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">';
-    html+='<option value="">(unassigned)</option>'+memberOpts;
+    html+='<div style="font-size:.75em;font-weight:600;width:100px;flex-shrink:0;color:var(--ink)">'+esc(r.label)+'</div>';
+    html+='<select class="sq-role-sel" data-role="'+r.id+'" '+(hasKit?'':'disabled')+' style="flex:1;padding:4px 6px;font-size:.8em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">';
+    html+='<option value="">'+(hasKit?'(unassigned)':'(kit required)')+'</option>'+memberOpts;
     html+='</select>';
+    html+='<span style="font-size:.68em;min-width:76px;color:'+(hasKit?'var(--forest)':'var(--crimson)')+'">'+(hasKit?'✓ kit owned':'✗ '+esc(kit?kit.name:'kit'))+'</span>';
     html+='</div>';
   });
-  html+='<div style="font-size:.65em;color:var(--ink-light);margin-top:4px">✓ = character has the role kit in inventory. Kits available in Store → 🧰 Kits.</div>';
+
+  html+='<div style="font-size:.65em;color:var(--ink-light);margin-top:5px">Leadership kits are squad-owned. Current roles have no additional character prerequisites; future roles may.</div>';
   html+='</div>';
+
+  html+='<div style="margin-top:10px;border:1px solid var(--parchment-deep);border-radius:7px;padding:10px 12px;background:rgba(201,146,42,.08)">';
+  html+='<div style="font-family:\'Cinzel\',serif;font-size:.72em;color:var(--gold-dark);text-transform:uppercase;letter-spacing:.04em">🗺 Squad Operations</div>';
+  html+='<div style="margin-top:6px;font-size:.84em"><strong>Leadership: '+status.active+'/5</strong> — '+(status.ready?'Deployment Ready':'Local Operations Only')+'</div>';
+  html+='<div style="font-size:.76em;margin-top:4px">Current Territory: <strong>'+esc(curTerr)+'</strong></div>';
+  html+='<div style="font-size:.76em;margin-top:3px">Relocation: 250 gp mobilization + 50 gp × '+move.members+' member'+(move.members===1?'':'s')+' = <strong>'+move.total+' gp</strong></div>';
+  if(status.missing.length)html+='<div style="font-size:.68em;color:var(--crimson);margin-top:4px">Missing: '+esc(status.missing.join(', '))+'</div>';
+  html+='<button type="button" id="sq-ops-relocate" class="btn bink sm" style="margin-top:8px" '+(status.ready?'':'disabled title="Requires 5/5 active leadership"')+'>⇄ Relocate Squad</button>';
+  html+='</div>';
+
   el.innerHTML=html;
-  // Wire selects
+
   el.querySelectorAll('.sq-role-sel').forEach(function(sel){
     sel.addEventListener('change',function(){
       var roleId=sel.getAttribute('data-role');
-      var ci=sel.value===''?undefined:parseInt(sel.value);
-      if(!sq.roles)sq.roles={};
-      // One role per character — remove this char from any other role
+      if(!squadHasRoleKit(sq,roleId)){alert('This squad does not own the required leadership kit.');renderSqRoles(sq);return;}
+      var ci=sel.value===''?undefined:parseInt(sel.value,10);
+      if(ci!==undefined&&!characterMeetsSquadRolePrereqs(S.party[ci],roleId)){alert('That character does not meet the prerequisites for this role.');renderSqRoles(sq);return;}
       if(ci!==undefined){
-        Object.keys(sq.roles).forEach(function(rid){
-          if(rid!==roleId&&sq.roles[rid]===ci)delete sq.roles[rid];
-        });
+        Object.keys(sq.roles).forEach(function(rid){if(rid!==roleId&&sq.roles[rid]===ci)delete sq.roles[rid];});
       }
-      if(ci===undefined)delete sq.roles[roleId];
-      else sq.roles[roleId]=ci;
+      if(ci===undefined)delete sq.roles[roleId]; else sq.roles[roleId]=ci;
       save();renderParty();renderSqRoles(sq);
     });
   });
+  var rb=document.getElementById('sq-ops-relocate');
+  if(rb)rb.addEventListener('click',function(){openSquadRelocateModal((S.squads||[]).indexOf(sq));});
 }
 
 function renderSquadMembers(){
