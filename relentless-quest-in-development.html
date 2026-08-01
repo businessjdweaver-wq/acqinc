@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7343 Role Dropdown Format</title>
+<title>Relentless Quest in Development v1.7344 Role Readability + Skill Ties</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7343 Role Dropdown Format</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7344 Role Readability + Skill Ties</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5525,8 +5525,8 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7343',
-  codename:'Role Dropdown Format',
+  version:'1.7344',
+  codename:'Role Readability + Skill Ties',
   built:'2026-08-01'
 };
 window.BUILD=BUILD;
@@ -40743,7 +40743,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7343-role-dropdown-format';
+var RQ_CLIENT_VERSION='v1.7344-role-readability-and-skill-ties';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -44340,12 +44340,14 @@ function squadRoleBestSkill(c){
     'Stealth':'dex','Survival':'wis'
   };
   var stats=c.stats||{};
-  list.sort(function(a,b){
-    var sa=Number(stats[statFor[a]]||10), sb=Number(stats[statFor[b]]||10);
-    if(sb!==sa)return sb-sa;
-    return String(a).localeCompare(String(b));
+  var scored=list.map(function(skill){
+    return {skill:skill,score:Number(stats[statFor[skill]]||10)};
   });
-  return list[0]||'—';
+  var best=Math.max.apply(null,scored.map(function(x){return x.score;}));
+  var tied=scored.filter(function(x){return x.score===best;})
+    .map(function(x){return x.skill;})
+    .sort(function(a,b){return String(a).localeCompare(String(b));});
+  return tied.join(' / ')||'—';
 }
 function squadRoleFirstName(c){
   var n=String(c&&c.name||'').trim();
@@ -44375,18 +44377,24 @@ function renderSqRoles(sq){
       var roleLabel=squadRoleFirstName(c)+' - '+(c.cls||'Unclassed')+' - Lv '+(Number(c.level)||0)+' - '+squadRoleBestSkill(c);
       return '<option value="'+ci+'"'+(assignedCi===ci?' selected':'')+(eligible?'':' disabled')+'>'+esc(roleLabel)+(eligible?'':' - ineligible')+'</option>';
     }).join('');
-    html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+    html+='<div style="display:grid;grid-template-columns:30px 118px minmax(0,1fr);gap:8px;align-items:center;margin-bottom:10px">';
     html+='<span style="font-size:1em;width:22px;text-align:center;flex-shrink:0">'+r.ic+'</span>';
-    html+='<div style="font-size:.75em;font-weight:600;width:100px;flex-shrink:0;color:var(--ink)">'+esc(r.label)+'</div>';
-    html+='<select class="sq-role-sel" data-role="'+r.id+'" '+(hasKit?'':'disabled')+' style="flex:1;padding:4px 6px;font-size:.8em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">';
+    html+='<div style="font-size:.75em;font-weight:600;color:var(--ink)">'+esc(r.label)+'</div>';
+    html+='<select class="sq-role-sel" data-role="'+r.id+'" '+(hasKit?'':'disabled')+' style="width:100%;min-width:0;padding:7px 8px;font-size:.78em;border:1px solid var(--parchment-deep);border-radius:4px;background:var(--parchment)">';
     html+='<option value="">'+(hasKit?'(unassigned)':'(kit required)')+'</option>'+memberOpts;
     html+='</select>';
-    if(hasKit){
-      html+='<span style="font-size:.68em;min-width:86px;color:var(--forest)">✓ kit owned</span>';
-    }else{
-      html+='<button type="button" class="btn bg sm sq-role-buy-kit" data-role-buy="'+r.id+'" style="font-size:.62em;padding:4px 7px;min-width:92px">Buy '+(kit?kit.price:100)+' gp</button>';
+    html+='<div></div><div></div><div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:-2px">';
+    if(assignedCi!==null&&assignedCi!==undefined&&S.party[assignedCi]){
+      var ac=S.party[assignedCi];
+      var assignedLabel=squadRoleFirstName(ac)+' - '+(ac.cls||'Unclassed')+' - Lv '+(Number(ac.level)||0)+' - '+squadRoleBestSkill(ac);
+      html+='<span style="font-size:.69em;color:var(--ink);font-weight:600;line-height:1.25">Assigned: '+esc(assignedLabel)+'</span>';
     }
-    html+='</div>';
+    if(hasKit){
+      html+='<span style="font-size:.66em;color:var(--forest);white-space:nowrap">✓ kit owned</span>';
+    }else{
+      html+='<button type="button" class="btn bg sm sq-role-buy-kit" data-role-buy="'+r.id+'" style="font-size:.62em;padding:4px 7px">Buy '+(kit?kit.price:100)+' gp</button>';
+    }
+    html+='</div></div>';
   });
 
   html+='<div style="font-size:.65em;color:var(--ink-light);margin-top:5px">Leadership kits are squad-owned. Current roles have no additional character prerequisites; future roles may.</div>';
