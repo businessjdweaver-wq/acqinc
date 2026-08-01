@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7334 Distant Territories 20000gp</title>
+<title>Relentless Quest in Development v1.7335 Wish Squad Picker Fix</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7334 Distant Territories 20000gp</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7335 Wish Squad Picker Fix</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5523,8 +5523,8 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7334',
-  codename:'Distant Territories 20000gp',
+  version:'1.7335',
+  codename:'Wish Squad Picker Fix',
   built:'2026-08-01'
 };
 window.BUILD=BUILD;
@@ -40554,7 +40554,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7334-distant-territories-20000gp';
+var RQ_CLIENT_VERSION='v1.7335-wish-squad-picker-fix';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -52537,19 +52537,84 @@ function setOfflineBadge(text){
       '\\nCoverage: '+before.have+'/'+before.total+' ('+before.pct+'%) → '+after.have+'/'+after.total+' ('+after.pct+'%)\\n\\n'+report.join('\\n'));
   }
 
+  // v1.7335 — Native prompt() proved unreliable in the installed iOS/PWA
+  // context after the wish overlay was removed. Replace it with an in-app
+  // squad picker so option 3 cannot silently vanish. Cancelling returns to
+  // the main wish chooser; selecting a squad opens a second in-app confirm.
+  function closeMassPicker(){
+    var ov=document.getElementById('rq-wish-mass-picker');
+    if(ov&&ov.parentNode)ov.parentNode.removeChild(ov);
+  }
+  function openMassConfirm(sq){
+    closeMassPicker();
+    var cv=coverageState(sq);
+    var ov=document.createElement('div');
+    ov.id='rq-wish-mass-confirm';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.innerHTML=
+      '<div class="modal" style="display:block;max-width:430px;width:100%">'+
+      '<h2 style="font-family:Cinzel,serif;color:#6655aa;margin:0 0 8px">💍 Mass Skill Increase</h2>'+
+      '<p><strong>'+esc(sq.name)+'</strong><br>'+
+      (sq.memberIdxs||[]).length+' members · current coverage '+cv.have+'/'+cv.total+' ('+cv.pct+'%)</p>'+
+      '<p>Every member will receive one coverage-targeted <strong>skill, tool, or faith</strong>. '+
+      'If a proficiency slot requires additional levels, those levels are granted automatically and free.</p>'+
+      '<p style="font-size:.85em;color:var(--crimson)"><strong>This spends the Ring of Limited Wishing and cannot be undone.</strong></p>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+      '<button id="rq-wish-mass-back" class="btn bink" style="flex:1">Back</button>'+
+      '<button id="rq-wish-mass-go" class="btn bpur" style="flex:2">Grant Boon</button>'+
+      '</div></div>';
+    document.body.appendChild(ov);
+    document.getElementById('rq-wish-mass-back').onclick=function(){
+      if(ov.parentNode)ov.parentNode.removeChild(ov);
+      chooseSquadForMass();
+    };
+    document.getElementById('rq-wish-mass-go').onclick=function(){
+      this.disabled=true;
+      if(ov.parentNode)ov.parentNode.removeChild(ov);
+      performMassIncrease(sq);
+    };
+  }
   function chooseSquadForMass(){
-    var squads=(S.squads||[]).filter(function(sq){return sq&&(sq.memberIdxs||[]).some(function(ci){return !!S.party[ci];});});
-    if(!squads.length){alert('No populated squad is available. The wish remains unused.');return;}
-    var body=squads.map(function(sq,i){
-      var cv=coverageState(sq);
-      return (i+1)+'. '+sq.name+' — '+(sq.memberIdxs||[]).length+' members — '+cv.pct+'% skill/tool/faith coverage';
-    }).join('\\n');
-    var ans=prompt('💍 Mass Skill Increase\\n\\nChoose a squad by number:\\n\\n'+body);
-    var n=parseInt(ans,10);
-    if(!isFinite(n)||n<1||n>squads.length){alert('No squad selected. The wish remains unused.');return;}
-    if(confirm('Grant one coverage-targeted skill/tool/faith to EVERY member of '+squads[n-1].name+'?\\n\\nAny level increases needed to open proficiency slots will be automatic and free.')){
-      performMassIncrease(squads[n-1]);
+    var squads=(S.squads||[]).filter(function(sq){
+      return sq&&(sq.memberIdxs||[]).some(function(ci){return !!S.party[ci];});
+    });
+    if(!squads.length){
+      alert('No populated squad is available. The wish remains unused.');
+      setTimeout(openWishUi,0);
+      return;
     }
+    closeMassPicker();
+    var ov=document.createElement('div');
+    ov.id='rq-wish-mass-picker';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px';
+    var rows=squads.map(function(sq,i){
+      var cv=coverageState(sq);
+      var names=(sq.memberIdxs||[]).map(function(ci){return S.party[ci]&&S.party[ci].name;}).filter(Boolean);
+      return '<button class="btn bpur full rq-wish-squad-pick" data-wish-sq="'+i+'" '+
+        'style="display:block;text-align:left;margin-bottom:8px;padding:10px">'+
+        '<strong>'+esc(sq.name)+'</strong><br>'+
+        '<span style="font-family:Crimson Text,serif;text-transform:none;letter-spacing:0">'+
+        names.length+' members · '+cv.have+'/'+cv.total+' coverage ('+cv.pct+'%)<br>'+
+        '<span style="font-size:.86em">'+esc(names.join(', '))+'</span></span></button>';
+    }).join('');
+    ov.innerHTML=
+      '<div class="modal" style="display:block;max-width:460px;width:100%;max-height:86vh;overflow:auto">'+
+      '<h2 style="font-family:Cinzel,serif;color:#6655aa;margin:0 0 8px">💍 Choose a Squad</h2>'+
+      '<p>Select the squad that will receive the Mass Skill Increase.</p>'+
+      rows+
+      '<button id="rq-wish-mass-cancel" class="btn bink full">Back to Wish Options</button>'+
+      '</div>';
+    document.body.appendChild(ov);
+    ov.querySelectorAll('.rq-wish-squad-pick').forEach(function(btn){
+      btn.onclick=function(){
+        var i=parseInt(this.getAttribute('data-wish-sq'),10);
+        if(isFinite(i)&&squads[i])openMassConfirm(squads[i]);
+      };
+    });
+    document.getElementById('rq-wish-mass-cancel').onclick=function(){
+      closeMassPicker();
+      setTimeout(openWishUi,0);
+    };
   }
 
   function buildWishCycle(territory,buildingName){
