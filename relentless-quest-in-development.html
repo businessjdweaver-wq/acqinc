@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7347 Intel Random Quest Generator</title>
+<title>Relentless Quest in Development v1.7348 Grind State Protection</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7347 Intel Random Quest Generator</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7348 Grind State Protection</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5525,8 +5525,8 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7347',
-  codename:'Intel Random Quest Generator',
+  version:'1.7348',
+  codename:'Grind State Protection',
   built:'2026-08-01'
 };
 window.BUILD=BUILD;
@@ -18394,8 +18394,8 @@ window.rqHealRB=function(){
     qs.repeatCounts={};
     qs.revealed=[];
     qs.assigned={};
-    qs.grindPending=[];
-    console.log('[rqHealRB] cleared stuck-active R&B so the cycle is no longer erroneously the active cycle.');
+    // v1.7348 — grindPending is franchise-wide and MUST survive quest-cycle repair.
+    console.log('[rqHealRB] cleared stuck-active R&B so the cycle is no longer erroneously the active cycle; franchise grinds preserved.');
   }
   if(typeof save==='function')save();
   if(typeof renderCycleMapCards==='function')renderCycleMapCards();
@@ -19310,6 +19310,19 @@ function _rqRestoreMissingGrinds(snap,context){
     try{logAdd('🛡 Grind guard restored '+restored+' mission'+(restored===1?'':'s')+' after '+(context||'downtime')+'.','adv');}catch(e){}
   }
   return restored;
+}
+
+// v1.7348 — General-purpose franchise grind protection wrapper.
+// Any UI workflow that should be unrelated to grinds can snapshot before it
+// runs and restore missing entries afterward. This protects against legacy
+// render/save paths that unexpectedly mutate questState.
+function _rqProtectGrinds(context,fn){
+  var snap=_rqSnapshotGrinds();
+  try{
+    return fn();
+  }finally{
+    _rqRestoreMissingGrinds(snap,context||'protected operation');
+  }
 }
 
 function processCompletedDowntimeJobs(){
@@ -28740,6 +28753,7 @@ function sqSave(){
       logAdd('⚔ Squad renamed: "'+oldName+'" → "'+n+'"','hire');
     }
   }
+  _rqEndSquadEditorGrindGuard('squad editor save');
   P3.sq=null;closeOv('ov-squad');save();renderParty();
   renderSquadManager();
   if((document.getElementById('ov-q-nosquad').getAttribute('data-ctx')||'')==='cycle'&&P4.cycleSetId){
@@ -28820,7 +28834,10 @@ document.getElementById('ov-sq-members').addEventListener('change',function(e){
   sqUpdateMemberCount();
 });
 
-document.getElementById('ov-sq-no').addEventListener('click',function(){P3.sq=null;closeOv('ov-squad');});
+document.getElementById('ov-sq-no').addEventListener('click',function(){
+  _rqEndSquadEditorGrindGuard('squad editor cancel');
+  P3.sq=null;closeOv('ov-squad');
+});
 document.getElementById('ov-sq-del').addEventListener('click',function(){
   if(P3.sq===null)return;
   if(!confirm('Disband this squad?'))return;
@@ -28865,6 +28882,7 @@ document.getElementById('ov-sq-del').addEventListener('click',function(){
   if(sq&&S.partyShoppingOverride&&typeof S.partyShoppingOverride==='object'){
     delete S.partyShoppingOverride[sq.name];
   }
+  _rqEndSquadEditorGrindGuard('squad disband');
   P3.sq=null;closeOv('ov-squad');save();renderParty();renderSquadManager();
 });
 document.getElementById('ov-sq-yes').addEventListener('click',sqSave);
@@ -28910,7 +28928,10 @@ document.getElementById('btn-sq-next-1').addEventListener('click',function(){
   renderSquadMembers();sqUpdateMemberCount();sqGo(2);
 });
 document.getElementById('btn-sq-back-2').addEventListener('click',function(){sqGo(1);});
-document.getElementById('btn-sq-cancel-1').addEventListener('click',function(){P3.sq=null;closeOv('ov-squad');});
+document.getElementById('btn-sq-cancel-1').addEventListener('click',function(){
+  _rqEndSquadEditorGrindGuard('squad editor cancel');
+  P3.sq=null;closeOv('ov-squad');
+});
 
 /* ── Party Stats Panel ── */
 
@@ -34637,15 +34658,9 @@ document.getElementById('ov-cycle-abandon-yes').addEventListener('click',functio
     var now=Date.now();
     qs.pending=qs.pending.filter(function(pq){return pq.doneAt<=now;});
   }
-  // Clear grind missions — they reference old squad chars and must not carry over
-  if(isActive){
-    qs.grindPending=[];
-  }
-  // Also wipe grindPending from the saved setProgress snapshot so reloading
-  // this cycle doesn't restore stale missions with wrong char indices
-  if(qs.setProgress&&qs.setProgress[setId]){
-    qs.setProgress[setId].grindPending=[];
-  }
+  // v1.7348 — DO NOT clear grinds here.
+  // grindPending is franchise-wide / territory-scoped and unrelated to abandoning
+  // a quest cycle. Older builds wiped every active grind in every territory here.
   // Unassign the squad from this cycle
   delete cycleSquadMap()[setId];
   // If this was the active cycle, clear it — user chooses next cycle manually
@@ -41006,7 +41021,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7347-intel-random-quest-generator';
+var RQ_CLIENT_VERSION='v1.7348-grind-state-protection';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -44529,7 +44544,20 @@ function populateSquadTerritoryPicker(){
   }
 }
 
+var _rqSquadEditorGrindSnapshot=null;
+
+function _rqBeginSquadEditorGrindGuard(){
+  _rqSquadEditorGrindSnapshot=_rqSnapshotGrinds();
+}
+function _rqEndSquadEditorGrindGuard(context){
+  if(_rqSquadEditorGrindSnapshot){
+    _rqRestoreMissingGrinds(_rqSquadEditorGrindSnapshot,context||'squad editor');
+    _rqSquadEditorGrindSnapshot=null;
+  }
+}
+
 function openSquadEdit(sqi){
+  _rqBeginSquadEditorGrindGuard();
   P3.sq=sqi;
   var sq=S.squads[sqi];
   // Show edit card, hide new card
@@ -44571,6 +44599,7 @@ function purchaseLeadershipKitForSquad(sq,roleId){
   if(!goldSpend(price,'Purchased '+kit.name+' for '+sq.name,'buy'))return false;
   sq.leadershipKits.push(kit.name);
   logAdd('📦 '+kit.name+' assigned to squad "'+sq.name+'".','buy');
+  _rqRestoreMissingGrinds(_rqSquadEditorGrindSnapshot,'leadership kit purchase');
   save();setGold();renderParty();
   return true;
 }
@@ -44700,6 +44729,7 @@ function renderSqRoles(sq){
         Object.keys(sq.roles).forEach(function(rid){if(rid!==roleId&&sq.roles[rid]===ci)delete sq.roles[rid];});
       }
       if(ci===undefined)delete sq.roles[roleId]; else sq.roles[roleId]=ci;
+      _rqRestoreMissingGrinds(_rqSquadEditorGrindSnapshot,'squad role assignment');
       save();renderParty();renderSqRoles(sq);
     });
   });
