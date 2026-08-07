@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7348 Grind State Protection</title>
+<title>Relentless Quest in Development v1.7349 Grind Black Box Diagnostics</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7348 Grind State Protection</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7349 Grind Black Box Diagnostics</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4297,6 +4297,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
          push/pull/save with a state fingerprint so multi-tab race conditions
          are visible in the trace. Pairs with the RQ_SYNCDIAG JS module. -->
     <button class="btn sm full" id="btn-rq-sync-diag" style="margin-top:6px;background:rgba(26,107,138,.1);border:1px solid var(--teal);color:var(--teal)">🔬 Sync Diagnostic Log</button>
+    <button class="btn sm full" id="btn-rq-grind-blackbox" style="margin-top:6px;background:rgba(155,32,54,.08);border:1px solid var(--crimson);color:var(--crimson)">📦 Copy Grind Black Box</button>
   </div>
   <div class="set-sec" id="dev-d20-sec">
     <div class="set-sec-ttl">🎲 Dev Rolling Table</div>
@@ -5525,8 +5526,8 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7348',
-  codename:'Grind State Protection',
+  version:'1.7349',
+  codename:'Grind Black Box Diagnostics',
   built:'2026-08-01'
 };
 window.BUILD=BUILD;
@@ -9014,12 +9015,118 @@ setTimeout(function(){
   }catch(e){}
 }, 800);
 
+
+// ══════════════════════════════════════════════════════════════════════════
+// v1.7349 — Persistent grind black box
+// ══════════════════════════════════════════════════════════════════════════
+var RQ_GRIND_DIAG=(function(){
+  var MAX=500,_events=[],_lastDigest='',_lastState=null,_timer=null;
+  function who(){try{return uid()||'guest';}catch(e){return 'guest';}}
+  function key(){return 'rq_grind_blackbox:'+who();}
+  function goodKey(){return 'rq_grind_lastgood:'+who();}
+  function clone(v){try{return JSON.parse(JSON.stringify(v));}catch(e){return null;}}
+  function locks(){
+    var out={};
+    try{
+      var m=(S&&S.questCycleSquads)||{};
+      Object.keys(m).forEach(function(k){
+        if(k==='__grind__'||k.indexOf('__grind__::')===0)out[k]=Array.isArray(m[k])?m[k].slice():m[k];
+      });
+    }catch(e){}
+    return out;
+  }
+  function state(){
+    var qs=(S&&S.questState)||{},q=Array.isArray(qs.grindPending)?qs.grindPending:[];
+    return {ts:Date.now(),count:q.length,grinds:clone(q)||[],locks:locks(),
+      setId:qs.setId||null,cycleId:qs.cycleId||null,
+      pendingQuestCount:Array.isArray(qs.pending)?qs.pending.length:0,
+      localKey:(function(){try{return localSaveKey();}catch(e){return null;}})(),
+      unpushed:(function(){try{return _hasUnpushedChanges();}catch(e){return null;}})(),
+      visibility:(typeof document!=='undefined'?document.visibilityState:null)};
+  }
+  function digest(st){
+    st=st||state();
+    try{return JSON.stringify({
+      g:(st.grinds||[]).map(function(x){return [x.id||'',x.title||'',x.territory||'',x.squadName||'',(x.chars||[]).join(','),Number(x.reward)||0,Number(x.doneAt)||0];}).sort(),
+      l:st.locks||{},setId:st.setId||null,cycleId:st.cycleId||null
+    });}catch(e){return String(st.count);}
+  }
+  function persist(){try{localStorage.setItem(key(),JSON.stringify(_events.slice(-MAX)));}catch(e){}}
+  function restore(){try{var r=localStorage.getItem(key());if(r){var a=JSON.parse(r);if(Array.isArray(a))_events=a.slice(-MAX);}}catch(e){}}
+  function saveGood(st,source){
+    if(!st||!st.count)return;
+    try{localStorage.setItem(goodKey(),JSON.stringify({savedAt:Date.now(),source:source||'',state:st}));}catch(e){}
+  }
+  function sig(x){return [x.id||'',x.territory||'',(x.chars||[]).join(','),x.doneAt||0].join('::');}
+  function removed(before,after){
+    var counts={},out=[];
+    (after&&after.grinds||[]).forEach(function(x){var k=sig(x);counts[k]=(counts[k]||0)+1;});
+    (before&&before.grinds||[]).forEach(function(x){var k=sig(x);if(counts[k])counts[k]--;else out.push(x);});
+    return out;
+  }
+  function added(before,after){return removed(after,before);}
+  function log(type,payload,opts){
+    var st=(opts&&opts.state)||state();
+    var e={ts:Date.now(),iso:new Date().toISOString(),type:type||'event',payload:payload||{},
+      count:st.count,setId:st.setId,cycleId:st.cycleId,localKey:st.localKey,
+      unpushed:st.unpushed,visibility:st.visibility};
+    if(opts&&opts.full)e.state=st;
+    if(opts&&opts.stack){try{e.stack=(new Error('RQ_GRIND_DIAG '+type)).stack||'';}catch(err){}}
+    _events.push(e);if(_events.length>MAX)_events=_events.slice(-MAX);persist();if(st.count)saveGood(st,type);
+    return e;
+  }
+  function checkpoint(source,opts){
+    var st=state(),dg=digest(st),before=_lastState;
+    if(!_lastDigest){_lastDigest=dg;_lastState=st;log('baseline',{source:source||'init'},{state:st,full:true});return st;}
+    if(dg!==_lastDigest){
+      var rem=removed(before,st),add=added(before,st),drop=!!(before&&before.count>st.count);
+      log(drop?'GRIND_DROP':'grind_change',{source:source||'checkpoint',
+        beforeCount:before?before.count:null,afterCount:st.count,removed:rem,added:add,
+        beforeLocks:before?before.locks:null,afterLocks:st.locks},
+        {state:st,full:true,stack:drop||!!(opts&&opts.stack)});
+      if(drop)try{console.error('[RQ_GRIND_DIAG] GRIND DROP '+before.count+' → '+st.count+' at '+source,{removed:rem,before:before,after:st});}catch(e){}
+      _lastDigest=dg;_lastState=st;
+    }else if(opts&&opts.force){
+      log('checkpoint',{source:source||'checkpoint'},{state:st,full:!!opts.full,stack:!!opts.stack});
+    }
+    return st;
+  }
+  function notePullServer(serverGrinds,meta){
+    var st=state();
+    log('pull_server_observed',{serverCount:Array.isArray(serverGrinds)?serverGrinds.length:null,
+      serverGrinds:clone(serverGrinds)||[],localBeforeCount:st.count,meta:meta||{}},
+      {state:st,full:true,stack:true});
+  }
+  function getAll(){return _events.slice();}
+  function clear(){_events=[];try{localStorage.removeItem(key());}catch(e){}}
+  function exportData(){
+    var good=null;try{good=JSON.parse(localStorage.getItem(goodKey())||'null');}catch(e){}
+    return {generatedAt:new Date().toISOString(),uid:who(),current:state(),lastGood:good,events:getAll()};
+  }
+  function start(){
+    restore();var st=state();_lastState=st;_lastDigest=digest(st);log('boot',{source:'start'},{state:st,full:true});
+    if(!_timer)_timer=setInterval(function(){checkpoint('1s-watchdog');},1000);
+    try{
+      document.addEventListener('visibilitychange',function(){checkpoint('visibility:'+document.visibilityState,{force:true,full:true});});
+      window.addEventListener('pageshow',function(){checkpoint('pageshow',{force:true,full:true});});
+      window.addEventListener('pagehide',function(){checkpoint('pagehide',{force:true,full:true});});
+      window.addEventListener('beforeunload',function(){checkpoint('beforeunload',{force:true,full:true});});
+    }catch(e){}
+  }
+  return {state:state,checkpoint:checkpoint,log:log,notePullServer:notePullServer,getAll:getAll,exportData:exportData,clear:clear,start:start};
+})();
+window.RQ_GRIND_DIAG=RQ_GRIND_DIAG;
+setTimeout(function(){try{RQ_GRIND_DIAG.start();}catch(e){console.warn('[RQ_GRIND_DIAG start]',e);}},1200);
+
+
 function saveLocalState(){
+  try{RQ_GRIND_DIAG.checkpoint('saveLocalState:before',{stack:true});}catch(e){}
   // v1.7300 — Runtime only. The offline catalog is embedded in the HTML and
   // must not be duplicated into localStorage on every save.
   try{localStorage.setItem(localSaveKey(),JSON.stringify(S));}
   catch(e){console.warn('[local save] failed; existing stored runtime left intact',e);}
   try{ RQ_SYNCDIAG.log('save', {}); }catch(e){}
+  try{RQ_GRIND_DIAG.checkpoint('saveLocalState:after');}catch(e){}
 }
 // v1.7054 — helpers for the unpushed-changes flag. The flag is set ONLY
 // by save() (genuine user-action save path), NOT by saveLocalState()
@@ -34190,6 +34297,7 @@ function _grindAutoCommit(territories){
     perTerr.push({terr:t||'(all)',n:n});
   });
   saveActiveSetProgress();
+  try{RQ_GRIND_DIAG.checkpoint('auto-grind committed',{force:true,full:true,stack:true});}catch(e){}
   save();
   renderAdv();
   if(typeof renderCycleMapCards==='function')renderCycleMapCards();
@@ -36707,6 +36815,7 @@ function confirmQuestAssignment(forceApproveDowntimeForfeit,skipContactWarn){
     var cn2=chars.map(function(ci){return S.party[ci]?S.party[ci].name:'?';}).join(', ')||'unassigned';
     logAdd('Grind: "'+gObj2.title+'" started ('+cn2+') — '+reward2+' gp in '+questDurationLabel(gObj2),'adv');
     saveActiveSetProgress();
+    try{RQ_GRIND_DIAG.checkpoint('manual grind started',{force:true,full:true,stack:true});}catch(e){}
     P4.grind=null;closeOv('ov-quest');save();renderAdv();
     // v1.6913: refresh the Grinds list if it's open so the just-started
     // mission shows as in-progress without requiring a manual reopen.
@@ -39508,6 +39617,25 @@ document.getElementById('btn-jump-cycle2').addEventListener('click',function(){
     renderSyncDiagModal();
     openOv('ov-sync-diag');
   });
+  var grindBoxBtn=document.getElementById('btn-rq-grind-blackbox');
+  if(grindBoxBtn)grindBoxBtn.addEventListener('click',function(){
+    try{
+      RQ_GRIND_DIAG.checkpoint('manual black-box export',{force:true,full:true,stack:true});
+      var payload=JSON.stringify(RQ_GRIND_DIAG.exportData(),null,2);
+      if(navigator.clipboard&&navigator.clipboard.writeText){
+        navigator.clipboard.writeText(payload).then(function(){
+          grindBoxBtn.textContent='✓ Grind Log Copied';
+          setTimeout(function(){grindBoxBtn.textContent='📦 Copy Grind Black Box';},1800);
+        }).catch(function(){
+          console.log('=== RQ_GRIND_DIAG EXPORT ===\n'+payload);
+          alert('Clipboard blocked. Grind black box printed to console.');
+        });
+      }else{
+        console.log('=== RQ_GRIND_DIAG EXPORT ===\n'+payload);
+        alert('Clipboard unavailable. Grind black box printed to console.');
+      }
+    }catch(err){alert('Grind black-box export failed: '+((err&&err.message)||String(err)));}
+  });
 })();
 
 // v1.7052 — Sync diagnostic modal renderer. Builds the event list + the
@@ -41021,7 +41149,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7348-grind-state-protection';
+var RQ_CLIENT_VERSION='v1.7349-grind-black-box-diagnostics';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -42126,6 +42254,7 @@ function sbPush(manual){
   // stale push overwrites good server state, the trace shows exactly what
   // fingerprint was about to be written + whether another tab was alive.
   try{ RQ_SYNCDIAG.log('push_start', { manual: !!manual, mode: (currentUser&&currentUser._codeLogin)?'code':'regular' }); }catch(e){}
+  try{RQ_GRIND_DIAG.checkpoint('sbPush:start',{force:true,full:true,stack:true});}catch(e){}
   // Code-session: save entire state as blob to login_codes.player_data
   if(currentUser&&currentUser._codeLogin){
     var _blob={};
@@ -42649,6 +42778,7 @@ function sbPush(manual){
       _pushInProgress=false;
       // v1.7052 — log successful push
       try{ RQ_SYNCDIAG.log('push_ok', { manual: !!manual }); }catch(e){}
+      try{RQ_GRIND_DIAG.checkpoint('sbPush:ok',{force:true,full:true});}catch(e){}
       if(manual){
         syncStatus('✅ Pushed '+new Date().toLocaleTimeString(),'var(--forest)');
         logAdd('Supabase: push complete.','gold');
@@ -42849,6 +42979,7 @@ function sbPull(manual){
   // recent push put out, another session wrote after we did.
   var _syncdiag_before = null;
   try{ _syncdiag_before = RQ_SYNCDIAG.fingerprint(); RQ_SYNCDIAG.log('pull_start', { manual: !!manual }); }catch(e){}
+  try{RQ_GRIND_DIAG.checkpoint('sbPull:start',{force:true,full:true,stack:true});}catch(e){}
   // Code-session: load from login_codes.player_data blob
   if(currentUser&&currentUser._codeLogin){
     if(manual)syncStatus('Loading save…','var(--gold-dark)');
@@ -42886,6 +43017,7 @@ function sbPull(manual){
             var _diff_cs = RQ_SYNCDIAG.diff(_syncdiag_before, _syncdiag_cs_after);
             RQ_SYNCDIAG.log('pull_ok', { manual: !!manual, mode:'code', diff: _diff_cs });
           }catch(e){}
+          try{RQ_GRIND_DIAG.checkpoint('sbPull:code-after',{force:true,full:true,stack:true});}catch(e){}
           syncStatus('☁ Loaded','var(--ink-light)');
           navTo('tasks');window.scrollTo({top:0,behavior:'smooth'});
         } else {
@@ -43532,6 +43664,9 @@ function sbPull(manual){
     if(questCycles&&questCycles[0]){
       console.log('[QuestPull] raw row:',JSON.stringify(questCycles[0]));
       var qc=questCycles[0];
+      try{RQ_GRIND_DIAG.notePullServer(qc?(qc.grind_pending||[]):[],{
+        manual:!!manual,setId:qc&&qc.set_id||null,cycleId:qc&&qc.cycle_id||null,questCycleRowPresent:!!qc
+      });}catch(e){}
       // Block 4: proper columns first, fall back to assigned blob for legacy rows
       var asgn=qc.assigned||{};
       var cleanAsgn={};
@@ -43679,6 +43814,7 @@ function sbPull(manual){
       var _diff = RQ_SYNCDIAG.diff(_syncdiag_before, _syncdiag_after);
       RQ_SYNCDIAG.log('pull_ok', { manual: !!manual, diff: _diff });
     }catch(e){}
+    try{RQ_GRIND_DIAG.checkpoint('sbPull:after',{force:true,full:true,stack:true});}catch(e){}
     if(manual){
       syncStatus('✅ Pulled '+new Date().toLocaleTimeString()+
         ' — '+S.gold+' gp · '+(S.active||[]).length+' tasks · '+
