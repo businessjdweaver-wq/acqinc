@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7352 Cannon Solo Fix</title>
+<title>Relentless Quest in Development v1.7353 Legacy Cycle Binding Cleanup</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7352 Cannon Solo Fix</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7353 Legacy Cycle Binding Cleanup</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5526,8 +5526,8 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7352',
-  codename:'Cannon Solo Fix',
+  version:'1.7353',
+  codename:'Legacy Cycle Binding Cleanup',
   built:'2026-08-01'
 };
 window.BUILD=BUILD;
@@ -10476,8 +10476,41 @@ function _grindKeyForTerritory(territory){
   return GRIND_CYCLE_KEY+GRIND_CYCLE_SEP+territory;
 }
 
+
+// v1.7353 — Targeted cleanup for two legacy phantom quest-cycle bindings.
+// These bindings can survive from older published progression even when there
+// is no cycle history, no pending quest, no completed quest, and no assignment.
+// We ONLY release the two known legacy ids and only when all safety checks pass.
+function migrateLegacyPhantomCycleBindingsV17353(){
+  try{
+    if(!S||!S.questCycleSquads||typeof S.questCycleSquads!=='object')return 0;
+    var ids=['drowned-temple-of-dicentis','hasufan-eastern-juxians'];
+    var removed=0;
+    ids.forEach(function(id){
+      var squad=S.questCycleSquads[id];
+      if(!squad||typeof squad!=='string')return;
+      if(S.questState&&S.questState.setId===id)return; // never touch current active cycle
+      var hist=(S.questCycles||[]).some(function(x){return x&&x.setId===id;});
+      if(hist)return;
+      var p=(S.questState&&S.questState.setProgress&&S.questState.setProgress[id])||{};
+      var hasPending=Array.isArray(p.pending)&&p.pending.length>0;
+      var hasDone=Array.isArray(p.done)&&p.done.length>0;
+      var hasAssigned=p.assigned&&typeof p.assigned==='object'&&Object.keys(p.assigned).length>0;
+      if(hasPending||hasDone||hasAssigned)return;
+      delete S.questCycleSquads[id];
+      removed++;
+      try{console.log('[v1.7353] Released legacy phantom cycle binding',id,'→',squad);}catch(e){}
+    });
+    return removed;
+  }catch(e){
+    try{console.warn('[v1.7353] legacy binding cleanup failed',e);}catch(_e){}
+    return 0;
+  }
+}
+
 function cycleSquadMap(){
   if(!S.questCycleSquads||typeof S.questCycleSquads!=='object')S.questCycleSquads={};
+  migrateLegacyPhantomCycleBindingsV17353();
   // Remove stale entries where the squad no longer exists.
   // v1.7217: also remove completed questline locks. A completed cycle can
   // remain in S.questCycleSquads after out-of-order capstone completion; if
@@ -32906,7 +32939,7 @@ function healMissingCapstoneRewards(){
   });
  }catch(e){console.warn('healMissingCapstoneRewards failed',e);}
 }
-window.addEventListener('load',function(){setTimeout(function(){try{rqApplyGeneratedIntelContent();}catch(e){console.warn('[v1.7347 intel restore]',e);}},1100);setTimeout(function(){migrateLegacyLeadershipKits();try{save();}catch(e){}},900);setTimeout(healMissingCapstoneRewards,1500);});
+window.addEventListener('load',function(){setTimeout(function(){try{var n=migrateLegacyPhantomCycleBindingsV17353();if(n){save();renderParty();if(typeof renderCycleMapCards==='function')renderCycleMapCards();}}catch(e){}},1400);setTimeout(function(){try{rqApplyGeneratedIntelContent();}catch(e){console.warn('[v1.7347 intel restore]',e);}},1100);setTimeout(function(){migrateLegacyLeadershipKits();try{save();}catch(e){}},900);setTimeout(healMissingCapstoneRewards,1500);});
 
 function awardCapstonReward(set){
   // v1.6945: idempotency guard — don't re-award a capstone that's already been
@@ -41176,7 +41209,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7352-cannon-solo-fix';
+var RQ_CLIENT_VERSION='v1.7353-legacy-cycle-binding-cleanup';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
