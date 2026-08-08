@@ -1,4 +1,5 @@
 
+// v1.3.90 — Resolve Workshop @mod damage placeholders from parsed action prose.
 // v1.3.89 — Offline Autosave Performance: IndexedDB snapshots, no quota retry churn, single canvas serialization;
 // v1.3.88 — Encounter Focus Performance: true canvas detachment, lightweight HP refresh, idle autosave;
 // v1.3.86 — cache-bust and direct login-control fallback;
@@ -14509,6 +14510,21 @@ function resolveAbilityMechanics(a) {
   if (!a) return {};
   const ov = a._override || {};
   const parsed = parseAbilityProse(a.desc || '');
+
+  // v1.3.90 — Workshop formulas may contain Foundry-style @mod placeholders
+  // (for example "2d10[force] + @mod") even though the generated 5e prose
+  // already contains the resolved modifier ("15 (2d10 + 4) force damage").
+  // Prefer the structured formula, because it can carry useful annotations such
+  // as [force], but hydrate @mod from the prose-parsed numeric damage formula.
+  const hydrateDamageMod = (formula, parsedFormula) => {
+    if (formula == null || !/@mod\b/i.test(String(formula))) return formula;
+    const pf = String(parsedFormula || '').replace(/\s+/g, '');
+    const mm = pf.match(/\d+d\d+(?:\[[^\]]+\])?([+\-]\d+)\b/i);
+    if (!mm) return formula;
+    const signed = mm[1];
+    const n = signed.charAt(0) === '+' ? signed.slice(1) : signed;
+    return String(formula).replace(/@mod\b/gi, n);
+  };
   // Helper: pick first non-empty value among override, structured, parsed.
   const pick = (ovV, structV, parsedV) => {
     if (ovV !== undefined && ovV !== null && ovV !== '') return ovV;
@@ -14530,7 +14546,7 @@ function resolveAbilityMechanics(a) {
     range:       pick(ov.range, a.range, parsed.range),
     saveDC:      pick(ov.saveDC, (a.saveDC ?? a.save_dc ?? a.dc), parsed.saveDC),
     saveAbility: pick(ov.saveAbility, (a.saveAbility || a.save_ability || a.save), parsed.saveAbility),
-    damage:      pick(ov.damage, (a.damage || (a.damages && a.damages[0])), parsed.damage),
+    damage:      hydrateDamageMod(pick(ov.damage, (a.damage || (a.damages && a.damages[0])), parsed.damage), parsed.damage),
     damageType:  pick(ov.damageType, (a.dmgType || a.damageType || (a.damageTypes && a.damageTypes[0])), parsed.damageType),
     // Extra (rider) damage — second damage instance applied alongside the
     // primary. Common in monsters with elemental riders (Young Blue
@@ -19814,7 +19830,7 @@ async function buildOfflineSessionBackup(reason, blocksOverride) {
   return {
     app: 'Session Canvas Planner',
     offline_rescue: true,
-    version: '1.3.89',
+    version: '1.3.90',
     reason: reason || 'manual_export',
     exported_at: new Date().toISOString(),
     session: {
