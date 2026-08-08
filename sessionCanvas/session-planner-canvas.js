@@ -1,4 +1,5 @@
 
+// v1.3.89 — Offline Autosave Performance: IndexedDB snapshots, no quota retry churn, single canvas serialization;
 // v1.3.88 — Encounter Focus Performance: true canvas detachment, lightweight HP refresh, idle autosave;
 // v1.3.86 — cache-bust and direct login-control fallback;
 // v1.3.85 — local-only authentication rescue: local JSON backups/import and Supabase-failure fallback.
@@ -1518,7 +1519,7 @@ async function attemptAutosave() {
     if (window.SPC_LOCAL_ONLY) {
       const row = sessionState.sessions.find(s => String(s.id) === String(sessionState.currentSessionId));
       if (row) row.blocks = payload;
-      await saveOfflineSessionSnapshot('local_only_autosave');
+      await saveOfflineSessionSnapshot('local_only_autosave', payload);
       lastSavedGen = inFlightGen;
       inFlightGen = 0;
       setCanvasSavedState(saveGen === lastSavedGen ? 'saved' : 'dirty');
@@ -1543,20 +1544,37 @@ async function attemptAutosave() {
     }
   } catch (e) {
     inFlightGen = 0;
-    try { saveOfflineSessionSnapshot('autosave_failed'); } catch (_) {}
     setCanvasSavedState('error');
-    console.warn('Autosave failed:', e.message);
-    // Try again less aggressively during an outage so the app remains usable
-    // and does not hammer a disabled Supabase project.
+    console.warn('Autosave failed:', e && e.message ? e.message : e);
+
+    // v1.3.89: A browser-storage failure in local-only mode is not a
+    // transient network outage. Retrying the same oversized snapshot creates
+    // an endless serialize/write/fail loop that monopolizes the main thread.
+    // Leave the document dirty and wait for a new edit or explicit Save.
+    if (window.SPC_LOCAL_ONLY) {
+      savePending = false;
+      window.SPC_OFFLINE_SAVE_BLOCKED = true;
+      console.warn('Local autosave paused after storage failure; automatic retry suppressed.');
+      return;
+    }
+
+    // Online mode: retain a browser-local rescue copy if possible, but await
+    // the async operation so a rejected backup cannot become an uncaught
+    // promise. Reuse the payload already serialized for this save attempt.
+    try {
+      const rescuePayload = (typeof payload !== 'undefined') ? payload : null;
+      await saveOfflineSessionSnapshot('autosave_failed', rescuePayload);
+    } catch (backupErr) {
+      console.warn('Offline rescue snapshot failed:', backupErr && backupErr.message ? backupErr.message : backupErr);
+    }
+
+    // Remote failures may be transient, so preserve the existing slow retry.
     const retryMs = window.SPC_SUPABASE_OFFLINE ? 30000 : 2500;
     setTimeout(() => {
       if (saveGen > lastSavedGen && !saveTimer4c) {
         saveTimer4c = setTimeout(attemptAutosave, AUTOSAVE_DEBOUNCE_MS);
       }
     }, retryMs);
-    // If a queued save came in during the failed attempt, drain it via the
-    // same retry timer (don't fire another immediate attempt that would
-    // likely also fail).
     savePending = false;
     return;
   }
@@ -19230,12 +19248,24 @@ function spcOpenBlankLocalSession() {
   setCanvasSavedState('saved');
   updateEmptyHint();
 }
-function spcEnterLocalOnlyMode() {
+async function spcEnterLocalOnlyMode() {
   window.SPC_LOCAL_ONLY = true;
   window.SPC_SUPABASE_OFFLINE = true;
   try { localStorage.setItem('spc_local_only_enabled','1'); } catch (_) {}
   rqHideLogin();
   setCanvasSavedState('idle');
+
+  // Prefer the large-capacity IndexedDB snapshot introduced in v1.3.89.
+  const idbBackup = await spcLatestIndexedDbBackup();
+  if (idbBackup) {
+    try {
+      const file = new File([JSON.stringify(idbBackup)], 'latest-offline-backup.json', {type:'application/json'});
+      importFocusedSessionJsonOffline(file, true);
+      return;
+    } catch (_) {}
+  }
+
+  // Backward compatibility for snapshots written by v1.3.88 and earlier.
   const latest = spcLatestLocalBackupText();
   if (latest && latest.text) {
     try {
@@ -19775,13 +19805,16 @@ async function serializeCanvasForOfflineBackup() {
   }
   return blocks;
 }
-async function buildOfflineSessionBackup(reason) {
-  const blocks = await serializeCanvasForOfflineBackup();
+async function buildOfflineSessionBackup(reason, blocksOverride) {
+  // Autosave already serialized the canvas. Reuse that payload rather than
+  // traversing the entire canvas a second time. Manual exports still use the
+  // image-embedding serializer when no override is supplied.
+  const blocks = blocksOverride || await serializeCanvasForOfflineBackup();
   const row = (sessionState.sessions || []).find(s => String(s.id) === String(sessionState.currentSessionId)) || {};
   return {
     app: 'Session Canvas Planner',
     offline_rescue: true,
-    version: '1.3.85',
+    version: '1.3.89',
     reason: reason || 'manual_export',
     exported_at: new Date().toISOString(),
     session: {
@@ -19798,11 +19831,74 @@ async function buildOfflineSessionBackup(reason) {
     arcBlocks: sessionState.arcBlocks || { nodes: [], collections: [], edges: [] }
   };
 }
-async function saveOfflineSessionSnapshot(reason) {
+const SPC_OFFLINE_DB_NAME = 'session-planner-canvas-offline';
+const SPC_OFFLINE_DB_VERSION = 1;
+const SPC_OFFLINE_DB_STORE = 'session_backups';
+let _spcOfflineDbPromise = null;
+function spcOpenOfflineDb() {
+  if (_spcOfflineDbPromise) return _spcOfflineDbPromise;
+  _spcOfflineDbPromise = new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error('IndexedDB is unavailable in this browser.'));
+    const req = indexedDB.open(SPC_OFFLINE_DB_NAME, SPC_OFFLINE_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(SPC_OFFLINE_DB_STORE)) {
+        const store = db.createObjectStore(SPC_OFFLINE_DB_STORE, { keyPath: 'key' });
+        store.createIndex('exported_at', 'exported_at', { unique: false });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('IndexedDB open failed.'));
+  });
+  return _spcOfflineDbPromise;
+}
+async function spcPutOfflineBackup(key, backup) {
+  const db = await spcOpenOfflineDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SPC_OFFLINE_DB_STORE, 'readwrite');
+    tx.objectStore(SPC_OFFLINE_DB_STORE).put({ key, exported_at: backup.exported_at, backup });
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error || new Error('IndexedDB backup write failed.'));
+    tx.onabort = () => reject(tx.error || new Error('IndexedDB backup write aborted.'));
+  });
+}
+async function spcLatestIndexedDbBackup() {
+  try {
+    const db = await spcOpenOfflineDb();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(SPC_OFFLINE_DB_STORE, 'readonly');
+      const store = tx.objectStore(SPC_OFFLINE_DB_STORE);
+      const index = store.index('exported_at');
+      const req = index.openCursor(null, 'prev');
+      req.onsuccess = () => {
+        const cursor = req.result;
+        resolve(cursor && cursor.value ? cursor.value.backup : null);
+      };
+      req.onerror = () => reject(req.error || new Error('IndexedDB backup read failed.'));
+    });
+  } catch (_) {
+    return null;
+  }
+}
+async function saveOfflineSessionSnapshot(reason, blocksOverride) {
   if (!sessionState || !sessionState.currentSessionId) return false;
-  const backup = await buildOfflineSessionBackup(reason || 'local_snapshot');
-  localStorage.setItem(spcCurrentOfflineBackupKey(), JSON.stringify(backup));
-  localStorage.setItem('spc_offline_last', backup.exported_at);
+  const backup = await buildOfflineSessionBackup(reason || 'local_snapshot', blocksOverride);
+  const key = spcCurrentOfflineBackupKey();
+
+  // v1.3.89: IndexedDB is the primary automatic snapshot store. Unlike
+  // localStorage it is intended for multi-megabyte structured data and does
+  // not require JSON.stringify on every combat edit.
+  await spcPutOfflineBackup(key, backup);
+  window.SPC_OFFLINE_SAVE_BLOCKED = false;
+
+  // Keep only tiny discovery metadata in localStorage. Once the IndexedDB copy
+  // is committed, remove an obsolete same-session localStorage snapshot that
+  // may be consuming the browser's small synchronous quota.
+  try {
+    localStorage.setItem('spc_offline_last', backup.exported_at);
+    localStorage.setItem('spc_offline_backend', 'indexeddb');
+    localStorage.removeItem(key);
+  } catch (_) {}
   return true;
 }
 async function exportFocusedSessionJsonOffline() {
