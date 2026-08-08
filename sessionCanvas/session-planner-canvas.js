@@ -1,5 +1,5 @@
 
-// v1.3.94 — inline Run Encounter HP key handler survives clone-rewire; v1.3.93 added delegated handling.
+// v1.3.95 — inline Run Encounter HP key handler survives clone-rewire; v1.3.93 added delegated handling.
 // v1.3.89 — Offline Autosave Performance: IndexedDB snapshots, no quota retry churn, single canvas serialization;
 // v1.3.88 — Encounter Focus Performance: true canvas detachment, lightweight HP refresh, idle autosave;
 // v1.3.86 — cache-bust and direct login-control fallback;
@@ -11548,6 +11548,10 @@ function wireEncounterFocusMode(node) {
     m._hpPrev = cur;
     m.hp_current = next;
     refreshEncounterFocusHp(node, m, i);
+    // refreshEncounterFocusHp intentionally avoids overwriting the actively
+    // edited HP input. On an Enter commit this input is still focused, so
+    // explicitly replace the typed delta (e.g. "-3") with the resulting HP.
+    inp.value = String(next);
     markDirty();
   };
 
@@ -12861,7 +12865,7 @@ function renderOverrideEditor(m, monIdx) {
 // On any commit (Enter or blur) we stash the prior value into m._hpPrev
 // so the inline ↶ undo button can revert. Undo TOGGLES — clicking it
 // swaps current ↔ previous, so repeated clicks bounce between the two.
-// v1.3.94 — Run Encounter HP key handling lives on the input itself via the
+// v1.3.95 — Run Encounter HP key handling lives on the input itself via the
 // inline onkeydown attribute below. wireMonsterRollClicks() intentionally
 // clone-replaces HP inputs to de-duplicate listeners; cloneNode(true) preserves
 // inline event attributes, so this path cannot be stripped by that rewire pass.
