@@ -1,5 +1,5 @@
 
-// v1.3.90 — Resolve Workshop @mod damage placeholders from parsed action prose.
+// v1.3.91 — Resolve @mod from effective action prose (override/generated/raw fallbacks).
 // v1.3.89 — Offline Autosave Performance: IndexedDB snapshots, no quota retry churn, single canvas serialization;
 // v1.3.88 — Encounter Focus Performance: true canvas detachment, lightweight HP refresh, idle autosave;
 // v1.3.86 — cache-bust and direct login-control fallback;
@@ -14509,9 +14509,32 @@ function parseAbilityProse(desc) {
 function resolveAbilityMechanics(a) {
   if (!a) return {};
   const ov = a._override || {};
-  const parsed = parseAbilityProse(a.desc || '');
 
-  // v1.3.90 — Workshop formulas may contain Foundry-style @mod placeholders
+  // v1.3.91 — Parse the same *effective* prose the override UI/VTT can display.
+  // Some Workshop rows keep generated combat prose outside raw `a.desc`, and
+  // an override description can itself contain the resolved damage modifier.
+  // Looking only at a.desc meant the UI could visibly show "2d10 + 4" while
+  // the mechanics resolver still had no numeric source with which to hydrate
+  // a structured formula such as "2d10[force] + @mod".
+  const effectiveDesc = (() => {
+    const candidates = [
+      ov.desc,
+      a.desc,
+      a.description,
+      a.text,
+      a.flavor,
+      a.flavour,
+      a.generatedDesc,
+      a.generated_desc
+    ];
+    for (const v of candidates) {
+      if (v !== undefined && v !== null && String(v).trim() !== '') return String(v);
+    }
+    return '';
+  })();
+  const parsed = parseAbilityProse(effectiveDesc);
+
+  // v1.3.91 — Workshop formulas may contain Foundry-style @mod placeholders
   // (for example "2d10[force] + @mod") even though the generated 5e prose
   // already contains the resolved modifier ("15 (2d10 + 4) force damage").
   // Prefer the structured formula, because it can carry useful annotations such
@@ -14539,7 +14562,7 @@ function resolveAbilityMechanics(a) {
     sourceName:  a.name || 'Ability',   // always the source — used by the override editor's title
     hidden:      !!ov.hidden,
     disableDesc: !!ov.disableDesc,
-    desc:        ov.disableDesc ? '' : pick(ov.desc, a.desc, ''),
+    desc:        ov.disableDesc ? '' : effectiveDesc,
     toHit:       pick(ov.toHit, a.toHit, undefined),
     attackType:  a.attackType,
     reach:       pick(ov.reach, a.reach, undefined),
@@ -19830,7 +19853,7 @@ async function buildOfflineSessionBackup(reason, blocksOverride) {
   return {
     app: 'Session Canvas Planner',
     offline_rescue: true,
-    version: '1.3.90',
+    version: '1.3.91',
     reason: reason || 'manual_export',
     exported_at: new Date().toISOString(),
     session: {
