@@ -1,5 +1,5 @@
 
-// v1.3.87 — Encounter Focus Mode: draggable initiative tabs, full statblocks, canvas suspension;
+// v1.3.88 — Encounter Focus Performance: true canvas detachment, lightweight HP refresh, idle autosave;
 // v1.3.86 — cache-bust and direct login-control fallback;
 // v1.3.85 — local-only authentication rescue: local JSON backups/import and Supabase-failure fallback.
 // v1.3.83 — session PDF export for readable offline backups.
@@ -1459,12 +1459,42 @@ let savePending    = false;    // true if a save fired while one was in flight
 let loadingSession = false;    // suppress markDirty during deserialization
 const AUTOSAVE_DEBOUNCE_MS = 600;
 
+let encounterFocusIdleSave = null;
+function _scheduleEncounterFocusAutosave() {
+  // Combat interaction must stay responsive. serializeCanvas() can be costly on
+  // very large sessions, so while Encounter Focus is active we only serialize
+  // when the browser reports idle time. Exiting focus forces a normal save.
+  if (encounterFocusIdleSave != null) {
+    if (typeof cancelIdleCallback === 'function') cancelIdleCallback(encounterFocusIdleSave);
+    else clearTimeout(encounterFocusIdleSave);
+    encounterFocusIdleSave = null;
+  }
+  const run = () => {
+    encounterFocusIdleSave = null;
+    if (!inEncounterFocusMode) return;
+    attemptAutosave();
+  };
+  if (typeof requestIdleCallback === 'function') {
+    // No timeout on purpose: sustained scrolling/clicking stays smooth; the
+    // forced flush on focus exit guarantees persistence before canvas resumes.
+    encounterFocusIdleSave = requestIdleCallback(run);
+  } else {
+    // Safari fallback: use a deliberately long quiet-period debounce.
+    encounterFocusIdleSave = setTimeout(run, 8000);
+  }
+}
+
 function markDirty() {
   if (loadingSession) return;
   if (!sessionState.currentSessionId) return;   // nothing to save into
   saveGen++;
   setCanvasSavedState('dirty');
   if (saveTimer4c) clearTimeout(saveTimer4c);
+  saveTimer4c = null;
+  if (inEncounterFocusMode) {
+    _scheduleEncounterFocusAutosave();
+    return;
+  }
   saveTimer4c = setTimeout(attemptAutosave, AUTOSAVE_DEBOUNCE_MS);
 }
 
@@ -5466,7 +5496,7 @@ function drawGrid() {
   grid.innerHTML = lines;
 }
 
-window.addEventListener('resize', drawGrid);
+window.addEventListener('resize', () => { if (!inEncounterFocusMode) drawGrid(); });
 
 // ── MOUSE BUTTON HANDLING ────────────────────────────────
 // Layout:
@@ -5570,7 +5600,7 @@ wrap.addEventListener('click', (e) => {
 
 // Esc cancels pending; Delete/Backspace removes selected edge
 window.addEventListener('keydown', (e) => {
-  // v1.3.87: Encounter Focus owns Esc and left/right initiative navigation.
+  // v1.3.88: Encounter Focus owns Esc and left/right initiative navigation.
   if (inEncounterFocusMode) {
     if (e.key === 'Escape') { exitEncounterFocusMode(); e.preventDefault(); return; }
     if (!isTypingTarget(e.target) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
@@ -6351,7 +6381,7 @@ function wireCanvasGroupBar() {
 
 
 
-// v1.3.87 — launch the dedicated encounter-running surface from a canvas card.
+// v1.3.88 — launch the dedicated encounter-running surface from a canvas card.
 function wireRunEncounterBtn(host, node) {
   if (!host || !node || node.type !== 'encounter') return;
   host.querySelectorAll('button[data-run-encounter]').forEach(btn => {
@@ -11114,7 +11144,7 @@ function editInWorkshop(node, idx) {
 }
 
 
-// ── ENCOUNTER FOCUS MODE (v1.3.87) ───────────────────────
+// ── ENCOUNTER FOCUS MODE (v1.3.88) ───────────────────────
 // A dedicated combat-running workspace. The underlying canvas is not merely
 // covered: canvas repaints/edge redraws are suppressed while this mode is open,
 // and the heavy canvas content is hidden from layout/paint. Encounter mutations
@@ -11289,6 +11319,50 @@ async function ensureEncounterFocusFullDetails(node, m) {
   }
 }
 
+function refreshEncounterFocusHp(node, m, idx) {
+  if (!inEncounterFocusMode || !encounterFocusState || !node || !m) return false;
+  if (encounterFocusState.nodeId !== node.id || encounterFocusState.selectedMonster !== m) return false;
+  const body = document.getElementById('encounter-focus-body');
+  const tabs = document.getElementById('encounter-focus-tabs');
+  if (!body || !tabs) return false;
+
+  const maxHp = parseInt((m.snapshot || {}).hp) || 0;
+  const curHp = (typeof m.hp_current === 'number') ? m.hp_current : maxHp;
+  const hpbar = body.querySelector(`[data-hpbar="${idx}"]`);
+  if (hpbar) {
+    const input = hpbar.querySelector('input[data-peek-hp]');
+    if (input && document.activeElement !== input) input.value = String(curHp);
+    const undo = hpbar.querySelector(`button[data-hp-undo="${idx}"]`);
+    const hasPrev = typeof m._hpPrev === 'number' && m._hpPrev !== curHp;
+    if (undo) {
+      undo.classList.toggle('hidden', !hasPrev);
+      undo.disabled = !hasPrev;
+      undo.title = hasPrev ? `Undo last HP change (back to ${m._hpPrev})` : 'No previous HP value to revert to';
+    }
+    const hasBloodiedActions = getWorkshopRenderableActions(m.snapshot || {}).some(a => actionBloodiedDamage(a));
+    const bloodied = maxHp > 0 && curHp <= maxHp * 0.5;
+    hpbar.classList.toggle('is-bloodied', bloodied && hasBloodiedActions);
+    const badge = hpbar.querySelector('.hpbar-bloodied');
+    if (badge && hasBloodiedActions) {
+      badge.classList.toggle('active', bloodied);
+      badge.textContent = bloodied ? '🩸 Bloodied' : 'Bloodied at ≤50%';
+    }
+  }
+  const card = body.querySelector('.encf-monster-card');
+  if (card) {
+    card.classList.toggle('dead', curHp <= 0);
+    card.classList.toggle('deactivated', !!m._deactivated);
+  }
+  const tab = tabs.querySelector(`[data-encf-tab="${idx}"]`);
+  if (tab) {
+    tab.classList.toggle('dead', curHp <= 0);
+    tab.classList.toggle('deactivated', !!m._deactivated);
+    const small = tab.querySelector('small');
+    if (small) small.textContent = curHp <= 0 ? '0 HP' : (m._deactivated ? 'sideline' : '');
+  }
+  return true;
+}
+
 function renderEncounterFocusMode() {
   if (!inEncounterFocusMode) return;
   const node = getEncounterFocusNode();
@@ -11402,9 +11476,16 @@ function exitEncounterFocusMode() {
   document.body.classList.remove('encounter-focus-active');
   document.getElementById('encounter-focus-overlay')?.classList.remove('open');
   encounterFocusState = null;
+  if (encounterFocusIdleSave != null) {
+    if (typeof cancelIdleCallback === 'function') cancelIdleCallback(encounterFocusIdleSave);
+    else clearTimeout(encounterFocusIdleSave);
+    encounterFocusIdleSave = null;
+  }
   // One consolidated repaint when the canvas wakes back up.
   if (node) refreshNodeFace(node);
   redrawEdges();
+  // Persist any combat-state edits only after the canvas is visible again.
+  if (saveGen > lastSavedGen && !saveTimer4c) saveTimer4c = setTimeout(attemptAutosave, 0);
 }
 window.enterEncounterFocusMode = enterEncounterFocusMode;
 window.exitEncounterFocusMode = exitEncounterFocusMode;
@@ -15375,6 +15456,7 @@ function wireMonsterRollClicks(nodeEl, node) {
       btn.title = m._deactivated
         ? 'Reactivate this monster'
         : 'Sideline this monster (kept in encounter, just out of the fight)';
+      refreshEncounterFocusHp(node, m, i);
       refreshEncounterDifficultyDisplay(node);
       markDirty();
     });
@@ -15786,7 +15868,7 @@ function wireMonsterRollClicks(nodeEl, node) {
     const s = String(raw).trim();
     if (!s) {
       // blank → silently revert (refresh re-renders the existing value)
-      refreshNodeFace(node);
+      if (!refreshEncounterFocusHp(node, m, i)) refreshNodeFace(node);
       return;
     }
     const cur = (typeof m.hp_current === 'number') ? m.hp_current : (parseInt((m.snapshot || {}).hp) || 0);
@@ -15801,21 +15883,21 @@ function wireMonsterRollClicks(nodeEl, node) {
       // Plain absolute number; reject non-numeric input by reverting
       const abs = parseInt(s, 10);
       if (Number.isNaN(abs)) {
-        refreshNodeFace(node);
+        if (!refreshEncounterFocusHp(node, m, i)) refreshNodeFace(node);
         return;
       }
       next = abs;
     }
     // No-op if value didn't actually change
     if (next === cur) {
-      refreshNodeFace(node);
+      if (!refreshEncounterFocusHp(node, m, i)) refreshNodeFace(node);
       return;
     }
     m._hpPrev    = cur;
     m.hp_current = next;
     const cardEl = nodeEl.querySelector(`.node-mon[data-mon-idx="${i}"]`);
     if (cardEl) cardEl.classList.toggle('dead', m.hp_current <= 0);
-    refreshNodeFace(node);
+    if (!refreshEncounterFocusHp(node, m, i)) refreshNodeFace(node);
     markDirty();
   };
 
@@ -15853,7 +15935,7 @@ function wireMonsterRollClicks(nodeEl, node) {
         e.preventDefault();
         // Revert to current shown value
         inp.dataset.justCommitted = '1';   // also block any blur-triggered re-commit
-        refreshNodeFace(node);
+        if (!refreshEncounterFocusHp(node, m, i)) refreshNodeFace(node);
       }
     });
     // Commit on blur in case the user clicks away without pressing Enter.
@@ -15903,7 +15985,7 @@ function wireMonsterRollClicks(nodeEl, node) {
       m._hpPrev = tmp;
       const cardEl = nodeEl.querySelector(`.node-mon[data-mon-idx="${i}"]`);
       if (cardEl) cardEl.classList.toggle('dead', m.hp_current <= 0);
-      refreshNodeFace(node);
+      if (!refreshEncounterFocusHp(node, m, i)) refreshNodeFace(node);
       markDirty();
     });
   });
