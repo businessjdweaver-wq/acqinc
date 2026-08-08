@@ -1,5 +1,5 @@
 
-// v1.3.93 — stable delegated Run Encounter HP Enter handling; v1.3.92 added direct HP wiring.
+// v1.3.94 — inline Run Encounter HP key handler survives clone-rewire; v1.3.93 added delegated handling.
 // v1.3.89 — Offline Autosave Performance: IndexedDB snapshots, no quota retry churn, single canvas serialization;
 // v1.3.88 — Encounter Focus Performance: true canvas detachment, lightweight HP refresh, idle autosave;
 // v1.3.86 — cache-bust and direct login-control fallback;
@@ -12861,6 +12861,67 @@ function renderOverrideEditor(m, monIdx) {
 // On any commit (Enter or blur) we stash the prior value into m._hpPrev
 // so the inline ↶ undo button can revert. Undo TOGGLES — clicking it
 // swaps current ↔ previous, so repeated clicks bounce between the two.
+// v1.3.94 — Run Encounter HP key handling lives on the input itself via the
+// inline onkeydown attribute below. wireMonsterRollClicks() intentionally
+// clone-replaces HP inputs to de-duplicate listeners; cloneNode(true) preserves
+// inline event attributes, so this path cannot be stripped by that rewire pass.
+function handleEncounterFocusHpKeydown(e, inp) {
+  if (!inEncounterFocusMode || !encounterFocusState) return true;
+  const body = document.getElementById('encounter-focus-body');
+  if (!body || !inp || !body.contains(inp)) return true;
+  if (e.key !== 'Enter' && e.key !== 'Escape') return true;
+
+  e.preventDefault();
+  e.stopPropagation();
+  if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+
+  const node = getEncounterFocusNode();
+  if (!node) return false;
+  const monsters = (node.fields && node.fields.monsters) || [];
+  const i = parseInt(inp.dataset.peekHp, 10);
+  const m = monsters[i];
+  if (!m) return false;
+
+  const cur = (typeof m.hp_current === 'number')
+    ? m.hp_current
+    : (parseInt((m.snapshot || {}).hp, 10) || 0);
+
+  if (e.key === 'Escape') {
+    inp.value = cur;
+    try { inp.blur(); } catch (_) {}
+    return false;
+  }
+
+  const raw = String(inp.value == null ? '' : inp.value).trim();
+  let next = cur;
+  const delta = raw.match(/^([+\-−])\s*(\d+)$/);
+  if (delta) {
+    const amount = parseInt(delta[2], 10);
+    next = cur + (delta[1] === '+' ? amount : -amount);
+  } else {
+    const absolute = parseInt(raw, 10);
+    if (Number.isNaN(absolute)) {
+      inp.value = cur;
+      try { inp.blur(); } catch (_) {}
+      return false;
+    }
+    next = absolute;
+  }
+
+  inp.dataset.justCommitted = '1';
+  if (next !== cur) {
+    m._hpPrev = cur;
+    m.hp_current = next;
+    refreshEncounterFocusHp(node, m, i);
+    markDirty();
+  } else {
+    inp.value = cur;
+  }
+  setTimeout(() => { try { document.activeElement && document.activeElement.blur(); } catch (_) {} }, 0);
+  return false;
+}
+window.handleEncounterFocusHpKeydown = handleEncounterFocusHpKeydown;
+
 function renderMonsterHpBar(m, idx) {
   const sn = m.snapshot || {};
   const maxHp = parseInt(sn.hp) || 0;
@@ -12877,6 +12938,7 @@ function renderMonsterHpBar(m, idx) {
       <input type="text" inputmode="numeric"
              class="hpbar-input"
              data-peek-hp="${idx}"
+             onkeydown="return handleEncounterFocusHpKeydown(event,this)"
              value="${curHp}"
              title="Type a number to set HP, or ±N (e.g. -6) and Enter to apply a delta">
       <span class="hpbar-ticks">
