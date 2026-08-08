@@ -1,4 +1,5 @@
 
+// v1.3.87 — Encounter Focus Mode: draggable initiative tabs, full statblocks, canvas suspension;
 // v1.3.86 — cache-bust and direct login-control fallback;
 // v1.3.85 — local-only authentication rescue: local JSON backups/import and Supabase-failure fallback.
 // v1.3.83 — session PDF export for readable offline backups.
@@ -5422,6 +5423,7 @@ const zoomHud = document.getElementById('zoom-hud');
 
 // ── TRANSFORM APPLICATION ────────────────────────────────
 function applyTransform() {
+  if (inEncounterFocusMode) return;
   content.style.transform =
     `translate(${VIEW.x}px, ${VIEW.y}px) scale(${VIEW.zoom})`;
   // Stage 45: expose the zoom level as a unitless CSS variable so
@@ -5568,6 +5570,13 @@ wrap.addEventListener('click', (e) => {
 
 // Esc cancels pending; Delete/Backspace removes selected edge
 window.addEventListener('keydown', (e) => {
+  // v1.3.87: Encounter Focus owns Esc and left/right initiative navigation.
+  if (inEncounterFocusMode) {
+    if (e.key === 'Escape') { exitEncounterFocusMode(); e.preventDefault(); return; }
+    if (!isTypingTarget(e.target) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      stepEncounterFocus(e.key === 'ArrowLeft' ? -1 : 1); e.preventDefault(); return;
+    }
+  }
   // Highest priority: Esc exits focus mode if active. (Focus mode trumps
   // every other modal because it's the most distracting visual state.)
   if (e.key === 'Escape' && inFocusMode) {
@@ -6341,6 +6350,22 @@ function wireCanvasGroupBar() {
 }
 
 
+
+// v1.3.87 — launch the dedicated encounter-running surface from a canvas card.
+function wireRunEncounterBtn(host, node) {
+  if (!host || !node || node.type !== 'encounter') return;
+  host.querySelectorAll('button[data-run-encounter]').forEach(btn => {
+    if (btn.dataset.encounterFocusWired === '1') return;
+    btn.dataset.encounterFocusWired = '1';
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      enterEncounterFocusMode(node.id);
+    });
+  });
+}
+
 // ── NODE MODEL ───────────────────────────────────────────
 // Stage 1: just one node type, hardcoded. Stage 3 introduces real types.
 let nodeIdSeq = 1;
@@ -6390,6 +6415,7 @@ function createNode({ x, y, type = 'scene', title = null, summary = '' } = {}) {
   wireImageNode(el, data);
   wireNodeCollapseToggle(el, data);
   wireMagnifyBtn(el, data);
+  wireRunEncounterBtn(el, data);
   wireNodeTypeChangeIcon(el, data);
   wireEdgeHoverForEndpoint(el, data.id);
   updateEmptyHint();
@@ -6450,6 +6476,7 @@ function renderNodeFace(data) {
         <span class="node-icon">${data.icon}</span>
         ${chevron ? `<span class="node-collapse-chevron">${chevron}</span>` : ''}
         <span class="node-title">${escHtml(data.title)}${dimsHint}</span>
+        ${data.type === 'encounter' ? `<button class="node-run-encounter-btn" data-run-encounter="${data.id}" type="button" title="Run this encounter in a dedicated combat view">⚔ Run</button>` : ''}
         <button class="node-magnify-btn" data-magnify="${data.id}" title="Focus this node (Z, or select multiple and use the topbar Focus button)">🔍</button>
       </div>
       <div class="node-anchors">
@@ -6488,7 +6515,8 @@ function renderNodeFace(data) {
       <span class="node-icon">${data.icon}</span>
       ${chevron ? `<span class="node-collapse-chevron">${chevron}</span>` : ''}
       <span class="node-title">${escHtml(data.title)}</span>
-      <button class="node-magnify-btn" data-magnify="${data.id}" title="Focus this node (Z, or select multiple and use the topbar Focus button)">🔍</button>
+      ${data.type === 'encounter' ? `<button class="node-run-encounter-btn" data-run-encounter="${data.id}" type="button" title="Run this encounter in a dedicated combat view">⚔ Run</button>` : ''}
+        <button class="node-magnify-btn" data-magnify="${data.id}" title="Focus this node (Z, or select multiple and use the topbar Focus button)">🔍</button>
     </div>
     <div class="node-body">
       <div class="node-typebadge">${escHtml(def.label)}</div>
@@ -8345,7 +8373,7 @@ function getAnchorScreenPos(res) {
   // Canvas node — for now use left-middle (matches behavior with campaign tier)
   return { x: r.left, y: r.top + r.height / 2 };
 }
-function redrawEdges() { state.edges.forEach(redrawEdge); }
+function redrawEdges() { if (inEncounterFocusMode) return; state.edges.forEach(redrawEdge); }
 
 let edgeIdSeq = 1;
 function createEdge(from, to, dir = 'forward', label = '') {
@@ -11085,6 +11113,302 @@ function editInWorkshop(node, idx) {
   window.open(url, '_blank', 'noopener');
 }
 
+
+// ── ENCOUNTER FOCUS MODE (v1.3.87) ───────────────────────
+// A dedicated combat-running workspace. The underlying canvas is not merely
+// covered: canvas repaints/edge redraws are suppressed while this mode is open,
+// and the heavy canvas content is hidden from layout/paint. Encounter mutations
+// still autosave; the ordinary card is refreshed once when focus closes.
+let inEncounterFocusMode = false;
+let encounterFocusState = null; // { nodeId, selectedMonster, dragFrom }
+
+function getEncounterFocusNode() {
+  return encounterFocusState ? state.nodes.get(encounterFocusState.nodeId) : null;
+}
+
+function _encFocusMonsterName(node, m, idx) {
+  const sn = normalizeWorkshopMonsterSnapshot((m && m.snapshot) || {});
+  const source = (m && m.nameOverride && String(m.nameOverride).trim())
+    ? String(m.nameOverride).trim()
+    : (sn.name || 'Monster');
+  const letter = String((m && (m.letter || m.flav)) || '').match(/[A-Z]/i);
+  const descriptor = (m && m.flavorDesc) ? String(m.flavorDesc).trim() : '';
+  let prefix = letter ? letter[0].toUpperCase() : '';
+  if (descriptor) prefix += (prefix ? ' ' : '') + descriptor;
+  return prefix ? (prefix + ' — ' + source) : source;
+}
+
+function _encFocusAttrLine(label, val) {
+  if (val == null || val === '' || (Array.isArray(val) && !val.length)) return '';
+  const text = Array.isArray(val) ? val.join(', ')
+    : (typeof val === 'object' ? Object.entries(val).map(([k,v]) => `${k} ${typeof v === 'number' && v >= 0 ? '+' : ''}${v}`).join(', ') : String(val));
+  if (!text.trim()) return '';
+  return `<div class="encf-attr"><b>${escHtml(label)}</b><span>${escHtml(text)}</span></div>`;
+}
+
+function _encFocusFeatureSection(list, title) {
+  if (!Array.isArray(list) || !list.length) return '';
+  const rows = list.map(raw => {
+    const f = normalizeWorkshopActionFieldAliases(raw) || raw || {};
+    const name = (f._override && f._override.name) || f.name || f.title || '';
+    const desc = f.desc || f.description || f.text || '';
+    const structured = formatStructuredMechanicsLine(f);
+    return `<div class="encf-feature">
+      <div class="encf-feature-name">${escHtml(name || 'Feature')}</div>
+      ${structured ? `<div class="encf-structured">${escHtml(structured)}</div>` : ''}
+      ${desc ? `<div class="encf-feature-text">${escHtml(desc)}</div>` : ''}
+    </div>`;
+  }).join('');
+  return `<section class="encf-section"><h3>${escHtml(title)}</h3>${rows}</section>`;
+}
+
+function renderEncounterFocusStatblock(node, m, idx) {
+  const sn = normalizeWorkshopMonsterSnapshot((m && m.snapshot) || {});
+  const abilities = sn.abilities || {};
+  const abilityHtml = ['str','dex','con','int','wis','cha'].map(k => {
+    const raw = abilities[k];
+    const score = Array.isArray(raw) ? raw[0] : raw;
+    const n = parseInt(score);
+    const mod = Number.isFinite(n) ? Math.floor((n - 10) / 2) : null;
+    const modText = mod == null ? '' : (mod >= 0 ? '+' + mod : String(mod));
+    return `<div class="encf-ability" data-peek-abil="${idx},${k}" title="Click to roll ${k.toUpperCase()}">
+      <b>${k.toUpperCase()}</b><span>${escHtml(score == null ? '?' : String(score))}</span><small>${escHtml(modText)}</small>
+    </div>`;
+  }).join('');
+  const defense = [
+    _encFocusAttrLine('Damage Immunities', sn.damage_immunities || sn.damageImmunities),
+    _encFocusAttrLine('Damage Resistances', sn.damage_resistances || sn.damageResistances),
+    _encFocusAttrLine('Damage Vulnerabilities', sn.damage_vulnerabilities || sn.damageVulnerabilities),
+    _encFocusAttrLine('Condition Immunities', sn.condition_immunities || sn.conditionImmunities),
+  ].filter(Boolean).join('');
+  const actionButtons = getMonsterRollActions(sn);
+  const specials = sn.special_abilities || sn.special || [];
+  const showHidden = !!m._showHidden;
+  const activeClass = (typeof m.hp_current === 'number' && m.hp_current <= 0) ? ' dead' : (m._deactivated ? ' deactivated' : '');
+
+  return `<div class="encf-monster-card node-mon${activeClass}" data-mon-idx="${idx}">
+    <div class="encf-sticky">
+      <div class="encf-monster-title-row">
+        <div>
+          <div class="encf-monster-title">${escHtml(_encFocusMonsterName(node, m, idx))}</div>
+          <div class="encf-monster-meta">${escHtml([sn.size, sn.monster_type, sn.alignment].filter(Boolean).join(' · '))}</div>
+        </div>
+        <div class="encf-state-actions">
+          <button class="node-mon-deact-btn ${m._deactivated ? 'is-deactivated' : ''}" data-peek-deact="${idx}" type="button"
+            title="${m._deactivated ? 'Reactivate this monster' : 'Sideline this monster'}">${m._deactivated ? '▶ Reactivate' : '⏸ Sideline'}</button>
+          <button class="node-mon-balance-btn" data-mon-balance="${idx}" type="button" title="Open Encounter Balance Wizard">⚖ Wizard</button>
+        </div>
+      </div>
+      ${renderMonsterHpBar(m, idx)}
+      <div class="encf-prevnext">
+        <button type="button" data-encf-step="-1" title="Previous combatant (Left Arrow)">← Previous</button>
+        <span>${idx + 1} of ${(node.fields.monsters || []).length}</span>
+        <button type="button" data-encf-step="1" title="Next combatant (Right Arrow)">Next →</button>
+      </div>
+    </div>
+
+    <div class="encf-core-grid">
+      ${_encFocusAttrLine('Armor Class', sn.ac)}
+      ${_encFocusAttrLine('Speed', sn.speed)}
+      ${_encFocusAttrLine('Saving Throws', sn.saves)}
+      ${_encFocusAttrLine('Skills', sn.skills)}
+      ${_encFocusAttrLine('Senses', sn.senses)}
+      ${_encFocusAttrLine('Languages', sn.languages)}
+      ${_encFocusAttrLine('Challenge', sn.cr)}
+    </div>
+    <div class="encf-abilities">${abilityHtml}</div>
+    <div class="encf-saves-live">${renderSaveRow(m, idx)}</div>
+    ${defense ? `<section class="encf-section encf-defenses"><h3>Defenses & Immunities</h3>${defense}</section>` : ''}
+
+    <section class="encf-section encf-rolls"><h3>Rolls & Abilities</h3>
+      <div class="node-mon-actions">${actionButtons.length ? actionButtons.map((a, ai) => renderActionButton(a, idx, ai, {showHidden, monster:m})).join('') : '<span class="encf-muted">No rollable actions.</span>'}</div>
+      ${renderTriggerButtons(specials, idx, {showHidden, monster:m})}
+      ${renderSpellButtons(m.snapshot || {}, idx)}
+      ${renderOverrideEditor(m, idx)}
+    </section>
+
+    ${_encFocusFeatureSection(specials, 'Traits')}
+    ${_encFocusFeatureSection(sn.actions, 'Actions')}
+    ${_encFocusFeatureSection(sn.bonus_actions, 'Bonus Actions')}
+    ${_encFocusFeatureSection(sn.reactions, 'Reactions')}
+    ${_encFocusFeatureSection(sn.legendary_actions, 'Legendary Actions')}
+    ${_encFocusFeatureSection(sn.lair_actions, 'Lair Actions')}
+    ${_encFocusFeatureSection(sn.mythic_actions, 'Mythic Actions')}
+    ${_encFocusFeatureSection(sn.villain_actions, 'Villain Actions')}
+  </div>`;
+}
+
+async function ensureEncounterFocusFullDetails(node, m) {
+  if (!inEncounterFocusMode || !node || !m || !m.monster_id || m._encFocusFetchPending || m._encFocusFetchAttempted) return;
+  // If a prior 📖 readout already cached the full Workshop row, merge it
+  // immediately without network work. Keep this instance's action arrays so
+  // local overrides/scaling remain instance-specific.
+  const mergeForInstance = (freshRow) => {
+    const fresh = normalizeWorkshopMonsterSnapshot(freshRow || {});
+    const local = normalizeWorkshopMonsterSnapshot(m.snapshot || {});
+    const merged = { ...fresh, ...local };
+    const actionKeys = ['actions','bonus_actions','reactions','legendary_actions','lair_actions','mythic_actions','villain_actions','special_abilities'];
+    actionKeys.forEach(k => {
+      if (Array.isArray(local[k]) && local[k].length) merged[k] = local[k];
+      else if (Array.isArray(fresh[k])) merged[k] = fresh[k];
+    });
+    const detailKeys = ['speed','saves','skills','senses','languages','damage_immunities','damage_resistances','damage_vulnerabilities','condition_immunities','damageImmunities','damageResistances','damageVulnerabilities','conditionImmunities'];
+    detailKeys.forEach(k => {
+      const lv = local[k];
+      const localHas = Array.isArray(lv) ? lv.length > 0 : (lv != null && String(lv).trim() !== '');
+      if (!localHas && fresh[k] != null) merged[k] = fresh[k];
+    });
+    merged.special = merged.special_abilities || merged.special || [];
+    return normalizeWorkshopMonsterSnapshot(merged);
+  };
+  if (m._fullStatblock) {
+    m.snapshot = mergeForInstance(m._fullStatblock);
+    m._encFocusFetchAttempted = true;
+    if (encounterFocusState && encounterFocusState.selectedMonster === m) renderEncounterFocusMode();
+    return;
+  }
+  if (typeof sbFetch !== 'function') return;
+  m._encFocusFetchPending = true;
+  try {
+    const rows = await sbFetch('rq_monsters?id=eq.' + encodeURIComponent(m.monster_id) + '&select=*', { cache:'no-store', headers:{'Cache-Control':'no-cache','Pragma':'no-cache'} });
+    if (rows && rows.length) {
+      m._fullStatblock = normalizeWorkshopMonsterSnapshot(rows[0]);
+      m.snapshot = mergeForInstance(m._fullStatblock);
+      markDirty();
+    }
+  } catch (err) {
+    // Offline/local-only operation is expected to land here; the encounter's
+    // existing snapshot remains fully usable and no modal/error interrupts play.
+    console.warn('[Encounter Focus] Workshop detail refresh unavailable; using encounter snapshot', err);
+  } finally {
+    m._encFocusFetchPending = false;
+    m._encFocusFetchAttempted = true;
+    if (inEncounterFocusMode && encounterFocusState && encounterFocusState.nodeId === node.id && encounterFocusState.selectedMonster === m) {
+      renderEncounterFocusMode();
+    }
+  }
+}
+
+function renderEncounterFocusMode() {
+  if (!inEncounterFocusMode) return;
+  const node = getEncounterFocusNode();
+  const overlay = document.getElementById('encounter-focus-overlay');
+  const tabs = document.getElementById('encounter-focus-tabs');
+  const body = document.getElementById('encounter-focus-body');
+  const title = document.getElementById('encounter-focus-title');
+  if (!node || !overlay || !tabs || !body) { exitEncounterFocusMode(); return; }
+  const monsters = (node.fields && Array.isArray(node.fields.monsters)) ? node.fields.monsters : [];
+  if (title) title.textContent = node.title || 'Encounter';
+  if (!monsters.length) {
+    tabs.innerHTML = '';
+    body.innerHTML = '<div class="encf-empty">This encounter has no monsters yet.</div>';
+    return;
+  }
+  if (!encounterFocusState.selectedMonster || !monsters.includes(encounterFocusState.selectedMonster)) {
+    encounterFocusState.selectedMonster = monsters[0];
+  }
+  const selectedIndex = monsters.indexOf(encounterFocusState.selectedMonster);
+  tabs.innerHTML = monsters.map((m, i) => {
+    const dead = typeof m.hp_current === 'number' && m.hp_current <= 0;
+    return `<button class="encf-tab ${i === selectedIndex ? 'active' : ''} ${dead ? 'dead' : ''} ${m._deactivated ? 'deactivated' : ''}"
+      type="button" draggable="true" data-encf-tab="${i}" title="Drag to reorder initiative; click to open">
+      <span class="encf-grip" aria-hidden="true">⠿</span><span>${escHtml(_encFocusMonsterName(node, m, i))}</span>
+      <small>${dead ? '0 HP' : (m._deactivated ? 'sideline' : '')}</small>
+    </button>`;
+  }).join('');
+  body.innerHTML = renderEncounterFocusStatblock(node, encounterFocusState.selectedMonster, selectedIndex);
+  wireEncounterFocusMode(node);
+  // Reuse the mature encounter click/HP/override dispatch system against this
+  // focused DOM. refreshNodeFace() is focus-aware, so mutations repaint here.
+  wireMonsterRollClicks(body, node);
+  const selectedMonster = encounterFocusState.selectedMonster;
+  setTimeout(() => ensureEncounterFocusFullDetails(node, selectedMonster), 0);
+}
+
+function wireEncounterFocusMode(node) {
+  const tabs = document.getElementById('encounter-focus-tabs');
+  const body = document.getElementById('encounter-focus-body');
+  if (!tabs || !body || !node) return;
+  const monsters = node.fields.monsters || [];
+  tabs.querySelectorAll('[data-encf-tab]').forEach(tab => {
+    const idx = parseInt(tab.dataset.encfTab);
+    tab.addEventListener('click', () => {
+      if (!monsters[idx]) return;
+      encounterFocusState.selectedMonster = monsters[idx];
+      renderEncounterFocusMode();
+      document.getElementById('encounter-focus-body')?.scrollTo({top:0, behavior:'instant'});
+    });
+    tab.addEventListener('dragstart', e => {
+      encounterFocusState.dragFrom = idx;
+      tab.classList.add('dragging');
+      try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idx)); } catch (_) {}
+    });
+    tab.addEventListener('dragend', () => tab.classList.remove('dragging'));
+    tab.addEventListener('dragover', e => { e.preventDefault(); try { e.dataTransfer.dropEffect = 'move'; } catch (_) {} });
+    tab.addEventListener('drop', e => {
+      e.preventDefault();
+      const from = encounterFocusState.dragFrom;
+      const to = idx;
+      if (!Number.isInteger(from) || from < 0 || from >= monsters.length || from === to) return;
+      const [moved] = monsters.splice(from, 1);
+      monsters.splice(to, 0, moved);
+      encounterFocusState.selectedMonster = moved;
+      encounterFocusState.dragFrom = null;
+      markDirty();
+      renderEncounterFocusMode();
+    });
+  });
+  body.querySelectorAll('[data-encf-step]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      stepEncounterFocus(parseInt(btn.dataset.encfStep) || 0);
+    });
+  });
+}
+
+function stepEncounterFocus(delta) {
+  const node = getEncounterFocusNode();
+  if (!node) return;
+  const monsters = (node.fields && node.fields.monsters) || [];
+  if (!monsters.length) return;
+  let i = monsters.indexOf(encounterFocusState.selectedMonster);
+  if (i < 0) i = 0;
+  i = (i + delta + monsters.length) % monsters.length;
+  encounterFocusState.selectedMonster = monsters[i];
+  renderEncounterFocusMode();
+  const body = document.getElementById('encounter-focus-body');
+  if (body) body.scrollTop = 0;
+}
+
+function enterEncounterFocusMode(nodeId) {
+  const node = state.nodes.get(nodeId);
+  if (!node || node.type !== 'encounter') return;
+  if (inFocusMode && typeof exitFocusMode === 'function') exitFocusMode();
+  // Commit an open side-panel form before freezing its canvas representation.
+  try { if (openNodeId === node.id && typeof commitOpenNodeFromForm === 'function') commitOpenNodeFromForm(); } catch (_) {}
+  if (sidePanel && sidePanel.classList.contains('open') && typeof closeSidePanel === 'function') closeSidePanel();
+  const monsters = (node.fields && Array.isArray(node.fields.monsters)) ? node.fields.monsters : [];
+  inEncounterFocusMode = true;
+  encounterFocusState = { nodeId: node.id, selectedMonster: monsters[0] || null, dragFrom: null };
+  document.body.classList.add('encounter-focus-active');
+  document.getElementById('encounter-focus-overlay')?.classList.add('open');
+  renderEncounterFocusMode();
+}
+
+function exitEncounterFocusMode() {
+  if (!inEncounterFocusMode) return;
+  const node = getEncounterFocusNode();
+  inEncounterFocusMode = false;
+  document.body.classList.remove('encounter-focus-active');
+  document.getElementById('encounter-focus-overlay')?.classList.remove('open');
+  encounterFocusState = null;
+  // One consolidated repaint when the canvas wakes back up.
+  if (node) refreshNodeFace(node);
+  redrawEdges();
+}
+window.enterEncounterFocusMode = enterEncounterFocusMode;
+window.exitEncounterFocusMode = exitEncounterFocusMode;
+
 // ── STATBLOCK READOUT (Stage 30) ──────────────────────────
 // Read-only quick reference popped from a monster's group/singleton header.
 // Fetches the full row from rq_monsters (`select=*`) so we can show
@@ -12852,6 +13176,7 @@ function _ebwDefaultVariantName(name) {
 }
 function refreshEncounterDifficultyDisplay(node) {
   if (!node || node.type !== 'encounter' || !node.el) return;
+  if (inEncounterFocusMode && encounterFocusState && node.id === encounterFocusState.nodeId) return;
   const oldBar = node.el.querySelector('.encounter-difficulty');
   if (!oldBar) return;
   const wrap = document.createElement('div');
@@ -14769,6 +15094,9 @@ function parseTablePaste(html, text) {
 
 function wireMonsterRollClicks(nodeEl, node) {
   if (node.type !== 'encounter') return;
+  // While Encounter Focus is open, do not wake/rebind the hidden canvas card.
+  // The focused body is wired separately against the same node model.
+  if (inEncounterFocusMode && encounterFocusState && node.id === encounterFocusState.nodeId && nodeEl === node.el) return;
 
   // Per-monster peek expansion currently lives in transient `m._peekOpen`,
   // and per-monster HP/mult edits also reside on the imported entry. None
@@ -17987,6 +18315,10 @@ function wireFocusNotesEditors() {
 // attached to the previous DOM nodes.
 function refreshNodeFace(node) {
   if (!node || !node.el) return;
+  if (inEncounterFocusMode && encounterFocusState && node.id === encounterFocusState.nodeId) {
+    renderEncounterFocusMode();
+    return;
+  }
   const wasConnecting = node.el.querySelector('.anchor.active');
   const activeKey = wasConnecting ? wasConnecting.dataset.anchor : null;
   node.el.innerHTML = (typeof rqSafeRenderNodeFace === 'function' ? rqSafeRenderNodeFace(node) : renderNodeFace(node));
@@ -18008,6 +18340,7 @@ function refreshNodeFace(node) {
   wireImageNode(node.el, node);
   wireNodeCollapseToggle(node.el, node);
   wireMagnifyBtn(node.el, node);
+  wireRunEncounterBtn(node.el, node);
   wireNodeTypeChangeIcon(node.el, node);
   wireEdgeHoverForEndpoint(node.el, node.id);
   // Restore selected styling if applicable
@@ -18023,6 +18356,7 @@ function refreshNodeFace(node) {
       host.innerHTML = (typeof rqSafeRenderNodeFace === 'function' ? rqSafeRenderNodeFace(node) : renderNodeFace(node));
       // Re-wire the mobile host so the freshly-rendered buttons fire.
       if (typeof wireMonsterRollClicks   === 'function') wireMonsterRollClicks(host, node);
+      if (typeof wireRunEncounterBtn    === 'function') wireRunEncounterBtn(host, node);
       if (typeof wireTrapRollClicks       === 'function') wireTrapRollClicks(host, node);
       if (typeof wireSceneHazardClicks    === 'function') wireSceneHazardClicks(host, node);
       if (typeof wireNpcPeekClicks        === 'function') wireNpcPeekClicks(host, node);
