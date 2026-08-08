@@ -1,5 +1,5 @@
 
-// v1.3.95 — inline Run Encounter HP key handler survives clone-rewire; v1.3.93 added delegated handling.
+// v1.3.96 — Run Encounter delta HP commits immediately replace the typed delta with resulting HP.
 // v1.3.89 — Offline Autosave Performance: IndexedDB snapshots, no quota retry churn, single canvas serialization;
 // v1.3.88 — Encounter Focus Performance: true canvas detachment, lightweight HP refresh, idle autosave;
 // v1.3.86 — cache-bust and direct login-control fallback;
@@ -12916,6 +12916,9 @@ function handleEncounterFocusHpKeydown(e, inp) {
   if (next !== cur) {
     m._hpPrev = cur;
     m.hp_current = next;
+    // The focused HP input is intentionally skipped by refreshEncounterFocusHp().
+    // Commit the resulting value here first so +N/-N does not remain visible.
+    inp.value = String(next);
     refreshEncounterFocusHp(node, m, i);
     markDirty();
   } else {
