@@ -1,5 +1,5 @@
 
-// v1.3.92 — Run Encounter HP delta/Enter wiring; v1.3.91 resolves @mod from effective action prose.
+// v1.3.93 — stable delegated Run Encounter HP Enter handling; v1.3.92 added direct HP wiring.
 // v1.3.89 — Offline Autosave Performance: IndexedDB snapshots, no quota retry churn, single canvas serialization;
 // v1.3.88 — Encounter Focus Performance: true canvas detachment, lightweight HP refresh, idle autosave;
 // v1.3.86 — cache-bust and direct login-control fallback;
@@ -11457,6 +11457,68 @@ function wireEncounterFocusMode(node) {
       stepEncounterFocus(parseInt(btn.dataset.encfStep) || 0);
     });
   });
+
+  // v1.3.93 — HP inputs inside Run Encounter are intentionally cloned by
+  // wireMonsterRollClicks() as part of its listener de-duplication pass. A
+  // listener attached directly to an individual input can therefore vanish.
+  // Delegate Enter/Escape from the stable focus body in CAPTURE phase so HP
+  // commits survive input cloning and any subsequent statblock re-render.
+  if (body.dataset.encfHpDelegated !== '1') {
+    body.dataset.encfHpDelegated = '1';
+    body.addEventListener('keydown', (e) => {
+      const inp = e.target && e.target.closest ? e.target.closest('input[data-peek-hp]') : null;
+      if (!inp || !body.contains(inp)) return;
+      if (e.key !== 'Enter' && e.key !== 'Escape') return;
+
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const liveNode = getEncounterFocusNode();
+      if (!liveNode) return;
+      const liveMonsters = (liveNode.fields && liveNode.fields.monsters) || [];
+      const i = parseInt(inp.dataset.peekHp, 10);
+      const m = liveMonsters[i];
+      if (!m) return;
+
+      if (e.key === 'Escape') {
+        inp.value = (typeof m.hp_current === 'number')
+          ? m.hp_current
+          : (parseInt((m.snapshot || {}).hp, 10) || 0);
+        try { inp.blur(); } catch (_) {}
+        return;
+      }
+
+      const raw = String(inp.value == null ? '' : inp.value).trim();
+      const cur = (typeof m.hp_current === 'number')
+        ? m.hp_current
+        : (parseInt((m.snapshot || {}).hp, 10) || 0);
+      let next = cur;
+      const dm = raw.match(/^([+\-−])\s*(\d+)$/);
+      if (dm) {
+        const amount = parseInt(dm[2], 10);
+        next = cur + (dm[1] === '+' ? amount : -amount);
+      } else {
+        const abs = parseInt(raw, 10);
+        if (Number.isNaN(abs)) {
+          inp.value = cur;
+          try { inp.blur(); } catch (_) {}
+          return;
+        }
+        next = abs;
+      }
+
+      inp.dataset.justCommitted = '1';
+      if (next !== cur) {
+        m._hpPrev = cur;
+        m.hp_current = next;
+        refreshEncounterFocusHp(liveNode, m, i);
+        markDirty();
+      } else {
+        inp.value = cur;
+      }
+      // Defer blur because refreshEncounterFocusHp may replace the input.
+      setTimeout(() => { try { document.activeElement && document.activeElement.blur(); } catch (_) {} }, 0);
+    }, true);
+  }
 
   // v1.3.92 — Run Encounter reuses renderMonsterHpBar(), but prior focus-mode
   // wiring never attached the HP commit/tick/undo handlers used by the normal
