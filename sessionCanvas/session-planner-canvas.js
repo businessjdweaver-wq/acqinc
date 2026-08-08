@@ -1,5 +1,5 @@
 
-// v1.3.97 — Remove conflicting capture-phase HP Enter handler; use single clone-safe commit path.
+// v1.3.98 — Remove conflicting capture-phase HP Enter handler; use single clone-safe commit path.
 // v1.3.89 — Offline Autosave Performance: IndexedDB snapshots, no quota retry churn, single canvas serialization;
 // v1.3.88 — Encounter Focus Performance: true canvas detachment, lightweight HP refresh, idle autosave;
 // v1.3.86 — cache-bust and direct login-control fallback;
@@ -11458,7 +11458,7 @@ function wireEncounterFocusMode(node) {
     });
   });
 
-  // v1.3.97 — Run Encounter HP Enter is handled exclusively by the clone-safe
+  // v1.3.98 — Run Encounter HP Enter is handled exclusively by the clone-safe
   // inline handleEncounterFocusHpKeydown() path. The former capture-phase delegated
   // handler ran first and stopped propagation, preventing the inline handler from
   // updating the visible field after +/- delta commits.
@@ -16160,9 +16160,18 @@ function wireMonsterRollClicks(nodeEl, node) {
         // top of the freshly-updated value (e.g. -7 turning into -14).
         inp.dataset.justCommitted = '1';
         _commitHp(m, i, inp.value);
-        // refreshNodeFace re-renders the whole face; the new input element
-        // won't keep focus, but that's actually desired (visual confirmation
-        // the value committed).
+        // v1.3.98 — In Encounter Focus, _commitHp updates the monster state but
+        // refreshEncounterFocusHp intentionally leaves the actively focused input
+        // alone. Write the committed result directly into this live control so
+        // +/- deltas immediately resolve to the new absolute HP value.
+        if (inEncounterFocusMode && encounterFocusState && document.getElementById('encounter-focus-body')?.contains(inp)) {
+          const committed = (typeof m.hp_current === 'number')
+            ? m.hp_current
+            : (parseInt((m.snapshot || {}).hp, 10) || 0);
+          inp.value = String(committed);
+        }
+        // refreshNodeFace re-renders the whole face outside Encounter Focus; the
+        // new input element won't keep focus, which provides visual confirmation.
       } else if (e.key === 'Escape') {
         e.preventDefault();
         // Revert to current shown value
