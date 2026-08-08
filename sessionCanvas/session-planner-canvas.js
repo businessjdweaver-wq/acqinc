@@ -1,5 +1,5 @@
 
-// v1.3.91 — Resolve @mod from effective action prose (override/generated/raw fallbacks).
+// v1.3.92 — Run Encounter HP delta/Enter wiring; v1.3.91 resolves @mod from effective action prose.
 // v1.3.89 — Offline Autosave Performance: IndexedDB snapshots, no quota retry churn, single canvas serialization;
 // v1.3.88 — Encounter Focus Performance: true canvas detachment, lightweight HP refresh, idle autosave;
 // v1.3.86 — cache-bust and direct login-control fallback;
@@ -11457,6 +11457,107 @@ function wireEncounterFocusMode(node) {
       stepEncounterFocus(parseInt(btn.dataset.encfStep) || 0);
     });
   });
+
+  // v1.3.92 — Run Encounter reuses renderMonsterHpBar(), but prior focus-mode
+  // wiring never attached the HP commit/tick/undo handlers used by the normal
+  // encounter card. Keep combat edits local to the focused DOM so they do not
+  // wake/re-render the underlying canvas.
+  const commitFocusHp = (m, i, raw) => {
+    if (!m || raw === null || raw === undefined) return;
+    const s = String(raw).trim();
+    const cur = (typeof m.hp_current === 'number')
+      ? m.hp_current
+      : (parseInt((m.snapshot || {}).hp, 10) || 0);
+    if (!s) { refreshEncounterFocusHp(node, m, i); return; }
+
+    let next;
+    // Accept ordinary hyphen-minus as well as the Unicode minus glyph.
+    const deltaMatch = s.match(/^([+\-−])\s*(\d+)$/);
+    if (deltaMatch) {
+      const n = parseInt(deltaMatch[2], 10);
+      next = cur + (deltaMatch[1] === '+' ? n : -n);
+    } else {
+      const abs = parseInt(s, 10);
+      if (Number.isNaN(abs)) { refreshEncounterFocusHp(node, m, i); return; }
+      next = abs;
+    }
+    if (next === cur) { refreshEncounterFocusHp(node, m, i); return; }
+
+    m._hpPrev = cur;
+    m.hp_current = next;
+    refreshEncounterFocusHp(node, m, i);
+    markDirty();
+  };
+
+  body.querySelectorAll('input[data-peek-hp]').forEach(inp => {
+    inp.addEventListener('click', e => e.stopPropagation());
+    inp.addEventListener('mousedown', e => e.stopPropagation());
+    inp.addEventListener('focus', () => {
+      setTimeout(() => { try { inp.select(); } catch (_) {} }, 0);
+    });
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        const i = parseInt(inp.dataset.peekHp, 10);
+        const m = monsters[i];
+        if (!m) return;
+        inp.dataset.justCommitted = '1';
+        commitFocusHp(m, i, inp.value);
+        inp.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        const i = parseInt(inp.dataset.peekHp, 10);
+        const m = monsters[i];
+        inp.dataset.justCommitted = '1';
+        if (m) refreshEncounterFocusHp(node, m, i);
+        inp.blur();
+      }
+    });
+    inp.addEventListener('blur', () => {
+      if (inp.dataset.justCommitted === '1') {
+        delete inp.dataset.justCommitted;
+        return;
+      }
+      const i = parseInt(inp.dataset.peekHp, 10);
+      const m = monsters[i];
+      if (!m) return;
+      const cur = (typeof m.hp_current === 'number')
+        ? m.hp_current
+        : (parseInt((m.snapshot || {}).hp, 10) || 0);
+      if (String(inp.value).trim() !== String(cur)) commitFocusHp(m, i, inp.value);
+    });
+  });
+
+  body.querySelectorAll('button[data-hp-tick]').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const [iStr, dStr] = btn.dataset.hpTick.split(',');
+      const i = parseInt(iStr, 10);
+      const d = parseInt(dStr, 10);
+      const m = monsters[i];
+      if (m) commitFocusHp(m, i, (d > 0 ? '+' : '') + d);
+    });
+  });
+
+  body.querySelectorAll('button[data-hp-undo]').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const i = parseInt(btn.dataset.hpUndo, 10);
+      const m = monsters[i];
+      if (!m || typeof m._hpPrev !== 'number') return;
+      const cur = (typeof m.hp_current === 'number')
+        ? m.hp_current
+        : (parseInt((m.snapshot || {}).hp, 10) || 0);
+      m.hp_current = m._hpPrev;
+      m._hpPrev = cur;
+      refreshEncounterFocusHp(node, m, i);
+      markDirty();
+    });
+  });
 }
 
 function stepEncounterFocus(delta) {
@@ -19853,7 +19954,7 @@ async function buildOfflineSessionBackup(reason, blocksOverride) {
   return {
     app: 'Session Canvas Planner',
     offline_rescue: true,
-    version: '1.3.91',
+    version: '1.3.92',
     reason: reason || 'manual_export',
     exported_at: new Date().toISOString(),
     session: {
