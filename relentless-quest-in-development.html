@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7353 Legacy Cycle Binding Cleanup</title>
+<title>Relentless Quest in Development v1.7354 Storage Safety + Grind Journal</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7353 Legacy Cycle Binding Cleanup</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7354 Storage Safety + Grind Journal</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4298,6 +4298,8 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
          are visible in the trace. Pairs with the RQ_SYNCDIAG JS module. -->
     <button class="btn sm full" id="btn-rq-sync-diag" style="margin-top:6px;background:rgba(26,107,138,.1);border:1px solid var(--teal);color:var(--teal)">🔬 Sync Diagnostic Log</button>
     <button class="btn sm full" id="btn-rq-grind-blackbox" style="margin-top:6px;background:rgba(155,32,54,.08);border:1px solid var(--crimson);color:var(--crimson)">📦 Copy Grind Black Box</button>
+    <div id="rq-storage-health" class="hint" style="margin-top:8px;padding:8px;border:1px solid rgba(138,92,26,.35);border-radius:6px;background:rgba(138,92,26,.06)">Storage health loading…</div>
+    <button class="btn sm full" id="btn-rq-storage-cleanup" style="margin-top:6px;background:rgba(31,111,31,.08);border:1px solid var(--forest);color:var(--forest)">🧹 Run Safe Storage Cleanup</button>
   </div>
   <div class="set-sec" id="dev-d20-sec">
     <div class="set-sec-ttl">🎲 Dev Rolling Table</div>
@@ -5526,8 +5528,8 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7353',
-  codename:'Legacy Cycle Binding Cleanup',
+  version:'1.7354',
+  codename:'Storage Safety + Grind Journal',
   built:'2026-08-01'
 };
 window.BUILD=BUILD;
@@ -9016,6 +9018,274 @@ setTimeout(function(){
 }, 800);
 
 
+
+// ══════════════════════════════════════════════════════════════════════════
+// v1.7354 — Storage safety + IndexedDB grind journal
+// ══════════════════════════════════════════════════════════════════════════
+// Background: Safari can reject localStorage writes near quota. Older builds
+// caught that exception silently, leaving the in-memory state newer than the
+// persisted state. If iOS later discarded the PWA process, the next boot
+// restored the older save (for example: grindPending returned to []).
+//
+// This module:
+//   • removes the obsolete multi-megabyte legacy "acqv7" snapshot once the
+//     namespaced runtime is verified;
+//   • verifies every main runtime localStorage write;
+//   • retries once after pruning safe diagnostic/legacy storage;
+//   • shows a persistent visible warning when a save is not durable;
+//   • journals questState.grindPending in IndexedDB on every save;
+//   • restores a newer IndexedDB grind journal after boot if the main
+//     localStorage snapshot is older;
+//   • exposes storage health in Settings → Test Mode.
+var RQ_STORAGE_SAFE=(function(){
+  var DB_NAME='relentless-quest-safety';
+  var DB_VER=1;
+  var STORE='kv';
+  var _lastStatus={ok:true,message:'Not checked yet',at:0,bytes:0};
+
+  function _uid(){try{return uid()||'guest';}catch(e){return 'guest';}}
+  function _journalKey(){return 'grinds:'+_uid();}
+  function _openDb(){
+    return new Promise(function(resolve,reject){
+      if(!window.indexedDB){reject(new Error('IndexedDB unavailable'));return;}
+      var req=indexedDB.open(DB_NAME,DB_VER);
+      req.onupgradeneeded=function(){
+        var db=req.result;
+        if(!db.objectStoreNames.contains(STORE))db.createObjectStore(STORE);
+      };
+      req.onsuccess=function(){resolve(req.result);};
+      req.onerror=function(){reject(req.error||new Error('IndexedDB open failed'));};
+    });
+  }
+  function _idbPut(key,value){
+    return _openDb().then(function(db){
+      return new Promise(function(resolve,reject){
+        var tx=db.transaction(STORE,'readwrite');
+        tx.objectStore(STORE).put(value,key);
+        tx.oncomplete=function(){try{db.close();}catch(e){} resolve(true);};
+        tx.onerror=function(){try{db.close();}catch(e){} reject(tx.error||new Error('IndexedDB write failed'));};
+        tx.onabort=function(){try{db.close();}catch(e){} reject(tx.error||new Error('IndexedDB write aborted'));};
+      });
+    });
+  }
+  function _idbGet(key){
+    return _openDb().then(function(db){
+      return new Promise(function(resolve,reject){
+        var tx=db.transaction(STORE,'readonly');
+        var req=tx.objectStore(STORE).get(key);
+        req.onsuccess=function(){resolve(req.result||null);};
+        req.onerror=function(){reject(req.error||new Error('IndexedDB read failed'));};
+        tx.oncomplete=function(){try{db.close();}catch(e){}};
+      });
+    });
+  }
+  function _clone(v){try{return JSON.parse(JSON.stringify(v));}catch(e){return null;}}
+  function _grindLocks(){
+    var out={};
+    try{
+      var m=(S&&S.questCycleSquads)||{};
+      Object.keys(m).forEach(function(k){
+        if(k==='__grind__'||k.indexOf('__grind__::')===0)out[k]=_clone(m[k]);
+      });
+    }catch(e){}
+    return out;
+  }
+  function writeGrindJournal(stamp){
+    try{
+      var qs=(S&&S.questState)||{};
+      var payload={
+        savedAt:Number(stamp)||Date.now(),
+        uid:_uid(),
+        grinds:_clone(Array.isArray(qs.grindPending)?qs.grindPending:[])||[],
+        locks:_grindLocks(),
+        setId:qs.setId||null,
+        cycleId:qs.cycleId||null
+      };
+      return _idbPut(_journalKey(),payload).then(function(){
+        try{RQ_GRIND_DIAG&&RQ_GRIND_DIAG.log('indexeddb_journal_write',{count:payload.grinds.length,savedAt:payload.savedAt});}catch(e){}
+        refreshHealth();
+        return true;
+      }).catch(function(err){
+        console.warn('[storage safety] IndexedDB grind journal failed',err);
+        return false;
+      });
+    }catch(e){return Promise.resolve(false);}
+  }
+  function _mergeGrindLocks(locks){
+    if(!locks||typeof locks!=='object')return;
+    if(!S.questCycleSquads||typeof S.questCycleSquads!=='object')S.questCycleSquads={};
+    Object.keys(locks).forEach(function(k){
+      if(k==='__grind__'||k.indexOf('__grind__::')===0)S.questCycleSquads[k]=_clone(locks[k]);
+    });
+  }
+  function restoreNewerJournalAfterBoot(){
+    return _idbGet(_journalKey()).then(function(j){
+      if(!j||!Array.isArray(j.grinds))return false;
+      var mainStamp=Number(S&&S._localSavedAt)||0;
+      var journalStamp=Number(j.savedAt)||0;
+      if(journalStamp<=mainStamp)return false;
+      var qs=S.questState||(S.questState={});
+      var current=Array.isArray(qs.grindPending)?qs.grindPending:[];
+      // The journal represents a save attempt newer than the persisted main
+      // runtime. Restore its exact queue, including an intentional empty queue.
+      qs.grindPending=_clone(j.grinds)||[];
+      _mergeGrindLocks(j.locks);
+      S._localSavedAt=journalStamp;
+      var msg='Recovered '+qs.grindPending.length+' grind mission'+(qs.grindPending.length===1?'':'s')+
+        ' from the IndexedDB safety journal because the main local save was older.';
+      console.warn('[storage safety] '+msg,{journalSavedAt:journalStamp,mainSavedAt:mainStamp});
+      showNotice(msg,'recover');
+      try{RQ_GRIND_DIAG&&RQ_GRIND_DIAG.log('INDEXEDDB_RECOVERY',{count:qs.grindPending.length,journalSavedAt:journalStamp,mainSavedAt:mainStamp},{full:true});}catch(e){}
+      // Persist recovered state now that v1.7354 has already pruned legacy data.
+      setTimeout(function(){try{saveLocalState();}catch(e){}},50);
+      try{if(typeof renderParty==='function')renderParty();}catch(e){}
+      try{if(typeof renderAdv==='function')renderAdv();}catch(e){}
+      try{if(typeof renderInboxBadge==='function')renderInboxBadge();}catch(e){}
+      return true;
+    }).catch(function(err){
+      console.warn('[storage safety] journal restore check failed',err);
+      return false;
+    });
+  }
+  function _parseableRuntime(raw){
+    if(!raw||raw.length<50)return false;
+    try{
+      var x=JSON.parse(raw);
+      return !!(x&&typeof x==='object'&&Array.isArray(x.party)&&x.questState);
+    }catch(e){return false;}
+  }
+  function purgeLegacyRuntimeIfSafe(){
+    try{
+      var activeKey=localSaveKey();
+      if(!activeKey||activeKey==='acqv7')return false;
+      var activeRaw=localStorage.getItem(activeKey);
+      if(!_parseableRuntime(activeRaw))return false;
+      var legacy=localStorage.getItem('acqv7');
+      if(!legacy)return false;
+      localStorage.removeItem('acqv7');
+      console.log('[storage safety] Removed obsolete legacy acqv7 snapshot ('+legacy.length+' chars).');
+      return true;
+    }catch(e){return false;}
+  }
+  function pruneSafeDiagnostics(){
+    try{
+      // Sync diagnostics are helpful but disposable. Keep only the last 40
+      // records if quota pressure forces a retry.
+      var k='rq_syncdiag:'+_uid();
+      var raw=localStorage.getItem(k);
+      if(raw){
+        try{
+          var a=JSON.parse(raw);
+          if(Array.isArray(a)&&a.length>40)localStorage.setItem(k,JSON.stringify(a.slice(-40)));
+        }catch(e){}
+      }
+    }catch(e){}
+  }
+  function usage(){
+    var rows=[],total=0;
+    try{
+      Object.keys(localStorage).forEach(function(k){
+        var v=localStorage.getItem(k)||'';
+        var bytes=v.length*2;
+        total+=bytes;
+        rows.push({key:k,bytes:bytes});
+      });
+    }catch(e){}
+    rows.sort(function(a,b){return b.bytes-a.bytes;});
+    var active=0;
+    try{active=((localStorage.getItem(localSaveKey())||'').length*2);}catch(e){}
+    return {totalBytes:total,activeBytes:active,rows:rows};
+  }
+  function showNotice(message,kind){
+    try{
+      var id='rq-storage-safety-banner';
+      var el=document.getElementById(id);
+      if(!el){
+        el=document.createElement('div');el.id=id;
+        el.style.cssText='position:fixed;left:8px;right:8px;top:8px;z-index:2147483647;padding:10px 12px;border-radius:8px;font:700 13px/1.35 system-ui,-apple-system,sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.35);';
+        document.body.appendChild(el);
+      }
+      var recover=kind==='recover';
+      el.style.background=recover?'#fff4ce':'#ffd9d9';
+      el.style.color='#351414';
+      el.style.border='2px solid '+(recover?'#b38600':'#a21b1b');
+      el.textContent=(recover?'⚠ STORAGE RECOVERY: ':'⚠ LOCAL SAVE FAILED: ')+message;
+      el.style.display='block';
+    }catch(e){}
+  }
+  function clearNotice(){
+    try{var el=document.getElementById('rq-storage-safety-banner');if(el)el.style.display='none';}catch(e){}
+  }
+  function setStatus(ok,message,bytes){
+    _lastStatus={ok:!!ok,message:message||'',at:Date.now(),bytes:Number(bytes)||0};
+    refreshHealth();
+  }
+  function refreshHealth(){
+    try{
+      var el=document.getElementById('rq-storage-health');
+      if(!el)return;
+      var u=usage(),mb=function(n){return (n/1024/1024).toFixed(2);};
+      el.innerHTML=
+        '<strong>Local Storage:</strong> '+mb(u.totalBytes)+' MB total · '+mb(u.activeBytes)+' MB runtime'+
+        '<br><strong>Last save:</strong> '+(_lastStatus.ok?'✅ ':'⚠ ')+esc(_lastStatus.message||'Not checked yet')+
+        (_lastStatus.at?(' · '+new Date(_lastStatus.at).toLocaleTimeString()):'')+
+        '<br><span style="opacity:.78">Grind safety journal: IndexedDB (separate quota)</span>';
+    }catch(e){}
+  }
+  function verifiedWrite(raw){
+    var key=localSaveKey(),firstErr=null;
+    purgeLegacyRuntimeIfSafe();
+    try{
+      localStorage.setItem(key,raw);
+      if(localStorage.getItem(key)!==raw)throw new Error('localStorage verification mismatch');
+      setStatus(true,'Verified',raw.length*2);
+      clearNotice();
+      return true;
+    }catch(e){
+      firstErr=e;
+      console.warn('[storage safety] first local save attempt failed; pruning and retrying',e);
+    }
+    // Emergency cleanup + one retry.
+    purgeLegacyRuntimeIfSafe();
+    pruneSafeDiagnostics();
+    try{
+      localStorage.setItem(key,raw);
+      if(localStorage.getItem(key)!==raw)throw new Error('localStorage verification mismatch after retry');
+      setStatus(true,'Verified after storage cleanup',raw.length*2);
+      clearNotice();
+      return true;
+    }catch(e2){
+      var msg=(e2&&e2.name?e2.name+': ':'')+((e2&&e2.message)||String(e2));
+      setStatus(false,msg,raw.length*2);
+      showNotice('Changes are currently only in memory and may be lost if the app closes. '+msg,'fail');
+      try{RQ_GRIND_DIAG&&RQ_GRIND_DIAG.log('LOCAL_SAVE_FAILED',{message:msg,firstError:(firstErr&&firstErr.message)||String(firstErr||'')},{full:true,stack:true});}catch(_e){}
+      return false;
+    }
+  }
+  function start(){
+    // Free the known obsolete 1+ MB snapshot as early as possible.
+    purgeLegacyRuntimeIfSafe();
+    setTimeout(refreshHealth,900);
+    setTimeout(restoreNewerJournalAfterBoot,1500);
+  }
+  return {
+    writeGrindJournal:writeGrindJournal,
+    restoreNewerJournalAfterBoot:restoreNewerJournalAfterBoot,
+    purgeLegacyRuntimeIfSafe:purgeLegacyRuntimeIfSafe,
+    pruneSafeDiagnostics:pruneSafeDiagnostics,
+    verifiedWrite:verifiedWrite,
+    usage:usage,
+    showNotice:showNotice,
+    clearNotice:clearNotice,
+    setStatus:setStatus,
+    refreshHealth:refreshHealth,
+    start:start
+  };
+})();
+window.RQ_STORAGE_SAFE=RQ_STORAGE_SAFE;
+setTimeout(function(){try{RQ_STORAGE_SAFE.start();}catch(e){console.warn('[storage safety start]',e);}},600);
+
+
 // ══════════════════════════════════════════════════════════════════════════
 // v1.7349 — Persistent grind black box
 // ══════════════════════════════════════════════════════════════════════════
@@ -9051,11 +9321,21 @@ var RQ_GRIND_DIAG=(function(){
       l:st.locks||{},setId:st.setId||null,cycleId:st.cycleId||null
     });}catch(e){return String(st.count);}
   }
-  function persist(){try{localStorage.setItem(key(),JSON.stringify(_events.slice(-MAX)));}catch(e){}}
+  function persist(){
+    try{
+      var compact=_events.slice(-120).map(function(e){
+        return {ts:e.ts,iso:e.iso,type:e.type,count:e.count,setId:e.setId,cycleId:e.cycleId,
+          localKey:e.localKey,unpushed:e.unpushed,visibility:e.visibility,
+          payload:e.payload,stack:e.stack||''};
+      });
+      localStorage.setItem(key(),JSON.stringify(compact));
+    }catch(e){}
+  }
   function restore(){try{var r=localStorage.getItem(key());if(r){var a=JSON.parse(r);if(Array.isArray(a))_events=a.slice(-MAX);}}catch(e){}}
   function saveGood(st,source){
-    if(!st||!st.count)return;
-    try{localStorage.setItem(goodKey(),JSON.stringify({savedAt:Date.now(),source:source||'',state:st}));}catch(e){}
+    // v1.7354 — full grind safety moved to IndexedDB. Keeping a complete
+    // grind queue in localStorage competed with the main runtime for quota.
+    return;
   }
   function sig(x){return [x.id||'',x.territory||'',(x.chars||[]).join(','),x.doneAt||0].join('::');}
   function removed(before,after){
@@ -9121,12 +9401,26 @@ setTimeout(function(){try{RQ_GRIND_DIAG.start();}catch(e){console.warn('[RQ_GRIN
 
 function saveLocalState(){
   try{RQ_GRIND_DIAG.checkpoint('saveLocalState:before',{stack:true});}catch(e){}
-  // v1.7300 — Runtime only. The offline catalog is embedded in the HTML and
-  // must not be duplicated into localStorage on every save.
-  try{localStorage.setItem(localSaveKey(),JSON.stringify(S));}
-  catch(e){console.warn('[local save] failed; existing stored runtime left intact',e);}
-  try{ RQ_SYNCDIAG.log('save', {}); }catch(e){}
-  try{RQ_GRIND_DIAG.checkpoint('saveLocalState:after');}catch(e){}
+  // v1.7354 — stamp both the main runtime and the independent IndexedDB
+  // journal with the same revision time. On boot, a newer journal proves
+  // that a later main localStorage save failed.
+  var _saveStamp=Date.now();
+  try{S._localSavedAt=_saveStamp;}catch(e){}
+  try{RQ_STORAGE_SAFE.writeGrindJournal(_saveStamp);}catch(e){}
+  var _raw='';
+  try{_raw=JSON.stringify(S);}catch(e){
+    console.error('[local save] JSON serialization failed',e);
+    try{RQ_STORAGE_SAFE.showNotice('Runtime serialization failed: '+((e&&e.message)||String(e)),'fail');}catch(_e){}
+    return false;
+  }
+  var _ok=false;
+  try{_ok=RQ_STORAGE_SAFE.verifiedWrite(_raw);}catch(e){
+    console.error('[local save] verified write failed',e);
+    try{RQ_STORAGE_SAFE.showNotice('Verified save failed: '+((e&&e.message)||String(e)),'fail');}catch(_e){}
+  }
+  try{ RQ_SYNCDIAG.log('save', {verified:_ok,bytes:_raw.length*2}); }catch(e){}
+  try{RQ_GRIND_DIAG.checkpoint('saveLocalState:after',{force:!_ok,full:!_ok,stack:!_ok});}catch(e){}
+  return _ok;
 }
 // v1.7054 — helpers for the unpushed-changes flag. The flag is set ONLY
 // by save() (genuine user-action save path), NOT by saveLocalState()
@@ -39696,6 +39990,18 @@ document.getElementById('btn-jump-cycle2').addEventListener('click',function(){
       }
     }catch(err){alert('Grind black-box export failed: '+((err&&err.message)||String(err)));}
   });
+  var storageCleanupBtn=document.getElementById('btn-rq-storage-cleanup');
+  if(storageCleanupBtn)storageCleanupBtn.addEventListener('click',function(){
+    try{
+      var purged=RQ_STORAGE_SAFE.purgeLegacyRuntimeIfSafe();
+      RQ_STORAGE_SAFE.pruneSafeDiagnostics();
+      RQ_STORAGE_SAFE.refreshHealth();
+      var u=RQ_STORAGE_SAFE.usage();
+      alert((purged?'Legacy acqv7 snapshot removed.\n':'No removable legacy runtime snapshot was found.\n')+
+        'Current localStorage usage: '+(u.totalBytes/1024/1024).toFixed(2)+' MB.');
+    }catch(e){alert('Storage cleanup failed: '+((e&&e.message)||String(e)));}
+  });
+  setTimeout(function(){try{RQ_STORAGE_SAFE.refreshHealth();}catch(e){}},250);
 })();
 
 // v1.7052 — Sync diagnostic modal renderer. Builds the event list + the
@@ -41209,7 +41515,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7353-legacy-cycle-binding-cleanup';
+var RQ_CLIENT_VERSION='v1.7354-storage-safety-and-grind-journal';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
