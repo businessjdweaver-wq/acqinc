@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7363 Quest Log Storage Hygiene</title>
+<title>Relentless Quest in Development v1.7364 Fortress Upgraded Staff</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7363 Quest Log Storage Hygiene</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7364 Fortress Upgraded Staff</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -5529,8 +5529,8 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7363',
-  codename:'Quest Log Storage Hygiene',
+  version:'1.7364',
+  codename:'Fortress Upgraded Staff',
   built:'2026-08-01'
 };
 window.BUILD=BUILD;
@@ -7504,6 +7504,9 @@ window.RQ_CONTENT_BRIDGE={
   getDndCatalog:function(){return DND;},
   getContentLib:function(){
     return (typeof CONTENT_LIB==='object'&&CONTENT_LIB)?CONTENT_LIB:null;
+  },
+  ensureJuxianFortressStaff:function(){
+    return _rqEnsureJuxianFortressStaff();
   },
   mergeCustomContent:function(){
     if(typeof mergeCustomContent==='function')mergeCustomContent();
@@ -19166,6 +19169,9 @@ window.rqPersistenceTest=function(){
     var _nameCol=sq.name;
     var _sqmetaObj={};
     if(sq.homeTerritory)_sqmetaObj.homeTerritory=sq.homeTerritory;
+    if(sq.staff)_sqmetaObj.staff=true;
+    if(sq.staffOfAssetUid)_sqmetaObj.staffOfAssetUid=sq.staffOfAssetUid;
+    if(sq.fortressStaff)_sqmetaObj.fortressStaff=true;
     if(sq.roles&&typeof sq.roles==='object'){
       var _rolesByName={};
       Object.keys(sq.roles).forEach(function(roleId){
@@ -19308,12 +19314,18 @@ window.rqPersistenceTest=function(){
   function _deserializeSquadRow(row,party){
     var sqHomeTerritory='';
     var sqRolesByName=null;
+    var sqStaff=false;
+    var sqStaffOfAssetUid='';
+    var sqFortressStaff=false;
     var _rawNameCol=row.name||'';
     var _metaSep=_rawNameCol.indexOf('__sqmeta__');
     if(_metaSep!==-1){
       try{
         var _mObj=JSON.parse(_rawNameCol.slice(_metaSep+10));
         if(_mObj&&_mObj.homeTerritory)sqHomeTerritory=_mObj.homeTerritory;
+        if(_mObj&&_mObj.staff)sqStaff=true;
+        if(_mObj&&_mObj.staffOfAssetUid)sqStaffOfAssetUid=_mObj.staffOfAssetUid;
+        if(_mObj&&_mObj.fortressStaff)sqFortressStaff=true;
         if(_mObj&&_mObj.rolesByName&&typeof _mObj.rolesByName==='object')sqRolesByName=_mObj.rolesByName;
       }catch(e){}
     }
@@ -19325,6 +19337,9 @@ window.rqPersistenceTest=function(){
     });
     var out={name:sqName,emoji:row.emoji||'⚔',color:row.color||SQUAD_COLORS[0],
       memberIdxs:memberIdxs,homeTerritory:sqHomeTerritory};
+    if(sqStaff)out.staff=true;
+    if(sqStaffOfAssetUid)out.staffOfAssetUid=sqStaffOfAssetUid;
+    if(sqFortressStaff)out.fortressStaff=true;
     if(sqRolesByName){
       var sqRoles={};
       Object.keys(sqRolesByName).forEach(function(roleId){
@@ -23183,6 +23198,54 @@ var RQ_BUILDING_STAFF_PLANS={
     ]
   }
 };
+
+// v1.7364 — Juxian Horn fortress buildings use the same staffing model as
+// ordinary staffed buildings, but the 50,000-gp stronghold attracts a
+// veteran Tier-III-capable garrison. The class/skill/tool themes remain the
+// ordinary building themes; only the roster levels and squad presentation
+// are upgraded.
+var RQ_JUXIAN_FORTRESS_STAFF_LEVELS={
+  'Barracks':[8,8,9,9,10,11,12,13],
+  "Wizard's Tower":[8,9,9,10,11,12,12,13],
+  'Temple Shrine':[8,8,9,10,10,11,12,13],
+  'Greenhouse':[7,8,8,9,10,11,12,13]
+};
+function _rqIsJuxianFortressBuildingAsset(asset){
+  if(!asset||!asset.meta||!asset.meta.juxianCampaign)return false;
+  if((asset.meta.ownerRef||asset.meta.owner_ref||'')!=='Juxian Horn')return false;
+  return ['fortress-barracks','fortress-tower','fortress-shrine','fortress-greenhouse'].indexOf(asset.meta.campaignKind)!==-1;
+}
+function _rqJuxianFortressStaffPlan(asset,item){
+  var name=(item&&item.name)||asset&&asset.name||'';
+  var base=RQ_BUILDING_STAFF_PLANS[name];
+  var levels=RQ_JUXIAN_FORTRESS_STAFF_LEVELS[name];
+  if(!base||!levels)return null;
+  var roster=(base.roster||[]).map(function(spec,i){
+    var copy=Object.assign({},spec);
+    copy.level=levels[i]!=null?levels[i]:Math.max(7,Number(spec.level)||0);
+    copy.bg='Fortress Staff';
+    return copy;
+  });
+  var squadNames={
+    'Barracks':'Fortress Barracks Staff',
+    "Wizard's Tower":'Fortress Tower Staff',
+    'Temple Shrine':'Fortress Shrine Staff',
+    'Greenhouse':'Fortress Greenhouse Staff'
+  };
+  return {
+    squadName:squadNames[name]||('Fortress '+(base.squadName||'Staff')),
+    emoji:base.emoji||'🏰',
+    color:base.color||SQUAD_COLORS[0],
+    roster:roster,
+    fortressStaff:true
+  };
+}
+function _rqStaffPlanForAsset(asset,item){
+  if(_rqIsJuxianFortressBuildingAsset(asset)){
+    return _rqJuxianFortressStaffPlan(asset,item);
+  }
+  return _rqStaffPlanForBuilding((item&&item.name)||asset&&asset.name||'');
+}
 function _rqStaffPlanForBuilding(name){return RQ_BUILDING_STAFF_PLANS[String(name||'')]||null;}
 function _rqStaffUniqueSquadName(base){
   if(!S.squads)S.squads=[];
@@ -23292,23 +23355,85 @@ function _rqMoveSquadForStaffSlot(territory,buildingName){
   return {ok:true};
 }
 function _rqMaybeCreateBuildingStaffSquad(asset,item){
-  var plan=_rqStaffPlanForBuilding((item&&item.name)||'');
-  if(!plan||!asset||!asset.meta)return {ok:true,none:true};
+  if(!asset||!asset.meta)return {ok:true,none:true};
+  item=item||{name:asset.name||'Building'};
+  var plan=_rqStaffPlanForAsset(asset,item);
+  if(!plan)return {ok:true,none:true};
+
+  // Idempotent grandfathering: if this asset already has real staff, never
+  // create a duplicate squad merely because an older meta flag was missing.
+  var existingSq=(S.squads||[]).filter(function(sq){return sq&&sq.staffOfAssetUid===asset.meta.uid;});
+  var existingChars=(S.party||[]).filter(function(c){return c&&c.staff&&c.staffOfAssetUid===asset.meta.uid;});
+  if(existingSq.length||existingChars.length){
+    asset.meta.staffCreated=true;
+    if(existingSq[0]){
+      asset.meta.staffSquadId=existingSq[0].id;
+      asset.meta.staffSquadName=existingSq[0].name;
+      if(plan.fortressStaff)existingSq[0].fortressStaff=true;
+    }
+    return {ok:true,existing:true};
+  }
+
   var terr=(asset.meta.ownerRef||asset.meta.owner_ref||S.originTerritory||'');
-  var capCheck=_rqMoveSquadForStaffSlot(terr,item.name);
+  var capCheck=plan.fortressStaff?{ok:true}:_rqMoveSquadForStaffSlot(terr,item.name);
   if(!capCheck.ok)return capCheck;
-  if(capCheck.forfeit){asset.meta.staffForfeited=true;logAdd('🏛 '+item.name+' staff squad forfeited — no squad slot in '+terr+'.','buy');return {ok:true,forfeit:true};}
+  if(capCheck.forfeit){
+    asset.meta.staffForfeited=true;
+    logAdd('🏛 '+item.name+' staff squad forfeited — no squad slot in '+terr+'.','buy');
+    return {ok:true,forfeit:true};
+  }
   if(!S.party)S.party=[];if(!S.squads)S.squads=[];
   var newIdxs=[];
   plan.roster.forEach(function(spec){
     var c=_rqStaffMakeCharacter(spec,terr,asset.meta.uid);
     S.party.push(c);newIdxs.push(S.party.length-1);
   });
-  var sq={id:Date.now()+Math.floor(Math.random()*1000),name:_rqStaffUniqueSquadName(plan.squadName),emoji:plan.emoji||'🏛️',color:plan.color||SQUAD_COLORS[0],memberIdxs:newIdxs,homeTerritory:terr,staff:true,staffOfAssetUid:asset.meta.uid};
+  var sq={
+    id:Date.now()+Math.floor(Math.random()*1000),
+    name:_rqStaffUniqueSquadName(plan.squadName),
+    emoji:plan.emoji||'🏛️',
+    color:plan.color||SQUAD_COLORS[0],
+    memberIdxs:newIdxs,
+    homeTerritory:terr,
+    staff:true,
+    staffOfAssetUid:asset.meta.uid
+  };
+  if(plan.fortressStaff){
+    sq.fortressStaff=true;
+    asset.meta.fortressStaff=true;
+    asset.meta.staffPlanVersion=1;
+  }
   S.squads.push(sq);
-  asset.meta.staffSquadId=sq.id;asset.meta.staffSquadName=sq.name;asset.meta.staffCreated=true;
-  logAdd('🏛 '+item.name+' founded staff squad "'+sq.name+'" in '+terr+' ('+newIdxs.length+' staff).','hire');
-  return {ok:true,created:true};
+  asset.meta.staffSquadId=sq.id;
+  asset.meta.staffSquadName=sq.name;
+  asset.meta.staffCreated=true;
+  logAdd('🏛 '+item.name+' founded '+(plan.fortressStaff?'veteran fortress ':'')+'staff squad "'+sq.name+'" in '+terr+' ('+newIdxs.length+' staff).','hire');
+  return {ok:true,created:true,fortressStaff:!!plan.fortressStaff};
+}
+
+function _rqEnsureJuxianFortressStaff(){
+  var result={created:0,existing:0,missingAssets:0,errors:[]};
+  var kinds=['fortress-barracks','fortress-tower','fortress-shrine','fortress-greenhouse'];
+  kinds.forEach(function(kind){
+    var asset=(S.partyAssets||[]).filter(function(a){
+      return a&&a.meta&&a.meta.juxianCampaign&&a.meta.campaignKind===kind&&
+        (a.meta.ownerRef||a.meta.owner_ref||'')==='Juxian Horn';
+    })[0]||null;
+    if(!asset){result.missingAssets++;return;}
+    try{
+      var r=_rqMaybeCreateBuildingStaffSquad(asset,{name:asset.name});
+      if(r&&r.created)result.created++;
+      else if(r&&r.existing)result.existing++;
+    }catch(e){
+      result.errors.push(kind+': '+((e&&e.message)||String(e)));
+    }
+  });
+  if(result.created){
+    try{save();}catch(e){}
+    try{if(typeof renderParty==='function')renderParty();}catch(e){}
+    try{if(typeof renderSquadManager==='function')renderSquadManager();}catch(e){}
+  }
+  return result;
 }
 
 function _dtRenderBuildingDedicationModal(){
@@ -41858,7 +41983,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7363-questlog-storage-hygiene';
+var RQ_CLIENT_VERSION='v1.7364-fortress-upgraded-staff';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -43409,6 +43534,9 @@ function sbPush(manual){
       var _nameCol=sq.name;
       var _sqmetaObj={};
       if(sq.homeTerritory)_sqmetaObj.homeTerritory=sq.homeTerritory;
+      if(sq.staff)_sqmetaObj.staff=true;
+      if(sq.staffOfAssetUid)_sqmetaObj.staffOfAssetUid=sq.staffOfAssetUid;
+      if(sq.fortressStaff)_sqmetaObj.fortressStaff=true;
       if(sq.roles&&typeof sq.roles==='object'){
         var _rolesByName={};
         Object.keys(sq.roles).forEach(function(roleId){
@@ -44279,12 +44407,18 @@ function sbPull(manual){
         // We rebuild {roleId: ci} by looking each name up in S.party.
         var sqHomeTerritory='';
         var sqRolesByName=null;
+        var sqStaff=false;
+        var sqStaffOfAssetUid='';
+        var sqFortressStaff=false;
         var _rawNameCol=sq.name||'';
         var _newMetaSep=_rawNameCol.indexOf('__sqmeta__');
         if(_newMetaSep!==-1){
           try{
             var _newMetaObj=JSON.parse(_rawNameCol.slice(_newMetaSep+10));
             if(_newMetaObj&&_newMetaObj.homeTerritory)sqHomeTerritory=_newMetaObj.homeTerritory;
+            if(_newMetaObj&&_newMetaObj.staff)sqStaff=true;
+            if(_newMetaObj&&_newMetaObj.staffOfAssetUid)sqStaffOfAssetUid=_newMetaObj.staffOfAssetUid;
+            if(_newMetaObj&&_newMetaObj.fortressStaff)sqFortressStaff=true;
             if(_newMetaObj&&_newMetaObj.rolesByName&&typeof _newMetaObj.rolesByName==='object'){
               sqRolesByName=_newMetaObj.rolesByName;
             }
@@ -44309,6 +44443,9 @@ function sbPull(manual){
               // (shouldn't happen under normal flow since squad_name is
               // always written, but defensive against shape drift).
               if(metaObj.homeTerritory)sqHomeTerritory=metaObj.homeTerritory;
+              if(metaObj.staff)sqStaff=true;
+              if(metaObj.staffOfAssetUid)sqStaffOfAssetUid=metaObj.staffOfAssetUid;
+              if(metaObj.fortressStaff)sqFortressStaff=true;
               // v1.7040 — legacy branch also picks up rolesByName from
               // the same pack (same defensive rationale as homeTerritory).
               if(metaObj.rolesByName&&typeof metaObj.rolesByName==='object'){
@@ -44352,6 +44489,9 @@ function sbPull(manual){
         // (sq.roles being undefined vs {} signals "never assigned" vs
         // "all unassigned" — both render as empty but future code may want
         // to distinguish).
+        if(sqStaff)_rebuilt.staff=true;
+        if(sqStaffOfAssetUid)_rebuilt.staffOfAssetUid=sqStaffOfAssetUid;
+        if(sqFortressStaff)_rebuilt.fortressStaff=true;
         if(sqRoles)_rebuilt.roles=sqRoles;
         return _rebuilt;
       });
@@ -52127,7 +52267,10 @@ function charHomeTerritory(c,ci){
 function squadCountInTerritory(terr){
   if(!terr)return 0;
   return (S.squads||[]).filter(function(sq){
-    return sq&&(sq.homeTerritory||S.originTerritory||'')===terr;
+    // v1.7364 — Juxian Horn fortress staff are infrastructure garrisons,
+    // not player strategic squad slots. They remain normal usable squads,
+    // but do not prevent the player from stationing up to four field squads.
+    return sq&&!sq.fortressStaff&&(sq.homeTerritory||S.originTerritory||'')===terr;
   }).length;
 }
 
@@ -54515,12 +54658,30 @@ function bootstrap(opts){
   opts=opts||{};
   var st=state();
   if(fortressPurchased()&&st.purchaseReceipt){ensureSets();return false;}
-  var snap={unlocked:(S.unlockedTerritories||[]).slice(),assets:JSON.parse(JSON.stringify(S.partyAssets||[])),weights:JSON.parse(JSON.stringify(S.territoryWeights||{})),campaign:JSON.parse(JSON.stringify(st))};
+  var snap={
+    unlocked:(S.unlockedTerritories||[]).slice(),
+    assets:JSON.parse(JSON.stringify(S.partyAssets||[])),
+    weights:JSON.parse(JSON.stringify(S.territoryWeights||{})),
+    campaign:JSON.parse(JSON.stringify(st)),
+    party:JSON.parse(JSON.stringify(S.party||[])),
+    squads:JSON.parse(JSON.stringify(S.squads||[]))
+  };
   try{
     st.fortressPurchased=false;st.purchaseReceipt=null;st.establishedAt=0;
     addTerritory(ROOT_TERR);
     ensureFortressAssets();
     ensureTerritoryKnowledge();
+
+    // v1.7364 — The four upgraded fortress facilities are staffed
+    // immediately with veteran building-themed squads.
+    if(!window.RQ_CONTENT_BRIDGE||typeof window.RQ_CONTENT_BRIDGE.ensureJuxianFortressStaff!=='function'){
+      throw new Error('Fortress staffing bridge unavailable');
+    }
+    var _staffResult=window.RQ_CONTENT_BRIDGE.ensureJuxianFortressStaff();
+    if(_staffResult&&_staffResult.errors&&_staffResult.errors.length){
+      throw new Error('Fortress staffing failed: '+_staffResult.errors.join('; '));
+    }
+
     st.purchaseReceipt={at:Date.now(),amount:Number(opts.purchaseTotal)||50000,source:opts.legacyAsset?'legacy-asset':'store'};
     st.fortressPurchased=true;st.establishedAt=st.purchaseReceipt.at;
     st.pressure=Math.max(0,Math.min(5,Number(st.pressure)||2));
@@ -54530,7 +54691,12 @@ function bootstrap(opts){
     if(typeof recomputeUnlockedTerritories==='function')recomputeUnlockedTerritories();
     return true;
   }catch(err){
-    S.unlockedTerritories=snap.unlocked;S.partyAssets=snap.assets;S.territoryWeights=snap.weights;S.settings._juxianCampaign=snap.campaign;
+    S.unlockedTerritories=snap.unlocked;
+    S.partyAssets=snap.assets;
+    S.territoryWeights=snap.weights;
+    S.settings._juxianCampaign=snap.campaign;
+    S.party=snap.party;
+    S.squads=snap.squads;
     try{
       if(window.RQ_CONTENT_BRIDGE&&typeof window.RQ_CONTENT_BRIDGE.removeQuestSet==='function')window.RQ_CONTENT_BRIDGE.removeQuestSet(INITIAL_SET);
       if(window.RQ_CONTENT_BRIDGE&&typeof window.RQ_CONTENT_BRIDGE.removeCampaignGrinds==='function')window.RQ_CONTENT_BRIDGE.removeCampaignGrinds();
@@ -54549,7 +54715,20 @@ function start(){
     st=state();
   }
   if(anyLegacyFortress&&!st.purchaseReceipt)bootstrap({legacyAsset:true,purchaseTotal:50000});
-  if(fortressPurchased()){addTerritory(ROOT_TERR);ensureFortressAssets();ensureTerritoryKnowledge();ensureSets();}
+  if(fortressPurchased()){
+    addTerritory(ROOT_TERR);ensureFortressAssets();ensureTerritoryKnowledge();ensureSets();
+    // v1.7364 grandfathering: sessions that already bought the Fortress Keep
+    // before upgraded staffing shipped receive the four veteran staff squads
+    // automatically, without another purchase or charge.
+    try{
+      if(window.RQ_CONTENT_BRIDGE&&typeof window.RQ_CONTENT_BRIDGE.ensureJuxianFortressStaff==='function'){
+        var _grandfather=window.RQ_CONTENT_BRIDGE.ensureJuxianFortressStaff();
+        if(_grandfather&&_grandfather.created){
+          console.log('[Juxian Horn] grandfathered '+_grandfather.created+' veteran fortress staff squad(s).');
+        }
+      }
+    }catch(e){console.warn('[Juxian Horn] grandfather staffing failed',e);}
+  }
   setInterval(completionSweep,5000);setTimeout(completionSweep,1200);
   try{if(typeof renderStore==='function')renderStore();}catch(e){}
   try{if(typeof renderParty==='function')renderParty();}catch(e){}
