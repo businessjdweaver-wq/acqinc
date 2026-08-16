@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7362 Internal Content Bridge Fix</title>
+<title>Relentless Quest in Development v1.7363 Quest Log Storage Hygiene</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7362 Internal Content Bridge Fix</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7363 Quest Log Storage Hygiene</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4300,6 +4300,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
     <button class="btn sm full" id="btn-rq-grind-blackbox" style="margin-top:6px;background:rgba(155,32,54,.08);border:1px solid var(--crimson);color:var(--crimson)">📦 Copy Grind Black Box</button>
     <div id="rq-storage-health" class="hint" style="margin-top:8px;padding:8px;border:1px solid rgba(138,92,26,.35);border-radius:6px;background:rgba(138,92,26,.06)">Storage health loading…</div>
     <button class="btn sm full" id="btn-rq-storage-cleanup" style="margin-top:6px;background:rgba(31,111,31,.08);border:1px solid var(--forest);color:var(--forest)">🧹 Run Safe Storage Cleanup</button>
+    <button class="btn sm full" id="btn-rq-questlog-export" style="margin-top:6px;background:rgba(26,107,138,.08);border:1px solid var(--teal);color:var(--teal)">📜 Export Complete Quest Log</button>
   </div>
   <div class="set-sec" id="dev-d20-sec">
     <div class="set-sec-ttl">🎲 Dev Rolling Table</div>
@@ -5528,8 +5529,8 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7362',
-  codename:'Internal Content Bridge Fix',
+  version:'1.7363',
+  codename:'Quest Log Storage Hygiene',
   built:'2026-08-01'
 };
 window.BUILD=BUILD;
@@ -9264,7 +9265,7 @@ var RQ_STORAGE_SAFE=(function(){
       var el=document.getElementById(id);
       if(!el){
         el=document.createElement('div');el.id=id;
-        el.style.cssText='position:fixed;left:8px;right:8px;top:8px;z-index:2147483647;padding:10px 12px;border-radius:8px;font:700 13px/1.35 system-ui,-apple-system,sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.35);';
+        el.style.cssText='position:fixed;left:8px;right:64px;top:8px;z-index:2147483647;padding:10px 12px;border-radius:8px;font:700 13px/1.35 system-ui,-apple-system,sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.35);max-height:96px;overflow:auto;';
         document.body.appendChild(el);
       }
       var recover=kind==='recover';
@@ -9291,6 +9292,7 @@ var RQ_STORAGE_SAFE=(function(){
         '<strong>Local Storage:</strong> '+mb(u.totalBytes)+' MB total · '+mb(u.activeBytes)+' MB runtime'+
         '<br><strong>Last save:</strong> '+(_lastStatus.ok?'✅ ':'⚠ ')+esc(_lastStatus.message||'Not checked yet')+
         (_lastStatus.at?(' · '+new Date(_lastStatus.at).toLocaleTimeString()):'')+
+        '<br><span style="opacity:.78">Quest Log: '+(((S&&S.questLog)||[]).length)+' / '+RQ_QUESTLOG_MAX+' live rows · overflow archives to IndexedDB</span>'+
         '<br><span style="opacity:.78">Grind safety journal: IndexedDB (separate quota)</span>';
     }catch(e){}
   }
@@ -9325,8 +9327,13 @@ var RQ_STORAGE_SAFE=(function(){
     }
   }
   function start(){
-    // Free the known obsolete 1+ MB snapshot as early as possible.
     purgeLegacyRuntimeIfSafe();
+    setTimeout(function(){
+      try{
+        var n=questLogCompactForSave('startup');
+        if(n)saveLocalState();
+      }catch(e){console.warn('[Quest Log startup compact]',e);}
+    },500);
     setTimeout(refreshHealth,900);
     setTimeout(restoreNewerJournalAfterBoot,1500);
   }
@@ -9463,6 +9470,8 @@ setTimeout(function(){try{RQ_GRIND_DIAG.start();}catch(e){console.warn('[RQ_GRIN
 
 function saveLocalState(){
   try{RQ_GRIND_DIAG.checkpoint('saveLocalState:before',{stack:true});}catch(e){}
+  // v1.7363 — imported/legacy Quest Logs are compacted before serialization.
+  try{questLogCompactForSave('saveLocalState');}catch(e){console.warn('[Quest Log compact before save]',e);}
   // v1.7354 — stamp both the main runtime and the independent IndexedDB
   // journal with the same revision time. On boot, a newer journal proves
   // that a later main localStorage save failed.
@@ -13051,6 +13060,93 @@ function logAdd(msg,type){
     ts:now.toISOString()});
   if(S.log.length>500)S.log.length=500;
 }
+
+// v1.7363 — Structured Quest Log storage hygiene.
+// Keep only the newest 1,500 rows in S. Older rows are archived in IndexedDB
+// so the main localStorage runtime cannot grow back to Safari's quota ceiling.
+var RQ_QUESTLOG_MAX=1500;
+var RQ_QUESTLOG_DB='relentless-quest-history';
+var RQ_QUESTLOG_STORE='questlog_chunks';
+
+function _rqQuestLogOpenDb(){
+  return new Promise(function(resolve,reject){
+    if(!window.indexedDB){reject(new Error('IndexedDB unavailable'));return;}
+    var req=indexedDB.open(RQ_QUESTLOG_DB,1);
+    req.onupgradeneeded=function(){
+      var db=req.result;
+      if(!db.objectStoreNames.contains(RQ_QUESTLOG_STORE)){
+        db.createObjectStore(RQ_QUESTLOG_STORE,{keyPath:'id',autoIncrement:true});
+      }
+    };
+    req.onsuccess=function(){resolve(req.result);};
+    req.onerror=function(){reject(req.error||new Error('Quest Log archive database failed to open'));};
+  });
+}
+function _rqQuestLogArchiveRows(rows,reason){
+  rows=Array.isArray(rows)?rows.filter(Boolean):[];
+  if(!rows.length)return Promise.resolve(false);
+  var payload={archivedAt:Date.now(),reason:reason||'live-cap',count:rows.length,rows:rows};
+  return _rqQuestLogOpenDb().then(function(db){
+    return new Promise(function(resolve,reject){
+      var tx=db.transaction(RQ_QUESTLOG_STORE,'readwrite');
+      tx.objectStore(RQ_QUESTLOG_STORE).add(payload);
+      tx.oncomplete=function(){try{db.close();}catch(e){} resolve(true);};
+      tx.onerror=function(){try{db.close();}catch(e){} reject(tx.error||new Error('Quest Log archive write failed'));};
+      tx.onabort=function(){try{db.close();}catch(e){} reject(tx.error||new Error('Quest Log archive write aborted'));};
+    });
+  }).catch(function(err){
+    console.warn('[Quest Log archive] failed',err);
+    try{
+      if(window.RQ_STORAGE_SAFE)window.RQ_STORAGE_SAFE.showNotice(
+        'Quest Log overflow was trimmed to protect the save, but archive storage failed: '+((err&&err.message)||String(err)),
+        'fail'
+      );
+    }catch(e){}
+    return false;
+  });
+}
+function questLogCompactForSave(reason){
+  if(!Array.isArray(S.questLog))S.questLog=[];
+  if(S.questLog.length<=RQ_QUESTLOG_MAX)return 0;
+  var overflow=S.questLog.slice(RQ_QUESTLOG_MAX);
+  S.questLog=S.questLog.slice(0,RQ_QUESTLOG_MAX);
+  _rqQuestLogArchiveRows(overflow,reason||'save-cap');
+  try{console.log('[Quest Log] archived '+overflow.length+' old row(s); live log capped at '+RQ_QUESTLOG_MAX+'.');}catch(e){}
+  return overflow.length;
+}
+function questLogPush(entry){
+  if(!entry)return false;
+  if(!Array.isArray(S.questLog))S.questLog=[];
+  S.questLog.unshift(entry);
+  questLogCompactForSave('questLogPush');
+  return true;
+}
+function questLogExportArchive(){
+  return _rqQuestLogOpenDb().then(function(db){
+    return new Promise(function(resolve,reject){
+      var tx=db.transaction(RQ_QUESTLOG_STORE,'readonly');
+      var req=tx.objectStore(RQ_QUESTLOG_STORE).getAll();
+      req.onsuccess=function(){
+        var chunks=req.result||[],archived=[];
+        chunks.forEach(function(c){if(c&&Array.isArray(c.rows))archived=archived.concat(c.rows);});
+        var payload={
+          exportedAt:new Date().toISOString(),
+          archivedRows:archived.length,
+          liveRows:(S.questLog||[]).length,
+          questLog:(S.questLog||[]).concat(archived)
+        };
+        try{db.close();}catch(e){}
+        resolve(payload);
+      };
+      req.onerror=function(){try{db.close();}catch(e){} reject(req.error||new Error('Quest Log archive read failed'));};
+    });
+  });
+}
+window.RQ_QUESTLOG={
+  max:RQ_QUESTLOG_MAX,
+  compact:function(){return questLogCompactForSave('manual');},
+  exportArchive:questLogExportArchive
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // v1.6957 — UNDO LEDGER
@@ -21052,7 +21148,7 @@ function openInboxModal(){
           var prevGold=S.gold||0;
           goldAdd(franchiseCut,'Grind: "'+gpEntry.title+'" ('+cn+') — franchise cut','adv');
           if(!S.questLog)S.questLog=[];
-          S.questLog.unshift({cycleId:qs.cycleId,questTitle:gpEntry.title+' [Grind]',type:'grind',
+          questLogPush({cycleId:qs.cycleId,questTitle:gpEntry.title+' [Grind]',type:'grind',
             reward:gReward,franchiseCut:franchiseCut,completedAt:new Date().toLocaleString()});
           logAdd('Grind complete (inbox): "'+gpEntry.title+'" — '+gReward+' gp','adv');
           summary.push('• [Grind] "'+gpEntry.title+'" → '+((S.gold||0)-prevGold)+' gp');
@@ -33301,7 +33397,7 @@ function collectQuest(qi,pq,q,set){
   goldAdd(franchiseCut,'Quest: "'+q.title+'" ('+cn+') — franchise cut','adv');
   logAdd('Quest completed: "'+q.title+'" — '+totalReward+' gp ('+franchiseCut+' franchise, '+charPool+' adventurers; unspent shares kept in coin purses)','adv');
   if(!S.questLog)S.questLog=[];
-  S.questLog.unshift({cycleId:S.questState.cycleId,questTitle:q.title,type:q.type,reward:totalReward,franchiseCut:franchiseCut,chars:charResults,completedAt:new Date().toLocaleString()});
+  questLogPush({cycleId:S.questState.cycleId,questTitle:q.title,type:q.type,reward:totalReward,franchiseCut:franchiseCut,chars:charResults,completedAt:new Date().toLocaleString()});
   // Decrement questsRemaining for contact NPCs on this quest
   (chars||[]).forEach(function(ci){
     var c=S.party[ci];if(!c||!c.contact)return;
@@ -34319,7 +34415,7 @@ function devMarkQuestComplete(qi){
   if(qs.done.indexOf(qi)===-1)qs.done.push(qi);
   qs.repeatCounts[qi]=Math.max(1,parseInt(qs.repeatCounts[qi],10)||0);
   if(!S.questLog)S.questLog=[];
-  S.questLog.unshift({cycleId:qs.cycleId,questTitle:q.title,type:q.type||'explore',reward:reward,franchiseCut:reward,chars:[],completedAt:new Date().toLocaleString(),_devComplete:true});
+  questLogPush({cycleId:qs.cycleId,questTitle:q.title,type:q.type||'explore',reward:reward,franchiseCut:reward,chars:[],completedAt:new Date().toLocaleString(),_devComplete:true});
   logAdd('Dev: completed "'+q.title+'" instantly','adv');
   if(q.capstone)awardCapstonReward(set);
   saveActiveSetProgress();save();setGold();renderAdv();renderQuestLog();
@@ -34641,7 +34737,7 @@ document.getElementById('btn-qmap-fast-forward').addEventListener('click',functi
     var prevGold=S.gold||0;
     goldAdd(franchiseCut,'Grind: "'+gpEntry.title+'" ('+cn+') \u2014 franchise cut','adv');
     if(!S.questLog)S.questLog=[];
-    S.questLog.unshift({cycleId:qs.cycleId,questTitle:gpEntry.title+' [Grind]',type:'grind',
+    questLogPush({cycleId:qs.cycleId,questTitle:gpEntry.title+' [Grind]',type:'grind',
       reward:gReward,franchiseCut:franchiseCut,completedAt:new Date().toLocaleString()});
     logAdd('Grind complete (fast-forward): "'+gpEntry.title+'" \u2014 '+gReward+' gp','adv');
     summary.push('\u2022 [Grind] "'+gpEntry.title+'" \u2192 '+(S.gold-prevGold)+' gp');
@@ -35143,7 +35239,7 @@ document.addEventListener('click',function(e){
     franchiseCut+=unspent;
     goldAdd(franchiseCut,'Grind: "'+gpEntry.title+'" ('+cn+') — franchise cut','adv');
     if(!S.questLog)S.questLog=[];
-    S.questLog.unshift({
+    questLogPush({
       cycleId:S.questState.cycleId,
       questTitle:gpEntry.title+' [Grind]',
       type:'grind',
@@ -36109,7 +36205,7 @@ document.getElementById('avcontent').addEventListener('click',function(e){
       }
       // Log quest completion
       if(!S.questLog)S.questLog=[];
-      S.questLog.unshift({cycleId:S.questState.cycleId,questTitle:_rq2.title,
+      questLogPush({cycleId:S.questState.cycleId,questTitle:_rq2.title,
         type:_rq2.type,reward:_rearn,franchiseCut:_rearn,chars:[],
         completedAt:new Date().toLocaleString(),earlyCompletion:true});
       saveActiveSetProgress();
@@ -40228,6 +40324,26 @@ document.getElementById('btn-jump-cycle2').addEventListener('click',function(){
         'Current localStorage usage: '+(u.totalBytes/1024/1024).toFixed(2)+' MB.');
     }catch(e){alert('Storage cleanup failed: '+((e&&e.message)||String(e)));}
   });
+  var questLogExportBtn=document.getElementById('btn-rq-questlog-export');
+  if(questLogExportBtn)questLogExportBtn.addEventListener('click',function(){
+    var oldTxt=questLogExportBtn.textContent;
+    questLogExportBtn.disabled=true;questLogExportBtn.textContent='Preparing Quest Log…';
+    questLogExportArchive().then(function(payload){
+      var data=JSON.stringify(payload,null,2);
+      var blob=new Blob([data],{type:'application/json'});
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');
+      a.href=url;
+      a.download='relentless-quest-complete-questlog-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json';
+      document.body.appendChild(a);a.click();a.remove();
+      setTimeout(function(){URL.revokeObjectURL(url);},5000);
+      questLogExportBtn.textContent='✓ Quest Log Exported';
+      setTimeout(function(){questLogExportBtn.textContent=oldTxt;questLogExportBtn.disabled=false;},1600);
+    }).catch(function(err){
+      questLogExportBtn.disabled=false;questLogExportBtn.textContent=oldTxt;
+      alert('Quest Log export failed: '+((err&&err.message)||String(err)));
+    });
+  });
   setTimeout(function(){try{RQ_STORAGE_SAFE.refreshHealth();}catch(e){}},250);
 })();
 
@@ -41742,7 +41858,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7362-internal-content-bridge-fix';
+var RQ_CLIENT_VERSION='v1.7363-questlog-storage-hygiene';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
