@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7368 Quota-Safe Recovery</title>
+<title>Relentless Quest in Development v1.7369 Targeted Cache Recovery</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7368 Quota-Safe Recovery</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7369 Targeted Cache Recovery</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4194,7 +4194,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7368 — Quota-Safe Recovery
+      Version 1.7369 — Targeted Cache Recovery
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -5529,7 +5529,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7368',
+  version:'1.7369',
   codename:'Auto-Grind Scroll Fix',
   built:'2026-08-01'
 };
@@ -41987,7 +41987,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7368-quota-safe-recovery';
+var RQ_CLIENT_VERSION='v1.7369-targeted-cache-recovery';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -53409,44 +53409,36 @@ if(!window.RQ_CONTENT_BRIDGE){
     if(typeof syncStatus==='function')syncStatus('Offline backup exported '+new Date().toLocaleTimeString(),'var(--forest)');
   }
   function transactionalWriteRuntime(targetKey,serialized){
-    // v1.7300 — Free only redundant catalog/rescue copies, hold them in memory,
-    // write+verify the imported runtime, and roll back the removed keys if the
-    // write does not succeed. The current target runtime is never deleted first.
+    // v1.7369: Keep every existing game save, offline backup and content library.
+    // Only purge old diagnostic traces and the obsolete, unreferenced DS monster
+    // index if the first authoritative write fails due to browser quota.
     var removed=[];
-    var prefixes=['rq_content:','rq_content_lib:','rq_offline_backup:'];
     try{
-      for(var i=0;i<localStorage.length;i++){
-        var k=localStorage.key(i)||'';
-        if(k===targetKey)continue;
-        if(prefixes.some(function(p){return k.indexOf(p)===0;})){
-          removed.push([k,localStorage.getItem(k)]);
+      try{localStorage.setItem(targetKey,serialized);}catch(firstError){
+        if(!firstError||firstError.name!=='QuotaExceededError')throw firstError;
+        var candidates=[];
+        for(var i=0;i<localStorage.length;i++){
+          var k=localStorage.key(i)||'';
+          if(k!==targetKey && (/^rq_syncdiag:/.test(k)||/^rq_grind_blackbox:/.test(k)||/^rq_offline_last:/.test(k)||k==='rq_ds_monster_index_v2')){
+            candidates.push(k);
+          }
         }
-      }
-      removed.forEach(function(pair){localStorage.removeItem(pair[0]);});
-      try{localStorage.setItem(targetKey,serialized);}catch(_quotaFirst){
-        if(!_quotaFirst||_quotaFirst.name!=='QuotaExceededError')throw _quotaFirst;
-        // Only disposable diagnostics may be removed automatically.
-        // Never delete another acqv7 runtime or a user backup.
-        var disposable=[];
-        for(var di=0;di<localStorage.length;di++){
-          var dk=localStorage.key(di)||'';
-          if(/^rq_syncdiag:|^rq_grind_blackbox:|^rq_offline_last:/.test(dk))disposable.push(dk);
-        }
-        disposable.forEach(function(dk){try{localStorage.removeItem(dk);}catch(_d) {}});
+        // Hold originals in memory until the new runtime is successfully read back.
+        candidates.forEach(function(k){removed.push([k,localStorage.getItem(k)]);});
+        removed.forEach(function(pair){localStorage.removeItem(pair[0]);});
         localStorage.setItem(targetKey,serialized);
       }
-      var check=localStorage.getItem(targetKey);
-      if(check!==serialized)throw new Error('Runtime verification failed after local save.');
-      var parsed=JSON.parse(check);
+      if(localStorage.getItem(targetKey)!==serialized)throw new Error('Runtime verification failed after local save.');
+      var parsed=JSON.parse(localStorage.getItem(targetKey));
       if(!parsed||typeof parsed!=='object')throw new Error('Saved runtime could not be read back.');
+      console.info('[v1.7369 recovery] Saved runtime; cleared disposable cache/diagnostic keys:',removed.map(function(x){return x[0];}));
       return {ok:true,removed:removed.length};
     }catch(err){
-      // Leave a previously existing target value untouched when setItem failed;
-      // restore redundant keys on a best-effort basis.
-      removed.forEach(function(pair){try{localStorage.setItem(pair[0],pair[1]);}catch(_e){}});
+      // Never delete or replace any other account runtime, backup, or content.
+      // Restore removed disposable entries as capacity permits on failed import.
+      removed.forEach(function(pair){try{localStorage.setItem(pair[0],pair[1]);}catch(_e){console.warn('[v1.7369] Disposable cache could not be restored:',pair[0]);}});
       if(err&&err.name==='QuotaExceededError'){
-        var used=0;try{used=RQ_STORAGE_SAFE.usage().totalBytes;}catch(_q){}
-        throw new Error('Browser localStorage quota exceeded ('+(used/1048576).toFixed(2)+' MiB currently stored). No other account save was deleted. Keep the JSON backup; storage needs a controlled migration or cleanup before import.');
+        throw new Error('Browser storage remains full after disposable cache cleanup. No account save, backup, or content library was deleted.');
       }
       throw err;
     }
