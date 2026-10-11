@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7366 Manual Sort Fix</title>
+<title>Relentless Quest in Development v1.7365 Auto-Grind Scroll Fix</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7366 Manual Sort Fix</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7365 Auto-Grind Scroll Fix</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -13940,13 +13940,7 @@ function sortedActive(){
   else if(mode==='az')normal.sort(function(a,b){return _returnedFirst(a,b)||a.name.localeCompare(b.name);});
   else if(mode==='za')normal.sort(function(a,b){return _returnedFirst(a,b)||b.name.localeCompare(a.name);});
   else if(mode==='ticks')normal.sort(function(a,b){return _returnedFirst(a,b)||(b.count-a.count);});
-  // v1.7366 — Manual order must be authoritative. Previously the manual-mode
-  // branch still sorted by _reactivatedAt, so a recurring contract that had
-  // recently returned could render above a task the user explicitly sent to
-  // position 1 with Reorder → To Top. In manual mode, preserve S.active order
-  // exactly; the legacy non-manual sort modes above may still float returned
-  // contracts within their selected sort.
-  else { /* manual: preserve existing S.active order */ }
+  else normal.sort(function(a,b){return _returnedFirst(a,b);});
   // v1.7225 — Back-burner contracts always render after active contracts.
   // This is especially important on mobile, where the contract list is a
   // single stack and deferred work should sink below the current stack.
@@ -41989,7 +41983,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7365-auto-grind-scroll-fix';
+var RQ_CLIENT_VERSION='v1.7367-guarded-offline-recovery';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -43079,7 +43073,15 @@ window._presencePollNow = _presencePollOthers; // for debugging
 /* ──────────── end v1.7092 PRESENCE ──────────── */
 
 /* ── PUSH ── */
+function rqRecoveryPending(){
+  try{return localStorage.getItem('rq_recovery_pending')==='1';}catch(e){return false;}
+}
+var rqRecoveryPushAuthorized=false;
 function sbPush(manual){
+  if(rqRecoveryPending()&&!rqRecoveryPushAuthorized){
+    if(manual)alert('Recovery protection is active. Use the Recovery panel to explicitly approve replacing the cloud save.');
+    return Promise.resolve(false);
+  }
   if(currentUser&&currentUser._localOnly){
     saveLocalState();
     try{if(typeof syncStatus==='function')syncStatus('📱 Saved locally','var(--forest)');}catch(e){}
@@ -43809,6 +43811,10 @@ function dedupePartyAssets(){
 }
 
 function sbPull(manual){
+  if(rqRecoveryPending()){
+    if(manual)alert('Cloud download is blocked while your imported recovery backup is pending.');
+    return Promise.resolve(false);
+  }
   if(currentUser&&currentUser._localOnly){
     load();
     try{if(typeof syncStatus==='function')syncStatus('📱 Local-only mode','var(--forest)');}catch(e){}
@@ -48209,6 +48215,11 @@ function initSession(pullFromCloud){
   maybeShowWelcome(starterApplied);
   updateHeaderCompactState();
 
+  if(rqRecoveryPending()){
+    rqShowRecoveryPanel();
+    syncStatus('🛟 Recovery protected: automatic cloud sync paused','var(--crimson)');
+    return Promise.resolve(true);
+  }
   if(pullFromCloud && uid()){
     // v1.7054 — Two coordinated changes guard against both (a) the ghost-
     // pending bug that v1.7052's forensic trace identified on iPhone
@@ -48774,6 +48785,39 @@ function enterLocalOnlyMode(){
 }
 window.enterLocalOnlyMode=enterLocalOnlyMode;
 
+
+function rqShowRecoveryPanel(){
+  if(!rqRecoveryPending())return;
+  var old=document.getElementById('rq-recovery-guard');if(old)return;
+  var panel=document.createElement('div');panel.id='rq-recovery-guard';
+  panel.style.cssText='position:fixed;bottom:8px;left:8px;right:8px;max-width:470px;margin:auto;z-index:99999;background:#fff4d2;border:3px solid #8b1a1a;border-radius:9px;padding:12px;color:#2c1a0e;box-shadow:0 4px 18px #0007;font:16px Georgia,serif';
+  panel.innerHTML='<b>🛟 Imported backup protected</b><p style="margin:7px 0">Gold: '+Number(S.gold||0).toLocaleString()+' · Active tasks: '+(S.active||[]).length+'. Automatic cloud upload and download are paused. Keep your original JSON backup.</p><button type="button" id="rq-recovery-commit" style="padding:8px">Replace cloud save with this backup</button><p id="rq-recovery-msg" style="margin-top:5px;font-size:13px"></p>';
+  document.body.appendChild(panel);
+  document.getElementById('rq-recovery-commit').onclick=function(){
+    if(!uid()||(currentUser&&currentUser._localOnly)){alert('Sign in to your cloud account, then import the JSON again before approving upload.');return;}
+    var expectedGold=Number(S.gold||0),expectedTasks=(S.active||[]).length;
+    if(!confirm('Replace the existing Supabase cloud save with this imported backup? This will overwrite older cloud progress. Keep your exported JSON.'))return;
+    if(!confirm('Final confirmation: upload '+expectedGold.toLocaleString()+' gold and '+expectedTasks+' active tasks to the signed-in account?'))return;
+    var btn=document.getElementById('rq-recovery-commit'),msg=document.getElementById('rq-recovery-msg');btn.disabled=true;msg.textContent='Uploading and verifying. Do not close this tab.';
+    rqRecoveryPushAuthorized=true;
+    Promise.resolve().then(function(){return sbPush(true);}).then(function(ok){
+      if(ok!==true)throw new Error('Cloud upload did not report success.');
+      return Promise.all([
+        sbGet('franchise','user_id=eq.'+encodeURIComponent(uid())+'&limit=1'),
+        sbGet('active_tasks','user_id=eq.'+encodeURIComponent(uid())+'&select=id')
+      ]);
+    }).then(function(rows){
+      var remote=rows[0]&&rows[0][0];
+      if(!remote)throw new Error('Could not read back franchise record.');
+      if(Number(remote.gold)!==expectedGold)throw new Error('Cloud gold verification failed: '+remote.gold+' versus '+expectedGold);
+      if(!Array.isArray(rows[1])||rows[1].length!==expectedTasks)throw new Error('Cloud task count verification failed.');
+      localStorage.removeItem('rq_recovery_pending');
+      msg.textContent='Cloud upload verified (gold and active task count). Reload to resume normal sync.';
+      alert('Cloud recovery uploaded and basic verification passed. Reloading.');location.reload();
+    }).catch(function(err){msg.textContent='Recovery remains protected: '+(err.message||err);alert(msg.textContent);})
+      .then(function(){rqRecoveryPushAuthorized=false;btn.disabled=false;});
+  };
+}
 async function bootApp(){
   try{
     if(localStorage.getItem('rq_local_only_enabled')==='1'){
@@ -53490,6 +53534,8 @@ if(!window.RQ_CONTENT_BRIDGE){
         var rememberedUid='';
         try{rememberedUid=localStorage.getItem('rq_last_local_uid')||'';}catch(_e){}
         var resolvedUid=safeUid();
+        // When signed in, always import to the authenticated account's namespace.
+        if(currentUser&&!currentUser._localOnly&&uid())resolvedUid=uid();
         if(!resolvedUid||resolvedUid==='guest')resolvedUid=rememberedUid||'local-primary-device';
         var targetKey='acqv7:'+resolvedUid;
         try{
@@ -53621,6 +53667,8 @@ if(!window.RQ_CONTENT_BRIDGE){
           // authoritative key is rq_offline_runtime_key -> targetKey.
           try{localStorage.setItem('acqv7',serializedImportedState);}catch(_legacyErr){}
         }catch(e){throw new Error('State loaded, but local save failed: '+(e&&e.message?e.message:e));}
+        // Persist before reload: neither automatic pull nor push may replace the imported backup.
+        try{localStorage.setItem('rq_recovery_pending','1');}catch(e){throw new Error('Cannot enable recovery protection: '+e.message);}
         try{if(typeof _markUnpushed==='function')_markUnpushed();}catch(e){}
         try{
           // Update the real live views used by this build. There is no global
