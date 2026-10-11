@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7365 Auto-Grind Scroll Fix</title>
+<title>Relentless Quest in Development v1.7368 Quota-Safe Recovery</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7365 Auto-Grind Scroll Fix</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7368 Quota-Safe Recovery</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4194,7 +4194,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7308 — Offline Grind Recovery Fix
+      Version 1.7368 — Quota-Safe Recovery
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -5529,7 +5529,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7365',
+  version:'1.7368',
   codename:'Auto-Grind Scroll Fix',
   built:'2026-08-01'
 };
@@ -9276,6 +9276,10 @@ var RQ_STORAGE_SAFE=(function(){
       el.style.color='#351414';
       el.style.border='2px solid '+(recover?'#b38600':'#a21b1b');
       el.textContent=(recover?'⚠ STORAGE RECOVERY: ':'⚠ LOCAL SAVE FAILED: ')+message;
+      var close=document.createElement('button');close.type='button';close.textContent='×';
+      close.setAttribute('aria-label','Dismiss storage warning');
+      close.style.cssText='float:right;margin-left:10px;background:#fff;border:1px solid #a21b1b;border-radius:5px;font-size:18px;cursor:pointer;min-width:28px;';
+      close.onclick=function(){el.style.display='none';};el.insertBefore(close,el.firstChild);
       el.style.display='block';
     }catch(e){}
   }
@@ -41983,7 +41987,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7367-guarded-offline-recovery';
+var RQ_CLIENT_VERSION='v1.7368-quota-safe-recovery';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -53419,7 +53423,18 @@ if(!window.RQ_CONTENT_BRIDGE){
         }
       }
       removed.forEach(function(pair){localStorage.removeItem(pair[0]);});
-      localStorage.setItem(targetKey,serialized);
+      try{localStorage.setItem(targetKey,serialized);}catch(_quotaFirst){
+        if(!_quotaFirst||_quotaFirst.name!=='QuotaExceededError')throw _quotaFirst;
+        // Only disposable diagnostics may be removed automatically.
+        // Never delete another acqv7 runtime or a user backup.
+        var disposable=[];
+        for(var di=0;di<localStorage.length;di++){
+          var dk=localStorage.key(di)||'';
+          if(/^rq_syncdiag:|^rq_grind_blackbox:|^rq_offline_last:/.test(dk))disposable.push(dk);
+        }
+        disposable.forEach(function(dk){try{localStorage.removeItem(dk);}catch(_d) {}});
+        localStorage.setItem(targetKey,serialized);
+      }
       var check=localStorage.getItem(targetKey);
       if(check!==serialized)throw new Error('Runtime verification failed after local save.');
       var parsed=JSON.parse(check);
@@ -53429,6 +53444,10 @@ if(!window.RQ_CONTENT_BRIDGE){
       // Leave a previously existing target value untouched when setItem failed;
       // restore redundant keys on a best-effort basis.
       removed.forEach(function(pair){try{localStorage.setItem(pair[0],pair[1]);}catch(_e){}});
+      if(err&&err.name==='QuotaExceededError'){
+        var used=0;try{used=RQ_STORAGE_SAFE.usage().totalBytes;}catch(_q){}
+        throw new Error('Browser localStorage quota exceeded ('+(used/1048576).toFixed(2)+' MiB currently stored). No other account save was deleted. Keep the JSON backup; storage needs a controlled migration or cleanup before import.');
+      }
       throw err;
     }
   }
@@ -53543,12 +53562,13 @@ if(!window.RQ_CONTENT_BRIDGE){
           localStorage.setItem('rq_offline_runtime_key',targetKey);
         }catch(_e2){}
         var importedText=JSON.stringify(imported);
-        transactionalWriteRuntime(targetKey,importedText);
+        // v1.7368: defer the only runtime write until S is finalized below.
         // v1.7289 — Do not invoke load() during import. Some quest-engine
         // functions reached from load() reference the main script's QUESTSETS
         // binding, which Safari does not expose reliably to this later rescue
         // script. Replace the live state in place, persist it, and reload; the
         // normal page bootstrap will then initialize quests in its own scope.
+        var preImportState=JSON.parse(JSON.stringify(S));
         Object.keys(S).forEach(function(k){delete S[k];});
         Object.assign(S,imported);
 
@@ -53645,27 +53665,11 @@ if(!window.RQ_CONTENT_BRIDGE){
           }
         }
 
+        // v1.7368: one verified authoritative write only. A second full-sized
+        // localStorage copy can exceed quota even when the first succeeds.
         try{
           var serializedImportedState=JSON.stringify(S);
-          localStorage.setItem(targetKey,serializedImportedState);
-          // Also maintain the legacy guest fallback used by load() when an
-          // offline session has no authenticated uid. This prevents the next
-          // startup from reading an older blank guest save.
-          // Keep the legacy unscoped fallback only as a best-effort copy; the
-          // authoritative key is rq_offline_runtime_key -> targetKey.
-          try{localStorage.setItem('acqv7',serializedImportedState);}catch(_legacyErr){}
-          // v1.7289: direct localStorage persistence only; avoid quest-engine side effects during import.
-          // saveLocalState may mirror/rebuild active quest progress. Reassert the
-          // authoritative imported quest runtime after it, then persist that exact
-          // final object to the import namespace.
-          if(authoritative.questState&&typeof authoritative.questState==='object'){
-            S.questState=JSON.parse(JSON.stringify(authoritative.questState));
-          }
-          serializedImportedState=JSON.stringify(S);
-          localStorage.setItem(targetKey,serializedImportedState);
-          // Keep the legacy unscoped fallback only as a best-effort copy; the
-          // authoritative key is rq_offline_runtime_key -> targetKey.
-          try{localStorage.setItem('acqv7',serializedImportedState);}catch(_legacyErr){}
+          transactionalWriteRuntime(targetKey,serializedImportedState);
         }catch(e){throw new Error('State loaded, but local save failed: '+(e&&e.message?e.message:e));}
         // Persist before reload: neither automatic pull nor push may replace the imported backup.
         try{localStorage.setItem('rq_recovery_pending','1');}catch(e){throw new Error('Cannot enable recovery protection: '+e.message);}
@@ -53694,6 +53698,7 @@ if(!window.RQ_CONTENT_BRIDGE){
         // objects.
         location.reload();
       }catch(err){
+        try{if(typeof preImportState!=='undefined'){Object.keys(S).forEach(function(k){delete S[k];});Object.assign(S,preImportState);}}catch(_restoreErr){}
         console.error('[offline rescue] Import failed',err);
         alert('Import failed: '+(err&&err.message?err.message:err));
       }
