@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Relentless Quest in Development v1.7371 Quota-Safe Save Repair</title>
+<title>Relentless Quest in Development v1.7372 Cloud Recovery Verification Fix</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=IM+Fell+English:ital@0;1&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -3144,7 +3144,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
   <div class="ov on" id="loginBox" style="z-index:99999;padding:18px;">
   <div class="modal" style="max-width:420px;width:100%;">
     <h3>⚔ Franchise Login</h3>
-    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7371 Quota-Safe Save Repair</div>
+    <div style="text-align:center;font-size:.7em;color:var(--ink-light);font-family:monospace;margin-top:-4px;margin-bottom:8px">v1.7372 Cloud Recovery Verification Fix</div>
     <!-- Login tabs -->
     <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--parchment-deep)">
       <button id="login-tab-email" onclick="loginTabSwitch('email')" style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid var(--gold);margin-bottom:-2px;font-weight:600;color:var(--gold);cursor:pointer;font-size:.88em">📧 Email</button>
@@ -4194,7 +4194,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
       font-family:\'Cinzel\',serif;font-size:.72em;color:var(--parchment-deep);
       background:var(--ink);border:1px solid var(--gold-dark);border-radius:10px;
       padding:3px 12px;letter-spacing:.07em">
-      Version 1.7371 — Quota-Safe Save Repair
+      Version 1.7372 — Cloud Recovery Verification Fix
     </div>
     <div style="font-size:.72em;color:var(--ink-light);margin-top:6px;font-style:italic">
       Dev mode: navy quick-access bar below the header with Ledger, QP Manager, +1 Day, and Exit Dev Mode.
@@ -5529,7 +5529,7 @@ body.dev-active #app{margin-top:var(--dev-bar-h,46px);}
 <script>
 // v1.7307 — single source of truth for release identity.
 var BUILD={
-  version:'1.7371',
+  version:'1.7372',
   codename:'Quota-Safe Save Repair',
   built:'2026-08-01'
 };
@@ -42004,7 +42004,7 @@ function notifySupabaseOffline(context,err){
      don't have that recovery point. Critically, a snapshot failure
      never propagates back to throw on sbPush.
    ───────────────────────────────────────────────────────────────────── */
-var RQ_CLIENT_VERSION='v1.7371-offline-import-scope-fix';
+var RQ_CLIENT_VERSION='v1.7372-cloud-recovery-verification-fix';
 // v1.7236 — Unified mercenary/adventurer/graduation class proficiency packages; added armor grants; skill-driven mercenary class fallback.
 var SNAPSHOT_RETENTION_DEFAULT=50;
 var SNAPSHOT_INTERVAL_MIN_DEFAULT=15;
@@ -48812,32 +48812,64 @@ function rqShowRecoveryPanel(){
   var old=document.getElementById('rq-recovery-guard');if(old)return;
   var panel=document.createElement('div');panel.id='rq-recovery-guard';
   panel.style.cssText='position:fixed;bottom:8px;left:8px;right:8px;max-width:470px;margin:auto;z-index:99999;background:#fff4d2;border:3px solid #8b1a1a;border-radius:9px;padding:12px;color:#2c1a0e;box-shadow:0 4px 18px #0007;font:16px Georgia,serif';
-  panel.innerHTML='<b>🛟 Imported backup protected</b><p style="margin:7px 0">Gold: '+Number(S.gold||0).toLocaleString()+' · Active tasks: '+(S.active||[]).length+'. Automatic cloud upload and download are paused. Keep your original JSON backup.</p><button type="button" id="rq-recovery-commit" style="padding:8px">Replace cloud save with this backup</button><p id="rq-recovery-msg" style="margin-top:5px;font-size:13px"></p>';
+  panel.innerHTML='<b>🛟 Imported backup protected</b><p style="margin:7px 0">Gold: '+Number(S.gold||0).toLocaleString()+' · Active tasks: '+(S.active||[]).length+'. Automatic cloud upload and download are paused. Keep your original JSON backup.</p><button type="button" id="rq-recovery-verify" style="padding:8px;margin-right:5px">Verify existing cloud upload (read only)</button><button type="button" id="rq-recovery-commit" style="padding:8px">Replace cloud save with this backup</button><p id="rq-recovery-msg" style="margin-top:5px;font-size:13px"></p>';
   document.body.appendChild(panel);
-  document.getElementById('rq-recovery-commit').onclick=function(){
-    if(!uid()||(currentUser&&currentUser._localOnly)){alert('Sign in to your cloud account, then import the JSON again before approving upload.');return;}
-    var expectedGold=Number(S.gold||0),expectedTasks=(S.active||[]).length;
-    if(!confirm('Replace the existing Supabase cloud save with this imported backup? This will overwrite older cloud progress. Keep your exported JSON.'))return;
-    if(!confirm('Final confirmation: upload '+expectedGold.toLocaleString()+' gold and '+expectedTasks+' active tasks to the signed-in account?'))return;
-    var btn=document.getElementById('rq-recovery-commit'),msg=document.getElementById('rq-recovery-msg');btn.disabled=true;msg.textContent='Uploading and verifying. Do not close this tab.';
-    rqRecoveryPushAuthorized=true;
-    Promise.resolve().then(function(){return sbPush(true);}).then(function(ok){
+  var verifyBtn=document.getElementById('rq-recovery-verify'),commitBtn=document.getElementById('rq-recovery-commit'),msg=document.getElementById('rq-recovery-msg');
+  function verifyCloud(){
+    var userId=uid();
+    if(!userId)return Promise.reject(new Error('Sign in before verifying the cloud save.'));
+    return Promise.all([
+      sbGet('franchise','user_id=eq.'+encodeURIComponent(userId)+'&limit=1'),
+      sbGet('active_tasks','user_id=eq.'+encodeURIComponent(userId)+'&select=name,cat,sort_order&order=sort_order.asc'),
+      sbGet('archived_tasks','user_id=eq.'+encodeURIComponent(userId)+'&select=name')
+    ]).then(function(rows){
+      var remote=rows[0]&&rows[0][0],taskRows=rows[1],archRows=rows[2];
+      if(!remote)throw new Error('Cloud franchise record not found.');
+      if(Number(remote.gold)!==Number(S.gold||0))throw new Error('Cloud gold differs: '+remote.gold+' versus '+S.gold);
+      if(!Array.isArray(taskRows)||!Array.isArray(archRows))throw new Error('Cloud task lists were not returned.');
+      // active_tasks also contains project sentinels and project tasks.
+      var regular=taskRows.filter(function(t){return t.cat!=='__project__';});
+      var expected=(S.active||[]).map(function(t){return String(t.name||'');}).sort();
+      var actual=regular.map(function(t){return String(t.name||'');}).sort();
+      if(JSON.stringify(actual)!==JSON.stringify(expected))throw new Error('Cloud active contracts differ: '+actual.length+' cloud versus '+expected.length+' local (names compared).');
+      var expectedArchived=(S.archived||[]).map(function(t){return String(t.name||'');}).sort();
+      var actualArchived=archRows.map(function(t){return String(t.name||'');}).sort();
+      if(JSON.stringify(actualArchived)!==JSON.stringify(expectedArchived))throw new Error('Cloud archived contracts differ: '+actualArchived.length+' cloud versus '+expectedArchived.length+' local.');
+      var projectRows=taskRows.filter(function(t){return t.cat==='__project__';});
+      var expectedProjectRows=(S.projects||[]).reduce(function(n,p){return n+1+(p.tasks||[]).length;},0);
+      if(projectRows.length!==expectedProjectRows)throw new Error('Cloud project row count differs: '+projectRows.length+' versus '+expectedProjectRows);
+      return {gold:Number(remote.gold),active:regular.length,archived:archRows.length,projects:projectRows.length};
+    });
+  }
+  function runVerification(upload){
+    if(!uid()||(currentUser&&currentUser._localOnly)){alert('Sign in to your cloud account before verifying.');return;}
+    if(upload){
+      if(!confirm('Replace the existing Supabase cloud save with the imported backup? Keep your exported JSON.'))return;
+      if(!confirm('Final confirmation: overwrite the cloud save with '+Number(S.gold||0).toLocaleString()+' gold and '+(S.active||[]).length+' active contracts?'))return;
+    }
+    verifyBtn.disabled=true;commitBtn.disabled=true;
+    msg.textContent=upload?'Uploading and verifying; do not close this tab.':'Reading existing cloud save without modifying it…';
+    if(upload)rqRecoveryPushAuthorized=true;
+    Promise.resolve().then(function(){return upload?sbPush(true):true;}).then(function(ok){
       if(ok!==true)throw new Error('Cloud upload did not report success.');
-      return Promise.all([
-        sbGet('franchise','user_id=eq.'+encodeURIComponent(uid())+'&limit=1'),
-        sbGet('active_tasks','user_id=eq.'+encodeURIComponent(uid())+'&select=id')
-      ]);
-    }).then(function(rows){
-      var remote=rows[0]&&rows[0][0];
-      if(!remote)throw new Error('Could not read back franchise record.');
-      if(Number(remote.gold)!==expectedGold)throw new Error('Cloud gold verification failed: '+remote.gold+' versus '+expectedGold);
-      if(!Array.isArray(rows[1])||rows[1].length!==expectedTasks)throw new Error('Cloud task count verification failed.');
-      localStorage.removeItem('rq_recovery_pending');
-      msg.textContent='Cloud upload verified (gold and active task count). Reload to resume normal sync.';
-      alert('Cloud recovery uploaded and basic verification passed. Reloading.');location.reload();
+      return verifyCloud();
+    }).then(function(result){
+      // The recovery flag remains until the user explicitly resumes syncing.
+      msg.textContent='Cloud verification passed: '+result.gold.toLocaleString()+' gold, '+result.active+' active, '+result.archived+' archived, '+result.projects+' project rows. Your local backup remains protected.';
+      var resume=document.getElementById('rq-recovery-resume');
+      if(!resume){
+        resume=document.createElement('button');resume.type='button';resume.id='rq-recovery-resume';resume.style.cssText='padding:8px;margin-top:6px;display:block';resume.textContent='Resume cloud synchronization (verified)';panel.appendChild(resume);
+      }
+      resume.onclick=function(){
+        if(!confirm('Cloud data matched the recovery checks. Resume automatic synchronization and reload? Keep your JSON backup.'))return;
+        try{localStorage.removeItem('rq_recovery_pending');}catch(e){alert('Could not clear recovery protection: '+e.message);return;}
+        location.reload();
+      };
     }).catch(function(err){msg.textContent='Recovery remains protected: '+(err.message||err);alert(msg.textContent);})
-      .then(function(){rqRecoveryPushAuthorized=false;btn.disabled=false;});
-  };
+      .then(function(){rqRecoveryPushAuthorized=false;verifyBtn.disabled=false;commitBtn.disabled=false;});
+  }
+  verifyBtn.onclick=function(){runVerification(false);};
+  commitBtn.onclick=function(){runVerification(true);};
 }
 async function bootApp(){
   try{
