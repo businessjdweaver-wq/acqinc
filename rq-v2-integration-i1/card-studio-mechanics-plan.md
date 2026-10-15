@@ -31,3 +31,19 @@ Card schema: stable ID, source character/class/background, name, flavor, rarity,
 Duplicate makes a new ID and a draft copy.
 Analyze a selected subset by color, energy cost, effect type, owner, rarity, and levels; show counts and estimated effect-per-energy.
 Catalog definitions and user-owned card inventory are separate. A published card does not automatically grant ownership.
+
+
+## Custom emoji special tiles (planned)
+Special tiles have stable type IDs, display emoji (presentation only), owner/team, numeric strength, duration, and optional metadata. Examples: web, rat, ward. They do not add match colors. Existing support tiles and ivory remain unchanged. Powers may create, count, move, consume, transform, amplify, dampen, and react to these tiles. Validate emoji and metadata size; do not store redundant per-turn tile snapshots in Supabase.
+
+## Reaction engine (planned)
+Declarative trigger -> predicates -> target selection -> ordered effects, with once-per-turn, charges, cooldown, and probability options. Event examples: special tile destroyed (with owner, type and cause), damage taken (amount after mitigation), stun applied, transformation applied/expired, match resolved, turn started. Event processing must be deterministic and bounded (per-event/per-turn caps and loop protection). Reactions should resolve without polling or persistent event spam.
+
+## Character conditions (planned)
+Canonical statuses: stunned, flying, invisible, transformed. Do NOT add restricted/entangled as a separate mechanical status; webbed, frozen, paralyzed, etc. may be cosmetic names for stunned. Status duration, dispel, immunity, and event emission are data-driven. Flying and invisible need explicit combat targeting/evasion semantics before being considered playable.
+
+## Transformed condition / alternate forms (planned)
+A character may define multiple alternate forms but only one active form by default. Form definitions have stable IDs and optional cosmetic name/icon, max-HP modifier, current-HP transition policy (preserve ratio, preserve absolute HP, grant temporary pool, or heal), damage/defense modifiers, replacement/additional/disabled active and passive powers, form-specific reactions, special tile behaviors, duration and expiration/dispelling rules.
+Forms are reversible overlays: never mutate permanent character identity, experience, equipment, roster, or ownership. On replacement, expire prior form before applying next; priority/immunity rules determine eligibility. Reverting must apply a specified HP policy and never duplicate healing or temporary HP. Save only the minimal active form ID and necessary runtime counters in existing battle checkpoint state. No new Supabase tables, polling, or automatic storage uploads for each transformation.
+Triggers may transform at a health threshold, on allied tile destruction, on a scheduled turn, or by active power. Avoid self-triggering recursion and enforce reaction limits.
+Acceptance tests: enlarge ratio-preserving HP, polymorph temporary HP exhaustion/revert, werewolf form powers/reactions, replace form, stun while transformed, dispel, save/reload mid-form, no permanent-stat mutation, and bounded event chains.
