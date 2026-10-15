@@ -167,9 +167,25 @@ function saveTickets(){localStorage.setItem(TICKET_KEY,JSON.stringify(tickets));
 function integrationGrant(t){const item={id:uid(),taskId:t.id,completionId:uid(),state:'available',createdAt:new Date().toISOString()};tickets.push(item);saveTickets();$('integrationStatus').textContent='Combat ticket earned for '+t.title;}
 function rewardAfterCombat(){const host=$('battleRewardBody');host.replaceChildren();const photos=tasks.filter(t=>t.photoId&&!t.done);const useKudos=kudos.length>0&&(!photos.length||Math.random()*100<rewardKudosChance);if(useKudos){const k=kudos[Math.floor(Math.random()*kudos.length)];host.append(el('h3','','⭐ Kudos'));if(k.text)host.append(el('p','',k.text));if(k.photoId){const b=el('button','secondary','View photograph');b.onclick=()=>showPhoto(k.photoId);host.append(b)}}else if(photos.length){const t=photos[Math.floor(Math.random()*photos.length)];host.append(el('h3','','📷 Snapshot'));host.append(el('p','',t.title));const b=el('button','secondary','View photograph');b.onclick=()=>showPhoto(t.photoId);host.append(b)}else host.append(el('p','','No local Kudos or snapshots available.'))}
 $('grantTestTicket').onclick=()=>{tickets.push({id:uid(),state:'available',source:'test',createdAt:new Date().toISOString()});saveTickets();tell('One local test ticket added. No server currency changed.')};
-$('launchBattle').onclick=()=>{const ticket=tickets.find(t=>t.state==='available');if(!ticket&&serverTicketCount<1){tell('Complete a task or daily check-in to earn a combat ticket.');return}currentTicket=ticket||{id:uid().replace(/[^a-zA-Z0-9_-]/g,''),state:'server-pending',source:'server'};observedResult=false;$('battleReward').hidden=true;$('combatFrame').hidden=false;$('combatFrame').src='combat49.html?ticket='+encodeURIComponent(currentTicket.id);$('battleDialog').showModal();};
+$('launchBattle').onclick=async()=>{
+ const button=$('launchBattle');button.disabled=true;
+ try{
+  await signedUser();
+  const encounterId=crypto.randomUUID();
+  const {data,error}=await client().schema('rq_v2').rpc('start_gold_encounter',{p_encounter_id:encounterId});
+  if(error)throw Error(error.message);
+  currentTicket={id:encounterId,source:'gold',state:'admitted'};
+  observedResult=false;
+  $('battleReward').hidden=true;$('combatFrame').hidden=false;
+  $('combatFrame').src='combat49.html?encounter='+encodeURIComponent(encounterId);
+  $('battleDialog').showModal();
+  $('integrationStatus').textContent='Encounter admitted for 100 gold. Gold is spent at launch, even if you leave early.';
+  await e1LoadBalances();
+ }catch(e){$('integrationStatus').textContent='Could not start encounter: '+e.message}
+ finally{button.disabled=false}
+};
 $('combatFrame').onload=()=>{try{const d=$('combatFrame').contentDocument;const result=d.getElementById('results');if(!result)return;const check=async()=>{if(observedResult||!currentTicket||result.classList.contains('hidden'))return;observedResult=true;if(currentTicket.source==='server'){try{const {error}=await client().schema('rq_v2').rpc('spend_encounter_ticket',{p_ticket_key:'battle:'+currentTicket.id});if(error)throw error;serverTicketCount=Math.max(0,serverTicketCount-1);saveTickets();}catch(e){$('integrationStatus').textContent='Server ticket could not be redeemed: '+e.message;observedResult=false;return}}else{currentTicket.state='redeemed';currentTicket.redeemedAt=new Date().toISOString();saveTickets()}rewardAfterCombat();const resultTitle=d.getElementById('resultTitle')?.textContent||'';const resultText=d.getElementById('resultText')?.textContent||'';const combatSummary=el('div','panel');combatSummary.append(el('h3','',resultTitle));combatSummary.append(el('p','',resultText));$('battleRewardBody').prepend(combatSummary);$('combatFrame').hidden=true;$('battleReward').hidden=false;};new MutationObserver(check).observe(result,{attributes:true,attributeFilter:['class']});check()}catch(e){$('integrationStatus').textContent='Combat bridge error: '+e.message}};
-$('closeBattle').onclick=()=>{if(!observedResult&&currentTicket){$('integrationStatus').textContent='Battle exited before results; ticket retained.'}$('combatFrame').src='about:blank';$('battleDialog').close();currentTicket=null;};
+$('closeBattle').onclick=()=>{if(!observedResult&&currentTicket){$('integrationStatus').textContent='Battle exited before results. Gold admission is not refunded.'}$('combatFrame').src='about:blank';$('battleDialog').close();currentTicket=null;};
 $('finishBattle').onclick=()=>{$('combatFrame').src='about:blank';$('battleDialog').close();currentTicket=null;};
 const SUPA_URL='https://burtvenqfzextswpjziw.supabase.co';
 const SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ1cnR2ZW5xZnpleHRzd3Bqeml3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyNTkxMzEsImV4cCI6MjA5MDgzNTEzMX0.M9krIdktkO1wMeKYMm_HoR_tEykewbRUVHdjerg1XIo';
