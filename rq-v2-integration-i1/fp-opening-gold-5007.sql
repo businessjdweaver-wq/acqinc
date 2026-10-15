@@ -12,8 +12,11 @@ declare
  v_existing rq_v2.economy_events%rowtype;
  v_key constant text := 'migration:2026-10-15:legacy-focus-to-gold:approved-4987';
 begin
- select count(*), min(user_id) into v_count,v_uid
+ select count(*) into v_count
  from rq_v2.economy_accounts where currency='gold';
+ if v_count=1 then
+   select user_id into v_uid from rq_v2.economy_accounts where currency='gold';
+ end if;
  if v_count<>1 then
    raise exception 'Expected exactly one E1 gold account, found %. No changes made.',v_count;
  end if;
