@@ -203,7 +203,41 @@ function ticketMilestones(t){if(!t||!t.id)return;let total=0,done=0;
 }
 function integrationGrant(t){ticketMilestones(t);for(const parent of tasks.filter(x=>x.id===t.parentId))ticketMilestones(parent);}
 window.addEventListener('online',ticketFlush);window.addEventListener('focus',ticketFlush);setTimeout(ticketFlush,2000);
-function rewardAfterCombat(){const host=$('battleRewardBody');host.replaceChildren();const photos=tasks.filter(t=>t.photoId&&!t.done);const useKudos=kudos.length>0&&(!photos.length||Math.random()*100<rewardKudosChance);if(useKudos){const k=kudos[Math.floor(Math.random()*kudos.length)];host.append(el('h3','','⭐ Kudos'));if(k.text)host.append(el('p','',k.text));if(k.photoId){const b=el('button','secondary','View photograph');b.onclick=()=>showPhoto(k.photoId);host.append(b)}}else if(photos.length){const t=photos[Math.floor(Math.random()*photos.length)];host.append(el('h3','','📷 Snapshot'));host.append(el('p','',t.title));const b=el('button','secondary','View photograph');b.onclick=()=>showPhoto(t.photoId);host.append(b)}else host.append(el('p','','No local Kudos or snapshots available.'))}
+async function battleRewardPhoto(id,caption,host){
+ if(!id)return;
+ const wrapper=el('figure','');wrapper.style.cssText='flex:1 1 180px;min-width:0;margin:5px';
+ const title=el('figcaption','',caption);wrapper.append(title);
+ const img=document.createElement('img');img.alt=caption;img.loading='eager';img.style.cssText='width:100%;max-height:280px;object-fit:contain;border-radius:8px;background:#121820';wrapper.append(img);host.append(wrapper);
+ try{
+  const map=photoMap(),entry=map[id];let blob=await localPhoto(id).catch(()=>null);
+  if(blob){const url=URL.createObjectURL(blob);img.src=url;img.addEventListener('load',()=>URL.revokeObjectURL(url),{once:true});return;}
+  const user=await signedUser();let path=entry?.userId===user.id?entry.path:null;
+  if(!path){const prefix=user.id+'/task-'+id+'.';const {data,error}=await client().schema('rq_v2').from('snapshots').select('storage_path').eq('user_id',user.id).in('storage_path',[prefix+'webp',prefix+'jpg',prefix+'png']).limit(1);if(error)throw error;path=data?.[0]?.storage_path;}
+  if(!path)throw Error('Photograph unavailable');
+  const {data,error}=await client().storage.from('rq-v2-snapshots').createSignedUrl(path,120);if(error)throw error;
+  img.src=data.signedUrl;
+ }catch(e){img.replaceWith(el('p','muted','Photograph unavailable: '+e.message));}
+}
+function battleRewardPhotoSet(item,host){
+ const before=item.beforePhotoId||item.photoId;
+ const after=item.afterPhotoId;
+ if(!before&&!after)return;
+ const gallery=el('div','row wrap');gallery.style.cssText='gap:12px;align-items:start';
+ host.append(gallery);
+ if(before)void battleRewardPhoto(before,after?'Before':'Photograph',gallery);
+ if(after)void battleRewardPhoto(after,'After',gallery);
+}
+function rewardAfterCombat(){
+ const host=$('battleRewardBody');host.replaceChildren();
+ const icon=el('div','','✨ 🛡️ SUPPORT REWARD');icon.style.cssText='font-size:1.25rem;font-weight:800;color:#f2d68b;padding:10px 0';host.append(icon);
+ const photos=tasks.filter(t=>t.photoId&&!t.done);
+ const useKudos=kudos.length>0&&(!photos.length||Math.random()*100<rewardKudosChance);
+ if(useKudos){
+  const k=kudos[Math.floor(Math.random()*kudos.length)];host.append(el('h3','','⭐ Kudos'));if(k.text)host.append(el('p','',k.text));battleRewardPhotoSet(k,host);
+ }else if(photos.length){
+  const t=photos[Math.floor(Math.random()*photos.length)];host.append(el('h3','','📷 Snapshot'));host.append(el('p','',t.title));battleRewardPhotoSet(t,host);
+ }else host.append(el('p','','No local Kudos or snapshots available.'));
+}
 $('grantTestTicket').onclick=()=>{tickets.push({id:uid(),state:'available',source:'test',createdAt:new Date().toISOString()});saveTickets();tell('One local test ticket added. No server currency changed.')};
 const ACTIVE_ENCOUNTER_KEY='rq_v2_e3_active_encounter';
 async function e3LaunchEncounter(resume=false){
