@@ -626,26 +626,33 @@ board.addEventListener('pointercancel',()=>{
  swipeGesture=null;
 });
 let pendingCardPattern=null;
-function chooseCardPatternCenter(config,who='player'){
+function chooseCardPatternCenter(config,who='player',power=null){
  if(pendingCardPattern||busy||ended||side!=='player')return false;
- pendingCardPattern={config,who};
+ pendingCardPattern={config,who,power};
  $('targetPanel').classList.remove('hidden');
  $('targetText').textContent='Choose the center tile for this pattern. Cancel is free.';
  say('Select the center tile for the pattern.');banner('CHOOSE PATTERN CENTER');
  return true;
 }
+async function executeCardPattern(config,who='player',power=null){
+ if(busy||ended)return false;
+ if(power){const p=party[power.i]?.powers[power.j];if(!p||energy[p[1]]<cost(power.i,power.j))return false;energy[p[1]]-=cost(power.i,power.j);}
+ busy=true;
+ try{await applyCardPattern(config,who);render();return true;}
+ catch(err){if(power){const p=party[power.i].powers[power.j];energy[p[1]]+=cost(power.i,power.j);}say('Pattern failed: '+err.message);render();return false;}
+ finally{busy=false;}
+}
 async function commitCardPatternCenter(t){
  const pending=pendingCardPattern;if(!pending)return false;
  pendingCardPattern=null;
  $('targetPanel').classList.add('hidden');
- busy=true;
- try{await applyCardPattern({...pending.config,centerMode:'selected',center:{x:t.c,y:t.r}},pending.who);}
+ try{await executeCardPattern({...pending.config,centerMode:'selected',center:{x:t.c,y:t.r}},pending.who,pending.power);}
  catch(err){say('Pattern power failed: '+err.message);}
- finally{busy=false;render();}
+ finally{render();}
  return true;
 }
 async function pick(t){if(pendingCardPattern){await commitCardPatternCenter(t);return;}if(t.lore&&!target&&!convertTarget&&!lineTarget&&!backgroundTarget&&!selected){$('tileInspector').classList.remove('hidden');showTileInfo(t.loreFortified?'◆ Fortified lore · two matches left':t.loreCracked?'◆ Cracked lore · one match left':'◆ Moving lore · '+t.loreTimer+' turns to fortify',t.loreFortified?'Fortified lore: the page has stopped moving and needs two matches to collect.':t.loreCracked?'Cracked lore: its protection has already been removed. It stays still and requires one more match to collect.':'Moving lore: shifts one square horizontally or vertically after each move; '+t.loreTimer+' moves before it fortifies and requires two matches.');return;}if(t.rat&&!target&&!convertTarget&&!lineTarget&&!backgroundTarget&&!selected){$('tileInspector').classList.remove('hidden');showTileInfo('🐀 Rat · Moves up 1 row/turn. At the top: 16 damage, then respawns.','🐀 Advancing rat · moves one row upward after each enemy turn. At the top it deals 16 stamina damage to the frontline character and respawns in a different bottom-row column. Match or disarm the rat to remove it.');return;}if(t.trap>0&&!target&&!convertTarget&&!lineTarget&&!backgroundTarget&&!selected){inspectTile(t);return;}if(ended||side!=='player'||enemyTarget)return;if(backgroundTarget){await pickBackgroundTarget(t);return;}if(convertTarget){await pickConvert(t);return;}if(lineTarget){await commitLine(t);return;}if(target){if(target.picks.includes(t)){t.el.classList.remove('selected');target.picks=target.picks.filter(x=>x!==t);return;}target.picks.push(t);t.el.classList.add('selected');if(target.picks.length===2)await confirmTarget();return;}if(busy)return;if(!selected){selected=t;t.el.classList.add('selected');return;}let a=selected;a.el.classList.remove('selected');selected=null;if(a===t)return;if((a.lore&&a.loreFortified)||(t.lore&&t.loreFortified)){say('Fortified lore cannot be swapped.');return;}if(Math.abs(a.r-t.r)+Math.abs(a.c-t.c)!==1){selected=t;t.el.classList.add('selected');return;}await playerMove(a,t);}
-function activateCardPower(i,j){const type=party[i].powers[j][4];if(['single-remove','single-convert','return-shield'].includes(type)||type==='inspect'){backgroundTarget={i,j,remaining:level(i,j)>=3&&['single-remove','single-convert'].includes(type)?2:1};$('targetPanel').classList.remove('hidden');$('targetText').textContent=type==='inspect'?'Magnifying Glass: select '+(loreMode?'a manuscript':puzzleMode?'a harvest objective':'a trap or rat')+' to investigate. Cancel is free.':powerDetail(i,j)+' Tap a tile to target it.';render();return;}usePower(i,j);}
+function activateCardPower(i,j){const type=party[i].powers[j][4];if(type==='card-pattern'){const p=party[i].powers[j],config=p[5];if(!config||busy||ended||side!=='player'||party[i].away||energy[p[1]]<cost(i,j))return;if(config.centerMode==='selected'){chooseCardPatternCenter(config,'player',{i,j});return;}executeCardPattern(config,'player',{i,j});return;}if(['single-remove','single-convert','return-shield'].includes(type)||type==='inspect'){backgroundTarget={i,j,remaining:level(i,j)>=3&&['single-remove','single-convert'].includes(type)?2:1};$('targetPanel').classList.remove('hidden');$('targetText').textContent=type==='inspect'?'Magnifying Glass: select '+(loreMode?'a manuscript':puzzleMode?'a harvest objective':'a trap or rat')+' to investigate. Cancel is free.':powerDetail(i,j)+' Tap a tile to target it.';render();return;}usePower(i,j);}
 
 async function pickBackgroundTarget(t){
  const x=backgroundTarget;if(!x||busy||ended)return;
