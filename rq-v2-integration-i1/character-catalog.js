@@ -1,6 +1,6 @@
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.RQCharacterCatalog=api;})(globalThis,function(){'use strict';
 const cell=[{x:0,y:0}],cross=[{x:0,y:0},{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}],line=[{x:0,y:0},{x:0,y:1},{x:0,y:-1}];
-const power=(name,color,cost,description,effect,cells=cell,amount=1,special=null)=>[name,color,cost,description,'card-pattern',{centerMode:'selected',count:1,cells,effect,amount,special}];
+const power=(name,color,cost,description,effect,cells=cell,amount=1,special=null)=>[name,color,cost,description,'card-pattern',{centerMode:'selected',count:1,cells,effect,amount,special,...(effect==='transform'?{color:6}:{} )}];
 const characters=[
 {name:'Mira · Scholar',icon:'🔎',background:'Sage',max:88,powers:[['Magnifying Glass',2,5,'Examine a dangerous trap','inspect'],['Unanswered Questions',3,7,'Turn clues blue','convert'],['Mentor’s Promise',1,6,'Heal allies','heal32']]},
 {name:'Tobin · Farmer',icon:'🐄',background:'Folk Hero',max:110,powers:[['Loyal Mastiff',1,6,'Summon attack tiles','spawn-attack'],['Stubborn Stand',4,6,'Returning protection','return-shield'],['Harvest Wisdom',0,6,'Change a tile green','single-convert']]},
