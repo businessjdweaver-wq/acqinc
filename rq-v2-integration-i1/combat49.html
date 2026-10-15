@@ -685,8 +685,30 @@ function chooseCardPatternCenter(config,who='player',power=null){
  say('Select the center tile for the pattern.');banner('CHOOSE PATTERN CENTER');
  return true;
 }
+function cardPatternCanChange(config,center){
+ if(!CARD_MECHANICS)return true;
+ const centers=config.centerMode==='selected'?[center]:Array.from({length:Math.max(1,Math.min(100,Number(config.count)||1))},()=>null);
+ if(centers.some(c=>!c))return true; // Random patterns cannot be predicted reliably.
+ const positions=new Set();
+ for(const c of centers)for(const pos of CARD_MECHANICS.patternTargets(8,8,config.cells,c))positions.add(pos.y*8+pos.x);
+ const amount=Math.max(0,Number(config.amount)||0);
+ return [...positions].some(index=>{
+  const t=tiles[index];if(!t)return false;
+  switch(config.effect){
+   case 'amplify':return !!t.special&&amount>0;
+   case 'dampen':return !!t.special&&amount>0&&(Number(t.specialStrength)||1)>0;
+   case 'lock':return !t.locked;
+   case 'unlock':return !!t.locked;
+   case 'fortify':return t.lore?!t.loreFortified:!t.effectFortified;
+   case 'destroy':return true;
+   case 'transform':return t.v!==Number(config.color);
+   default:return true;
+  }
+ });
+}
 async function executeCardPattern(config,who='player',power=null){
  if(busy||ended)return false;
+ if(!cardPatternCanChange(config,config.center)){say('No effect: the selected tiles are not eligible for '+config.effect+'. No energy spent.');banner('NO VALID TARGET');return false;}
  if(power){const p=party[power.i]?.powers[power.j];if(!p||energy[p[1]]<cost(power.i,power.j))return false;energy[p[1]]-=cost(power.i,power.j);}
  busy=true;
  try{await applyCardPattern(config,who);render();return true;}
