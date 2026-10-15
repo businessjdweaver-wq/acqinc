@@ -271,8 +271,8 @@ function paint(t){
  else {let heroIndex=preferred('player',t.v);icon.textContent=heroIndex===null?G[t.v]:party[heroIndex].icon;}
  d.appendChild(icon);
  t.el.classList.toggle('trap',t.trap>0);t.el.classList.toggle('power',t.power);
- t.el.classList.toggle('rat',!!t.rat);t.el.classList.toggle('special-tile',!!t.special);t.el.classList.toggle('wild-tile',t.special==='wild');t.el.classList.toggle('attack-tile',t.special==='attack');t.el.classList.toggle('hay',!!t.hay);t.el.classList.toggle('lore',!!t.lore);t.el.classList.toggle('fortified',!!t.lore&&t.loreFortified);t.el.classList.toggle('locked',!!t.locked);t.el.classList.toggle('hidden-card-trap',!!t.hiddenTrap);
- if(t.rat){let counter=document.createElement('span');counter.className='counter';counter.textContent='↑';d.appendChild(counter);}if(t.lore){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.loreFortified?'🔒':t.loreCracked?'◇':t.loreTimer;d.appendChild(counter);}if(t.returnShield){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.returnShield;d.appendChild(counter);}if(t.trap){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.trap;d.appendChild(counter);}
+ t.el.classList.toggle('rat',!!t.rat);t.el.classList.toggle('special-tile',!!t.special);t.el.classList.toggle('wild-tile',t.special==='wild');t.el.classList.toggle('attack-tile',t.special==='attack');t.el.classList.toggle('hay',!!t.hay);t.el.classList.toggle('lore',!!t.lore);t.el.classList.toggle('fortified',!!(t.lore&&t.loreFortified||t.effectFortified));t.el.classList.toggle('locked',!!t.locked);t.el.classList.toggle('hidden-card-trap',!!t.hiddenTrap);
+ if(t.rat){let counter=document.createElement('span');counter.className='counter';counter.textContent='↑';d.appendChild(counter);}if(t.lore){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.loreFortified?'🔒':t.loreCracked?'◇':t.loreTimer;d.appendChild(counter);}if(t.special&&t.specialStrength!==1){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.specialStrength;d.appendChild(counter);}if(t.returnShield){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.returnShield;d.appendChild(counter);}if(t.trap){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.trap;d.appendChild(counter);}
  t.el.setAttribute('aria-label',`${labels[t.v]} tile at row ${t.r+1}, column ${t.c+1}${t.rat?' advancing rat: moves up one row each turn, reaching top deals 16 stamina damage':''}${t.trap?' enemy countdown, '+t.trap+' turns until 18 damage':''}${t.hay?' haystack objective':''}${t.lore?' lore glyph, '+(t.loreFortified?'fortified: requires two matches':'moves each turn for '+t.loreTimer+' more turns'):''}${t.special?' '+t.special+' special tile':''}`);
 }
 function refreshTileIcons(){for(const t of tiles)if(t)paint(t);}
@@ -285,8 +285,10 @@ function tileEffect(t,effect){if(!t||!effect)return false;const amount=Math.max(
  case 'lock':t.locked=true;break;
  case 'unlock':t.locked=false;break;
  case 'fortify':if(t.lore){t.loreFortified=true;t.loreCracked=false;t.loreHits=0;}else{t.effectFortified=true;}break;
- case 'amplify':t.specialStrength=Math.max(0,(Number(t.specialStrength)||1)+amount);break;
- case 'dampen':t.specialStrength=Math.max(0,(Number(t.specialStrength)||1)-amount);break;
+ case 'amplify':if(!t.special)return false;t.specialStrength=Math.max(0,(Number(t.specialStrength)||1)+amount);break;
+ case 'dampen':if(!t.special)return false;t.specialStrength=Math.max(0,(Number(t.specialStrength)||1)-amount);break;
+ case 'create':if(t.special||t.lore||t.rat||t.trap||t.hay)return false;if(!['attack','defense','energy','energy5','strike','wild'].includes(effect.special))return false;t.special=effect.special;t.specialOwner=effect.owner||'player';t.specialStrength=Math.max(0,Number(effect.strength??effect.amount??1)||0);break;
+ case 'move':{const x=Number(effect.x),y=Number(effect.y);if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||x>=8||y<0||y>=8||t.locked)return false;const dest=tiles[y*8+x];if(dest?.locked||dest?.lore||dest?.rat||dest?.trap||dest?.hay)return false;const old=t.r*8+t.c,newIndex=y*8+x;if(old===newIndex)return true;if(dest){dest.r=t.r;dest.c=t.c;tiles[old]=dest;place(dest);}else tiles[old]=null;tiles[newIndex]=t;t.r=y;t.c=x;place(t);break;}
  case 'transform':if(effect.special!==undefined){t.special=effect.special;t.specialOwner=effect.owner||t.specialOwner;}if(Number.isInteger(effect.color)&&effect.color>=0&&effect.color<ORDINARY_COLOR_COUNT)t.v=effect.color;break;
  case 'count':return !!(effect.owner===undefined||t.specialOwner===effect.owner)&&!!(effect.special===undefined||t.special===effect.special);
  default:return false;
@@ -316,7 +318,7 @@ async function applyCardPattern(config,who='player'){
     t.el.remove();tiles[t.r*8+t.c]=null;
     return {changed:true};
    }
-   return {changed:tileEffect(t,{type:config.effect,amount:config.amount,color:config.color,special:config.special,owner:who})};
+   return {changed:tileEffect(t,{type:config.effect,amount:config.amount,color:config.color,special:config.special,owner:who,strength:config.strength,x:config.x,y:config.y})};
   }
  });
  for(const [color,amount] of Object.entries(result.resources))charge(Number(color),amount,who);
