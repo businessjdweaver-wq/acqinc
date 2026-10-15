@@ -81,5 +81,87 @@ function reactions(rules=[],maxEvents=100,maxFires=50){
  }
  return {emit,drain,log};
 }
-return Object.freeze({CONDITIONS,actor,stats,transform,revert,damage,setCondition,tick,specialTile,reactions});
+
+/* Pattern coordinates are offsets from the chosen center, independent of board size. */
+function pattern(cells){
+ if(!Array.isArray(cells)||cells.length>225)throw Error('Pattern must have at most 225 cells');
+ const seen=new Set(),out=[];
+ for(const p of cells){const x=Number(p.x),y=Number(p.y);
+  if(!Number.isInteger(x)||!Number.isInteger(y)||Math.abs(x)>7||Math.abs(y)>7)throw Error('Invalid pattern offset');
+  const key=x+','+y;if(!seen.has(key)){seen.add(key);out.push({x,y});}
+ }
+ return out;
+}
+const PATTERNS=Object.freeze({
+ ring8:pattern(Array.from({length:9},(_,i)=>({x:i%3-1,y:Math.floor(i/3)-1})).filter(p=>p.x||p.y)),
+ x:pattern([{x:-2,y:-2},{x:-1,y:-1},{x:0,y:0},{x:1,y:1},{x:2,y:2},{x:-2,y:2},{x:-1,y:1},{x:1,y:-1},{x:2,y:-2}]),
+ star:pattern([{x:0,y:0},{x:0,y:-2},{x:0,y:-1},{x:0,y:1},{x:0,y:2},{x:-2,y:0},{x:-1,y:0},{x:1,y:0},{x:2,y:0},{x:-1,y:-1},{x:1,y:-1},{x:-1,y:1},{x:1,y:1}])
+});
+function patternTargets(width,height,cells,center){
+ const w=Math.floor(n(width)),h=Math.floor(n(height)),cx=center.x,cy=center.y;
+ if(w<1||h<1||w*h>10000||!Number.isInteger(cx)||!Number.isInteger(cy)||cx<0||cx>=w||cy<0||cy>=h)throw Error('Invalid board/center');
+ return pattern(cells).map(p=>({x:cx+p.x,y:cy+p.y})).filter(p=>p.x>=0&&p.x<w&&p.y>=0&&p.y<h);
+}
+function applyPattern(board,width,height,options){
+ if(!Array.isArray(board)||board.length!==width*height)throw Error('Board size mismatch');
+ const count=Math.max(1,Math.min(100,Math.floor(n(options.count,1))));
+ const rng=options.random||Math.random, centers=[];
+ for(let i=0;i<count;i++){
+  let c;
+  if(options.centerMode==='selected'){c=options.centers?.[i]||options.center;if(!c)throw Error('Selected center required');}
+  else {c={x:Math.min(width-1,Math.floor(clamp(rng(),0,0.999999)*width)),y:Math.min(height-1,Math.floor(clamp(rng(),0,0.999999)*height))};}
+  centers.push(c);
+ }
+ const affected=new Set(),resources={};
+ for(const center of centers)for(const pos of patternTargets(width,height,options.cells,center)){
+  const index=pos.y*width+pos.x;if(affected.has(index))continue;affected.add(index);
+  const tile=board[index];if(!tile)continue;
+  const result=options.change(tile,{index,...pos,center})||{};
+  if(result.changed&&options.gainResources&&result.collectable!==false&&Number.isInteger(tile.color)){
+   resources[tile.color]=(resources[tile.color]||0)+Math.max(0,n(result.resourceAmount,1));
+  }
+ }
+ return {indices:[...affected],centers,resources};
+}
+/* Resource colors are numeric keys; ties break by ascending color ID. */
+function rankResourceColor(resources,mode='best',eligible=null){
+ const ids=(eligible||Object.keys(resources).map(Number)).map(Number).filter(Number.isInteger).sort((a,b)=>a-b);
+ if(!ids.length)return null;
+ if(mode!=='best'&&mode!=='worst')throw Error('Invalid ranking');
+ return ids.reduce((best,id)=>best===null||(mode==='best'?n(resources[id])>n(resources[best]):n(resources[id])<n(resources[best]))?id:best,null);
+}
+function changeResource(resources,color,delta,{maximum=Infinity}={}){
+ const before=Math.max(0,n(resources[color]));
+ const after=clamp(before+n(delta),0,maximum);
+ resources[color]=after;return {before,after,delta:after-before};
+}
+function chooseTeamColor(teams,side,mode='best',eligible=null){
+ if(side!=='ally'&&side!=='enemy')throw Error('Invalid team');
+ if(!teams[side])throw Error('Missing team resources');
+ return rankResourceColor(teams[side],mode,eligible);
+}
+/* Hidden traps are overlays, not replacement match colors. */
+function makeTrap({id,owner,triggerTeam,trigger='matched',effect,charges=1,emoji='⚠️'}){
+ if(!id||!owner||!triggerTeam||typeof effect!=='object'||effect===null)throw Error('Invalid trap');
+ return {kind:'trap',id:String(id),owner:String(owner),triggerTeam:String(triggerTeam),trigger,emoji,charges:Math.max(1,Math.floor(n(charges,1))),effect:{...effect}};
+}
+function visibleTile(tile,viewerTeam){
+ if(!tile)return tile;
+ const copy={...tile};
+ if(copy.trap&&copy.trap.owner!==viewerTeam)delete copy.trap;
+ return copy;
+}
+function triggerTraps(matchedTiles,actingTeam){
+ const fired=[];
+ for(const tile of matchedTiles){
+  const trap=tile?.trap;
+  if(!trap||trap.triggerTeam!==actingTeam||trap.trigger!=='matched'||trap.charges<=0)continue;
+  trap.charges--;
+  fired.push({trapId:trap.id,owner:trap.owner,targetTeam:actingTeam,effect:{...trap.effect}});
+  if(!trap.charges)delete tile.trap;
+ }
+ return fired;
+}
+
+return Object.freeze({CONDITIONS,actor,stats,transform,revert,damage,setCondition,tick,specialTile,reactions,pattern,PATTERNS,patternTargets,applyPattern,rankResourceColor,changeResource,chooseTeamColor,makeTrap,visibleTile,triggerTraps});
 });
