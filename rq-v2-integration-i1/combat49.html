@@ -224,6 +224,11 @@ function isEquipped(i,j){return equipped[i].includes(j);}
 function cost(i,j){const p=party[i].powers[j],n=level(i,j);return p[4]==='swap'&&n===4?Math.max(3,p[2]-3):p[2];}
 function tileCount(i,j){return level(i,j)+1;}
 function powerDetail(i,j){const p=party[i].powers[j],n=level(i,j),type=p[4];
+ if(type==='card-pattern'){const effect=p[5].effect;const cells=progressedPattern(i,j).cells.length;const value=progressedPattern(i,j).amount;return (['amplify','dampen'].includes(effect)?effect+' special strength by '+value:effect+' across '+cells+' tile(s)')+(n>=4?' · Choose Focused or Wide before targeting.':'')+'.';}
+ if(type==='consume-special')return 'Consume a special tile; deal '+(12+6*n)+' + 6 × its strength damage.'+(n>=4?' Choose between damage or restoring 4 energy of the power color.':'');
+ if(type==='enemy-special-burst')return 'Deal '+(8+4*(n-1))+' + '+(5+n-1)+' × total enemy special strength damage.';
+ if(type==='accelerate-timer')return 'Reduce an eligible countdown by '+Math.min(n,3)+' turn(s).'+(n>=4?' Choose to accelerate or extend it.':'');
+ if(type==='flip-owner')return 'Capture '+Math.min(n,3)+' enemy special tile(s).'+(n>=4?' Choose whether to capture or destroy the target.':'');
  if(type==='spawn-trap')return `Conceal up to ${tileCount(i,j)} friendly spike traps for 3 rounds. Enemy matches trigger 18 damage each.`;
  if(type.startsWith('spawn-'))return `${tileCount(i,j)} ${type.slice(6)} tiles. Each level adds one tile.`;
  if(type==='move-up')return `Move a tile up ${Math.min(n,3)} row(s) and ${n>=4?'choose whether to resolve matches or reposition only':'resolve matches and cascades'}.`;
@@ -755,7 +760,31 @@ async function handleTileDevPick(t){
 $('tileDevApply').onclick=()=>{const t=tileDevSource;if(!t||busy||ended)return;const effect=$('tileDevEffect').value,amount=Math.max(0,Math.min(100,Number($('tileDevAmount').value)||0));let ok=false;if(effect==='move'){if(!tileDevDestination)return;ok=tileEffect(t,{type:'move',x:tileDevDestination.c,y:tileDevDestination.r});}else if(effect==='destroy'){if(t.effectFortified){t.effectFortified=false;paint(t);ok=true;}else if(!t.lore&&!t.locked){const pos=t.r*8+t.c;t.el.remove();tiles[pos]=create(rnd(ORDINARY_COLOR_COUNT),t.r,t.c);ok=true;}}else ok=tileEffect(t,effect==='create'||effect==='defense'?{type:'create',special:effect==='create'?'attack':'defense',owner:'player',strength:amount}:{type:effect,amount});tileDevClear();tileDevStatus(ok?'Applied '+effect+'.':'Effect blocked or invalid for selected tile.');};
 $('tileDevGrant').onclick=()=>{if(ended||$('game').classList.contains('hidden')){$('tileDevGrantStatus').textContent='Begin an encounter first.';return;}const color=Number($('tileDevResourceColor').value),amount=Math.floor(Number($('tileDevResourceAmount').value));if(!Number.isInteger(color)||color<0||color>=ORDINARY_COLOR_COUNT||!Number.isFinite(amount)||amount<1||amount>100){$('tileDevGrantStatus').textContent='Choose a valid color and amount (1–100).';return;}energy[color]+=amount;render();$('tileDevGrantStatus').textContent='Granted '+amount+' '+labels[color]+' energy. Pool: '+energy[color]+'.';};
 async function pick(t){if(await handleTileDevPick(t))return;if(pendingCardPattern){await commitCardPatternCenter(t);return;}if(t.lore&&!target&&!convertTarget&&!lineTarget&&!backgroundTarget&&!selected){$('tileInspector').classList.remove('hidden');showTileInfo(t.loreFortified?'◆ Fortified lore · two matches left':t.loreCracked?'◆ Cracked lore · one match left':'◆ Moving lore · '+t.loreTimer+' turns to fortify',t.loreFortified?'Fortified lore: the page has stopped moving and needs two matches to collect.':t.loreCracked?'Cracked lore: its protection has already been removed. It stays still and requires one more match to collect.':'Moving lore: shifts one square horizontally or vertically after each move; '+t.loreTimer+' moves before it fortifies and requires two matches.');return;}if(t.rat&&!target&&!convertTarget&&!lineTarget&&!backgroundTarget&&!selected){$('tileInspector').classList.remove('hidden');showTileInfo('🐀 Rat · Moves up 1 row/turn. At the top: 16 damage, then respawns.','🐀 Advancing rat · moves one row upward after each enemy turn. At the top it deals 16 stamina damage to the frontline character and respawns in a different bottom-row column. Match or disarm the rat to remove it.');return;}if(t.trap>0&&!target&&!convertTarget&&!lineTarget&&!backgroundTarget&&!selected){inspectTile(t);return;}if(ended||side!=='player'||enemyTarget)return;if(backgroundTarget){await pickBackgroundTarget(t);return;}if(convertTarget){await pickConvert(t);return;}if(lineTarget){await commitLine(t);return;}if(target){if(target.picks.includes(t)){t.el.classList.remove('selected');target.picks=target.picks.filter(x=>x!==t);return;}target.picks.push(t);t.el.classList.add('selected');if(target.picks.length===2)await confirmTarget();return;}if(busy)return;if(!selected){selected=t;t.el.classList.add('selected');return;}let a=selected;a.el.classList.remove('selected');selected=null;if(a===t)return;if((a.lore&&a.loreFortified)||(t.lore&&t.loreFortified)){say('Fortified lore cannot be swapped.');return;}if(Math.abs(a.r-t.r)+Math.abs(a.c-t.c)!==1){selected=t;t.el.classList.add('selected');return;}await playerMove(a,t);}
-function activateCardPower(i,j){const type=party[i].powers[j][4];if(type==='card-pattern'){const p=party[i].powers[j],config=p[5];if(!config||busy||ended||side!=='player'||party[i].away||energy[p[1]]<cost(i,j))return;if(config.centerMode==='selected'){chooseCardPatternCenter(config,'player',{i,j});return;}executeCardPattern(config,'player',{i,j});return;}if(['single-remove','single-convert','return-shield','consume-special','move-up','shift-row','accelerate-timer','flip-owner'].includes(type)||type==='inspect'){backgroundTarget={i,j,remaining:level(i,j)>=3&&['single-remove','single-convert'].includes(type)?2:1};$('targetPanel').classList.remove('hidden');$('targetText').textContent=type==='inspect'?'Magnifying Glass: select '+(loreMode?'a manuscript':puzzleMode?'a harvest objective':'a trap or rat')+' to investigate. Cancel is free.':powerDetail(i,j)+' Tap a tile to target it.';render();return;}usePower(i,j);}
+// Experimental card progression: levels 2/3 grow the effect; level 4 offers a choice.
+function progressedPattern(i,j,wide=false){
+ const p=party[i].powers[j],n=level(i,j),base=p[5],effect=base.effect;
+ const cells=base.cells.map(c=>({...c}));
+ const config={...base,cells};
+ if(['amplify','dampen'].includes(effect))config.amount=Number(base.amount)+Math.min(n-1,2)*2;
+ else if(n>=2&&['lock','unlock','fortify','create','transform'].includes(effect)){
+  if(cells.length===1){cells.push({x:1,y:0});if(n>=3)cells.push({x:-1,y:0});}
+  else if(n>=3){for(const c of [{x:1,y:1},{x:-1,y:1},{x:1,y:-1},{x:-1,y:-1}])if(!cells.some(v=>v.x===c.x&&v.y===c.y))cells.push(c);}
+ }
+ if(n>=4&&wide){
+  if(['amplify','dampen'].includes(effect)){config.cells=[{x:0,y:0},{x:1,y:0},{x:-1,y:0}];config.amount=Number(base.amount)+2;}
+  else {for(const c of [{x:0,y:1},{x:0,y:-1},{x:2,y:0},{x:-2,y:0}])if(!config.cells.some(v=>v.x===c.x&&v.y===c.y))config.cells.push(c);}
+ }
+ return config;
+}
+function chooseProgressedPattern(i,j){
+ const p=party[i].powers[j],n=level(i,j);
+ const run=(wide)=>{const config=progressedPattern(i,j,wide);if(config.centerMode==='selected')chooseCardPatternCenter(config,'player',{i,j});else executeCardPattern(config,'player',{i,j});};
+ if(n<4){run(false);return;}
+ openModal(p[0]+' · Mastery choice','Focused: retain the stronger level-3 effect. Wide: affect additional tiles (amplify/dampen uses a smaller bonus).','Choose before spending energy.',true,()=>run(false));
+ const button=document.createElement('button');button.type='button';button.className='btn';button.textContent='Wide effect';button.onclick=()=>{$('modal').classList.add('hidden');run(true);};
+ $('modalDesc').appendChild(document.createElement('br'));$('modalDesc').appendChild(button);
+}
+function activateCardPower(i,j){const type=party[i].powers[j][4];if(type==='card-pattern'){const p=party[i].powers[j],config=p[5];if(!config||busy||ended||side!=='player'||party[i].away||energy[p[1]]<cost(i,j))return;chooseProgressedPattern(i,j);return;}if(['single-remove','single-convert','return-shield','consume-special','move-up','shift-row','accelerate-timer','flip-owner'].includes(type)||type==='inspect'){backgroundTarget={i,j,remaining:level(i,j)>=3&&['single-remove','single-convert'].includes(type)?2:1};$('targetPanel').classList.remove('hidden');$('targetText').textContent=type==='inspect'?'Magnifying Glass: select '+(loreMode?'a manuscript':puzzleMode?'a harvest objective':'a trap or rat')+' to investigate. Cancel is free.':powerDetail(i,j)+' Tap a tile to target it.';render();return;}usePower(i,j);}
 
 async function pickBackgroundTarget(t){
  const x=backgroundTarget;if(!x||busy||ended)return;
