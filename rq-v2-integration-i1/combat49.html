@@ -294,7 +294,7 @@ function tileEffect(t,effect){if(!t||!effect)return false;const amount=Math.max(
 }
 /* Card Studio pattern/trap adapter: callable by future card power definitions.
    Legacy t.trap remains a countdown until checkpoint migration is implemented. */
-function applyCardPattern(config,who='player'){
+async function applyCardPattern(config,who='player'){
  if(!CARD_MECHANICS)throw Error('Card mechanics module not loaded');
  const result=CARD_MECHANICS.applyPattern(tiles,8,8,{
   cells:config.cells,count:config.count,centerMode:config.centerMode,
@@ -313,7 +313,24 @@ function applyCardPattern(config,who='player'){
   }
  });
  for(const [color,amount] of Object.entries(result.resources))charge(Number(color),amount,who);
+ if(config.effect==='destroy'){await settlePatternBoard(who);}
  return result;
+}
+async function settlePatternBoard(who){
+ for(let c=0;c<8;c++){
+  const fixed=[],falling=[];
+  for(let r=7;r>=0;r--){const t=tiles[r*8+c];if(t)(t.locked?fixed:falling).push(t);}
+  for(let r=0;r<8;r++)tiles[r*8+c]=null;
+  for(const t of fixed)tiles[t.r*8+c]=t;
+  let next=0;
+  for(let r=7;r>=0;r--){
+   if(tiles[r*8+c])continue;
+   if(next<falling.length){const t=falling[next++];t.r=r;t.c=c;tiles[r*8+c]=t;place(t);}
+   else tiles[r*8+c]=create(rnd(ORDINARY_COLOR_COUNT),r,c,-1-next);
+  }
+ }
+ await wait(470);
+ await resolve(who);
 }
 function placeCardTrap(tile,definition){
  if(!CARD_MECHANICS||!tile)throw Error('Trap unavailable');
