@@ -117,8 +117,8 @@ function applyPattern(board,width,height,options){
   const index=pos.y*width+pos.x;if(affected.has(index))continue;affected.add(index);
   const tile=board[index];if(!tile)continue;
   const result=options.change(tile,{index,...pos,center})||{};
-  if(result.changed&&options.gainResources&&result.collectable!==false&&Number.isInteger(tile.color)){
-   resources[tile.color]=(resources[tile.color]||0)+Math.max(0,n(result.resourceAmount,1));
+  if(result.changed&&options.gainResources&&result.collectable!==false&&Number.isInteger(tile.color??tile.v)){
+   resources[tile.color??tile.v]=(resources[tile.color??tile.v]||0)+Math.max(0,n(result.resourceAmount,1));
   }
  }
  return {indices:[...affected],centers,resources};
@@ -148,17 +148,17 @@ function makeTrap({id,owner,triggerTeam,trigger='matched',effect,charges=1,emoji
 function visibleTile(tile,viewerTeam){
  if(!tile)return tile;
  const copy={...tile};
- if(copy.trap&&copy.trap.owner!==viewerTeam)delete copy.trap;
+ if(copy.hiddenTrap&&copy.hiddenTrap.owner!==viewerTeam)delete copy.hiddenTrap;
  return copy;
 }
 function triggerTraps(matchedTiles,actingTeam){
  const fired=[];
  for(const tile of matchedTiles){
-  const trap=tile?.trap;
+  const trap=tile?.hiddenTrap;
   if(!trap||trap.triggerTeam!==actingTeam||trap.trigger!=='matched'||trap.charges<=0)continue;
   trap.charges--;
   fired.push({trapId:trap.id,owner:trap.owner,targetTeam:actingTeam,effect:{...trap.effect}});
-  if(!trap.charges)delete tile.trap;
+  if(!trap.charges)delete tile.hiddenTrap;
  }
  return fired;
 }
