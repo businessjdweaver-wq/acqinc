@@ -291,14 +291,14 @@ const TILE_EFFECT_TYPES=Object.freeze(['lock','unlock','fortify','amplify','damp
 const CARD_MECHANICS=window.RQCardMechanics||null;
 function tileEffect(t,effect){if(!t||!effect)return false;const amount=Math.max(0,Number(effect.amount)||0);
  switch(effect.type){
- case 'lock':t.locked=true;break;
- case 'unlock':t.locked=false;break;
- case 'fortify':if(t.lore){t.loreFortified=true;t.loreCracked=false;t.loreHits=0;}else{t.effectFortified=true;}break;
- case 'amplify':if(!t.special)return false;t.specialStrength=Math.max(0,(Number(t.specialStrength)||1)+amount);break;
- case 'dampen':if(!t.special)return false;t.specialStrength=Math.max(0,(Number(t.specialStrength)||1)-amount);break;
+ case 'lock':if(t.locked)return false;t.locked=true;break;
+ case 'unlock':if(!t.locked)return false;t.locked=false;break;
+ case 'fortify':if(t.lore?t.loreFortified:t.effectFortified)return false;if(t.lore){t.loreFortified=true;t.loreCracked=false;t.loreHits=0;}else{t.effectFortified=true;}break;
+ case 'amplify':if(!t.special||amount<=0)return false;t.specialStrength=Math.max(0,(Number(t.specialStrength)||1)+amount);break;
+ case 'dampen':if(!t.special||amount<=0||(Number(t.specialStrength)??1)<=0)return false;t.specialStrength=Math.max(0,(Number(t.specialStrength)||1)-amount);break;
  case 'create':if(t.special||t.lore||t.rat||t.trap||t.hay)return false;if(!['attack','defense','energy','energy5','strike','wild'].includes(effect.special))return false;t.special=effect.special;t.specialOwner=effect.owner||'player';t.specialStrength=Math.max(0,Number(effect.strength??effect.amount??1)||0);break;
  case 'move':{const x=Number(effect.x),y=Number(effect.y);if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||x>=8||y<0||y>=8||t.locked)return false;const dest=tiles[y*8+x];if(dest?.locked||dest?.lore||dest?.rat||dest?.trap||dest?.hay)return false;const old=t.r*8+t.c,newIndex=y*8+x;if(old===newIndex)return true;if(dest){dest.r=t.r;dest.c=t.c;tiles[old]=dest;place(dest);}else tiles[old]=null;tiles[newIndex]=t;t.r=y;t.c=x;t.shuffleKeepRow=true;place(t);break;}
- case 'transform':if(effect.special!==undefined){t.special=effect.special;t.specialOwner=effect.owner||t.specialOwner;}if(Number.isInteger(effect.color)&&effect.color>=0&&effect.color<ORDINARY_COLOR_COUNT)t.v=effect.color;break;
+ case 'transform':if(effect.special===undefined&&(!Number.isInteger(effect.color)||t.v===effect.color))return false;if(effect.special!==undefined){t.special=effect.special;t.specialOwner=effect.owner||t.specialOwner;}if(Number.isInteger(effect.color)&&effect.color>=0&&effect.color<ORDINARY_COLOR_COUNT)t.v=effect.color;break;
  case 'count':return !!(effect.owner===undefined||t.specialOwner===effect.owner)&&!!(effect.special===undefined||t.special===effect.special);
  default:return false;
  }paint(t);return true;
@@ -444,7 +444,7 @@ let lastTileRosterSignature="";function render(){if(!ended&&!$('game').classList
 const specialNames={attack:'Attack Arrowhead',energy:'Energy Conduit',strike:'Strike Standard',defense:'Defense Ward'};
 function specialBonus(owner,type){return tiles.filter(t=>t&&!t.locked&&t.special===type&&t.specialOwner===owner).length;}
 function spawnSpecial(type,owner='player',count=2){
- const available=tiles.filter(t=>t&&!t.trap&&!t.special);
+ const available=tiles.filter(t=>t&&!t.trap&&!t.special&&!t.lore&&!t.hay&&!t.rat&&!t.returnShield);
  let made=0;
  for(let i=0;i<count&&available.length;i++){
    const t=available.splice(rnd(available.length),1)[0];
@@ -750,8 +750,11 @@ async function pickBackgroundTarget(t){
  const x=backgroundTarget;if(!x||busy||ended)return;
  const type=party[x.i].powers[x.j][4],lv=level(x.i,x.j),power=party[x.i].powers[x.j];
  if(type==='inspect'){const eligible=loreMode?t.lore:(puzzleMode&&!loreMode?t.hay:(t.trap>0||t.rat));if(!eligible){say(loreMode?'Choose a manuscript tile to investigate.':puzzleMode?'Choose a harvest objective.':'Choose a trap or rat to investigate.');return;}}
+ if(type==='single-convert'&&t.v===2){say('This tile is already blue. Choose a non-blue tile; no energy spent.');return;}
  if(type==='single-convert'&&(t.rat||t.hay||t.lore||t.trap||t.special||t.returnShield||t.power)){say('Harvest Wisdom requires an ordinary tile; special tiles cannot be converted.');return;}
+ if(type==='single-remove'&&t.locked){say('Unlock this tile before removing it. No energy spent.');return;}
  if(type==='single-remove'&&(t.rat||t.hay||t.lore||t.trap||t.special||t.returnShield)){say('Choose an ordinary tile without a special function.');return;}
+ if(type==='return-shield'&&t.returnShield){say('This tile already has a returning shield. No energy spent.');return;}
  if(type==='return-shield'&&lv===1&&(t.rat||t.hay||t.lore||t.trap||t.special)){say('Level 1 shield needs an ordinary tile. Upgrade to overwrite special tiles.');return;}
  if(!x.paid&&energy[power[1]]<cost(x.i,x.j)){cancelTarget();return;}
  if(!x.paid){energy[power[1]]-=cost(x.i,x.j);x.paid=true;}
@@ -881,7 +884,7 @@ async function commitLine(t){
  if(x.remaining>1&&!ended){lineTarget={...x,remaining:x.remaining-1,paid:true};$('targetPanel').classList.remove('hidden');$('targetText').textContent='Sundering Line: choose second row. Cancel ends the power.';}
  render();
 }
-async function usePower(i,j,enemyIndex=null){let p=party[i].powers[j];if(busy||ended||energy[p[1]]<cost(i,j)||party[i].away)return;if(p[4]==='convert'&&!tiles.some(t=>t&&t.v!==2&&!t.lore&&!t.hay&&!t.rat&&!t.trap&&!t.special&&!t.returnShield&&!t.power)){say('No non-blue ordinary tiles remain. No energy spent.');banner('NO VALID TARGET');return;}energy[p[1]]-=cost(i,j);busy=true;render();say(party[i].name+' uses '+p[0]);if(p[4]==='inspect'){say('Choose a target for Magnifying Glass before spending energy.');}
+async function usePower(i,j,enemyIndex=null){let p=party[i].powers[j];if(busy||ended||energy[p[1]]<cost(i,j)||party[i].away)return;if(p[4].startsWith('spawn-')&&!tiles.some(t=>t&&!t.trap&&!t.special&&!t.lore&&!t.hay&&!t.rat&&!t.returnShield)){say('No eligible tiles for special creation. No energy spent.');banner('NO VALID TARGET');return;}if(p[4].startsWith('heal')&&!party.some(t=>t.hp>0&&t.hp<t.max)){say('All allies are at full health. No energy spent.');banner('NO VALID TARGET');return;}if(p[4]==='convert'&&!tiles.some(t=>t&&t.v!==2&&!t.lore&&!t.hay&&!t.rat&&!t.trap&&!t.special&&!t.returnShield&&!t.power)){say('No non-blue ordinary tiles remain. No energy spent.');banner('NO VALID TARGET');return;}energy[p[1]]-=cost(i,j);busy=true;render();say(party[i].name+' uses '+p[0]);if(p[4]==='inspect'){say('Choose a target for Magnifying Glass before spending energy.');}
  
  if(p[4].startsWith('damage'))damageEnemy(30+10*(level(i,j)-1));if(p[4]==='snipe')damageEnemy(36+10*(level(i,j)-1),enemyIndex);if(p[4]==='aoe'){for(let k=0;k<enemies.length;k++)if(targetable(enemies[k]))damageEnemy(28+8*(level(i,j)-1),k);}if(puzzleMode&&p[4]==='intercept'){turnLimit+=1;banner('EXTRA TIME!');}
  if(p[4]==='intercept'){heroOrder=heroOrder.filter(x=>x!==i).concat(i);guard={i,ratio:(.60+(level(i,j)-1)*.08)};banner('GUARDIAN INTERCEPT READY');}if(p[4]==='vanish'){party[i].away=level(i,j)+1;banner('VEIL STEP');}if(p[4].startsWith('heal'))heal(32+8*(level(i,j)-1));if(p[4]==='resonance'){damageEnemy(16);heal(8);}if(p[4]==='inspire')for(let c=0;c<6;c++)charge(c,level(i,j)+2,'player');if(p[4].startsWith('spawn-'))spawnSpecial(p[4].slice(6),'player',tileCount(i,j));if(p[4]==='convert'){let pool=tiles.filter(t=>t&&t.v!==2&&!t.lore&&!t.hay&&!t.rat&&!t.trap&&!t.special&&!t.returnShield&&!t.power);let n=Math.min(pool.length,level(i,j)+2);for(let k=0;k<n;k++){let t=pool.splice(rnd(pool.length),1)[0];t.v=2;paint(t);}say('Unanswered Questions reveals '+n+' blue clues, spending purple energy.');await wait(350);await resolve('player');}await wait(350);busy=ended;render();}
