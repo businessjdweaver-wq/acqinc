@@ -442,7 +442,7 @@ let lastTileRosterSignature="";function render(){if(!ended&&!$('game').classList
  $('support').innerHTML=load.map((id,i)=>{let s=supports.find(x=>x.id===id);return s?`<button data-support="${i}" class="${energy[5]>=s.cost&&inventory[id]>0&&!supportSlotUsed[i]?'ready':''}" ${supportSlotUsed[i]||inventory[id]<1?'disabled':''}><div style="font-size:23px">${s.icon}</div><b class="small">${s.name}</b><div class="small">${supportSlotUsed[i]?'USED · 0/1':`■ ${s.cost} · 1/1 · ${inventory[id]} in inventory`}</div></button>`:`<button disabled>Empty</button>`;}).join('');document.querySelectorAll('[data-support]').forEach(b=>b.onclick=()=>{if(!busy&&!ended&&side==='player'&&!target&&!enemyTarget)showSupport(+b.dataset.support);});}
 
 const specialNames={attack:'Attack Arrowhead',energy:'Energy Conduit',strike:'Strike Standard',defense:'Defense Ward'};
-function specialBonus(owner,type){return tiles.filter(t=>t&&t.special===type&&t.specialOwner===owner).length;}
+function specialBonus(owner,type){return tiles.filter(t=>t&&!t.locked&&t.special===type&&t.specialOwner===owner).length;}
 function spawnSpecial(type,owner='player',count=2){
  const available=tiles.filter(t=>t&&!t.trap&&!t.special);
  let made=0;
@@ -455,7 +455,7 @@ function spawnSpecial(type,owner='player',count=2){
  return made;
 }
 async function swarmAnimation(owner,target){
- const source=tiles.find(t=>t&&t.special==='attack'&&t.specialOwner===owner);
+ const source=tiles.find(t=>t&&!t.locked&&t.special==='attack'&&t.specialOwner===owner);
  const el=owner==='player'?document.querySelector('[data-enemy="'+frontEnemy()+'"]'):document.querySelector('[data-member="'+frontHero()+'"]');
  if(!source||!el)return;
  const a=source.el.getBoundingClientRect(),b=el.getBoundingClientRect();
@@ -564,6 +564,7 @@ async function advanceRats(){
  const rats=tiles.filter(t=>t&&t.rat).sort((a,b)=>a.r-b.r);
  for(const rat of rats){
   if(ended)break;
+  if(rat.locked)continue;
   if(rat.r===0){
    const oldCol=rat.c;rat.rat=false;paint(rat);
    banner('RAT REACHES THE GRAIN!');
@@ -572,7 +573,7 @@ async function advanceRats(){
    if(!ended)spawnRat(oldCol);
   }else{
    const above=tiles[(rat.r-1)*8+rat.c];
-   if(above&&!above.rat&&!above.hay&&!above.lore&&!above.trap&&!above.returnShield&&!above.special){
+   if(above&&!above.locked&&!above.rat&&!above.hay&&!above.lore&&!above.trap&&!above.returnShield&&!above.special){
     const a=rat.r*8+rat.c,b=above.r*8+above.c;
     [rat.r,above.r]=[above.r,rat.r];[rat.c,above.c]=[above.c,rat.c];
     tiles[a]=above;tiles[b]=rat;place(rat);place(above);
@@ -583,7 +584,7 @@ async function advanceRats(){
  }
  render();
 }
-async function tickTraps(){for(let t of [...tiles].filter(t=>t.trap>0)){if(t.fresh){t.fresh=false;continue;}t.trap--;if(t.trap===0){paint(t);if(storeMode)await shopkeeperTheft(t);else{banner('COMPLICATION UNFOLDS!');damageParty(18);await wait(700);}}else paint(t);}}
+async function tickTraps(){for(let t of [...tiles].filter(t=>t.trap>0&&!t.locked)){if(t.fresh){t.fresh=false;continue;}t.trap--;if(t.trap===0){paint(t);if(storeMode)await shopkeeperTheft(t);else{banner('COMPLICATION UNFOLDS!');damageParty(18);await wait(700);}}else paint(t);}}
 function swapAttackColor(a,b){
  const runs=matchInfo().runs||[];
  const relevant=runs.filter(g=>g.includes(a)||g.includes(b));
@@ -598,9 +599,9 @@ function loreSpawnFromEnergy(){if(!loreMode||ended)return;let spawned=0;while(en
 async function advanceLore(){
  const pages=tiles.filter(t=>t&&t.lore&&!t.loreFortified&&!t.loreCracked);
  for(const page of pages){
-  if(!tiles.includes(page))continue;
+  if(!tiles.includes(page)||page.locked)continue;
   if(page.loreTimer>0){
-   const options=[[1,0],[-1,0],[0,1],[0,-1]].map(([dr,dc])=>[page.r+dr,page.c+dc]).filter(([r,c])=>r>=0&&r<8&&c>=0&&c<8).map(([r,c])=>tiles[r*8+c]).filter(t=>t&&!t.lore&&!t.hay&&!t.trap&&!t.returnShield);
+   const options=[[1,0],[-1,0],[0,1],[0,-1]].map(([dr,dc])=>[page.r+dr,page.c+dc]).filter(([r,c])=>r>=0&&r<8&&c>=0&&c<8).map(([r,c])=>tiles[r*8+c]).filter(t=>t&&!t.locked&&!t.lore&&!t.hay&&!t.trap&&!t.returnShield);
    if(options.length){
     const other=options[rnd(options.length)],a=page.r*8+page.c,b=other.r*8+other.c;
     [page.r,other.r]=[other.r,page.r];[page.c,other.c]=[other.c,page.c];
@@ -810,7 +811,7 @@ async function returnShieldTile(t){
 }
 async function tickReturningShields(){
  const expired=[];
- for(const t of [...tiles]){if(!t?.returnShield)continue;t.returnShield--;if(t.returnShield===0)expired.push(t);else paint(t);}
+ for(const t of [...tiles]){if(!t?.returnShield||t.locked)continue;t.returnShield--;if(t.returnShield===0)expired.push(t);else paint(t);}
  for(const t of expired){if(tiles.includes(t))await returnShieldTile(t);}
 }
 function inspectTile(t){const box=$('tileInspector');box.classList.remove('hidden');showTileInfo(storeMode?'🪙 Fee · '+t.trap+' turns · steals up to 12 energy':'☠ Trap · '+t.trap+' turns · 18 damage',storeMode?'Shopkeeper fee token · '+t.trap+' opposing turns until activation. Steals up to 4 energy from each of your three most-stocked colors (12 total). Clear or disarm it.':'Countdown complication · '+t.trap+' opposing turns until activation. Deals 18 damage to the front character. Match or disarm it.');say(storeMode?'Inspected shopkeeper fee: '+t.trap+' turns; steals up to 12 power energy.':'Inspected countdown: '+t.trap+' turns, 18 damage.');}
