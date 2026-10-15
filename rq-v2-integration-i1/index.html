@@ -216,15 +216,26 @@ async function fpServerAudit(){
    }
    results[table]={rows,error:errorMessage,truncated:rows.length>=10000};
   }
+  // V1 stored gold in public.franchise and history in public.gold_log; read only.
+  const legacy={};
+  for(const table of ['franchise','gold_log']){
+   const rows=[];let errorMessage=null;
+   for(let from=0;from<10000;from+=500){
+    const {data,error}=await client().schema('public').from(table).select('*').eq('user_id',user.id).range(from,from+499);
+    if(error){errorMessage=error.message;break}
+    rows.push(...(data||[]));if((data||[]).length<500)break;
+   }
+   legacy[table]={rows,error:errorMessage,truncated:rows.length>=10000};
+  }
   const snapshot={format:'rq-v2-server-economy-audit-v1',createdAt:new Date().toISOString(),
-   source:'authenticated Supabase rq_v2 read-only select',userId:user.id,tables:results,
-   limitations:'Pre-E1 gold may live in another table not queried. Table errors, RLS filtering, or truncation mean incomplete evidence. No mutations performed.'};
+   source:'authenticated Supabase rq_v2 read-only select',userId:user.id,tables:results,legacyPublicTables:legacy,
+   limitations:'V1 gold is expected in public.franchise and public.gold_log; check errors, access and whether the authenticated account matches the V1 account. Table errors, RLS filtering, or truncation mean incomplete evidence. No mutations performed.'};
   const payload=JSON.stringify(snapshot,null,2),bytes=new TextEncoder().encode(payload);
   const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).map(x=>x.toString(16).padStart(2,'0')).join('');
   const url=URL.createObjectURL(new Blob([payload],{type:'application/json'}));
   const a=document.createElement('a');a.href=url;a.download='rq-v2-server-economy-audit-'+new Date().toISOString().slice(0,10)+'-'+hash.slice(0,12)+'.json';
   document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
-  status.textContent='Server audit download requested · SHA-256 '+hash+' · '+tables.map(t=>t+': '+results[t].rows.length+(results[t].error?' (error)':'')).join(', ')+'. Verify file saved; no balances changed.';
+  status.textContent='Server audit download requested · SHA-256 '+hash+' · '+tables.map(t=>t+': '+results[t].rows.length+(results[t].error?' (error)':'')).join(', ')+', legacy franchise: '+legacy.franchise.rows.length+(legacy.franchise.error?' (error)':'')+', legacy gold_log: '+legacy.gold_log.rows.length+(legacy.gold_log.error?' (error)':'')+'. Verify file saved; no balances changed.';
  }catch(e){status.textContent='Server audit failed: '+e.message+'; no data changed.'}
  finally{button.disabled=false}
 }
