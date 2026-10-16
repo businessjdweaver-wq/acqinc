@@ -413,11 +413,11 @@ $('fpLegacyExport').onclick=async()=>{
  }catch(e){status.textContent='Export failed: '+e.message+'; local records remain unchanged.'}
 };
 $('fpPreviewRefresh').onclick=fpMigrationPreview;
-let e2GoldSyncBusy=false;
-function queueFocusGoldSync(){setTimeout(()=>{if(!e2GoldSyncBusy)e2SyncGold();},0)}
+let e2GoldSyncBusy=false,e2GoldSyncQueued=false;
+function queueFocusGoldSync(){e2GoldSyncQueued=true;if(!e2GoldSyncBusy)setTimeout(e2SyncGold,0)}
 async function e2SyncGold(){
  if(e2GoldSyncBusy)return;
- e2GoldSyncBusy=true;
+ e2GoldSyncBusy=true;e2GoldSyncQueued=false;
  const button=$('e2SyncGold'),status=$('e1Status');button.disabled=true;
  try{
   await signedUser();
@@ -425,6 +425,7 @@ async function e2SyncGold(){
   if(!pending.length){status.textContent='No new Focus sessions awaiting gold. Historical sessions are already included in your opening balance.';await e1LoadBalances();return}
   let claimed=0,already=0;
   for(const session of pending){
+   if(!session.startedAt&&Number.isFinite(Number(session.ms))&&Number.isFinite(Date.parse(session.at)))session.startedAt=new Date(Date.parse(session.at)-Number(session.ms)).toISOString();
    const {data,error}=await client().schema('rq_v2').rpc('claim_focus_gold',{
     p_session_id:session.e2SessionId,p_started_at:session.startedAt,p_ended_at:session.at,p_elapsed_ms:Math.floor(session.ms)
    });
@@ -435,7 +436,7 @@ async function e2SyncGold(){
   await e1LoadBalances();
   status.textContent='Focus gold synchronized: +'+claimed+' gold; '+already+' already recorded. Local session history preserved.';
  }catch(e){status.textContent='Gold sync paused: '+e.message+'. Pending sessions remain stored locally for retry.'}
- finally{button.disabled=false;e2GoldSyncBusy=false}
+ finally{button.disabled=false;e2GoldSyncBusy=false;if(e2GoldSyncQueued){e2GoldSyncQueued=false;queueFocusGoldSync();}}
 }
 $('e2SyncGold').onclick=e2SyncGold;
 $('e1Refresh').onclick=e1LoadBalances;$('e1Adjust').onclick=async()=>{const btn=$('e1Adjust');btn.disabled=true;try{await signedUser();const {data,error}=await client().schema('rq_v2').rpc('claim_daily_baseline_adjustment',{p_local_date:'2026-10-13'});if(error)throw error;$('e1Status').textContent=Number(data)>0?'20 gold adjustment credited.':'Adjustment already claimed; no duplicate credit.';await e1LoadBalances();$('e1Status').textContent=Number(data)>0?'20 gold adjustment credited.':'Adjustment already claimed; no duplicate credit.'}catch(e){$('e1Status').textContent='Adjustment unavailable: '+e.message}finally{btn.disabled=false}};
