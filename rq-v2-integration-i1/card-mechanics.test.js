@@ -1,0 +1,27 @@
+/* Run with: node card-mechanics.test.js */
+const assert=require('node:assert/strict');
+const M=require('./card-mechanics.js');
+const hero=M.actor({maxHp:100,hp:50,powers:['basic'],forms:{wolf:{modifiers:{maxHpMultiplier:1.5,damageFlat:10},powers:['claws'],duration:2}}});
+assert.equal(M.transform(hero,'wolf').maxHp,150);
+assert.equal(hero.hp,75);assert.deepEqual(M.stats(hero).powers,['basic','claws']);
+M.tick(hero);assert.equal(hero.form.remaining,1);
+M.tick(hero);assert.equal(hero.form,null);assert.equal(hero.hp,75);
+const ring=M.PATTERNS.ring8;
+assert.equal(ring.length,8);assert.equal(M.patternTargets(8,8,ring,{x:0,y:0}).length,3);
+assert.equal(M.rankResourceColor([4,8,8],'best'),1);
+assert.equal(M.rankResourceColor([4,8,8],'worst'),0);
+const resources=[4,8];assert.equal(M.changeResource(resources,0,-10).after,0);
+const trap=M.makeTrap({id:'web-1',owner:'player',triggerTeam:'enemy',effect:{type:'damage',amount:12}});
+const tile={v:1,hiddenTrap:trap};
+assert.equal(M.visibleTile(tile,'enemy').hiddenTrap,undefined);
+assert.equal(M.visibleTile(tile,'player').hiddenTrap.id,'web-1');
+assert.equal(M.triggerTraps([tile],'player').length,0);
+assert.equal(M.triggerTraps([tile],'enemy').length,1);
+assert.equal(tile.hiddenTrap,undefined);
+const board=Array.from({length:64},(_,i)=>({color:i%7}));
+const result=M.applyPattern(board,8,8,{cells:ring,centerMode:'selected',center:{x:4,y:4},gainResources:true,change:()=>({changed:true})});
+assert.equal(result.indices.length,8);
+assert.equal(Object.values(result.resources).reduce((a,b)=>a+b,0),8);
+const engine=M.reactions([{id:'a',trigger:'hit',maxFires:2,effect:(_e,{emit})=>emit({type:'hit'})}],20,10);
+engine.emit({type:'hit'});assert.equal(engine.drain().length,2);
+console.log('Card mechanics tests passed');
