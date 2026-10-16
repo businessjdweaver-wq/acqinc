@@ -14,6 +14,17 @@ A successfully completed Match-3 encounter must award **at least one support cha
 
 These are **proposed values**, not yet gameplay implementation. The only confirmed mechanical requirement is **one support charge minimum on success**, scaling upward by difficulty.
 
+
+## Easy encounter reward-matrix adjustment (approved 2026-10-16)
+For the existing Easy Match-3 bonus-drop matrix, move **5 percentage points** from **No Reward** to **Common Power Card**. All other outcomes retain their previous probabilities; the total remains 100%.
+
+- `P(no_reward)_new = P(no_reward)_old - 0.05`
+- `P(common_power_card)_new = P(common_power_card)_old + 0.05`
+- Other probabilities unchanged. Validate that the existing no-reward share is at least 5% before applying.
+- This adjusts only the *bonus* reward roll, not the guaranteed support-charge floor on victory.
+- Keep Easy General Store and Granary Rats encounter drops distinct from the 20/60/15/5 class-based ticket reward distribution.
+- This document is a design directive, **not evidence that the runtime drop table or cloud grant pipeline has been updated**. Wire the canonical reward resolver when it is implemented; do not create a second random roll or duplicate inventory write.
+
 ## Safety / implementation notes
 - Award exactly once per encounter result, using a durable encounter ID and idempotent reward receipt.
 - Failure/retreat outcomes are separate; do not grant a success reward to failed encounters.
