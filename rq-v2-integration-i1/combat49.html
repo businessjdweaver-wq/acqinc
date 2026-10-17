@@ -232,7 +232,7 @@
 window.addEventListener('error',e=>{const box=document.getElementById('combatRuntimeError');if(box){box.hidden=false;box.textContent='Combat startup error: '+(e.message||'Unknown error')+' · line '+(e.lineno||'?')+':'+(e.colno||'?')}});
 window.addEventListener('unhandledrejection',e=>{const box=document.getElementById('combatRuntimeError');if(box){box.hidden=false;box.textContent='Combat promise error: '+String(e.reason?.message||e.reason)}});
 (()=>{
-const $=id=>document.getElementById(id),board=$('board'),overlay=$('overlay');const C=['#d94d57','#d8ad3c','#388bdc','#8b5fc8','#35a579','#748095','#f0e6ca'],G=['◆','✦','●','⬟','▲','■','◇'];const labels=['red','yellow','blue','purple','green','gray','ivory'];const ORDINARY_COLOR_COUNT=7,SUPPORT_COLOR=5,IVORY_COLOR=6;const supports=[{id:'fox',name:'Fox Companion',icon:'🦊',type:'Pet',cost:5,description:'Protect the weakest ally from the next 20 damage.',effect:'shield'},{id:'ranger',name:'Ranger Volley',icon:'🏹',type:'Ally',cost:7,description:'Make 35 progress against the lead obstacle.',effect:'damage'},{id:'potion',name:'Restorative Elixir',icon:'🧪',type:'Item',cost:4,description:'Heal all living party members for 20 HP.',effect:'heal'},{id:'fire',name:'Alchemist Fire',icon:'💣',type:'Item',cost:6,description:'Make 25 progress and remove a complication.',effect:'fire'},{id:'shuffle',name:'Tactical Reshuffle',icon:'🔀',type:'Item',cost:6,description:'Reshuffle unlocked tiles while retaining locked tiles and special properties.',effect:'shuffle'},{id:'row',name:'Sweeping Strike',icon:'↔️',type:'Ally',cost:8,description:'Choose a row to clear; fortified objectives require another hit.',effect:'row'},{id:'exchange',name:'Free Exchange',icon:'🔁',type:'Item',cost:5,description:'Swap any two unlocked tiles without using a turn.',effect:'exchange'}];const inventory={fox:3,ranger:2,potion:5,fire:2,shuffle:2,row:2,exchange:2};
+const $=id=>document.getElementById(id),board=$('board'),overlay=$('overlay');const C=['#d94d57','#d8ad3c','#388bdc','#8b5fc8','#35a579','#748095','#f0e6ca'],G=['◆','✦','●','⬟','▲','■','◇'];const labels=['red','yellow','blue','purple','green','gray','ivory'];const ORDINARY_COLOR_COUNT=7,SUPPORT_COLOR=5,IVORY_COLOR=6;const supports=[{id:'fox',name:'Fox Companion',icon:'🦊',type:'Pet',cost:5,description:'Protect the weakest ally from the next 20 damage.',effect:'shield'},{id:'ranger',name:'Ranger Volley',icon:'🏹',type:'Ally',cost:7,description:'Make 35 progress against the lead obstacle.',effect:'damage'},{id:'potion',name:'Restorative Elixir',icon:'🧪',type:'Item',cost:4,description:'Heal all living party members for 20 HP.',effect:'heal'},{id:'fire',name:'Alchemist Fire',icon:'💣',type:'Item',cost:6,description:'Choose a tile: blast six tiles, then ignite two survivors for three-turn delayed explosions.',effect:'fire'},{id:'shuffle',name:'Tactical Reshuffle',icon:'🔀',type:'Item',cost:6,description:'Reshuffle unlocked tiles while retaining locked tiles and special properties.',effect:'shuffle'},{id:'row',name:'Sweeping Strike',icon:'↔️',type:'Ally',cost:8,description:'Choose a row to clear; fortified objectives require another hit.',effect:'row'},{id:'exchange',name:'Free Exchange',icon:'🔁',type:'Item',cost:5,description:'Swap any two unlocked tiles without using a turn.',effect:'exchange'}];const inventory={fox:3,ranger:2,potion:5,fire:2,shuffle:2,row:2,exchange:2};
 const SUPPORT_STORAGE_PREFIX='rq-v2-combat-support-inventory-v1-';
 let supportStorageKey=null;let supportCloudClient=null;let supportCloudReady=false;
 function saveSupportInventory(){
@@ -356,6 +356,7 @@ function say(s){logs.unshift(s);logs=logs.slice(0,9);$('log').replaceChildren(..
 }
 // Recalculate positions on rotation, viewport changes, and browser chrome resizing.
 new ResizeObserver(()=>{if(typeof tiles!=='undefined'&&Array.isArray(tiles))for(const t of tiles)if(t)place(t,true);}).observe(board);
+const alchemistBurns=new Map();
 function paint(t){
  let d=t.el.firstChild;d.style.background=C[t.v];d.replaceChildren();
  let icon=document.createElement('span');icon.className='tile-character-icon';
@@ -368,7 +369,7 @@ function paint(t){
  if(t===inspectedSpecialTile&&t.special&&['attack','defense','energy','strike'].includes(t.special)&&Number.isFinite(Number(t.specialStrength))){const value=document.createElement('span');value.className='tile-selected-value';value.textContent=String(Math.max(0,Number(t.specialStrength)));value.title='Selected special tile strength';d.appendChild(value);}
  t.el.classList.toggle('trap',t.trap>0);t.el.classList.toggle('power',t.power);
  t.el.classList.toggle('rat',!!t.rat);t.el.classList.toggle('special-tile',!!t.special);t.el.classList.toggle('wild-tile',t.special==='wild');t.el.classList.toggle('attack-tile',t.special==='attack');t.el.classList.toggle('hay',!!t.hay);t.el.classList.toggle('lore',!!t.lore);t.el.classList.toggle('fortified',!!(t.lore&&t.loreFortified||t.effectFortified));t.el.classList.toggle('locked',!!t.locked);t.el.classList.toggle('hidden-card-trap',!!t.hiddenTrap);if(t.locked||t.effectFortified||t.loreFortified){const markers=document.createElement('span');markers.className='tile-state-markers';if(t.locked){const mark=document.createElement('span');mark.textContent='🔒';mark.title='Locked: fixed in place';markers.appendChild(mark);}d.appendChild(markers);}
- if(t.friendlyRat){icon.textContent='🐀';icon.style.filter='grayscale(1) brightness(0) invert(1)';icon.style.opacity='1';icon.title='Friendly rat · climbs toward the enemy';}if(t.rat){let counter=document.createElement('span');counter.className='counter';counter.textContent='↑';d.appendChild(counter);}if(t.lore){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.locked?'🔒':t.loreFortified?(t.loreUnlocked?'◇':t.loreLockTimer>0?t.loreLockTimer:'◇'):t.loreCracked?'◇':t.loreTimer;d.appendChild(counter);}if(t.returnShield){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.returnShield;d.appendChild(counter);}if(t.trap||t.hiddenTrap?.owner==='player'&&t.hiddenTrap.duration>0){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.trap||t.hiddenTrap.duration;d.appendChild(counter);}
+ if(t.friendlyRat){icon.textContent='🐀';icon.style.filter='grayscale(1) brightness(0) invert(1)';icon.style.opacity='1';icon.title='Friendly rat · climbs toward the enemy';}if(t.rat){let counter=document.createElement('span');counter.className='counter';counter.textContent='↑';d.appendChild(counter);}const burn=alchemistBurns.get(t.r*8+t.c);if(burn){const mark=document.createElement('span');mark.className='counter';mark.textContent='🔥'+burn.turns;mark.title='Alchemist Fire: '+burn.turns+' player turns until detonation';d.appendChild(mark);}if(t.lore){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.locked?'🔒':t.loreFortified?(t.loreUnlocked?'◇':t.loreLockTimer>0?t.loreLockTimer:'◇'):t.loreCracked?'◇':t.loreTimer;d.appendChild(counter);}if(t.returnShield){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.returnShield;d.appendChild(counter);}if(t.trap||t.hiddenTrap?.owner==='player'&&t.hiddenTrap.duration>0){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.trap||t.hiddenTrap.duration;d.appendChild(counter);}
  t.el.setAttribute('aria-label',`${labels[t.v]} tile at row ${t.r+1}, column ${t.c+1}${t.rat?' advancing rat: moves up one row each turn, reaching top deals 16 stamina damage':''}${t.trap?(t.trapOwner==='player'?' friendly spike trap, '+t.trap+' rounds remaining; triggers when enemy matches it':' enemy countdown, '+t.trap+' turns until 18 damage'):''}${t.hay?' haystack objective':''}${t.lore?' lore glyph, '+(t.loreFortified?'fortified: requires two matches':'moves each turn for '+t.loreTimer+' more turns'):''}${t.special?' '+t.special+' special tile':''}${t.locked?' locked':''}${t.effectFortified||t.loreFortified?' fortified':''}`);
 }
 function refreshTileIcons(){for(const t of tiles)if(t)paint(t);}
@@ -687,7 +688,7 @@ function swapAttackColor(a,b){
  eligible.sort((x,y)=>y.length-x.length);
  return eligible[0]?.[0]?.v??null;
 }
-async function enemyTurn(){if(ended)return;const stunnedEnemy=enemyStunRounds>0?enemyStunTarget:null;if(enemyStunRounds>0){enemyStunRounds--;banner('FRONT OPPONENT STUNNED!');say((enemies[stunnedEnemy]?.name||'Front opponent')+' cannot activate powers this turn; other opponents remain active.');if(!enemyStunRounds)enemyStunTarget=null;}side='enemy';busy=true;render();await wait(450);let extra=false,actions=0;do{let options=moves();if(!options.length){fresh();options=moves();}if(!options.length)break;options.forEach(o=>{let old=tiles[o.i],next=tiles[o.j];if(enemies[1]?.hp>0&&(old.v===0||next.v===0))o.score+=7;if(enemies[2]?.hp>0&&(old.v===3||next.v===3))o.score+=7;});options.sort((a,b)=>b.score-a.score);let m=options[rnd(Math.min(2,options.length))],a=tiles[m.i],b=tiles[m.j];a.el.classList.add('selected');b.el.classList.add('selected');say('The challenge pushes back.');await wait(550);a.el.classList.remove('selected');b.el.classList.remove('selected');await swap(a,b);extra=await resolve('enemy',swapAttackColor(a,b),a,b);if(!ended)await tickAttackTiles('enemy');actions++;if(extra&&!ended){banner('ANOTHER COMPLICATION!');await wait(850);}}while(extra&&!ended&&actions<8);if(stunnedEnemy!==0&&!ratMode&&!ended&&enemies[0]?.hp>0&&enemyEnergy[1]>=(storeMode?9:5)){enemyEnergy[1]-=storeMode?9:5;let available=tiles.filter(t=>!t.rat&&!t.trap&&!t.lore&&!t.hay&&!t.special&&!t.power);if(available.length){let t=available[rnd(available.length)];t.trap=storeMode?3:2;t.trapOwner=0;t.fresh=true;paint(t);banner('NEW COMPLICATION!');say(storeMode?'The merchant posts a new fee token: it will steal power energy when its countdown ends.':currentEncounter.skills[0]+' creates a countdown complication.');await wait(850);}}if(stunnedEnemy!==1&&!ended&&enemies[1]?.hp>0&&enemyEnergy[0]>=6){enemyEnergy[0]-=6;banner('UNEXPECTED SETBACK!');say(currentEncounter.skills[1]+' drains the party’s stamina.');damageParty(20);await wait(600);}if(stunnedEnemy!==2&&!ended&&enemies[2]?.hp>0&&enemyEnergy[3]>=6){enemyEnergy[3]-=6;banner('MORE TROUBLE!');say(currentEncounter.skills[2]+' slows progress.');damageParty(15);await wait(600);}if(!ended){if(ratMode)await advanceRats();else await tickTraps();}for(let p of party)if(p.away>0){p.away--;if(!p.away)say(p.name+' returns from concealment / flight.');}round++;side='player';busy=ended;render();if(!ended)say('Your turn.');}
+async function enemyTurn(){if(ended)return;const stunnedEnemy=enemyStunRounds>0?enemyStunTarget:null;if(enemyStunRounds>0){enemyStunRounds--;banner('FRONT OPPONENT STUNNED!');say((enemies[stunnedEnemy]?.name||'Front opponent')+' cannot activate powers this turn; other opponents remain active.');if(!enemyStunRounds)enemyStunTarget=null;}side='enemy';busy=true;render();await wait(450);let extra=false,actions=0;do{let options=moves();if(!options.length){fresh();options=moves();}if(!options.length)break;options.forEach(o=>{let old=tiles[o.i],next=tiles[o.j];if(enemies[1]?.hp>0&&(old.v===0||next.v===0))o.score+=7;if(enemies[2]?.hp>0&&(old.v===3||next.v===3))o.score+=7;});options.sort((a,b)=>b.score-a.score);let m=options[rnd(Math.min(2,options.length))],a=tiles[m.i],b=tiles[m.j];a.el.classList.add('selected');b.el.classList.add('selected');say('The challenge pushes back.');await wait(550);a.el.classList.remove('selected');b.el.classList.remove('selected');await swap(a,b);extra=await resolve('enemy',swapAttackColor(a,b),a,b);if(!ended)await tickAttackTiles('enemy');actions++;if(extra&&!ended){banner('ANOTHER COMPLICATION!');await wait(850);}}while(extra&&!ended&&actions<8);if(stunnedEnemy!==0&&!ratMode&&!ended&&enemies[0]?.hp>0&&enemyEnergy[1]>=(storeMode?9:5)){enemyEnergy[1]-=storeMode?9:5;let available=tiles.filter(t=>!t.rat&&!t.trap&&!t.lore&&!t.hay&&!t.special&&!t.power);if(available.length){let t=available[rnd(available.length)];t.trap=storeMode?3:2;t.trapOwner=0;t.fresh=true;paint(t);banner('NEW COMPLICATION!');say(storeMode?'The merchant posts a new fee token: it will steal power energy when its countdown ends.':currentEncounter.skills[0]+' creates a countdown complication.');await wait(850);}}if(stunnedEnemy!==1&&!ended&&enemies[1]?.hp>0&&enemyEnergy[0]>=6){enemyEnergy[0]-=6;banner('UNEXPECTED SETBACK!');say(currentEncounter.skills[1]+' drains the party’s stamina.');damageParty(20);await wait(600);}if(stunnedEnemy!==2&&!ended&&enemies[2]?.hp>0&&enemyEnergy[3]>=6){enemyEnergy[3]-=6;banner('MORE TROUBLE!');say(currentEncounter.skills[2]+' slows progress.');damageParty(15);await wait(600);}if(!ended){if(ratMode)await advanceRats();else await tickTraps();}for(let p of party)if(p.away>0){p.away--;if(!p.away)say(p.name+' returns from concealment / flight.');}if(!ended)await tickAlchemistBurns();round++;side='player';busy=ended;render();if(!ended)say('Your turn.');}
 
 const LORE_ENERGY_COLOR=2,LORE_SPAWN_COST=12;
 function loreSpawnFromEnergy(){if(!loreMode||ended)return;let spawned=0;while(enemyEnergy[LORE_ENERGY_COLOR]>=LORE_SPAWN_COST&&spawned<3){const available=tiles.filter(t=>t&&!t.lore&&!t.loreFortified&&!t.hay&&!t.trap&&!t.rat&&!t.special&&!t.power&&!t.returnShield&&!t.locked);if(!available.length)break;const t=available[rnd(available.length)];enemyEnergy[LORE_ENERGY_COLOR]-=LORE_SPAWN_COST;t.lore=true;t.loreTimer=3;t.loreLockTimer=0;t.loreUnlocked=false;t.loreFortified=false;t.loreHits=0;t.loreCracked=false;t.loreJustCracked=false;loreLeft++;paint(t);spawned++;say('The archive spends '+LORE_SPAWN_COST+' blue energy to create another moving manuscript.');banner('NEW MANUSCRIPT!')}if(spawned)render();}
@@ -996,6 +997,7 @@ async function destroyAllCorners(){
  await resolve('player');
 }
 async function collapseRemovedTile(t){
+ for(const [key,burn] of alchemistBurns)if(burn.originalId===t.id)alchemistBurns.delete(key);
  const c=t.c;
  t.el.remove();tiles[t.r*8+c]=null;
  const fixed=[],falling=[];
@@ -1080,20 +1082,76 @@ async function usePower(i,j,enemyIndex=null){let p=party[i].powers[j];if(busy||e
  if(p[4]==='enemy-special-burst'){const n=tiles.filter(t=>t?.special&&t.specialOwner==='enemy'&&!t.locked).reduce((sum,t)=>sum+Math.max(1,Number(t.specialStrength??1)),0);if(level(i,j)>=4&&burstMasteryDisarm){let cleared=0;for(const t of tiles)if(t?.special&&t.specialOwner==='enemy'&&!t.locked){t.special=null;t.specialOwner=null;t.specialStrength=0;paint(t);cleared++;}say('Feed the Chaos disarmed '+cleared+' enemy special tiles.');}else{damageEnemy(8+4*(level(i,j)-1)+n*(4+level(i,j)));say('Feed the Chaos uses '+n+' enemy special strength.');}}if(p[4]==='spawn-trap'){const pool=tiles.filter(t=>t&&!t.special&&!t.trap&&!t.hiddenTrap&&!t.lore&&!t.hay&&!t.rat);const long=level(i,j)>=4&&trapMasteryLong;const count=Math.min(pool.length,long?4:tileCount(i,j));for(let k=0;k<count;k++){const t=pool.splice(rnd(pool.length),1)[0];t.hiddenTrap={id:'iris-'+t.id+'-'+round,owner:'player',triggerTeam:'enemy',trigger:'matched',charges:1,duration:long?5:3,maxDuration:long?5:3,age:0,effect:{type:'damage',amount:6}};paint(t);say('Delayed Danger conceals '+count+' friendly spike traps for three rounds.');} }if(p[4].startsWith('damage'))damageEnemy(30+10*(level(i,j)-1));if(p[4]==='snipe')damageEnemy(36+10*(level(i,j)-1),enemyIndex);if(p[4]==='aoe'){for(let k=0;k<enemies.length;k++)if(targetable(enemies[k]))damageEnemy(28+8*(level(i,j)-1),k);}if(puzzleMode&&p[4]==='intercept'){turnLimit+=1;banner('EXTRA TIME!');}
  if(p[4]==='intercept'){heroOrder=heroOrder.filter(x=>x!==i).concat(i);guard={i,ratio:(.60+(level(i,j)-1)*.08)};banner('GUARDIAN INTERCEPT READY');}if(p[4]==='vanish'){party[i].away=level(i,j)+1;banner('VEIL STEP');}if(p[4].startsWith('heal'))heal(32+8*(level(i,j)-1)+(p[0]==='Rallying Cry'?Math.min(10,fortifiedCount())*(level(i,j)+1):0));if(p[4]==='resonance'){damageEnemy(16);heal(8);}if(p[4]==='inspire')for(let c=0;c<6;c++)charge(c,level(i,j)+2,'player');if(p[4].startsWith('spawn-')&&p[4]!=='spawn-trap')spawnSpecial((p[4].startsWith('spawn-enemy-')?p[4].slice(12):p[4].slice(6)),p[4].startsWith('spawn-enemy-')?'enemy':'player',tileCount(i,j));if(p[4]==='convert'){let pool=tiles.filter(t=>t&&t.v!==2&&!t.lore&&!t.hay&&!t.rat&&!t.trap&&!t.special&&!t.returnShield&&!t.power);let n=Math.min(pool.length,level(i,j)+2);for(let k=0;k<n;k++){let t=pool.splice(rnd(pool.length),1)[0];t.v=2;paint(t);}say('Unanswered Questions reveals '+n+' blue clues, spending purple energy.');await wait(350);await resolve('player');}await wait(350);busy=ended;render();}
 async function useSupport(s,slot){if(party.every(p=>p.hp<=0)){finish(false);return}if(busy||ended||supportSlotUsed[slot]||load[slot]!==s.id||inventory[s.id]<1||energy[5]<s.cost)return;if(!supportCloudReady){say('Cloud inventory unavailable. No charge spent.');return;}
- if(['row','exchange'].includes(s.effect)){supportTarget={s,slot,first:null};$('targetPanel').classList.remove('hidden');$('targetText').textContent=s.effect==='row'?'Sweeping Strike: tap any tile in the row to clear. Cancel spends nothing.':'Free Exchange: select two unlocked tiles. Cancel spends nothing.';render();return;}
+ if(['row','exchange','fire'].includes(s.effect)){supportTarget={s,slot,first:null};$('targetPanel').classList.remove('hidden');$('targetText').textContent=s.effect==='row'?'Sweeping Strike: tap any tile in the row to clear. Cancel spends nothing.':s.effect==='fire'?'Alchemist Fire: tap the center of the explosion. Cancel spends nothing.':'Free Exchange: select two unlocked tiles. Cancel spends nothing.';render();return;}
  if(s.effect==='shuffle'&&!tiles.some(t=>t&&!t.locked)){say('No movable tiles; no charge spent.');return;}
  busy=true;render();
  const {data:charges,error:spendError}=await supportCloudClient.rpc('rq_v2_support_spend',{p_support:s.id,p_request_id:crypto.randomUUID()});
  if(spendError){busy=false;say('Support activation failed: '+spendError.message);render();return;}
  for(const k of Object.keys(inventory)){if(Number.isSafeInteger(charges?.[k]))inventory[k]=charges[k];}
- supportSlotUsed[slot]=true;energy[5]-=s.cost;saveSupportInventory();render();say(`${s.name} activated. One charge permanently consumed.`);if(s.effect==='shuffle'){if(!reshufflePreservingTiles())say('No legal rearrangement found; existing tiles preserved.');else say('Tactical Reshuffle rearranged the board.');}if(s.effect==='shield'){shield+=20;banner('FOX PROTECTION!');}if(s.effect==='damage')damageEnemy(35);if(s.effect==='heal')heal(20,true);if(s.effect==='fire'){damageEnemy(25);let t=tiles.find(x=>x.trap>0||x.rat);if(t){t.trap=0;t.rat=false;t.fresh=false;paint(t);say('Alchemist Fire clears a hazard.');}}await wait(500);busy=ended;render();}
+ supportSlotUsed[slot]=true;energy[5]-=s.cost;saveSupportInventory();render();say(`${s.name} activated. One charge permanently consumed.`);if(s.effect==='shuffle'){if(!reshufflePreservingTiles())say('No legal rearrangement found; existing tiles preserved.');else say('Tactical Reshuffle rearranged the board.');}if(s.effect==='shield'){shield+=20;banner('FOX PROTECTION!');}if(s.effect==='damage')damageEnemy(35);if(s.effect==='heal')heal(20,true);await wait(500);busy=ended;render();}
+// Alchemist Fire burns board coordinates. Early removal of an ignited tile extinguishes its flame.
+function fireArea(center){
+ const candidates=[];
+ for(let radius=1;radius<=4;radius++){
+  for(let r=Math.max(0,center.r-radius);r<=Math.min(7,center.r+radius);r++)
+   for(let c=Math.max(0,center.c-radius);c<=Math.min(7,center.c+radius);c++){
+    const tile=tiles[r*8+c];
+    if(tile&&!candidates.includes(tile))candidates.push(tile);
+   }
+  if(candidates.length>=8)break;
+ }
+ return candidates;
+}
+function fireShuffle(items){const out=[...items];for(let i=out.length-1;i>0;i--){const j=rnd(i+1);[out[i],out[j]]=[out[j],out[i]];}return out;}
+async function fireHit(q){
+ if(!q||!tiles.includes(q))return false;
+ if(q.loreFortified){q.loreFortified=false;q.loreCracked=true;q.loreHits=1;paint(q);return false;}
+ if(q.effectFortified){q.effectFortified=false;paint(q);return false;}
+ if(q.hay)hayLeft=Math.max(0,hayLeft-1);
+ if(q.lore)loreLeft=Math.max(0,loreLeft-1);
+ await collapseRemovedTile(q);return true;
+}
+async function igniteAlchemist(center){
+ const area=fireArea(center),others=fireShuffle(area.filter(q=>q!==center));
+ const struck=[center,...others.slice(0,5)];
+ const survivors=fireShuffle(area.filter(q=>!struck.includes(q)));
+ // Mark the delayed positions before gravity, but only after the initial six hits.
+ let removed=0;
+ for(const q of struck){if(ended)break;if(await fireHit(q))removed++;}
+ const burning=survivors.slice(0,2);
+ for(const q of burning){
+  const current=tiles[q.r*8+q.c];
+  if(current){alchemistBurns.set(q.r*8+q.c,{turns:3,originalId:current.id});paint(current);}
+ }
+ say('Alchemist Fire struck '+struck.length+' tiles ('+removed+' removed); '+burning.length+' flames will erupt after three turns.');
+ if(puzzleMode&&(loreMode?loreLeft===0:hayLeft===0)){finish(true);return;}
+ if(!ended)await resolve('player');
+}
+async function tickAlchemistBurns(){
+ if(!alchemistBurns.size)return;
+ const detonations=[];
+ for(const [key,burn] of [...alchemistBurns]){
+  burn.turns--;
+  if(burn.turns<=0){detonations.push(key);alchemistBurns.delete(key);}
+ }
+ for(const key of detonations){
+  if(ended)break;
+  const q=tiles[key];
+  if(q){await fireHit(q);say('Alchemist Fire erupts!');}
+ }
+ for(const [key] of alchemistBurns){const q=tiles[key];if(q)paint(q);}
+ if(detonations.length&&!ended){
+  if(puzzleMode&&(loreMode?loreLeft===0:hayLeft===0))finish(true);
+  else await resolve('player');
+ }
+}
 async function pickSupportTarget(t){
  const x=supportTarget;if(!x||busy||ended)return;
  if(x.s.effect==='exchange'){
   if(t.locked){say('Choose an unlocked tile.');return;}
   if(!x.first){x.first=t;t.el.classList.add('selected');$('targetText').textContent='Free Exchange: select the second unlocked tile. Cancel spends nothing.';return;}
   if(t===x.first){t.el.classList.remove('selected');x.first=null;return;}
- }else if(x.s.effect==='row'&&!tiles.some(q=>q&&q.r===t.r&&!q.locked)){say('This row has no eligible tiles.');return;}
+ }else if(x.s.effect==='fire'&&fireArea(t).length<8){say('Not enough eligible tiles for Alchemist Fire.');return;}else if(x.s.effect==='row'&&!tiles.some(q=>q&&q.r===t.r&&!q.locked)){say('This row has no eligible tiles.');return;}
  const first=x.first;if(first)first.el.classList.remove('selected');
  supportTarget=null;$('targetPanel').classList.add('hidden');
  // Target chosen; charge only after server confirms the spend.
@@ -1105,6 +1163,7 @@ async function pickSupportTarget(t){
  for(const k of Object.keys(inventory))if(Number.isSafeInteger(data?.[k]))inventory[k]=data[k];
  supportSlotUsed[slot]=true;energy[5]-=s.cost;saveSupportInventory();
  if(s.effect==='exchange'){await playerMove(first,t,true);say('Free Exchange swapped two unlocked tiles.');}
+ else if(s.effect==='fire'){await igniteAlchemist(t);}
  else{
   const row=t.r;let cleared=0;
   for(let c=0;c<8&&!ended;c++){
