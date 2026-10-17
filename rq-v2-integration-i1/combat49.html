@@ -357,6 +357,9 @@ function say(s){logs.unshift(s);logs=logs.slice(0,9);$('log').replaceChildren(..
 // Recalculate positions on rotation, viewport changes, and browser chrome resizing.
 new ResizeObserver(()=>{if(typeof tiles!=='undefined'&&Array.isArray(tiles))for(const t of tiles)if(t)place(t,true);}).observe(board);
 const alchemistBurns=new Map();
+const alchemistFireStyle=document.createElement('style');
+alchemistFireStyle.textContent='.tile.alchemist-marked>div{background:#c92e2e!important;box-shadow:inset 0 0 0 3px #ffb4a0,0 0 15px #ff493b!important;filter:saturate(1.3)}.alchemist-fire-icon{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(24px,5vw,38px);z-index:30;pointer-events:none;text-shadow:0 2px 4px #5a0d00}';
+document.head.appendChild(alchemistFireStyle);
 function paint(t){
  let d=t.el.firstChild;d.style.background=C[t.v];d.replaceChildren();
  let icon=document.createElement('span');icon.className='tile-character-icon';
@@ -1111,14 +1114,51 @@ async function fireHit(q){
  if(q.lore)loreLeft=Math.max(0,loreLeft-1);
  await collapseRemovedTile(q);return true;
 }
+// Show all targets before a simultaneous removal and single gravity pass.
+async function fireVolley(targets){
+ const unique=[...new Set(targets)].filter(q=>q&&tiles.includes(q));
+ for(const q of unique){
+  q.el.classList.add('alchemist-marked');
+  const overlay=document.createElement('span');overlay.className='alchemist-fire-icon';overlay.textContent='🔥';q.el.appendChild(overlay);
+ }
+ await wait(850);
+ const removed=[];
+ for(const q of unique){
+  q.el.classList.remove('alchemist-marked');
+  q.el.querySelector('.alchemist-fire-icon')?.remove();
+  if(q.loreFortified){q.loreFortified=false;q.loreCracked=true;q.loreHits=1;paint(q);continue;}
+  if(q.effectFortified){q.effectFortified=false;paint(q);continue;}
+  if(q.hay)hayLeft=Math.max(0,hayLeft-1);
+  if(q.lore)loreLeft=Math.max(0,loreLeft-1);
+  removed.push(q);
+ }
+ // Remove every target in the same frame; refill each affected column once.
+ const columns=new Set();
+ for(const q of removed){
+  for(const [key,burn] of alchemistBurns)if(burn.originalId===q.id)alchemistBurns.delete(key);
+  columns.add(q.c);tiles[q.r*8+q.c]=null;q.el.remove();
+ }
+ for(const c of columns){
+  const fixed=[],falling=[];
+  for(let row=7;row>=0;row--){const q=tiles[row*8+c];if(q)(q.locked?fixed:falling).push(q);}
+  for(let row=0;row<8;row++)tiles[row*8+c]=null;
+  for(const q of fixed)tiles[q.r*8+c]=q;
+  let next=0;
+  for(let row=7;row>=0;row--){
+   if(tiles[row*8+c])continue;
+   if(next<falling.length){const q=falling[next++];q.r=row;q.c=c;tiles[row*8+c]=q;place(q);}
+   else {const color=noMatchRefillColor(row,c);tiles[row*8+c]=create(color??rnd(ORDINARY_COLOR_COUNT),row,c,-1-next);}
+  }
+ }
+ if(columns.size)await wait(300);
+ return removed.length;
+}
 async function igniteAlchemist(center){
  const area=fireArea(center),others=fireShuffle(area.filter(q=>q!==center));
  const struck=[center,...others.slice(0,5)];
  const survivors=fireShuffle(area.filter(q=>!struck.includes(q)));
  const burning=survivors.slice(0,2).map(q=>({r:q.r,c:q.c}));
- // Capture ignition coordinates before gravity changes tile positions.
- let removed=0;
- for(const q of struck){if(ended)break;if(await fireHit(q))removed++;}
+ const removed=await fireVolley(struck);
  for(const q of burning){
   const current=tiles[q.r*8+q.c];
   if(current){alchemistBurns.set(q.r*8+q.c,{turns:3,originalId:current.id});paint(current);}
@@ -1134,11 +1174,7 @@ async function tickAlchemistBurns(){
   burn.turns--;
   if(burn.turns<=0){detonations.push(key);alchemistBurns.delete(key);}
  }
- for(const key of detonations){
-  if(ended)break;
-  const q=tiles[key];
-  if(q){await fireHit(q);say('Alchemist Fire erupts!');}
- }
+ if(detonations.length&&!ended){await fireVolley(detonations.map(key=>tiles[key]).filter(Boolean));say('Alchemist Fire erupts!');}
  for(const [key] of alchemistBurns){const q=tiles[key];if(q)paint(q);}
  if(detonations.length&&!ended){
   if(puzzleMode&&(loreMode?loreLeft===0:hayLeft===0))finish(true);
