@@ -22,7 +22,7 @@ declare
  u uuid:=auth.uid();
  old_reward jsonb;
  n integer; streak_count integer:=1; prev_date date; day_row record;
- gold_amount integer; support_id text; support_charges integer:=3;
+ gold_amount integer; ticket_amount integer:=0; checked_count integer:=0; support_id text; support_charges integer:=3;
  card jsonb:=null; cards jsonb:='[]'::jsonb; monthly boolean; result jsonb;
  choices text[]:=array['fox','ranger','potion','fire','shuffle','row','exchange'];
  unlocked boolean:=false;
@@ -43,6 +43,8 @@ begin
  gold_amount:=80+floor(random()*41)::integer+least(100,25*((streak_count-1)/7));
  support_id:=choices[1+floor(random()*array_length(choices,1))::integer];
  monthly:=(n%30=0);
+ select count(*) into checked_count from rq_v2.daily_logs l cross join lateral jsonb_each(l.activities) a where l.user_id=u and l.local_date=p_local_date and a.value='true'::jsonb;
+ ticket_amount:=checked_count/2;
  perform public.rq_v2_initialize();
  insert into public.rq_v2_support_inventory(user_id) values(u) on conflict do nothing;
  update public.rq_v2_support_inventory
@@ -52,6 +54,12 @@ begin
  on conflict(user_id,currency) do update set balance=rq_v2.economy_accounts.balance+excluded.balance;
  insert into rq_v2.economy_events(user_id,event_key,currency,amount)
  values(u,'daily-bundle:'||p_local_date::text,'gold',gold_amount);
+ if ticket_amount>0 then
+  insert into rq_v2.economy_accounts(user_id,currency,balance) values(u,'encounter_tickets',ticket_amount)
+  on conflict(user_id,currency) do update set balance=rq_v2.economy_accounts.balance+excluded.balance;
+  insert into rq_v2.economy_events(user_id,event_key,currency,amount)
+  values(u,'daily-bundle-tickets:'||p_local_date::text,'encounter_tickets',ticket_amount);
+ end if;
  if random()<0.2 then
   select count(distinct (x.value->>'archetype')::integer)>=3 into unlocked
   from public.rq_v2_collection s cross join lateral jsonb_array_elements(s.roster_members) x
@@ -62,7 +70,7 @@ begin
   update public.rq_v2_collection set inbox=inbox||cards,updated_at=now() where user_id=u;
  end if;
  if monthly then update public.rq_v2_collection set roster_slots=roster_slots+1,updated_at=now() where user_id=u;end if;
- result:=jsonb_build_object('claim_number',n,'streak',streak_count,'gold',gold_amount,'support',support_id,'support_charges',support_charges,'cards',cards,'roster_slot',monthly,'already_claimed',false);
+ result:=jsonb_build_object('claim_number',n,'streak',streak_count,'gold',gold_amount,'tickets',ticket_amount,'checked_count',checked_count,'support',support_id,'support_charges',support_charges,'cards',cards,'roster_slot',monthly,'already_claimed',false);
  insert into rq_v2.daily_bundle_claims(user_id,local_date,claim_number,streak,rewards)
  values(u,p_local_date,n,streak_count,result);
  return result;
