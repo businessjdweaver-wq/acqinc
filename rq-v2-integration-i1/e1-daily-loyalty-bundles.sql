@@ -28,7 +28,7 @@ declare
  unlocked boolean:=false;
 begin
  if u is null then raise exception 'Authentication required';end if;
- if p_local_date<>(now() at time zone 'America/Indiana/Indianapolis')::date then raise exception 'Only today's check-in is eligible';end if;
+ if p_local_date<>(now() at time zone 'America/Indiana/Indianapolis')::date then raise exception 'Only the current date is eligible';end if;
  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(u::text||':daily-bundle',0));
  select rewards into old_reward from rq_v2.daily_bundle_claims where user_id=u and local_date=p_local_date;
  if found then return old_reward||jsonb_build_object('already_claimed',true);end if;
