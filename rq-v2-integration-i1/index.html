@@ -265,7 +265,7 @@ function ticketMilestones(t){if(!t||!t.id)return;let total=0,done=0;if(t.difficu
 }
 function integrationGrant(t){ticketMilestones(t);for(const parent of tasks.filter(x=>x.id===t.parentId))ticketMilestones(parent);}
 window.addEventListener('online',ticketFlush);window.addEventListener('focus',ticketFlush);setTimeout(ticketFlush,2000);
-async function battleRewardPhoto(id,caption,host){
+async function battleRewardPhoto(id,caption,host,taskTitle){
  if(!id)return;
  const wrapper=el('figure','');wrapper.style.cssText='flex:1 1 180px;min-width:0;margin:5px';
  const title=el('figcaption','',caption);wrapper.append(title);
@@ -275,7 +275,14 @@ async function battleRewardPhoto(id,caption,host){
   if(blob){const url=URL.createObjectURL(blob);img.src=url;img.addEventListener('load',()=>URL.revokeObjectURL(url),{once:true});return;}
   const user=await signedUser();let path=entry?.userId===user.id?entry.path:null;
   if(!path){const prefix=user.id+'/task-'+id+'.';const {data,error}=await client().schema('rq_v2').from('snapshots').select('storage_path').eq('user_id',user.id).in('storage_path',[prefix+'webp',prefix+'jpg',prefix+'png']).limit(1);if(error)throw error;path=data?.[0]?.storage_path;}
-  if(!path)throw Error('Photograph unavailable');
+  if(!path&&caption==='After'&&taskTitle){
+   // Recover legacy/incorrect photo IDs using the authoritative cloud metadata note.
+   // Only accept an exact, user-scoped match; never guess among multiple photographs.
+   const {data:matches,error:lookupError}=await client().schema('rq_v2').from('snapshots').select('storage_path').eq('user_id',user.id).eq('note','After photograph for '+taskTitle).order('created_at',{ascending:false}).limit(2);
+   if(lookupError)throw lookupError;
+   if(matches?.length===1)path=matches[0].storage_path;
+  }
+  if(!path)throw Error('No matching photograph found in local or cloud storage');
   const {data,error}=await client().storage.from('rq-v2-snapshots').createSignedUrl(path,120);if(error)throw error;
   img.src=data.signedUrl;
  }catch(e){img.replaceWith(el('p','muted','Photograph unavailable: '+e.message));}
@@ -306,7 +313,7 @@ function openDailyReview(){
  const item=entries[pos];const card=el('section','panel');card.style.cssText='width:min(100%,820px);margin:28px auto;padding:22px;text-align:center';
  card.append(el('p','muted',(pos+1)+' of '+entries.length+' · '+item.type+' · '+new Date(item.at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})));
  card.append(el('h2','',item.title));
- if(item.photoId||item.afterPhotoId){const gallery=el('div','row wrap');gallery.style.cssText='justify-content:center;gap:16px';card.append(gallery);if(item.photoId&&item.photoId!==item.afterPhotoId)void battleRewardPhoto(item.photoId,item.afterPhotoId?'Before':'Photograph',gallery);if(item.afterPhotoId)void battleRewardPhoto(item.afterPhotoId,'After',gallery);}
+ if(item.photoId||item.afterPhotoId){const gallery=el('div','row wrap');gallery.style.cssText='justify-content:center;gap:16px';card.append(gallery);if(item.photoId&&item.photoId!==item.afterPhotoId)void battleRewardPhoto(item.photoId,item.afterPhotoId?'Before':'Photograph',gallery);if(item.afterPhotoId)void battleRewardPhoto(item.afterPhotoId,'After',gallery,item.title);}
  overlay.append(card);const controls=el('div','row wrap');controls.style.cssText='gap:14px';const prev=el('button','secondary','← Previous');prev.disabled=pos===0;prev.onclick=()=>{pos--;show()};const next=el('button','secondary',pos===entries.length-1?'Finish':'Next →');next.onclick=()=>{if(pos===entries.length-1){overlay.remove();history.replaceState(null,'',location.pathname+location.search)}else{pos++;show()}};controls.append(prev,next);overlay.append(controls);
  };show();
 }
