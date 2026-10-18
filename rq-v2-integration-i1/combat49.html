@@ -1339,7 +1339,10 @@ async function bootstrapCloudRoster(){
   const members=Array.isArray(data?.rosterMembers)?data.rosterMembers:[];
   if(!members.length)throw Error('No recruited characters yet. Recruit a character in Cloud Collection first.');
   if(members.length>3)status.textContent='Choose up to three characters in the upcoming cloud party selector.';
-  const chosen=members.slice(0,3);
+  const savedFormation=(()=>{try{return JSON.parse(localStorage.getItem('rq-v2-cloud-formation-v1')||'null')}catch(e){return null}})();
+  const requestedIds=savedFormation?.userId===user.id&&Array.isArray(savedFormation.ids)?savedFormation.ids:[];
+  const validSelection=requestedIds.length===3&&new Set(requestedIds).size===3&&requestedIds.every(id=>members.some(m=>m.id===id));
+  const chosen=validSelection?requestedIds.map(id=>members.find(m=>m.id===id)):members.slice(0,3);
   party.splice(0,party.length,...chosen.map(m=>{
    const template=catalog[Number(m.archetype)];
    if(!template)throw Error('Unknown character archetype '+m.archetype);
@@ -1347,7 +1350,7 @@ async function bootstrapCloudRoster(){
   }));
   equipped.splice(0,equipped.length,...chosen.map(m=>(m.powers||[]).filter(j=>Number.isInteger(j)&&j>=0&&j<3).slice(0,3)));
   skillLevels.splice(0,skillLevels.length,...chosen.map(m=>party[chosen.indexOf(m)].powers.map((_,j)=>Math.max(1,Math.min(4,Number(m.powerLevels?.[j]||1))))));
-  heroOrder=party.map((_,i)=>i).reverse();
+  heroOrder=validSelection?[0,2,1]:party.map((_,i)=>i).reverse();
   cloudHealthUserId=user.id;HEALTH_KEY='rq-v2-cloud-combat-health-'+user.id+'-'+chosen.map(m=>m.id).join('-');
   healthData={hp:party.map(p=>p.max),lastLongRest:localDay(),shortRests:2};
   try{const saved=JSON.parse(localStorage.getItem(HEALTH_KEY)||'null');if(saved&&Array.isArray(saved.hp)&&saved.hp.length===party.length){healthData={...healthData,...saved};healthData.hp=saved.hp.map((v,i)=>Math.max(0,Math.min(party[i].max,Number(v)||0)));}}catch(e){}
