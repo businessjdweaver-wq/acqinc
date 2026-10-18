@@ -261,7 +261,7 @@ const localDay=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.get
 let healthData={hp:party.map(p=>p.max),lastLongRest:localDay(),shortRests:2};
 try{const saved=JSON.parse(localStorage.getItem(HEALTH_KEY)||'null');if(saved&&Array.isArray(saved.hp)&&saved.hp.length===party.length){healthData={...healthData,...saved};healthData.hp=saved.hp.map((v,i)=>Math.max(0,Math.min(party[i].max,Number(v)||0)));}}catch(e){}
 party.forEach((p,i)=>p.hp=healthData.hp[i]);
-function saveHealth(){healthData.hp=party.map(p=>p.hp);try{localStorage.setItem(HEALTH_KEY,JSON.stringify(healthData));}catch(e){}}
+let cloudHealthUserId='';function characterHealthKey(id){return 'rq-v2-character-health-v1-'+cloudHealthUserId+'-'+id}function saveHealth(){healthData.hp=party.map(p=>p.hp);try{localStorage.setItem(HEALTH_KEY,JSON.stringify(healthData));if(cloudHealthUserId)party.forEach((p,i)=>{if(p.id)localStorage.setItem(characterHealthKey(p.id),String(p.hp))})}catch(e){}}
 function healthView(){const el=$('healthSummary');const picker=$('fieldHealTarget');if(picker){const selected=picker.value;picker.innerHTML=party.map((p,i)=>'<option value="'+i+'">'+p.icon+' '+p.name+' · '+p.hp+'/'+p.max+' HP</option>').join('');if(selected)picker.value=selected;$('fieldHeal').disabled=inventory.potion<1||party.every(p=>p.hp>=p.max);}if(!el)return;el.textContent=party.map(p=>`${p.icon} ${p.name}: ${p.hp}/${p.max} HP`).join(' · ');$('shortRest').disabled=healthData.shortRests<=0||party.every(p=>p.hp===p.max);$('longRest').disabled=false;$('restStatus').textContent=`${healthData.shortRests} short rest(s) available (prototype test allotment). Long rest requires the remote calendar (last local display: ${healthData.lastLongRest}). Test rest remains a developer-only bypass.`;}
 let restRequestCounter=0;const restPending=new Map();function remoteRestRequest(action){return new Promise((resolve,reject)=>{const id='rest-'+(++restRequestCounter);const timeout=setTimeout(()=>{restPending.delete(id);reject(Error('Remote calendar did not respond. No rest granted.'))},12000);restPending.set(id,{resolve,reject,timeout});window.parent.postMessage({type:'rq-v2-rest-request',id,action},location.origin)})}window.addEventListener('message',event=>{if(event.origin!==location.origin||event.source!==window.parent)return;const data=event.data;if(data?.type!=='rq-v2-rest-result')return;const pending=restPending.get(data.id);if(!pending)return;clearTimeout(pending.timeout);restPending.delete(data.id);if(data.error)pending.reject(Error(data.error));else pending.resolve(data.result)});
 function shortRest(){if(healthData.shortRests<=0)return;healthData.shortRests--;party.forEach(p=>p.hp=Math.min(p.max,p.hp+Math.ceil(p.max*.25)));saveHealth();healthView();}
@@ -1348,10 +1348,10 @@ async function bootstrapCloudRoster(){
   equipped.splice(0,equipped.length,...chosen.map(m=>(m.powers||[]).filter(j=>Number.isInteger(j)&&j>=0&&j<3).slice(0,3)));
   skillLevels.splice(0,skillLevels.length,...chosen.map(m=>party[chosen.indexOf(m)].powers.map((_,j)=>Math.max(1,Math.min(4,Number(m.powerLevels?.[j]||1))))));
   heroOrder=party.map((_,i)=>i).reverse();
-  HEALTH_KEY='rq-v2-cloud-combat-health-'+user.id+'-'+chosen.map(m=>m.id).join('-');
+  cloudHealthUserId=user.id;HEALTH_KEY='rq-v2-cloud-combat-health-'+user.id+'-'+chosen.map(m=>m.id).join('-');
   healthData={hp:party.map(p=>p.max),lastLongRest:localDay(),shortRests:2};
   try{const saved=JSON.parse(localStorage.getItem(HEALTH_KEY)||'null');if(saved&&Array.isArray(saved.hp)&&saved.hp.length===party.length){healthData={...healthData,...saved};healthData.hp=saved.hp.map((v,i)=>Math.max(0,Math.min(party[i].max,Number(v)||0)));}}catch(e){}
-  party.forEach((p,i)=>p.hp=healthData.hp[i]);
+  party.forEach((p,i)=>{try{const raw=localStorage.getItem(characterHealthKey(p.id));if(raw!==null&&Number.isFinite(Number(raw)))healthData.hp[i]=Math.max(0,Math.min(p.max,Number(raw)));else localStorage.setItem(characterHealthKey(p.id),String(healthData.hp[i]));}catch(e){}p.hp=healthData.hp[i]});
   prepare();$('prep').hidden=false;startButton.disabled=false;
  }catch(e){
   party.splice(0);equipped.splice(0);skillLevels.splice(0);
