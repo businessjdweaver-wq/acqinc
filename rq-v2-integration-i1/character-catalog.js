@@ -15,5 +15,5 @@ const characters=[
 ,{name:'Iris · Chronomancer',icon:'⌛',background:'Sage',max:90,powers:[['Delayed Danger',3,6,'Conceal friendly traps that grow more dangerous with age.','spawn-trap'],['Lengthen the Hour',2,5,'Extend a friendly concealed trap duration.','lengthen-trap'],power('Stop Time',6,6,'Lock a countdown tile.','lock')]}
 ,{name:'Elowen · Illusionist',icon:'🎭',background:'Charlatan',max:92,powers:[power('Ivory Mirage',6,6,'Turn eligible ordinary tiles Ivory.','transform',cell,1),['Turncoat',3,6,'Change ownership of a special tile.','flip-owner'],['Prismatic Veil',2,6,'Create a phantom target that absorbs and retaliates.','phantom-target']]}
 
-];const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist'];characters.forEach((c,i)=>{c.cardTitle=cardTitles[i];});return{characters,defaultSelection:[0,1,2],storageKey:'rq-v2-character-selection-v1'};
+];const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist'];characters.forEach((c,i)=>{c.cardTitle=cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});return{characters,defaultSelection:[0,1,2],storageKey:'rq-v2-character-selection-v1'};
 });
