@@ -896,7 +896,7 @@ function dpSave(){
    let t=row.taskId?tasks.find(x=>x.id===row.taskId):null;
    if(!t){t={id:uid(),title:row.title.trim(),notes:'',bucket:'waiting',focus:false,done:false,order:nextOrder(),structure:'simple',progress:0,slices:8,checklist:[],parentId:null,frequency:'single',dayplannerCreated:true};tasks.push(t);row.taskId=t.id}
    const slots=t.dayplannerSlots||(t.dayplannerSlots=[]);if(!slots.some(x=>x.id===row.id))slots.push({id:row.id,date:row.date,period:row.period});
-   if(t.dayplannerCreated){const future=slots.map(x=>dpStamp(x.date,x.period)).filter(x=>x>now).sort((a,b)=>a-b);t.dayplannerReleaseAt=future[0]||0;if(!t.dayplannerReleaseAt)t.bucket='inbox'}
+   if(t.dayplannerCreated){const future=slots.map(x=>dpStamp(x.date,x.period)).filter(x=>x>now).sort((a,b)=>a-b);t.dayplannerReleaseAt=future[0]||0;if(t.dayplannerReleaseAt){t.passiveUntil=t.dayplannerReleaseAt;t.passiveAcknowledged=false;}else{t.bucket='inbox';const elapsed=slots.map(x=>dpStamp(x.date,x.period)).filter(x=>x<=now).sort((a,b)=>b-a)[0];if(elapsed&&!t.passiveUntil){t.passiveUntil=elapsed;t.passiveAcknowledged=false;}}}
   }
  },'Dayplanner saved.');
  dpDirty=false;dpLoadedIds=new Set(dpDraft.map(x=>x.id));dpSaveFeedback=cloudJoined?'✓ Saved locally · cloud sync pending':'✓ Saved locally · cloud connection being checked';dpDraw();if(cloudJoined&&!cloudConflict){scheduleCloudSave(100);cloudStatus(cloudDirty?'Dayplanner tasks saving to cloud…':'✓ Dayplanner tasks already synchronized · revision '+cloudRevision)}else if(!cloudJoined){refreshCloudAuth().then(()=>{if(cloudJoined&&!cloudConflict){scheduleCloudSave(100);dpSaveFeedback='✓ Saved locally · cloud sync pending';dpStatusUpdate()}else{dpSaveFeedback='✓ Saved locally · cloud not connected; open Cloud Sync';dpStatusUpdate()}}).catch(e=>{dpSaveFeedback='✓ Saved locally · cloud unavailable: '+e.message;dpStatusUpdate()})}
@@ -905,7 +905,7 @@ function dpSave(){
 function dpReleaseDue(){
  const now=Date.now(),due=tasks.filter(t=>t.dayplannerCreated&&!t.done&&t.bucket==='waiting'&&t.dayplannerReleaseAt&&t.dayplannerReleaseAt<=now);
  if(!due.length)return;
- change(()=>{for(const t of due){t.bucket='inbox';t.dayplannerReleaseAt=0}},'Dayplanner tasks are ready.');
+ change(()=>{for(const t of due){t.bucket='inbox';t.passiveUntil=t.dayplannerReleaseAt;t.passiveAcknowledged=false;t.dayplannerReleaseAt=0}},'Dayplanner tasks are ready.');
 }
 setInterval(dpReleaseDue,60000);dpReleaseDue();
 
