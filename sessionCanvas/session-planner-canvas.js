@@ -20253,38 +20253,44 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-// v1.3.99 — Encounter Builder: JSON import/export, per-instance CR and Beyond20 actions.
+// v1.3.100 — Encounter Builder: display HP, categorized actions, geographic/wave groups.
 let encounterBuilderNodeId = null;
+const ecbCollapsedGroups = new Set();
 function encounterBuilderNode(){return encounterBuilderNodeId == null ? null : state.nodes.get(encounterBuilderNodeId);}
 function openEncounterBuilder(nodeId){
-  const node=state.nodes.get(nodeId);if(!node||node.type!=='encounter')return;
-  if(inEncounterFocusMode)exitEncounterFocusMode();
-  encounterBuilderNodeId=nodeId;
-  document.body.classList.add('encounter-builder-active');
-  document.getElementById('encounter-builder-overlay').classList.add('open');
-  renderEncounterBuilder();
+ const node=state.nodes.get(nodeId);if(!node||node.type!=='encounter')return;
+ if(inEncounterFocusMode)exitEncounterFocusMode();
+ encounterBuilderNodeId=nodeId;ecbCollapsedGroups.clear();
+ document.body.classList.add('encounter-builder-active');
+ document.getElementById('encounter-builder-overlay').classList.add('open');renderEncounterBuilder();
 }
 function openEncounterBuilderFromFocus(){const id=encounterFocusState&&encounterFocusState.nodeId;if(id!=null)openEncounterBuilder(id);}
 function closeEncounterBuilder(){closeEncounterBuilderDetail();document.getElementById('encounter-builder-overlay').classList.remove('open');document.body.classList.remove('encounter-builder-active');const node=encounterBuilderNode();encounterBuilderNodeId=null;if(node)refreshNodeFace(node);}
+function ecbGroup(m){return String(m._encounterGroup||'Unassigned');}
+function ecbGroups(node){return [...new Set([...(node.fields.encounterGroups||[]),...(node.fields.monsters||[]).map(ecbGroup),'Unassigned'])];}
+function ecbActionInfo(a){return [a.desc||a.description||'',a.saveDC?'Save DC '+a.saveDC+' '+(a.saveAbility||''):'',a.toHit!=null?'Attack +'+a.toHit:'',a.damage?'Damage '+a.damage+' '+(a.damageType||''):'',a.range||a.reach||''].filter(Boolean).join(' · ');}
 function renderEncounterBuilder(){
  const node=encounterBuilderNode();if(!node)return;
  document.getElementById('ecb-title').textContent=node.title||'Encounter';
  const monsters=Array.isArray(node.fields?.monsters)?node.fields.monsters:[];
- const crOptions=Object.keys(CANVAS_CR_TABLE);
- const rows=monsters.map((m,i)=>{
-  const sn=normalizeWorkshopMonsterSnapshot(m.snapshot||{});
-  const actions=getMonsterRollActions(sn);
-  const specials=sn.special_abilities||sn.special||[];
-  const name=_monsterDisplayName(m,node)||_encFocusMonsterName(node,m,i);
-  const buttons=actions.map((a,k)=>`<button type="button" data-ecb-action="${i}:${k}" title="Roll in VTT">${escHtml(a.name||a.title||'Action')}</button>`).join('')+
-    specials.map((a,k)=>`<button type="button" data-ecb-special="${i}:${k}">${escHtml(a.name||a.title||'Special')}</button>`).join('');
-  return `<tr><td><strong>${escHtml(name)}</strong><br><button type="button" data-ecb-stats="${i}">📖 Rollable stats</button></td><td><select aria-label="Challenge rating for ${escHtml(name)}" data-ecb-cr="${i}">${crOptions.map(cr=>`<option value="${escHtml(cr)}" ${String(sn.cr)===cr?'selected':''}>${escHtml(cr)}</option>`).join('')}</select></td><td>AC ${escHtml(String(sn.ac??'—'))}</td><td><div class="ecb-action-list">${buttons||'<span>No rollable actions</span>'}</div></td></tr>`;
+ const crOptions=Object.keys(CANVAS_CR_TABLE),groups=ecbGroups(node);
+ const actionSets=[['actions','Action'],['bonus_actions','Bonus action'],['reactions','Reaction'],['legendary_actions','Legendary'],['lair_actions','Lair'],['special_abilities','Traits / special']];
+ const buttonsFor=(sn,i)=>actionSets.map(([field,label])=>{
+  const arr=Array.isArray(sn[field])?sn[field]:[];if(!arr.length)return '';
+  return `<div class="ecb-action-category"><span class="ecb-action-label">${label}</span><div class="ecb-action-list">${arr.map((a,k)=>`<button type="button" data-ecb-roll="${i}:${field}:${k}" title="${escHtml(ecbActionInfo(a)||'No details provided')}" aria-label="${escHtml(label+' '+(a.name||'Ability'))}">${escHtml(a.name||a.title||'Ability')}</button>`).join('')}</div></div>`;
+ }).join('');
+ const rowsFor=group=>monsters.map((m,i)=>({m,i})).filter(({m})=>ecbGroup(m)===group).map(({m,i})=>{
+  const sn=normalizeWorkshopMonsterSnapshot(m.snapshot||{}),name=_monsterDisplayName(m,node)||_encFocusMonsterName(node,m,i);
+  return `<tr><td><strong>${escHtml(name)}</strong><br><button type="button" data-ecb-stats="${i}">📖 Rollable stats</button></td><td><select aria-label="Challenge rating for ${escHtml(name)}" data-ecb-cr="${i}">${crOptions.map(cr=>`<option value="${escHtml(cr)}" ${String(sn.cr)===cr?'selected':''}>${escHtml(cr)}</option>`).join('')}</select></td><td>AC ${escHtml(String(sn.ac??'—'))}</td><td>HP ${escHtml(String(sn.hp??'—'))}</td><td><select aria-label="Area or wave for ${escHtml(name)}" data-ecb-group="${i}">${groups.map(g=>`<option value="${escHtml(g)}" ${ecbGroup(m)===g?'selected':''}>${escHtml(g)}</option>`).join('')}</select><div class="ecb-order"><button data-ecb-move="${i}:-1" title="Move earlier in group">↑</button><button data-ecb-move="${i}:1" title="Move later in group">↓</button></div></td><td>${buttonsFor(sn,i)||'<span>No actions</span>'}</td></tr>`;
  }).join('');
  const host=document.getElementById('ecb-table-wrap');
- host.innerHTML=`<table class="ecb-table"><thead><tr><th>Monster / VTT name</th><th>CR</th><th>AC</th><th>Clickable actions</th></tr></thead><tbody>${rows||'<tr><td colspan="4">No monsters. Import a ChatGPT encounter JSON package to begin.</td></tr>'}</tbody></table>`;
+ host.innerHTML=`<div class="ecb-group-tools"><button type="button" id="ecb-add-group">+ Add area / wave</button><span>Move monsters between groups using the dropdown. Use arrows to set order within each group.</span></div><table class="ecb-table"><thead><tr><th>Monster / VTT name</th><th>CR</th><th>AC</th><th>HP (reference)</th><th>Area / wave</th><th>Actions</th></tr></thead><tbody>${groups.map(g=>`<tr class="ecb-group-header"><td colspan="6"><button type="button" data-ecb-collapse="${escHtml(g)}" aria-expanded="${!ecbCollapsedGroups.has(g)}">${ecbCollapsedGroups.has(g)?'▸':'▾'} ${escHtml(g)} (${monsters.filter(m=>ecbGroup(m)===g).length})</button></td></tr>${ecbCollapsedGroups.has(g)?'':rowsFor(g)}`).join('')}${!monsters.length?'<tr><td colspan="6">No monsters. Import a ChatGPT encounter JSON package to begin.</td></tr>':''}</tbody></table>`;
+ host.querySelector('#ecb-add-group').onclick=()=>{const name=prompt('Area or wave name (e.g. North Gate, Wave 2):');if(!name||!name.trim())return;const g=name.trim().slice(0,80);node.fields.encounterGroups=[...new Set([...(node.fields.encounterGroups||[]),g])];markDirty();renderEncounterBuilder();};
+ host.querySelectorAll('[data-ecb-collapse]').forEach(b=>b.onclick=()=>{const g=b.dataset.ecbCollapse;ecbCollapsedGroups.has(g)?ecbCollapsedGroups.delete(g):ecbCollapsedGroups.add(g);renderEncounterBuilder();});
+ host.querySelectorAll('[data-ecb-group]').forEach(sel=>sel.onchange=()=>{monsters[+sel.dataset.ecbGroup]._encounterGroup=sel.value;markDirty();renderEncounterBuilder();});
+ host.querySelectorAll('[data-ecb-move]').forEach(b=>b.onclick=()=>{const [i,delta]=b.dataset.ecbMove.split(':').map(Number),g=ecbGroup(monsters[i]),indexes=monsters.map((m,k)=>ecbGroup(m)===g?k:-1).filter(k=>k>=0),pos=indexes.indexOf(i),other=indexes[pos+delta];if(other===undefined)return;[monsters[i],monsters[other]]=[monsters[other],monsters[i]];markDirty();renderEncounterBuilder();});
  host.querySelectorAll('[data-ecb-stats]').forEach(b=>b.onclick=()=>openEncounterBuilderDetail(+b.dataset.ecbStats));
- host.querySelectorAll('[data-ecb-action]').forEach(b=>b.onclick=e=>{const [i,k]=b.dataset.ecbAction.split(':').map(Number);const m=monsters[i],a=getMonsterRollActions(m.snapshot||{})[k];if(a)dispatchMonsterRoll(m,a,_advFromEvent(e),node);});
- host.querySelectorAll('[data-ecb-special]').forEach(b=>b.onclick=e=>{const [i,k]=b.dataset.ecbSpecial.split(':').map(Number);const m=monsters[i],a=(m.snapshot?.special_abilities||m.snapshot?.special||[])[k];if(a)dispatchMonsterRoll(m,a,_advFromEvent(e),node);});
+ host.querySelectorAll('[data-ecb-roll]').forEach(b=>b.onclick=e=>{const [idx,field,key]=b.dataset.ecbRoll.split(':'),m=monsters[+idx],a=normalizeWorkshopMonsterSnapshot(m.snapshot||{})[field]?.[+key];if(a)dispatchMonsterRoll(m,a,_advFromEvent(e),node);});
  host.querySelectorAll('[data-ecb-cr]').forEach(sel=>sel.onchange=()=>{const m=monsters[+sel.dataset.ecbCr],next=sel.value,base=String(m._scaledFromCr||m.snapshot?.cr||'');if(!CANVAS_CR_TABLE[next]||!CANVAS_CR_TABLE[base]){alert('Cannot scale: invalid starting or target CR.');renderEncounterBuilder();return;}if(!m._originalSnapshot)m._originalSnapshot=JSON.parse(JSON.stringify(m.snapshot));if(next===String(m._originalSnapshot.cr)){m.snapshot=JSON.parse(JSON.stringify(m._originalSnapshot));delete m._originalSnapshot;delete m._scaledFromCr;}else{m._scaledFromCr=String(m._originalSnapshot.cr);m.snapshot=scaleMonsterSnapshot(m._originalSnapshot,next,m._scaledFromCr);}markDirty();renderEncounterBuilder();});
 }
 function openEncounterBuilderDetail(i){const node=encounterBuilderNode(),m=node?.fields?.monsters?.[i];if(!m)return;const el=document.getElementById('ecb-detail');el.hidden=false;const body=document.getElementById('ecb-detail-content');body.innerHTML=renderEncounterFocusStatblock(node,m,i);body.querySelectorAll('[data-hpbar],.encf-prevnext,.encf-state-actions').forEach(x=>x.remove());wireMonsterRollClicks(body,node);}
@@ -20296,20 +20302,17 @@ function validateEncounterBuilderPackage(pkg){
   const id=String(entry.id||'').trim();if(!id||ids.has(id))throw Error('Each monster needs a unique, stable id.');ids.add(id);
   const sn=normalizeWorkshopMonsterSnapshot(JSON.parse(JSON.stringify(entry.snapshot)));
   if(!sn.name||!CANVAS_CR_TABLE[String(sn.cr)])throw Error('Monster '+id+' needs a name and supported CR.');
-  return {id,nameOverride:String(entry.name||sn.name).slice(0,160),snapshot:sn};
+  return {id,nameOverride:String(entry.name||sn.name).slice(0,160),snapshot:sn,group:String(entry.group||'Unassigned').slice(0,80)};
  });
 }
 async function importEncounterBuilderFile(input){const file=input.files?.[0];input.value='';if(!file)return;try{
  if(file.size>1500000)throw Error('Encounter JSON must be smaller than 1.5 MB.');
- const pkg=JSON.parse(await file.text());const incoming=validateEncounterBuilderPackage(pkg);const node=encounterBuilderNode();if(!node)return;
- const old=Array.isArray(node.fields.monsters)?node.fields.monsters:[];
- const previous=new Map(old.filter(m=>m._encounterImportId).map(m=>[m._encounterImportId,m]));
- const updated=incoming.map(m=>{const prior=previous.get(m.id);return {...(prior||{}),...m,_encounterImportId:m.id,_encounterImportKey:String(pkg.encounterId||''),_originalSnapshot:undefined,_scaledFromCr:undefined};});
- const sameKey=old.filter(m=>m._encounterImportKey===String(pkg.encounterId||''));
- const keep=old.filter(m=>m._encounterImportKey!==String(pkg.encounterId||''));
- const msg=`Import ${updated.length} creatures into ${node.title}? ${sameKey.length} previously imported creatures with the same encounter ID will be replaced; ${keep.length} other creatures will remain.`;
- if(!confirm(msg))return;
- node.fields.monsters=[...keep,...updated];if(pkg.title)node.title=String(pkg.title).slice(0,160);markDirty();renderEncounterBuilder();
+ const pkg=JSON.parse(await file.text()),incoming=validateEncounterBuilderPackage(pkg),node=encounterBuilderNode();if(!node)return;
+ const old=Array.isArray(node.fields.monsters)?node.fields.monsters:[],previous=new Map(old.filter(m=>m._encounterImportId).map(m=>[m._encounterImportId,m]));
+ const updated=incoming.map(m=>{const prior=previous.get(m.id);return {...(prior||{}),...m,_encounterGroup:m.group==='Unassigned'?(prior?ecbGroup(prior):'Unassigned'):m.group,_encounterImportId:m.id,_encounterImportKey:String(pkg.encounterId||''),_originalSnapshot:undefined,_scaledFromCr:undefined};});
+ const sameKey=old.filter(m=>m._encounterImportKey===String(pkg.encounterId||'')),keep=old.filter(m=>m._encounterImportKey!==String(pkg.encounterId||''));
+ if(!confirm(`Import ${updated.length} creatures into ${node.title}? ${sameKey.length} previously imported creatures with the same encounter ID will be replaced; ${keep.length} other creatures will remain.`))return;
+ node.fields.monsters=[...keep,...updated];node.fields.encounterGroups=[...new Set([...(node.fields.encounterGroups||[]),...(Array.isArray(pkg.groups)?pkg.groups.map(String):[]),...updated.map(ecbGroup)])];if(pkg.title)node.title=String(pkg.title).slice(0,160);markDirty();renderEncounterBuilder();
  }catch(err){alert('Encounter import failed: '+err.message);}}
-function exportEncounterBuilderJson(){const node=encounterBuilderNode();if(!node)return;const pkg={format:'session-canvas-encounter',schemaVersion:1,encounterId:String(node.id),title:node.title,monsters:(node.fields.monsters||[]).map((m,i)=>({id:String(m._encounterImportId||'creature-'+(i+1)),name:m.nameOverride||m.snapshot?.name||'Monster',snapshot:m.snapshot}))};const blob=new Blob([JSON.stringify(pkg,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='session-canvas-encounter.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+function exportEncounterBuilderJson(){const node=encounterBuilderNode();if(!node)return;const pkg={format:'session-canvas-encounter',schemaVersion:1,encounterId:String(node.id),title:node.title,groups:ecbGroups(node),monsters:(node.fields.monsters||[]).map((m,i)=>({id:String(m._encounterImportId||'creature-'+(i+1)),name:m.nameOverride||m.snapshot?.name||'Monster',group:ecbGroup(m),snapshot:m.snapshot}))};const blob=new Blob([JSON.stringify(pkg,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='session-canvas-encounter.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 window.openEncounterBuilder=openEncounterBuilder;window.openEncounterBuilderFromFocus=openEncounterBuilderFromFocus;window.closeEncounterBuilder=closeEncounterBuilder;window.importEncounterBuilderFile=importEncounterBuilderFile;window.exportEncounterBuilderJson=exportEncounterBuilderJson;window.closeEncounterBuilderDetail=closeEncounterBuilderDetail;
