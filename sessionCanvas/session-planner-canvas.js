@@ -1,3 +1,4 @@
+// v1.3.101 — Encounter informational actions, creature duplication, and guarded cloud reconnection.
 // v1.3.99 — ChatGPT encounter JSON import and full-screen table.
 
 // v1.3.98 — Remove conflicting capture-phase HP Enter handler; use single clone-safe commit path.
@@ -243,7 +244,39 @@ async function rqRefreshToken() {
   return true;
 }
 
+// Cloud guard: offline-first by default for existing local-only installations.
+// Explicit opt-in is required before any REST traffic; a hard per-page cap
+// stops runaway loops and preserves local data after failure.
+const spcCloudGuard = { requests: 0, bytes: 0, blocked: false, maxRequests: 90, maxBytes: 8 * 1024 * 1024 };
+function spcCloudEnabled(){
+  try { return !window.SPC_LOCAL_ONLY && localStorage.getItem('spc_cloud_paused') !== '1'; }
+  catch (_) { return !window.SPC_LOCAL_ONLY; }
+}
+function spcCloudStatus(){
+  const el=document.getElementById('spc-cloud-status');
+  if(el) el.textContent = spcCloudGuard.blocked ? 'Cloud: safety limit reached' : spcCloudEnabled() ? 'Cloud: enabled (guarded)' : 'Cloud: paused';
+  const btn=document.getElementById('spc-cloud-toggle');
+  if(btn) btn.textContent=spcCloudEnabled()?'Pause cloud':'Reconnect cloud';
+}
+function spcToggleCloud(){
+  if(spcCloudEnabled()){
+    try{localStorage.setItem('spc_cloud_paused','1');}catch(_){}
+    window.SPC_SUPABASE_OFFLINE=true;
+    // Reload into local-only mode, preserving offline backups; no silent upload.
+    try{localStorage.setItem('spc_local_only_enabled','1');}catch(_){}
+    location.reload();
+    return;
+  }
+  if(!confirm('Reconnect to Supabase? Export an offline JSON backup first. This will reload the app and allow bounded cloud requests. Local changes are NOT automatically merged into cloud data.'))return;
+  try{localStorage.removeItem('spc_cloud_paused');localStorage.removeItem('spc_local_only_enabled');}catch(_){}
+  window.SPC_LOCAL_ONLY=false;spcCloudGuard.blocked=false;spcCloudGuard.requests=0;spcCloudGuard.bytes=0;
+  location.reload();
+}
+window.spcToggleCloud=spcToggleCloud;
+window.addEventListener('DOMContentLoaded',spcCloudStatus);
 async function sbFetch(path, opts = {}) {
+  if(!spcCloudEnabled() || spcCloudGuard.blocked) throw new Error('Cloud paused by safety switch');
+  if(++spcCloudGuard.requests > spcCloudGuard.maxRequests){spcCloudGuard.blocked=true;spcCloudStatus();throw new Error('Cloud request safety limit reached');}
   const auth = rqGetAuth();
   const token = auth && auth.access_token ? auth.access_token : SB_KEY;
   // v1.3.29: preserve Supabase auth headers even when callers pass opts.headers
@@ -280,7 +313,10 @@ async function sbFetch(path, opts = {}) {
   }
   try { window.SPC_SUPABASE_OFFLINE = false; } catch (_) {}
   if (res.status === 204) return null;
-  return res.json();
+  const raw=await res.text();
+  spcCloudGuard.bytes += raw.length * 2; // conservative UTF-16 estimate
+  if(spcCloudGuard.bytes>spcCloudGuard.maxBytes){spcCloudGuard.blocked=true;spcCloudStatus();throw new Error('Cloud download safety limit reached');}
+  return raw ? JSON.parse(raw) : null;
 }
 
 
@@ -1570,6 +1606,7 @@ async function attemptAutosave() {
       console.warn('Offline rescue snapshot failed:', backupErr && backupErr.message ? backupErr.message : backupErr);
     }
 
+    if (!spcCloudEnabled() || spcCloudGuard.blocked) { savePending=false; return; }
     // Remote failures may be transient, so preserve the existing slow retry.
     const retryMs = window.SPC_SUPABASE_OFFLINE ? 30000 : 2500;
     setTimeout(() => {
@@ -17256,6 +17293,11 @@ function dispatchMonsterSpell(imported, attachRef, advantage, dispatchNode) {
 }
 
 function dispatchMonsterRoll(imported, action, advantage, dispatchNode) {
+  if (ecbIsInformational(action)) {
+    const sn=imported.snapshot||{};
+    b20SendFlavor(_monsterDisplayName(imported,dispatchNode),sn.cr||'',sn.ac||'',sn.hp||'',action.name||'Ability',ecbActionInfo(action)||'No details provided.',0);
+    return;
+  }
   const sn = imported.snapshot || {};
   // Display name uses _monsterDisplayName so per-instance nameOverride
   // (Stage 19) flows through to the VTT — without that, "Billy the Ankheg"
@@ -19518,7 +19560,7 @@ window.spcExitLocalOnlyMode = spcExitLocalOnlyMode;
 function boot() {
   applyTransform();
   try {
-    if (localStorage.getItem('spc_local_only_enabled') === '1') {
+    if (localStorage.getItem('spc_local_only_enabled') === '1' || localStorage.getItem('spc_cloud_paused') === '1') {
       spcEnterLocalOnlyMode();
       return;
     }
@@ -20269,6 +20311,36 @@ function closeEncounterBuilder(){closeEncounterBuilderDetail();document.getEleme
 function ecbGroup(m){return String(m._encounterGroup||'Unassigned');}
 function ecbGroups(node){return [...new Set([...(node.fields.encounterGroups||[]),...(node.fields.monsters||[]).map(ecbGroup),'Unassigned'])];}
 function ecbActionInfo(a){return [a.desc||a.description||'',a.saveDC?'Save DC '+a.saveDC+' '+(a.saveAbility||''):'',a.toHit!=null?'Attack +'+a.toHit:'',a.damage?'Damage '+a.damage+' '+(a.damageType||''):'',a.range||a.reach||''].filter(Boolean).join(' · ');}
+function ecbIsInformational(a){
+ if(!a||typeof a!=='object')return true;
+ if(a.informational===true||a.rollType==='none'||a.type==='informational')return true;
+ const r=a._override||{};
+ const explicit=[a.toHit,a.attack_bonus,a.attackBonus,a.saveDC,a.save_dc,a.damage,a.damageFormula,a.damages,a.damage_dice,r.toHit,r.damage,r.saveDC];
+ if(explicit.some(v=>v!=null && v!=='' && (!Array.isArray(v)||v.length)))return false;
+ // A named ability with only a description is never a damage roll.
+ return true;
+}
+function ecbShowInfo(m,a,node){
+ const description=ecbActionInfo(a)||'No description provided.';
+ if(confirm((a.name||'Ability')+'\n\n'+description+'\n\nSend description to VTT chat?')){
+  const sn=m.snapshot||{};
+  b20SendFlavor(_monsterDisplayName(m,node),sn.cr||'',sn.ac||'',sn.hp||'',a.name||'Ability',description,0);
+ }
+}
+function ecbDuplicateCreature(i){
+ const node=encounterBuilderNode(),arr=node?.fields?.monsters||[],m=arr[i];if(!m)return;
+ const copy=JSON.parse(JSON.stringify(m));
+ const id=(typeof crypto!=='undefined'&&crypto.randomUUID)?crypto.randomUUID():Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+ copy._encounterImportId='duplicate-'+id;
+ // Keep same encounter import key, but independent ID prevents collisions.
+ copy.nameOverride=String(prompt('VTT-facing name for duplicate:',(m.nameOverride||m.snapshot?.name||'Monster')+' 2')||'').trim().slice(0,160);
+ if(!copy.nameOverride)return;
+ const groups=ecbGroups(node),target=prompt('Area / wave for duplicate ('+groups.join(', ')+'):',ecbGroup(m));
+ if(target===null)return;
+ copy._encounterGroup=(target.trim()||ecbGroup(m)).slice(0,80);
+ node.fields.encounterGroups=[...new Set([...(node.fields.encounterGroups||[]),copy._encounterGroup])];
+ arr.splice(i+1,0,copy);markDirty();renderEncounterBuilder();
+}
 function renderEncounterBuilder(){
  const node=encounterBuilderNode();if(!node)return;
  document.getElementById('ecb-title').textContent=node.title||'Encounter';
@@ -20277,11 +20349,11 @@ function renderEncounterBuilder(){
  const actionSets=[['actions','Action'],['bonus_actions','Bonus action'],['reactions','Reaction'],['legendary_actions','Legendary'],['lair_actions','Lair'],['special_abilities','Traits / special']];
  const buttonsFor=(sn,i)=>actionSets.map(([field,label])=>{
   const arr=Array.isArray(sn[field])?sn[field]:[];if(!arr.length)return '';
-  return `<div class="ecb-action-category"><span class="ecb-action-label">${label}</span><div class="ecb-action-list">${arr.map((a,k)=>`<button type="button" data-ecb-roll="${i}:${field}:${k}" title="${escHtml(ecbActionInfo(a)||'No details provided')}" aria-label="${escHtml(label+' '+(a.name||'Ability'))}">${escHtml(a.name||a.title||'Ability')}</button>`).join('')}</div></div>`;
+  return `<div class="ecb-action-category"><span class="ecb-action-label">${label}</span><div class="ecb-action-list">${arr.map((a,k)=>`<button type="button" data-ecb-${ecbIsInformational(a)?'info':'roll'}="${i}:${field}:${k}" title="${escHtml(ecbActionInfo(a)||'No details provided')}" aria-label="${escHtml(label+' '+(a.name||'Ability'))}">${ecbIsInformational(a)?'💬 ':''}${escHtml(a.name||a.title||'Ability')}</button>`).join('')}</div></div>`;
  }).join('');
  const rowsFor=group=>monsters.map((m,i)=>({m,i})).filter(({m})=>ecbGroup(m)===group).map(({m,i})=>{
   const sn=normalizeWorkshopMonsterSnapshot(m.snapshot||{}),name=_monsterDisplayName(m,node)||_encFocusMonsterName(node,m,i);
-  return `<tr><td><strong>${escHtml(name)}</strong><br><button type="button" data-ecb-stats="${i}">📖 Rollable stats</button></td><td><select aria-label="Challenge rating for ${escHtml(name)}" data-ecb-cr="${i}">${crOptions.map(cr=>`<option value="${escHtml(cr)}" ${String(sn.cr)===cr?'selected':''}>${escHtml(cr)}</option>`).join('')}</select></td><td>AC ${escHtml(String(sn.ac??'—'))}</td><td>HP ${escHtml(String(sn.hp??'—'))}</td><td><select aria-label="Area or wave for ${escHtml(name)}" data-ecb-group="${i}">${groups.map(g=>`<option value="${escHtml(g)}" ${ecbGroup(m)===g?'selected':''}>${escHtml(g)}</option>`).join('')}</select><div class="ecb-order"><button data-ecb-move="${i}:-1" title="Move earlier in group">↑</button><button data-ecb-move="${i}:1" title="Move later in group">↓</button></div></td><td>${buttonsFor(sn,i)||'<span>No actions</span>'}</td></tr>`;
+  return `<tr><td><strong>${escHtml(name)}</strong><br><button type="button" data-ecb-stats="${i}">📖 Rollable stats</button> <button type="button" data-ecb-duplicate="${i}" title="Create independent creature copy in another area or wave">⧉ Duplicate</button></td><td><select aria-label="Challenge rating for ${escHtml(name)}" data-ecb-cr="${i}">${crOptions.map(cr=>`<option value="${escHtml(cr)}" ${String(sn.cr)===cr?'selected':''}>${escHtml(cr)}</option>`).join('')}</select></td><td>AC ${escHtml(String(sn.ac??'—'))}</td><td>HP ${escHtml(String(sn.hp??'—'))}</td><td><select aria-label="Area or wave for ${escHtml(name)}" data-ecb-group="${i}">${groups.map(g=>`<option value="${escHtml(g)}" ${ecbGroup(m)===g?'selected':''}>${escHtml(g)}</option>`).join('')}</select><div class="ecb-order"><button data-ecb-move="${i}:-1" title="Move earlier in group">↑</button><button data-ecb-move="${i}:1" title="Move later in group">↓</button></div></td><td>${buttonsFor(sn,i)||'<span>No actions</span>'}</td></tr>`;
  }).join('');
  const host=document.getElementById('ecb-table-wrap');
  host.innerHTML=`<div class="ecb-group-tools"><button type="button" id="ecb-add-group">+ Add area / wave</button><span>Move monsters between groups using the dropdown. Use arrows to set order within each group.</span></div><table class="ecb-table"><thead><tr><th>Monster / VTT name</th><th>CR</th><th>AC</th><th>HP (reference)</th><th>Area / wave</th><th>Actions</th></tr></thead><tbody>${groups.map(g=>`<tr class="ecb-group-header"><td colspan="6"><button type="button" data-ecb-collapse="${escHtml(g)}" aria-expanded="${!ecbCollapsedGroups.has(g)}">${ecbCollapsedGroups.has(g)?'▸':'▾'} ${escHtml(g)} (${monsters.filter(m=>ecbGroup(m)===g).length})</button></td></tr>${ecbCollapsedGroups.has(g)?'':rowsFor(g)}`).join('')}${!monsters.length?'<tr><td colspan="6">No monsters. Import a ChatGPT encounter JSON package to begin.</td></tr>':''}</tbody></table>`;
@@ -20290,6 +20362,8 @@ function renderEncounterBuilder(){
  host.querySelectorAll('[data-ecb-group]').forEach(sel=>sel.onchange=()=>{monsters[+sel.dataset.ecbGroup]._encounterGroup=sel.value;markDirty();renderEncounterBuilder();});
  host.querySelectorAll('[data-ecb-move]').forEach(b=>b.onclick=()=>{const [i,delta]=b.dataset.ecbMove.split(':').map(Number),g=ecbGroup(monsters[i]),indexes=monsters.map((m,k)=>ecbGroup(m)===g?k:-1).filter(k=>k>=0),pos=indexes.indexOf(i),other=indexes[pos+delta];if(other===undefined)return;[monsters[i],monsters[other]]=[monsters[other],monsters[i]];markDirty();renderEncounterBuilder();});
  host.querySelectorAll('[data-ecb-stats]').forEach(b=>b.onclick=()=>openEncounterBuilderDetail(+b.dataset.ecbStats));
+ host.querySelectorAll('[data-ecb-duplicate]').forEach(b=>b.onclick=()=>ecbDuplicateCreature(+b.dataset.ecbDuplicate));
+ host.querySelectorAll('[data-ecb-info]').forEach(b=>b.onclick=()=>{const [idx,field,key]=b.dataset.ecbInfo.split(':'),m=monsters[+idx],a=normalizeWorkshopMonsterSnapshot(m.snapshot||{})[field]?.[+key];if(a)ecbShowInfo(m,a,node);});
  host.querySelectorAll('[data-ecb-roll]').forEach(b=>b.onclick=e=>{const [idx,field,key]=b.dataset.ecbRoll.split(':'),m=monsters[+idx],a=normalizeWorkshopMonsterSnapshot(m.snapshot||{})[field]?.[+key];if(a)dispatchMonsterRoll(m,a,_advFromEvent(e),node);});
  host.querySelectorAll('[data-ecb-cr]').forEach(sel=>sel.onchange=()=>{const m=monsters[+sel.dataset.ecbCr],next=sel.value,base=String(m._scaledFromCr||m.snapshot?.cr||'');if(!CANVAS_CR_TABLE[next]||!CANVAS_CR_TABLE[base]){alert('Cannot scale: invalid starting or target CR.');renderEncounterBuilder();return;}if(!m._originalSnapshot)m._originalSnapshot=JSON.parse(JSON.stringify(m.snapshot));if(next===String(m._originalSnapshot.cr)){m.snapshot=JSON.parse(JSON.stringify(m._originalSnapshot));delete m._originalSnapshot;delete m._scaledFromCr;}else{m._scaledFromCr=String(m._originalSnapshot.cr);m.snapshot=scaleMonsterSnapshot(m._originalSnapshot,next,m._scaledFromCr);}markDirty();renderEncounterBuilder();});
 }
