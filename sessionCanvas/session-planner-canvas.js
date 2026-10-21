@@ -1,3 +1,4 @@
+// v1.3.102 — Inline Encounter Builder action categories with compact separators.
 // v1.3.101 — Encounter informational actions, creature duplication, and guarded cloud reconnection.
 // v1.3.99 — ChatGPT encounter JSON import and full-screen table.
 
@@ -20347,10 +20348,10 @@ function renderEncounterBuilder(){
  const monsters=Array.isArray(node.fields?.monsters)?node.fields.monsters:[];
  const crOptions=Object.keys(CANVAS_CR_TABLE),groups=ecbGroups(node);
  const actionSets=[['actions','Action'],['bonus_actions','Bonus action'],['reactions','Reaction'],['legendary_actions','Legendary'],['lair_actions','Lair'],['special_abilities','Traits / special']];
- const buttonsFor=(sn,i)=>actionSets.map(([field,label])=>{
+ const buttonsFor=(sn,i)=>'<div class="ecb-action-groups">'+actionSets.map(([field,label])=>{
   const arr=Array.isArray(sn[field])?sn[field]:[];if(!arr.length)return '';
   return `<div class="ecb-action-category"><span class="ecb-action-label">${label}</span><div class="ecb-action-list">${arr.map((a,k)=>`<button type="button" data-ecb-${ecbIsInformational(a)?'info':'roll'}="${i}:${field}:${k}" title="${escHtml(ecbActionInfo(a)||'No details provided')}" aria-label="${escHtml(label+' '+(a.name||'Ability'))}">${ecbIsInformational(a)?'💬 ':''}${escHtml(a.name||a.title||'Ability')}</button>`).join('')}</div></div>`;
- }).join('');
+ }).join('')+'</div>';
  const rowsFor=group=>monsters.map((m,i)=>({m,i})).filter(({m})=>ecbGroup(m)===group).map(({m,i})=>{
   const sn=normalizeWorkshopMonsterSnapshot(m.snapshot||{}),name=_monsterDisplayName(m,node)||_encFocusMonsterName(node,m,i);
   return `<tr><td><strong>${escHtml(name)}</strong><br><button type="button" data-ecb-stats="${i}">📖 Rollable stats</button> <button type="button" data-ecb-duplicate="${i}" title="Create independent creature copy in another area or wave">⧉ Duplicate</button></td><td><select aria-label="Challenge rating for ${escHtml(name)}" data-ecb-cr="${i}">${crOptions.map(cr=>`<option value="${escHtml(cr)}" ${String(sn.cr)===cr?'selected':''}>${escHtml(cr)}</option>`).join('')}</select></td><td>AC ${escHtml(String(sn.ac??'—'))}</td><td>HP ${escHtml(String(sn.hp??'—'))}</td><td><select aria-label="Area or wave for ${escHtml(name)}" data-ecb-group="${i}">${groups.map(g=>`<option value="${escHtml(g)}" ${ecbGroup(m)===g?'selected':''}>${escHtml(g)}</option>`).join('')}</select><div class="ecb-order"><button data-ecb-move="${i}:-1" title="Move earlier in group">↑</button><button data-ecb-move="${i}:1" title="Move later in group">↓</button></div></td><td>${buttonsFor(sn,i)||'<span>No actions</span>'}</td></tr>`;
