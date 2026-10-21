@@ -1,4 +1,4 @@
-// v1.3.104 — Dynamic creature references and reviewed legacy name conversion.
+// v1.3.105 — Dynamic creature references and reviewed legacy name conversion.
 // v1.3.103 — Encounter instance rename and rider/mount linking.
 // v1.3.102 — Inline Encounter Builder action categories with compact separators.
 // v1.3.101 — Encounter informational actions, creature duplication, and guarded cloud reconnection.
@@ -20453,8 +20453,9 @@ function ecbKeepPairsAdjacent(node){
 function renderEncounterBuilder(){
  const node=encounterBuilderNode();if(!node)return;
  document.getElementById('ecb-title').textContent=node.title||'Encounter';
+ ecbKeepPairsAdjacent(node);
  const monsters=Array.isArray(node.fields?.monsters)?node.fields.monsters:[];
- ecbKeepPairsAdjacent(node);const crOptions=Object.keys(CANVAS_CR_TABLE),groups=ecbGroups(node);
+ const crOptions=Object.keys(CANVAS_CR_TABLE),groups=ecbGroups(node);
  const actionSets=[['actions','Action'],['bonus_actions','Bonus action'],['reactions','Reaction'],['legendary_actions','Legendary'],['lair_actions','Lair'],['special_abilities','Traits / special']];
  const buttonsFor=(sn,i)=>'<div class="ecb-action-groups">'+actionSets.map(([field,label])=>{
   const arr=Array.isArray(sn[field])?sn[field]:[];if(!arr.length)return '';
@@ -20472,7 +20473,24 @@ function renderEncounterBuilder(){
  host.querySelector('#ecb-add-group').onclick=()=>{const name=prompt('Area or wave name (e.g. North Gate, Wave 2):');if(!name||!name.trim())return;const g=name.trim().slice(0,80);node.fields.encounterGroups=[...new Set([...(node.fields.encounterGroups||[]),g])];markDirty();renderEncounterBuilder();};
  host.querySelectorAll('[data-ecb-collapse]').forEach(b=>b.onclick=()=>{const g=b.dataset.ecbCollapse;ecbCollapsedGroups.has(g)?ecbCollapsedGroups.delete(g):ecbCollapsedGroups.add(g);renderEncounterBuilder();});
  host.querySelectorAll('[data-ecb-group]').forEach(sel=>sel.onchange=()=>{const m=monsters[+sel.dataset.ecbGroup];m._encounterGroup=sel.value;const partner=ecbLinkedPartner(node,m);if(partner)partner._encounterGroup=sel.value;markDirty();renderEncounterBuilder();});
- host.querySelectorAll('[data-ecb-move]').forEach(b=>b.onclick=()=>{const [i,delta]=b.dataset.ecbMove.split(':').map(Number),g=ecbGroup(monsters[i]),indexes=monsters.map((m,k)=>ecbGroup(m)===g?k:-1).filter(k=>k>=0),pos=indexes.indexOf(i),other=indexes[pos+delta];if(other===undefined)return;[monsters[i],monsters[other]]=[monsters[other],monsters[i]];ecbKeepPairsAdjacent(node);markDirty();renderEncounterBuilder();});
+ host.querySelectorAll('[data-ecb-move]').forEach(b=>b.onclick=()=>{
+  const [i,delta]=b.dataset.ecbMove.split(':').map(Number);
+  const arr=node.fields.monsters||[],selected=arr[i];if(!selected)return;
+  const group=ecbGroup(selected),blocks=[],seen=new Set();
+  for(const creature of arr){
+   if(ecbGroup(creature)!==group||seen.has(creature))continue;
+   const block=[creature];seen.add(creature);
+   const partner=ecbLinkedPartner(node,creature);
+   if(partner&&ecbGroup(partner)===group&&!seen.has(partner)){block.push(partner);seen.add(partner);}
+   blocks.push(block);
+  }
+  const pos=blocks.findIndex(block=>block.includes(selected)),target=pos+delta;
+  if(pos<0||target<0||target>=blocks.length)return;
+  [blocks[pos],blocks[target]]=[blocks[target],blocks[pos]];
+  const replacement=blocks.flat(),groupSlots=arr.map((m,k)=>ecbGroup(m)===group?k:-1).filter(k=>k>=0);
+  groupSlots.forEach((slot,k)=>{arr[slot]=replacement[k];});
+  markDirty();renderEncounterBuilder();
+ });
  host.querySelectorAll('[data-ecb-rename]').forEach(b=>b.onclick=()=>ecbRenameCreature(+b.dataset.ecbRename));
  host.querySelectorAll('[data-ecb-link]').forEach(b=>b.onclick=()=>ecbLinkCreature(+b.dataset.ecbLink));
  host.querySelectorAll('[data-ecb-mounted]').forEach(b=>b.onclick=()=>ecbToggleMounted(+b.dataset.ecbMounted));
