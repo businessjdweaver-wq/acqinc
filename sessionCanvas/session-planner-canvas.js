@@ -1,3 +1,4 @@
+// v1.3.99 — ChatGPT encounter JSON import and full-screen table.
 
 // v1.3.98 — Remove conflicting capture-phase HP Enter handler; use single clone-safe commit path.
 // v1.3.89 — Offline Autosave Performance: IndexedDB snapshots, no quota retry churn, single canvas serialization;
@@ -6403,6 +6404,11 @@ function wireCanvasGroupBar() {
 // v1.3.88 — launch the dedicated encounter-running surface from a canvas card.
 function wireRunEncounterBtn(host, node) {
   if (!host || !node || node.type !== 'encounter') return;
+  host.querySelectorAll('button[data-encounter-builder]').forEach(btn => {
+    if(btn.dataset.ecbWired)return;btn.dataset.ecbWired="1";
+    btn.addEventListener("mousedown",e=>e.stopPropagation());
+    btn.addEventListener("click",e=>{e.preventDefault();e.stopPropagation();openEncounterBuilder(node.id);});
+  });
   host.querySelectorAll('button[data-run-encounter]').forEach(btn => {
     if (btn.dataset.encounterFocusWired === '1') return;
     btn.dataset.encounterFocusWired = '1';
@@ -6410,7 +6416,7 @@ function wireRunEncounterBtn(host, node) {
     btn.addEventListener('click', e => {
       e.preventDefault();
       e.stopPropagation();
-      enterEncounterFocusMode(node.id);
+      if(e.shiftKey)openEncounterBuilder(node.id);else enterEncounterFocusMode(node.id);
     });
   });
 }
@@ -6526,6 +6532,7 @@ function renderNodeFace(data) {
         ${chevron ? `<span class="node-collapse-chevron">${chevron}</span>` : ''}
         <span class="node-title">${escHtml(data.title)}${dimsHint}</span>
         ${data.type === 'encounter' ? `<button class="node-run-encounter-btn" data-run-encounter="${data.id}" type="button" title="Run this encounter in a dedicated combat view">⚔ Run</button>` : ''}
+        ${data.type === 'encounter' ? `<button class="node-run-encounter-btn" data-encounter-builder="${data.id}" type="button" title="Open encounter table and ChatGPT JSON import">▦ Builder</button>` : ''}
         <button class="node-magnify-btn" data-magnify="${data.id}" title="Focus this node (Z, or select multiple and use the topbar Focus button)">🔍</button>
       </div>
       <div class="node-anchors">
@@ -6565,6 +6572,7 @@ function renderNodeFace(data) {
       ${chevron ? `<span class="node-collapse-chevron">${chevron}</span>` : ''}
       <span class="node-title">${escHtml(data.title)}</span>
       ${data.type === 'encounter' ? `<button class="node-run-encounter-btn" data-run-encounter="${data.id}" type="button" title="Run this encounter in a dedicated combat view">⚔ Run</button>` : ''}
+        ${data.type === 'encounter' ? `<button class="node-run-encounter-btn" data-encounter-builder="${data.id}" type="button" title="Open encounter table and ChatGPT JSON import">▦ Builder</button>` : ''}
         <button class="node-magnify-btn" data-magnify="${data.id}" title="Focus this node (Z, or select multiple and use the topbar Focus button)">🔍</button>
     </div>
     <div class="node-body">
@@ -20244,3 +20252,64 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
+
+// v1.3.99 — Encounter Builder: JSON import/export, per-instance CR and Beyond20 actions.
+let encounterBuilderNodeId = null;
+function encounterBuilderNode(){return encounterBuilderNodeId == null ? null : state.nodes.get(encounterBuilderNodeId);}
+function openEncounterBuilder(nodeId){
+  const node=state.nodes.get(nodeId);if(!node||node.type!=='encounter')return;
+  if(inEncounterFocusMode)exitEncounterFocusMode();
+  encounterBuilderNodeId=nodeId;
+  document.body.classList.add('encounter-builder-active');
+  document.getElementById('encounter-builder-overlay').classList.add('open');
+  renderEncounterBuilder();
+}
+function openEncounterBuilderFromFocus(){const id=encounterFocusState&&encounterFocusState.nodeId;if(id!=null)openEncounterBuilder(id);}
+function closeEncounterBuilder(){closeEncounterBuilderDetail();document.getElementById('encounter-builder-overlay').classList.remove('open');document.body.classList.remove('encounter-builder-active');const node=encounterBuilderNode();encounterBuilderNodeId=null;if(node)refreshNodeFace(node);}
+function renderEncounterBuilder(){
+ const node=encounterBuilderNode();if(!node)return;
+ document.getElementById('ecb-title').textContent=node.title||'Encounter';
+ const monsters=Array.isArray(node.fields?.monsters)?node.fields.monsters:[];
+ const crOptions=Object.keys(CANVAS_CR_TABLE);
+ const rows=monsters.map((m,i)=>{
+  const sn=normalizeWorkshopMonsterSnapshot(m.snapshot||{});
+  const actions=getMonsterRollActions(sn);
+  const specials=sn.special_abilities||sn.special||[];
+  const name=_monsterDisplayName(m,node)||_encFocusMonsterName(node,m,i);
+  const buttons=actions.map((a,k)=>`<button type="button" data-ecb-action="${i}:${k}" title="Roll in VTT">${escHtml(a.name||a.title||'Action')}</button>`).join('')+
+    specials.map((a,k)=>`<button type="button" data-ecb-special="${i}:${k}">${escHtml(a.name||a.title||'Special')}</button>`).join('');
+  return `<tr><td><strong>${escHtml(name)}</strong><br><button type="button" data-ecb-stats="${i}">📖 Rollable stats</button></td><td><select aria-label="Challenge rating for ${escHtml(name)}" data-ecb-cr="${i}">${crOptions.map(cr=>`<option value="${escHtml(cr)}" ${String(sn.cr)===cr?'selected':''}>${escHtml(cr)}</option>`).join('')}</select></td><td>AC ${escHtml(String(sn.ac??'—'))}</td><td><div class="ecb-action-list">${buttons||'<span>No rollable actions</span>'}</div></td></tr>`;
+ }).join('');
+ const host=document.getElementById('ecb-table-wrap');
+ host.innerHTML=`<table class="ecb-table"><thead><tr><th>Monster / VTT name</th><th>CR</th><th>AC</th><th>Clickable actions</th></tr></thead><tbody>${rows||'<tr><td colspan="4">No monsters. Import a ChatGPT encounter JSON package to begin.</td></tr>'}</tbody></table>`;
+ host.querySelectorAll('[data-ecb-stats]').forEach(b=>b.onclick=()=>openEncounterBuilderDetail(+b.dataset.ecbStats));
+ host.querySelectorAll('[data-ecb-action]').forEach(b=>b.onclick=e=>{const [i,k]=b.dataset.ecbAction.split(':').map(Number);const m=monsters[i],a=getMonsterRollActions(m.snapshot||{})[k];if(a)dispatchMonsterRoll(m,a,_advFromEvent(e),node);});
+ host.querySelectorAll('[data-ecb-special]').forEach(b=>b.onclick=e=>{const [i,k]=b.dataset.ecbSpecial.split(':').map(Number);const m=monsters[i],a=(m.snapshot?.special_abilities||m.snapshot?.special||[])[k];if(a)dispatchMonsterRoll(m,a,_advFromEvent(e),node);});
+ host.querySelectorAll('[data-ecb-cr]').forEach(sel=>sel.onchange=()=>{const m=monsters[+sel.dataset.ecbCr],next=sel.value,base=String(m._scaledFromCr||m.snapshot?.cr||'');if(!CANVAS_CR_TABLE[next]||!CANVAS_CR_TABLE[base]){alert('Cannot scale: invalid starting or target CR.');renderEncounterBuilder();return;}if(!m._originalSnapshot)m._originalSnapshot=JSON.parse(JSON.stringify(m.snapshot));if(next===String(m._originalSnapshot.cr)){m.snapshot=JSON.parse(JSON.stringify(m._originalSnapshot));delete m._originalSnapshot;delete m._scaledFromCr;}else{m._scaledFromCr=String(m._originalSnapshot.cr);m.snapshot=scaleMonsterSnapshot(m._originalSnapshot,next,m._scaledFromCr);}markDirty();renderEncounterBuilder();});
+}
+function openEncounterBuilderDetail(i){const node=encounterBuilderNode(),m=node?.fields?.monsters?.[i];if(!m)return;const el=document.getElementById('ecb-detail');el.hidden=false;const body=document.getElementById('ecb-detail-content');body.innerHTML=renderEncounterFocusStatblock(node,m,i);body.querySelectorAll('[data-hpbar],.encf-prevnext,.encf-state-actions').forEach(x=>x.remove());wireMonsterRollClicks(body,node);}
+function closeEncounterBuilderDetail(){document.getElementById('ecb-detail').hidden=true;document.getElementById('ecb-detail-content').innerHTML='';}
+function validateEncounterBuilderPackage(pkg){
+ if(!pkg||pkg.format!=='session-canvas-encounter'||pkg.schemaVersion!==1||!Array.isArray(pkg.monsters)||pkg.monsters.length>150)throw Error('Expected session-canvas-encounter JSON schemaVersion 1 with up to 150 monsters.');
+ const ids=new Set();return pkg.monsters.map((entry,i)=>{
+  if(!entry||typeof entry!=='object'||!entry.snapshot||typeof entry.snapshot!=='object'||Array.isArray(entry.snapshot))throw Error('Monster '+(i+1)+' needs a snapshot.');
+  const id=String(entry.id||'').trim();if(!id||ids.has(id))throw Error('Each monster needs a unique, stable id.');ids.add(id);
+  const sn=normalizeWorkshopMonsterSnapshot(JSON.parse(JSON.stringify(entry.snapshot)));
+  if(!sn.name||!CANVAS_CR_TABLE[String(sn.cr)])throw Error('Monster '+id+' needs a name and supported CR.');
+  return {id,nameOverride:String(entry.name||sn.name).slice(0,160),snapshot:sn};
+ });
+}
+async function importEncounterBuilderFile(input){const file=input.files?.[0];input.value='';if(!file)return;try{
+ if(file.size>1500000)throw Error('Encounter JSON must be smaller than 1.5 MB.');
+ const pkg=JSON.parse(await file.text());const incoming=validateEncounterBuilderPackage(pkg);const node=encounterBuilderNode();if(!node)return;
+ const old=Array.isArray(node.fields.monsters)?node.fields.monsters:[];
+ const previous=new Map(old.filter(m=>m._encounterImportId).map(m=>[m._encounterImportId,m]));
+ const updated=incoming.map(m=>{const prior=previous.get(m.id);return {...(prior||{}),...m,_encounterImportId:m.id,_encounterImportKey:String(pkg.encounterId||''),_originalSnapshot:undefined,_scaledFromCr:undefined};});
+ const sameKey=old.filter(m=>m._encounterImportKey===String(pkg.encounterId||''));
+ const keep=old.filter(m=>m._encounterImportKey!==String(pkg.encounterId||''));
+ const msg=`Import ${updated.length} creatures into ${node.title}? ${sameKey.length} previously imported creatures with the same encounter ID will be replaced; ${keep.length} other creatures will remain.`;
+ if(!confirm(msg))return;
+ node.fields.monsters=[...keep,...updated];if(pkg.title)node.title=String(pkg.title).slice(0,160);markDirty();renderEncounterBuilder();
+ }catch(err){alert('Encounter import failed: '+err.message);}}
+function exportEncounterBuilderJson(){const node=encounterBuilderNode();if(!node)return;const pkg={format:'session-canvas-encounter',schemaVersion:1,encounterId:String(node.id),title:node.title,monsters:(node.fields.monsters||[]).map((m,i)=>({id:String(m._encounterImportId||'creature-'+(i+1)),name:m.nameOverride||m.snapshot?.name||'Monster',snapshot:m.snapshot}))};const blob=new Blob([JSON.stringify(pkg,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='session-canvas-encounter.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+window.openEncounterBuilder=openEncounterBuilder;window.openEncounterBuilderFromFocus=openEncounterBuilderFromFocus;window.closeEncounterBuilder=closeEncounterBuilder;window.importEncounterBuilderFile=importEncounterBuilderFile;window.exportEncounterBuilderJson=exportEncounterBuilderJson;window.closeEncounterBuilderDetail=closeEncounterBuilderDetail;
