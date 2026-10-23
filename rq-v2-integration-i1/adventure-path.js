@@ -15,8 +15,8 @@
       nextPathId: 'outskirts_01',
       nodes: [
         { id: 'village', type: 'story', name: 'Village Square', requiresAny: [], free: true, x: 0.5, y: 0.08 },
-        { id: 'harvest', type: 'puzzle', name: 'Harvest Fields', encounterId: 'harvest', requiresAny: ['village'], x: 0.24, y: 0.28 },
-        { id: 'merchant', type: 'combat', name: "Merchant's Shop", encounterId: 'shopkeeper', requiresAny: ['village'], x: 0.76, y: 0.28 },
+        { id: 'harvest', type: 'puzzle', name: 'Harvest Fields', encounterId: 'harvest', requiresAny: [], x: 0.24, y: 0.28 },
+        { id: 'merchant', type: 'combat', name: "Merchant's Shop", encounterId: 'shopkeeper', requiresAny: [], x: 0.76, y: 0.28 },
         { id: 'granary', type: 'combat', name: 'Village Granary', encounterId: 'rats', requiresAny: ['harvest'], x: 0.24, y: 0.55 },
         { id: 'lore', type: 'puzzle', name: 'Old Archives', encounterId: 'lore', requiresAny: ['merchant'], x: 0.76, y: 0.55 },
         { id: 'crisis', type: 'finale', name: 'Village Crisis', encounterId: null, requiresAny: ['granary', 'lore'], x: 0.5, y: 0.82 }
