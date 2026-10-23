@@ -47,7 +47,7 @@
   function eligibleParty(pathId, completedKeys, members) {
     const path = PATHS[pathId];
     if (!path) return { ok: false, reason: 'Unknown adventure path' };
-    const cleared = new Set(completedKeys || []).has(completionKey(pathId, path.finaleId));
+    const cleared = !!path.finaleId && new Set(completedKeys || []).has(completionKey(pathId, path.finaleId));
     if (!Array.isArray(members) || members.length !== 3 || members.some(m => !m))
       return { ok: false, reason: 'Choose three party members' };
     // Background = archetype 0–5; class rank = archetype 6+.
