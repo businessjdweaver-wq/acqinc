@@ -19,7 +19,7 @@
         { id: 'merchant', type: 'combat', name: "Merchant's Shop", encounterId: 'shopkeeper', requiresAny: [], x: 0.76, y: 0.28 },
         { id: 'granary', type: 'combat', name: 'Village Granary', encounterId: 'rats', requiresAny: ['harvest'], x: 0.24, y: 0.55 },
         { id: 'lore', type: 'puzzle', name: 'Old Archives', encounterId: 'lore', requiresAny: ['merchant'], x: 0.76, y: 0.55 },
-        { id: 'crisis', type: 'finale', name: 'Village Crisis', encounterId: null, requiresAny: ['granary', 'lore'], x: 0.5, y: 0.82 }
+        { id: 'crisis', type: 'finale', name: 'Village Crisis', encounterId: 'thornclaw_raid', requiresAny: ['granary', 'lore'], x: 0.5, y: 0.82 }
       ]
     },
     outskirts_01: {
