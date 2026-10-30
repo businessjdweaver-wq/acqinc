@@ -12,7 +12,7 @@
       chapter: 1,
       startingRank: 'background',
       finaleId: 'crisis',
-      nextPathId: 'outskirts_01',
+      nextPathId: 'ashes_01',
       nodes: [
         { id: 'village', type: 'story', name: 'Village Square', requiresAny: [], free: true, x: 0.5, y: 0.08 },
         { id: 'harvest', type: 'puzzle', name: 'Harvest Fields', encounterId: 'harvest', requiresAny: [], x: 0.24, y: 0.28 },
@@ -22,9 +22,29 @@
         { id: 'crisis', type: 'finale', name: 'Village Crisis', encounterId: 'thornclaw_raid', requiresAny: ['granary', 'lore'], x: 0.5, y: 0.82 }
       ]
     },
+    ashes_01: {
+      id: 'ashes_01',
+      title: 'Ashes of the Raid',
+      chapter: 2,
+      starRank: 2,
+      startingRank: 'class',
+      finaleId: 'captain',
+      requiresFinale: { pathId: 'village_01', nodeId: 'crisis' },
+      nextPathId: 'thornclaw_trail_01',
+      // Encounter IDs are reserved for the Chapter II runtime; do not expose
+      // this path in the UI until the server admission and encounter handlers exist.
+      nodes: [
+        { id: 'lumbermill', type: 'puzzle', name: 'The Burning Lumbermill', encounterId: 'burning_lumbermill', requiresAny: [], x: 0.5, y: 0.12 },
+        { id: 'sluice', type: 'puzzle', name: 'The Broken Sluice', encounterId: 'broken_sluice', requiresAny: ['lumbermill'], x: 0.24, y: 0.34 },
+        { id: 'scavengers', type: 'combat', name: 'Scavengers in the Smoke', encounterId: 'smoke_scavengers', requiresAny: ['lumbermill'], x: 0.76, y: 0.34 },
+        { id: 'grove', type: 'puzzle', name: 'The Ashen Grove', encounterId: 'ashen_grove_rescue', requiresAny: ['sluice'], x: 0.24, y: 0.58 },
+        { id: 'tower', type: 'hybrid', name: 'The Signal Tower', encounterId: 'signal_tower', requiresAny: ['scavengers'], x: 0.76, y: 0.58 },
+        { id: 'captain', type: 'finale', name: 'The Ashen Captain', encounterId: 'ashen_captain', requiresAny: ['grove', 'tower'], x: 0.5, y: 0.83 }
+      ]
+    },
     outskirts_01: {
       id: 'outskirts_01',
-      title: 'The Outskirts',
+      title: 'The Outskirts (legacy placeholder)',
       chapter: 2,
       requiresFinale: { pathId: 'village_01', nodeId: 'crisis' },
       nodes: []
