@@ -950,13 +950,13 @@ if(location.hash.startsWith('#daily-review')){
  window.addEventListener('hashchange',()=>{if(location.hash.startsWith('#daily-review'))launchReview()});
 }
 })();
-</script><script src="adventure-path.js?build=3"></script><script>
+</script><script src="adventure-path.js?build=4"></script><script>
 (function(){
  const open=document.getElementById('adventureMapOpen'),modal=document.getElementById('adventureMapDialog'),close=document.getElementById('adventureMapClose'),host=document.getElementById('adventureMapNodes'),status=document.getElementById('adventureMapStatus');
  const battle=document.getElementById('battleDialog'),frame=document.getElementById('combatFrame');
  if(!open||!modal||!window.RQV2AdventurePath)return;
  const api=window.supabase.createClient('https://burtvenqfzextswpjziw.supabase.co','sb_publishable_eKBLY77ZQR4GKCKAuuMu_g_NCYupdt1',{db:{schema:'rq_v2'},auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false}});
- let activeAdmission=null,launching=false;
+ let activeAdmission=null,launching=false,selectedAdventurePath='village_01';
  async function cancelAdmission(){
   if(!activeAdmission)return;
   const id=activeAdmission;activeAdmission=null;
@@ -970,7 +970,7 @@ if(location.hash.startsWith('#daily-review')){
  async function selectParty(node,user,cleared){
   pendingNode=node;pendingUser=user;picker.hidden=false;
   document.getElementById('adventurePartyHeading').textContent='Assemble Your Heroes · '+node.name;
-  partyFrame.src='character-manager.html?build=adventure-2&adventureParty=1&rank=background';
+  partyFrame.src='character-manager.html?build=adventure-2&adventureParty=1&rank='+(selectedAdventurePath==='ashes_01'?'class':'background');
   picker.scrollIntoView({behavior:'smooth',block:'nearest'});
  }
  window.addEventListener('message',async event=>{
@@ -979,7 +979,7 @@ if(location.hash.startsWith('#daily-review')){
   if(!Array.isArray(ids)||ids.length!==3||new Set(ids).size!==3)return;
   launching=true;status.textContent='Validating your selected heroes…';
   try{
-   const {data:admission,error}=await api.schema('rq_v2').rpc('adventure_admit',{p_path_id:'village_01',p_node_id:pendingNode.id,p_party_ids:ids});
+   const {data:admission,error}=await api.schema('rq_v2').rpc('adventure_admit',{p_path_id:selectedAdventurePath,p_node_id:pendingNode.id,p_party_ids:ids});
    if(error)throw Error(error.message);
    activeAdmission=admission;picker.hidden=true;partyFrame.src='about:blank';modal.close();
    // Adventure Path uses the combat iframe, not the regular task-reward overlay.
@@ -987,7 +987,7 @@ if(location.hash.startsWith('#daily-review')){
    frame.hidden=false;
    frame.style.display='block';
    window.rqCheckBattleResult=null;
-   frame.src='combat49.html?build=105&adventureAdmission='+encodeURIComponent(admission)+'&adventureNode='+encodeURIComponent(pendingNode.id)+'&adventureParty='+encodeURIComponent(ids.join(','));
+   frame.src=(selectedAdventurePath==='ashes_01'&&pendingNode.id==='lumbermill'?'ashes-lumbermill-prototype.html?build=integrated-1':'combat49.html?build=105')+'&adventureAdmission='+encodeURIComponent(admission)+'&adventureNode='+encodeURIComponent(pendingNode.id)+'&adventureParty='+encodeURIComponent(ids.join(','));
    battle.showModal();status.textContent='Adventure encounter started. Win to roll the October 16 reward table (client-reported test mode).';
   }catch(err){status.textContent='Encounter admission unavailable: '+err.message;}
   finally{launching=false;}
@@ -1066,31 +1066,31 @@ if(location.hash.startsWith('#daily-review')){
  battle.addEventListener('close',()=>{if(activeAdmission){void cancelAdmission();}frame.src='about:blank';adventureSettlement=null;settleNotice.remove();});
  document.getElementById('closeBattle')?.addEventListener('click',()=>{if(activeAdmission&&!adventureSettlement)void cancelAdmission();});
  document.getElementById('finishBattle')?.addEventListener('click',()=>{if(activeAdmission&&!adventureSettlement)void cancelAdmission();});
- open.addEventListener('click',async()=>{
-  modal.showModal();host.replaceChildren();status.textContent='Loading cloud progression…';
+ async function showAdventurePath(pathId){
+  selectedAdventurePath=pathId;host.replaceChildren();status.textContent='Loading cloud progression…';
   try{
    const {data:auth,error:authError}=await api.auth.getUser();
    if(authError||!auth?.user)throw Error('Sign in to your cloud account first: '+(authError?.message||'No active session'));
    const user=auth.user;
-   const {data,error}=await api.schema('rq_v2').from('adventure_preview_clears').select('node_id').eq('user_id',user.id).eq('path_id','village_01');
+   const {data,error}=await api.schema('rq_v2').from('adventure_preview_clears').select('path_id,node_id').eq('user_id',user.id).in('path_id',['village_01','ashes_01']);
    if(error)throw error;
-   const keys=(data||[]).map(row=>'village_01:'+row.node_id);
-   const states=Object.fromEntries(RQV2AdventurePath.status('village_01',keys).map(row=>[row.id,row.state]));
+   const keys=(data||[]).map(row=>row.path_id+':'+row.node_id);
+   const states=Object.fromEntries(RQV2AdventurePath.status(pathId,keys).map(row=>[row.id,row.state]));
    const cleared=keys.includes('village_01:crisis');
    picker.hidden=true;pendingNode=null;
    status.textContent='Chapter 1 · ★ Background-rank party required · Unverified preview clears unlock test branches only; no rewards or permanent progression.';
    // Responsive two-lane map: explicit connections, accessible node buttons,
    // and locked prerequisites. The finale is intentionally not launchable yet.
    host.style.cssText='display:block;width:100%;min-width:0;margin-top:18px;box-sizing:border-box;isolation:isolate';
-   const nodes=RQV2AdventurePath.paths.village_01.nodes;
+   const nodes=RQV2AdventurePath.paths[pathId].nodes;
    const byId=Object.fromEntries(nodes.map(n=>[n.id,n]));
-   const rows=[['village',null],['harvest','merchant'],['granary','lore'],['crisis',null]];
+   const rows=pathId==='ashes_01'?[['lumbermill',null],['sluice','scavengers'],['grove','tower'],['captain',null]]:[['village',null],['harvest','merchant'],['granary','lore'],['crisis',null]];
    const mapGrid=document.createElement('div');
    mapGrid.style.cssText='position:relative;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(4,minmax(105px,auto));column-gap:10px;row-gap:38px;padding:8px 0 22px;min-width:0;width:100%;box-sizing:border-box';
    const connectors=document.createElementNS('http://www.w3.org/2000/svg','svg');
    connectors.setAttribute('viewBox','0 0 100 100');connectors.setAttribute('preserveAspectRatio','none');connectors.setAttribute('aria-hidden','true');
    connectors.style.cssText='position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;overflow:visible';
-   const links=[['village','harvest'],['village','merchant'],['harvest','granary'],['merchant','lore'],['granary','crisis'],['lore','crisis']];
+   const links=pathId==='ashes_01'?[['lumbermill','sluice'],['lumbermill','scavengers'],['sluice','grove'],['scavengers','tower'],['grove','captain'],['tower','captain']]:[['village','harvest'],['village','merchant'],['harvest','granary'],['merchant','lore'],['granary','crisis'],['lore','crisis']];
    // Draw lines after layout, using actual card coordinates so mobile text wrapping
    // never causes a connector to miss its node.
    const cardById={};
@@ -1114,22 +1114,22 @@ if(location.hash.startsWith('#daily-review')){
     }
    };
    mapGrid.append(connectors);
-   const hints={granary:'Complete Harvest Fields to unlock',lore:"Complete Merchant's Shop to unlock",crisis:'Complete Village Granary OR Old Archives to unlock'};
+   const hints={granary:'Complete Harvest Fields to unlock',lore:"Complete Merchant's Shop to unlock",crisis:'Complete Village Granary OR Old Archives to unlock',sluice:'Complete the Burning Lumbermill',scavengers:'Complete the Burning Lumbermill',grove:'Complete the Broken Sluice',tower:'Complete Scavengers in the Smoke',captain:'Complete the preceding branches'};
    for(let row=0;row<rows.length;row++){
     for(let col=0;col<2;col++){
      const id=rows[row][col];if(!id)continue;
      const node=byId[id],state=states[id];
      const card=document.createElement('article');cardById[id]=card;
      card.style.cssText='position:relative;z-index:1;min-width:0;box-sizing:border-box;padding:12px 10px;border:2px solid '+(state==='completed'?'#61c6a4':state==='available'?'#d7b36c':'#68788b')+';border-radius:12px;background:'+(state==='completed'?'#173b34':state==='available'?'#303441':'#222a35')+';overflow-wrap:normal;word-break:normal';
-     card.style.gridColumn=id==='village'||id==='crisis'?'1 / 3':String(col+1);
-     if(id==='village'||id==='crisis'){card.style.width='min(100%,260px)';card.style.justifySelf='center';}
+     card.style.gridColumn=col===0&&!rows[row][1]?'1 / 3':String(col+1);
+     if(col===0&&!rows[row][1]){card.style.width='min(100%,260px)';card.style.justifySelf='center';}
      card.style.gridRow=String(row+1);
      const title=document.createElement('strong');title.style.cssText='display:block;font-size:clamp(14px,3.4vw,18px);line-height:1.3';
      title.textContent=(state==='completed'?'✓ ':state==='locked'?'🔒 ':'◇ ')+({harvest:'Harvest',merchant:'Merchant',granary:'Granary',lore:'Archives',crisis:'Village Crisis',village:'Village Square'}[id]||node.name);title.setAttribute('aria-label',node.name);
      const detail=document.createElement('p');detail.style.cssText='margin:8px 0 0;font-size:13px;line-height:1.4;color:#c4ced9';
-     detail.textContent=state==='locked'?(hints[id]||'Complete prerequisite encounters to unlock'):node.type==='finale'?'Finale · Thornclaw Raid (combat preview)':node.type+' · '+state;
+     detail.textContent=pathId==='ashes_01'&&id!=='lumbermill'?'In design · not yet playable':state==='locked'?(hints[id]||'Complete prerequisite encounters to unlock'):node.type==='finale'?'Finale · Thornclaw Raid (combat preview)':node.type+' · '+state;
      card.append(title,detail);
-     if(node.encounterId&&state!=='locked'){
+     if(node.encounterId&&state!=='locked'&&(pathId!=='ashes_01'||id==='lumbermill')){
       const button=document.createElement('button');button.type='button';
       button.textContent=state==='completed'?'Replay':'Play →';button.setAttribute('aria-label',(state==='completed'?'Replay ':'Choose party for ')+node.name);
       button.style.cssText='margin-top:12px;padding:10px 6px;min-height:42px;font-size:14px;width:100%;white-space:nowrap';
@@ -1141,12 +1141,14 @@ if(location.hash.startsWith('#daily-review')){
    const legend=document.createElement('p');legend.className='muted';
    legend.style.cssText='font-size:13px;margin:4px 0 10px';
    legend.textContent='✓ Completed (replayable) · ◇ Available · 🔒 Locked · Solid paths: completed route · Dashed paths: unfinished route';
+   if(cleared){const chapterNav=document.createElement('button');chapterNav.type='button';chapterNav.textContent=pathId==='ashes_01'?'← Chapter I: Trouble in the Village':'Chapter II ★★: Ashes of the Raid →';chapterNav.style.cssText='padding:10px 14px;margin:8px 0';chapterNav.onclick=()=>void showAdventurePath(pathId==='ashes_01'?'village_01':'ashes_01');host.append(chapterNav)}
    host.append(mapGrid,legend);
    requestAnimationFrame(paintLinks);
    if(typeof ResizeObserver!=='undefined'){const observer=new ResizeObserver(paintLinks);observer.observe(mapGrid);modal.addEventListener('close',()=>observer.disconnect(),{once:true});}
-   status.textContent='Chapter 1 · ★ Background-rank party required · Finish either branch to reach Village Crisis. Preview clears unlock test routes only; no rewards or permanent progression.';
+   status.textContent=pathId==='ashes_01'?'Chapter II · ★★ Ashes of the Raid · Burning Lumbermill available; remaining encounters in design. Victory clears and rewards use the existing preview settlement.':'Chapter I · ★ Background-rank party required · Finish either branch to reach Village Crisis.';
 
   }catch(err){status.textContent='Progression unavailable: '+err.message;}
- });
+ }
+ open.addEventListener('click',()=>{modal.showModal();void showAdventurePath('village_01')});
 })();
 </script></body></html>
