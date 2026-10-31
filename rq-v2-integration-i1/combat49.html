@@ -561,7 +561,7 @@ async function applyCardPattern(config,who='player'){
 async function settlePatternBoard(who){
  for(let c=0;c<8;c++){
   const fixed=[],falling=[];
-  for(let r=7;r>=0;r--){const t=tiles[r*8+c];if(t)(t.locked?fixed:falling).push(t);}
+  for(let r=7;r>=0;r--){const t=tiles[r*8+c];if(t)(t.locked||t.lumberFire?fixed:falling).push(t);}
   for(let r=0;r<8;r++)tiles[r*8+c]=null;
   for(const t of fixed)tiles[t.r*8+c]=t;
   let next=0;
@@ -607,7 +607,7 @@ function countEffectTiles(criteria){return tiles.filter(t=>t&&tileEffect(t,{type
 function create(v,r,c,from=null){let el=document.createElement('div');el.className='tile';el.innerHTML='<div></div>';let t={id:++seq,v,r,c,el,trap:0,rat:false,hay:false,lore:false,loreTimer:0,loreLockTimer:0,loreUnlocked:false,loreFortified:false,loreHits:0,loreCracked:false,locked:false,effectFortified:false,specialStrength:1,trapOwner:undefined,fresh:false,power:false,special:null,specialOwner:null,linkedEnemy:null,independent:false,returnShield:0,returnShieldEnergy:0,lumberFire:false};board.appendChild(el);paint(t);el.onclick=(e)=>{if(tileDevMode){e.preventDefault();e.stopPropagation();return;}if(suppressSwipeClick){e.preventDefault();e.stopPropagation();return;}pick(t);};if(from!==null){t.r=from;place(t,true);t.r=r;requestAnimationFrame(()=>requestAnimationFrame(()=>place(t)));}else place(t,true);return t;}
 function runs(){const out=[],seen=new Set();const scan=line=>{for(let start=0;start<8;start++){for(let color=0;color<ORDINARY_COLOR_COUNT;color++){if(!line[start]||line[start].lumberFire||line[start].loreJustCracked||!(line[start].v===color||line[start].special==='wild'))continue;let end=start;while(end<8&&line[end]&&!line[end].lumberFire&&!line[end].loreJustCracked&&(line[end].v===color||line[end].special==='wild'))end++;if(end-start<3)continue;const run=line.slice(start,end);if(!run.some(t=>t.special!=='wild'&&t.v===color))continue;const key=run.map(t=>t.id).join(':');if(!seen.has(key)){seen.add(key);out.push(run)}}}};for(let r=0;r<8;r++)scan(tiles.slice(r*8,r*8+8));for(let col=0;col<8;col++)scan(Array.from({length:8},(_,r)=>tiles[r*8+col]));return out;}
 function matchInfo(){let rr=runs(),all=[...new Set(rr.flat())],seen=new Set(),components=[];for(let t of all){if(seen.has(t))continue;let stack=[t],comp=[];seen.add(t);while(stack.length){let x=stack.pop();comp.push(x);for(let y of all)if(!seen.has(y)&&(x.v===y.v||x.special==='wild'||y.special==='wild')&&Math.abs(x.r-y.r)+Math.abs(x.c-y.c)===1){seen.add(y);stack.push(y);}}components.push(comp);}let five=rr.some(x=>x.length>=5)||components.some(comp=>comp.length>=5&&rr.filter(r=>r.some(t=>comp.includes(t))).length>=2);return {runs:rr,all,five,four:rr.some(x=>x.length===4),components};}
-function moves(){const out=[];for(let i=0;i<64;i++)for(const j of [i+1,i+8]){if(j>=64||(j===i+1&&i%8===7))continue;const a=tiles[i],b=tiles[j];if(a?.locked||b?.locked)continue;[tiles[i],tiles[j]]=[b,a];const m=matchInfo();[tiles[i],tiles[j]]=[a,b];if(m.all.length&&m.all.some(t=>t===a||t===b))out.push({i,j,score:m.all.length+(m.five?45:0)+m.all.filter(t=>t.v===1).length*6+m.all.filter(t=>t.trap).length*8});}return out;}
+function moves(){const out=[];for(let i=0;i<64;i++)for(const j of [i+1,i+8]){if(j>=64||(j===i+1&&i%8===7))continue;const a=tiles[i],b=tiles[j];if(a?.locked||b?.locked||a?.lumberFire||b?.lumberFire)continue;[tiles[i],tiles[j]]=[b,a];const m=matchInfo();[tiles[i],tiles[j]]=[a,b];if(m.all.length&&m.all.some(t=>t===a||t===b))out.push({i,j,score:m.all.length+(m.five?45:0)+m.all.filter(t=>t.v===1).length*6+m.all.filter(t=>t.trap).length*8});}return out;}
 function fresh(){let attempts=0;do{board.querySelectorAll('.tile').forEach(x=>x.remove());tiles=[];for(let r=0;r<8;r++)for(let col=0;col<8;col++){let v;do{v=rnd(ORDINARY_COLOR_COUNT)}while((col>=2&&tiles[r*8+col-1]?.v===v&&tiles[r*8+col-2]?.v===v)||(r>=2&&tiles[(r-1)*8+col]?.v===v&&tiles[(r-2)*8+col]?.v===v));tiles.push(create(v,r,col));}attempts++;}while(attempts<20&&(!moves().length||matchInfo().all.length));if(!moves().length||matchInfo().all.length){for(let r=0;r<8;r++)for(let col=0;col<8;col++){const t=tiles[r*8+col];t.v=(r*2+col)%ORDINARY_COLOR_COUNT;paint(t)}const setup=[[0,0],[1,0],[2,1],[8,1],[9,2],[10,0]];for(const [pos,v] of setup){tiles[pos].v=v;paint(tiles[pos])}}}
 function reshufflePreservingTiles(){
  // Reposition existing tile objects rather than recreating them: special effects,
@@ -754,7 +754,7 @@ async function resolve(who,chosenColor=null,anchor=null,otherSwapTile=null){let 
  const qualifiesFive=group&&(group.length>=5);
  const qualifiesFour=group&&(group.length>=4);
  if(qualifiesFive)createdBonus={tile:triggeringTile,kind:'wild'};
-}let matched=info.all;resolveHiddenTrapMatches(matched,who);let counts=Array(ORDINARY_COLOR_COUNT).fill(0),powerHits=matched.filter(t=>t.special==='energy').length;matched.forEach(t=>{if(t.special!=='wild'&&Number.isInteger(t.v)&&t.v>=0&&t.v<ORDINARY_COLOR_COUNT)counts[t.v]+=t.special==='energy5'?5:t.special==='energy'?3:1});const lineClears=new Set();for(const run of info.runs){if(run.length!==4)continue;const horizontal=run.every(t=>t.r===run[0].r);for(let n=0;n<8;n++){const t=horizontal?tiles[run[0].r*8+n]:tiles[n*8+run[0].c];if(t&&!matched.includes(t))lineClears.add(t)}}say((who==='player'?'Player':'Guardian')+' matches '+matched.length+' tiles'+(depth>1?' · cascade '+depth:'')+(info.five?' · bonus turn!':''));[...matched,...lineClears].forEach(t=>{if(!(t.lore&&t.loreFortified)&&!t.effectFortified)t.el.classList.add('pop');});await wait(300);
+}let matched=info.all;if(lumbermillMode&&who==='player'){const adjacent=new Set();for(const t of matched)if([2,3,4].includes(t.v))for(const [dr,dc] of [[0,1],[0,-1],[1,0],[-1,0]]){const r=t.r+dr,c=t.c+dc;if(r>=0&&r<8&&c>=0&&c<8){const q=tiles[r*8+c];if(q?.lumberFire)adjacent.add(q);}}for(const q of adjacent){q.lumberFire=false;paint(q);}if(adjacent.size)say('Cool matches extinguished '+adjacent.size+' fires.');}resolveHiddenTrapMatches(matched,who);let counts=Array(ORDINARY_COLOR_COUNT).fill(0),powerHits=matched.filter(t=>t.special==='energy').length;matched.forEach(t=>{if(t.special!=='wild'&&Number.isInteger(t.v)&&t.v>=0&&t.v<ORDINARY_COLOR_COUNT)counts[t.v]+=t.special==='energy5'?5:t.special==='energy'?3:1});const lineClears=new Set();for(const run of info.runs){if(run.length!==4)continue;const horizontal=run.every(t=>t.r===run[0].r);for(let n=0;n<8;n++){const t=horizontal?tiles[run[0].r*8+n]:tiles[n*8+run[0].c];if(t&&!matched.includes(t))lineClears.add(t)}}say((who==='player'?'Player':'Guardian')+' matches '+matched.length+' tiles'+(depth>1?' · cascade '+depth:'')+(info.five?' · bonus turn!':''));[...matched,...lineClears].forEach(t=>{if(!(t.lore&&t.loreFortified)&&!t.effectFortified)t.el.classList.add('pop');});await wait(300);
  [...matched,...lineClears].forEach(t=>{
   t.el.classList.remove('pop');
   if(createdBonus&&t===createdBonus.tile&&!(t.lore&&t.loreFortified)&&!t.effectFortified&&depth===1){
@@ -772,7 +772,7 @@ async function resolve(who,chosenColor=null,anchor=null,otherSwapTile=null){let 
   if(puzzleMode&&t.hay){hayLeft--;say('Gathered a haystack! '+hayLeft+' remain.');}
   if(loreMode&&t.lore){loreLeft--;say('Recovered a lore page! '+loreLeft+' remain.');}
   t.el.remove();tiles[t.r*8+t.c]=null;
- });if(puzzleMode&&(loreMode?loreLeft<=0:hayLeft<=0)){finish(true);return false;}for(let c=0;c<8;c++){
+ });if(puzzleMode&&!lumbermillMode&&(loreMode?loreLeft<=0:hayLeft<=0)){finish(true);return false;}for(let c=0;c<8;c++){
  // Locked tiles retain their coordinates; all other tiles fall past them.
  const fixed=[],falling=[];
  for(let r=7;r>=0;r--){const t=tiles[r*8+c];if(!t)continue;(t.locked?fixed:falling).push(t);}
@@ -1468,7 +1468,7 @@ async function tickAlchemistBurns(){
  if(detonations.length&&!ended){await fireVolley(detonations.map(key=>tiles[key]).filter(Boolean));say('Alchemist Fire erupts!');}
  for(const [key] of alchemistBurns){const q=tiles[key];if(q)paint(q);}
  if(detonations.length&&!ended){
-  if(puzzleMode&&(loreMode?loreLeft===0:hayLeft===0))finish(true);
+  if(puzzleMode&&!lumbermillMode&&(loreMode?loreLeft===0:hayLeft===0))finish(true);
   else await resolve('player');
  }
 }
@@ -1560,7 +1560,7 @@ function finish(win){
  try{if(window.parent!==window)window.parent.postMessage({type:'rq-v2-combat-completed',encounter:new URLSearchParams(location.search).get('ticketEncounter')||new URLSearchParams(location.search).get('encounter'),won:!!win},location.origin);}catch(e){console.warn('Combat completion notification unavailable',e);}
  banner(win?'CHALLENGE COMPLETE!':'TRY AGAIN LATER');
  $('resultTitle').textContent=win?currentEncounter.title+' · Complete':currentEncounter.title+' · Unfinished';
- const outcomeReason=win?'All opponents defeated.':party.every(p=>p.hp<=0)?'All party members were incapacitated.':puzzleMode&&turnsUsed>=turnLimit?'Turn limit reached ('+turnsUsed+'/'+turnLimit+').':'Unexpected encounter termination; investigate battle log.';
+ const outcomeReason=win?(lumbermillMode?'All fires extinguished.':'All opponents defeated.'):party.every(p=>p.hp<=0)?'All party members were incapacitated.':puzzleMode&&turnsUsed>=turnLimit?'Turn limit reached ('+turnsUsed+'/'+turnLimit+').':'Unexpected encounter termination; investigate battle log.';
  $('resultText').textContent=outcomeReason+' '+(win?currentEncounter.win:currentEncounter.loss)+' '+(win?'Support reward verification in progress.':puzzleMode?(loreMode?'The archive closed before all pages were recovered. No stamina was lost.':'The storm arrived before all haystacks were gathered. No stamina was lost.'):'Fatigue persists on retry; resting restores stamina.')+' Final HP: party '+party.map(p=>p.name+' '+p.hp+'/'+p.max).join(', ')+'; enemies '+enemies.map(e=>e.name+' '+e.hp+'/'+e.max).join(', ')+'.';
  saveHealth();
  if(win&&!new URLSearchParams(location.search).has('adventureAdmission')){
