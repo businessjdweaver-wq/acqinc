@@ -516,7 +516,7 @@ const CARD_MECHANICS=window.RQCardMechanics||null;
 function tileEffect(t,effect){if(!t||!effect)return false;const amount=Math.max(0,Number(effect.amount)||0);
  switch(effect.type){
  case 'lock':if(t.locked)return false;t.locked=true;break;
- case 'unlock':if(!t.locked)return false;t.locked=false;if(t.lore){t.loreUnlocked=true;t.loreLockTimer=0;}emitCombatEvent('tile-unlocked',{count:1,tiles:[t]});break;
+ case 'unlock':if(sluiceMode&&t.sluiceGear){sluiceRepairGear(t,'Unlock power');return true;}if(!t.locked)return false;t.locked=false;if(t.lore){t.loreUnlocked=true;t.loreLockTimer=0;}emitCombatEvent('tile-unlocked',{count:1,tiles:[t]});break;
  case 'fortify':if(t.lore?t.loreFortified:t.effectFortified)return false;if(lumbermillMode&&t.lumberFire)t.lumberFire=false;if(t.lore){t.loreFortified=true;t.loreCracked=false;t.loreHits=0;t.loreLockTimer=2;}else{t.effectFortified=true;}break;
  case 'amplify':if(!t.special||amount<=0)return false;t.specialStrength=Math.max(0,(Number(t.specialStrength)||1)+amount);float(t.el,'+'+amount,'#7fffb3');break;
  case 'dampen':if(!t.special||amount<=0||Math.max(0,Number(t.specialStrength??1))<=0)return false;{const previous=Math.max(0,Number(t.specialStrength??1));t.specialStrength=Math.max(0,previous-amount);float(t.el,'−'+(previous-t.specialStrength),'#ffad73');}break;
@@ -1171,7 +1171,7 @@ async function animatePowerTile(t,emote='🔎'){if(!t?.el)return Promise.resolve
 async function activateCardPower(i,j){const type=party[i].powers[j][4];if(type==='card-pattern'){const p=party[i].powers[j],config=p[5];if(!config||busy||ended||side!=='player'||party[i].away||energy[p[1]]<cost(i,j))return;chooseProgressedPattern(i,j);return;}if(['unlock-theft','uncanny-dodge'].includes(type)){say('This is an automatic passive ability.');return;}if(type==='enemy-special-burst'&&level(i,j)>=4){openModal('Feed the Chaos · Mastery choice','Deal amplified damage or disarm every unlocked enemy special tile.','No energy spent until you choose.',true,()=>{burstMasteryDisarm=false;usePower(i,j);});const button=document.createElement('button');button.type='button';button.className='btn';button.textContent='Disarm enemy specials';button.onclick=()=>{$('modal').classList.add('hidden');burstMasteryDisarm=true;usePower(i,j);};$('modalDesc').appendChild(document.createElement('br'));$('modalDesc').appendChild(button);return;}if(type==='inspect'){
  const lv=level(i,j),threshold=[2,3,4,6][lv-1],power=lv===4?2:1;
  const enemySpecial=q=>!!(q.special&&q.specialOwner==='enemy');
- const objective=q=>(loreMode&&q.lore)||(puzzleMode&&!lumbermillMode&&q.hay)||(lumbermillMode&&q.lumberFire);
+ const objective=q=>(sluiceMode&&q.sluiceGear)||(loreMode&&q.lore)||(puzzleMode&&!lumbermillMode&&q.hay)||(lumbermillMode&&q.lumberFire);
  const ordinary=q=>!q.special&&!q.lore&&!q.hay&&!q.rat&&!q.trap&&!q.hiddenTrap&&!q.friendlyRat&&!q.returnShield&&!q.power;
  // One player-selected tile; status layers take priority over the tile's underlying identity.
  const eligible=q=>!!q&&(q.locked||q.effectFortified||q.loreFortified||objective(q)||(q.trap>0&&q.trapOwner!=='player')||q.rat||enemySpecial(q)||ordinary(q));
@@ -1192,7 +1192,8 @@ async function activateCardPower(i,j){const type=party[i].powers[j][4];if(type==
     if(strength<=threshold){q.special=null;q.specialOwner=null;q.specialStrength=0;say('Magnifying Glass disarms the enemy special (strength '+strength+').');}
     else{q.specialStrength=Math.max(0,strength-power);say('Magnifying Glass dampens enemy special strength '+strength+' → '+q.specialStrength+'.');}
    }else if(objective(q)){
-    if(lumbermillMode&&q.lumberFire){q.lumberFire=false;say('Magnifying Glass extinguishes the fire.');lumberCheckWin();}
+    if(sluiceMode&&q.sluiceGear){sluiceRepairGear(q,'Magnifying Glass');}
+    else if(lumbermillMode&&q.lumberFire){q.lumberFire=false;say('Magnifying Glass extinguishes the fire.');lumberCheckWin();}
     else if(q.lore){q.lore=false;q.loreTimer=0;q.loreLockTimer=0;q.loreCracked=false;loreLeft=Math.max(0,loreLeft-1);say('Magnifying Glass recovers a manuscript.');if(loreLeft===0)finish(true);}
     else if(q.hay){q.hay=false;hayLeft=Math.max(0,hayLeft-1);say('Magnifying Glass collects a harvest objective.');if(hayLeft===0)finish(true);}
    }else if(q.trap>0&&q.trapOwner!=='player'){q.trap=0;q.trapOwner=null;say('Magnifying Glass disarms an enemy countdown.');}
