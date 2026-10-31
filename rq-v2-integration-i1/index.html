@@ -166,17 +166,32 @@ function renderSnoozedGroup(lane,list){const members=list.filter(t=>workflowSect
 function render(){if(timerActive&&!tasks.some(t=>t.id===timerActive.id&&!t.done))stopTimer();cleanupDrag();persist();renderPassiveAlerts();const f=active();$('focusCount').textContent=f.length+' selected';$('primary').replaceChildren();$('queueTasks').replaceChildren();const main=mainTask();if(main)$('primary').append(makeTask(main,true));else $('primary').append(el('div','empty-slot','Primary focus slot is empty · drag a task here'));f.filter(t=>t!==main).forEach(t=>$('queueTasks').append(makeTask(t,true)));if(!f.length)$('queueTasks').append(el('p','muted','No focus tasks selected.')); $('queueLabel').textContent='Other focus tasks ('+Math.max(0,f.length-(main?1:0))+') · drag to reorder';const filter=$('filter').value;const contextFilter=$('contextFilter').value;const list=tasks.filter(t=>(contextFilter==='all'||(contextFilter==='none'?!t.context:t.context===contextFilter))&&(filter==='done'?t.done:!t.done&&(filter==='all'||(filter==='focus'?t.focus:filter==='tickler'?(passiveReady(t)||(t.dayplannerCreated&&t.bucket==='waiting'&&!t.done)):t.bucket===filter)))).sort((a,b)=>a.order-b.order);const host=$('taskList');host.replaceChildren();host.style.setProperty('--cols',columns);$('columnCount').value=String(columns);for(let c=0;c<columns;c++){const lane=el('section','column-lane');lane.dataset.column=String(c);lane.append(el('h3','',`Column ${c+1} · drop tasks here`));const colTasks=list.filter(t=>Math.max(0,Math.min(columns-1,Number(t.column)||0))===c);if(filter==='all')renderWorkflowGroups(lane,colTasks,c);for(const g of [...groups,{id:'',name:'Ungrouped'}]){const groupColumn=g.id?Math.max(0,Math.min(columns-1,Number(g.column??tasks.find(t=>t.groupId===g.id)?.column??0))):c;if(g.id&&groupColumn!==c)continue;const eligible=filter==='all'?list.filter(t=>!workflowSection(t)):list;const members=g.id?eligible.filter(t=>t.groupId===g.id):colTasks.filter(t=>!t.groupId&&(filter!=='all'||!workflowSection(t)));if(!g.id&&!members.length)continue;const section=el('section','task-group'+(g.pending?' group-pending':''));section.dataset.group=g.id; if(g.id&&g.column===undefined)g.column=groupColumn;if(g.id){section.style.background=g.color||'#26394b';section.style.borderColor=g.color||'#45515f'}const heading=el('div','group-title');if(g.id)heading.append(el('span','group-icon',g.icon||'📁'));heading.append(el('span','grow',g.name+' ('+members.length+')'));if(g.id){const color=el('input','group-color');color.type='color';color.title='Group background color';color.value=g.color||'#26394b';color.onchange=()=>change(()=>g.color=color.value,'Group color updated.');heading.append(color);const icon=el('button','secondary',g.icon||'📁');icon.title='Choose group icon';icon.onclick=()=>{const choice=prompt('Group icon (emoji or short symbol)',g.icon||'📁');if(choice?.trim())change(()=>g.icon=choice.trim().slice(0,6),'Group icon updated.')};heading.append(icon);const rename=el('button','secondary','✎');rename.title='Rename group';rename.onclick=()=>{const name=prompt('Name this group',g.pending?'':g.name);if(name?.trim())change(()=>{g.name=name.trim();g.pending=false},'Group renamed.')};heading.append(rename);const del=el('button','secondary','✕');del.title='Delete this group (tasks become ungrouped)';del.onclick=()=>{if(confirm('Delete group '+g.name+'? Tasks will remain.'))change(()=>{tasks.filter(t=>t.groupId===g.id).forEach(t=>{t.groupId='';t.column=groupColumn});groups=groups.filter(x=>x.id!==g.id)},'Group deleted; tasks preserved.')};heading.append(del);const collapse=el('button','secondary',g.collapsed?'Expand':'Collapse');collapse.onclick=()=>change(()=>{g.collapsed=!g.collapsed},'Group visibility updated.');heading.append(collapse)}section.append(heading);if(!g.collapsed)members.forEach(t=>section.append(makeTask(t)));if(g.id&&!members.length)section.append(el('p','muted','Empty group · drag tasks here or delete this group.'));lane.append(section)}if(filter==='all'&&c===columns-1)renderSnoozedGroup(lane,list);host.append(lane)}if(!list.length)host.append(el('p','muted','No tasks in this view.'));$('kudosCount').textContent=kudos.length+' earned';const hist=$('kudosHistory');hist.replaceChildren();kudos.slice(-5).reverse().forEach(k=>{const item=el('div','kudos-entry');item.append(el('div','',new Date(typeof k==='string'?k:k.at).toLocaleString()));if(k.text)item.append(el('div','',k.text));if(k.photoId){const b=el('button','secondary',k.afterPhotoId?'View before':'View kudos photograph');b.onclick=()=>showPhoto(k.photoId);item.append(b)}if(k.afterPhotoId){const b=el('button','secondary','View after');b.onclick=()=>showPhoto(k.afterPhotoId);item.append(b)}
 if(k&&typeof k==='object'&&k.taskId&&tasks.some(t=>t.id===k.taskId&&t.retroactive)){
  const b=el('button','secondary','Undo Kudos');b.type='button';
- b.onclick=()=>{
+ b.onclick=async()=>{
   const linked=focusSessions.filter(x=>x.taskId===k.taskId);
-  if(linked.some(x=>x.e2GoldStatus==='claimed'||x.e2GoldAggregateId)){
-   tell('This Kudos already claimed gold; reversal requires a separate gold adjustment.');return;
-  }
-  if(!confirm('Undo this Kudos and its associated focus minutes?'))return;
-  change(()=>{
-   kudos=kudos.filter(x=>x!==k);
-   focusSessions=focusSessions.filter(x=>x.taskId!==k.taskId);
-   tasks=tasks.filter(x=>x.id!==k.taskId);
-  },'Kudos and associated focus minutes reversed.');
+  if(!linked.length){tell('No focus record linked to this Kudos; no changes made.');return;}
+  const claimed=linked.filter(x=>x.e2GoldStatus==='claimed'||x.e2GoldAggregateId);
+  const aggregateIds=[...new Set(claimed.map(x=>x.e2GoldAggregateId||x.e2SessionId))];
+  if(aggregateIds.length>1){tell('Multiple gold claims linked to this Kudos. Manual reconciliation required.');return;}
+  const reverseMs=claimed.reduce((n,x)=>n+Math.max(0,Number(x.e2GoldRedeemedMs??x.ms??0)),0);
+  if(claimed.length&&(!aggregateIds[0]||!Number.isSafeInteger(reverseMs)||reverseMs<6000||reverseMs%6000!==0)){tell('Gold evidence is incomplete; no changes made.');return;}
+  if(!confirm('Undo this Kudos, remove its focus minutes'+(claimed.length?', and reverse '+(reverseMs/6000)+' gold':'')+'?'))return;
+  b.disabled=true;
+  try{
+   if(claimed.length){
+    await signedUser();
+    const key='rq_v2_kudos_reversal_'+aggregateIds[0]+'_'+k.taskId;
+    let reversalId=localStorage.getItem(key);
+    if(!reversalId){reversalId=crypto.randomUUID();localStorage.setItem(key,reversalId);}
+    const {error}=await client().schema('rq_v2').rpc('reverse_focus_gold',{p_session_id:aggregateIds[0],p_reversal_id:reversalId,p_reverse_ms:reverseMs});
+    if(error)throw Error(error.message);
+   }
+   change(()=>{
+    kudos=kudos.filter(x=>x!==k);
+    focusSessions=focusSessions.filter(x=>x.taskId!==k.taskId);
+    tasks=tasks.filter(x=>x.id!==k.taskId);
+   },'Kudos, focus minutes, and claimed gold reversed.');
+   if(claimed.length)await e1LoadBalances();
+  }catch(err){tell('Kudos reversal not completed: '+err.message);b.disabled=false;}
  };
  item.append(b);
 }
