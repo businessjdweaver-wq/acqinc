@@ -53,11 +53,13 @@ body.embedded-party #cards{gap:5px}
 const catalog=RQCharacterCatalog,chosen=new Set();let focusedSlot=1,slotIds=[null,null,null];let recruits=[],userId='',loading=true,potions=0,healingBusy=false;let recoveryRefreshBusy=false;
 const client=window.supabase.createClient('https://burtvenqfzextswpjziw.supabase.co','sb_publishable_eKBLY77ZQR4GKCKAuuMu_g_NCYupdt1',{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
 const colors=['Red','Yellow','Blue','Purple','Green','Gray (support)','Ivory'];
-const formationKey='rq-v2-cloud-formation-v1';
+const baseFormationKey='rq-v2-cloud-formation-v1';
 const adventureParams=new URLSearchParams(location.search);
 const adventureEmbedded=adventureParams.get('adventureParty')==='1';
 const backgroundOnly=adventureEmbedded&&adventureParams.get('rank')==='background';
-function allowedRecruit(m){return !backgroundOnly||Number(m.archetype)<6;}
+const subclassOnly=adventureEmbedded&&adventureParams.get('rank')==='class';
+const formationKey=adventureEmbedded?baseFormationKey+(backgroundOnly?'-village':'-subclass'):baseFormationKey;
+function allowedRecruit(m){const rank=Number(m.archetype);return backgroundOnly?rank<6:subclassOnly?rank>=6:true;}
 if(adventureEmbedded){
  document.body.classList.add('embedded-party');
  document.querySelector('h1').textContent='ASSEMBLE YOUR HEROES · ADVENTURE';
@@ -98,7 +100,7 @@ function powerSymbol(p){const name=String(p[0]||'').toLowerCase(),kind=String(p[
 function equippedPowers(m,c){return (Array.isArray(m.powers)?m.powers:[]).filter(j=>Number.isInteger(j)&&j>=0&&j<c.powers.length).map(j=>({power:c.powers[j],level:m.powerLevels?.[j]||1}));}
 function powerIcons(m,c){const line=document.createElement('div');line.className='power-dots';for(const {power:p,level} of equippedPowers(m,c)){const dot=document.createElement('span');dot.className='power-dot';dot.style.background=powerColors[p[1]]||'#777';dot.style.color=p[1]===6?'#202936':'#fff';dot.textContent=powerSymbol(p);dot.title=p[0]+' · '+colors[p[1]]+' · level '+level+' · '+p[3];dot.setAttribute('aria-label',dot.title);line.append(dot)}return line;}
 function persistFormation(){if(!userId||chosen.size!==3||slotIds.some(id=>!id))return;try{localStorage.setItem(formationKey,JSON.stringify({userId,ids:slotIds.slice(),frontId:slotIds[1]}))}catch(e){console.warn('Could not persist formation',e)}}function syncChosen(){chosen.clear();slotIds.forEach(id=>{if(id)chosen.add(id)});if(!loading)persistFormation();}
-function assignHero(id){if(loading)return;const existing=slotIds.indexOf(id);if(existing===focusedSlot){slotIds[focusedSlot]=null;}else{if(existing>=0)slotIds[existing]=null;slotIds[focusedSlot]=id;}syncChosen();draw();}
+function assignHero(id){if(loading||!recruits.some(m=>m.id===id&&allowedRecruit(m)))return;const existing=slotIds.indexOf(id);if(existing===focusedSlot){slotIds[focusedSlot]=null;}else{if(existing>=0)slotIds[existing]=null;slotIds[focusedSlot]=id;}syncChosen();draw();}
 function draw(){
  const stage=document.getElementById('stage'),host=document.getElementById('cards'),detail=document.getElementById('details');stage.replaceChildren();host.replaceChildren();detail.replaceChildren();
  for(let slot=0;slot<3;slot++){const id=slotIds[slot],m=recruits.find(x=>x.id===id),c=m&&catalog.characters[Number(m.archetype)],hp=c?personalHp(id,c.max):null;const box=document.createElement('button');box.type='button';box.className='hero'+(slot===1?' front':'')+(focusedSlot===slot?' focused':'')+(hp===0?' unconscious':'')+(!m?' empty':'');box.setAttribute('aria-pressed',String(focusedSlot===slot));box.setAttribute('aria-label','Party slot '+(slot+1)+(slot===1?', front line':'')+(m?', '+m.name:', empty'));box.onclick=()=>{focusedSlot=slot;draw()};const label=document.createElement('span');label.className='slot-label';label.textContent=slot===1?'FRONT LINE':'PARTY SLOT '+(slot+1);const face=document.createElement('span');face.className='face';face.textContent=c?.icon||'＋';const name=document.createElement('span');name.className='slot-name';name.textContent=m?.name||'Choose a hero';box.append(label,face,name);if(c){box.append(powerIcons(m,c));const bar=document.createElement('div');bar.className='hp';const fill=document.createElement('i');fill.style.width=hp===null?'0%':Math.round(hp/c.max*100)+'%';bar.append(fill);const count=document.createElement('small');count.textContent=(hp??'—')+' / '+c.max+' HP';box.append(bar,count);}stage.append(box);}
