@@ -531,7 +531,7 @@ function tileEffect(t,effect){if(!t||!effect)return false;const amount=Math.max(
  case 'dampen':if(!t.special||amount<=0||Math.max(0,Number(t.specialStrength??1))<=0)return false;{const previous=Math.max(0,Number(t.specialStrength??1));t.specialStrength=Math.max(0,previous-amount);float(t.el,'−'+(previous-t.specialStrength),'#ffad73');}break;
  case 'create':if(sluiceMode&&t.sluiceGear)return false;if(t.special||t.lore||t.rat||t.trap||t.hay||(lumbermillMode&&t.lumberFire))return false;if(!['attack','defense','energy','energy5','strike','wild'].includes(effect.special))return false;t.special=effect.special;t.specialOwner=effect.owner||'player';t.specialStrength=Math.max(0,Number(effect.strength??effect.amount??1)||0);break;
  case 'move':{if(sluiceMode&&t.sluiceGear)return false;const x=Number(effect.x),y=Number(effect.y);if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||x>=8||y<0||y>=8||t.locked)return false;const dest=tiles[y*8+x];if(sluiceMode&&dest?.sluiceGear)return false;if(dest?.locked||dest?.lore||dest?.rat||dest?.trap||dest?.hay||(lumbermillMode&&(t.lumberFire||dest?.lumberFire)))return false;const old=t.r*8+t.c,newIndex=y*8+x;if(old===newIndex)return true;if(dest){dest.r=t.r;dest.c=t.c;tiles[old]=dest;place(dest);}else tiles[old]=null;tiles[newIndex]=t;t.r=y;t.c=x;t.shuffleKeepRow=true;place(t);break;}
- case 'transform':if(scavengersMode&&t.smoke)return false;if(sluiceMode&&t.sluiceGear)return false;if(lumbermillMode&&t.lumberFire)return false;if(effect.special===undefined&&(!Number.isInteger(effect.color)||t.v===effect.color))return false;if(effect.special!==undefined){t.special=effect.special;t.specialOwner=effect.owner||t.specialOwner;}if(Number.isInteger(effect.color)&&effect.color>=0&&effect.color<ORDINARY_COLOR_COUNT)t.v=effect.color;break;
+ case 'transform':if(sluiceMode&&t.sluiceGear)return false;if(lumbermillMode&&t.lumberFire)return false;if(effect.special===undefined&&(!Number.isInteger(effect.color)||t.v===effect.color))return false;if(effect.special!==undefined){t.special=effect.special;t.specialOwner=effect.owner||t.specialOwner;}if(Number.isInteger(effect.color)&&effect.color>=0&&effect.color<ORDINARY_COLOR_COUNT)t.v=effect.color;break;
  case 'count':return !!(effect.owner===undefined||t.specialOwner===effect.owner)&&!!(effect.special===undefined||t.special===effect.special);
  default:return false;
  }paint(t);return true;
@@ -561,7 +561,7 @@ async function applyCardPattern(config,who='player'){
     t.el.remove();tiles[t.r*8+t.c]=null;
     return {changed:true};
    }
-   const changed=(config.effect==='transform'&&scavengersMode&&t.smoke)?false:tileEffect(t,{type:config.effect,amount:config.amount,color:config.color,special:config.special,owner:who,strength:config.strength,x:config.x,y:config.y});if(changed&&(config.fortifyCreated||config.fortifyAmplified)){t.effectFortified=true;paint(t);}return {changed};
+   const changed=tileEffect(t,{type:config.effect,amount:config.amount,color:config.color,special:config.special,owner:who,strength:config.strength,x:config.x,y:config.y});if(changed&&(config.fortifyCreated||config.fortifyAmplified)){t.effectFortified=true;paint(t);}return {changed};
   }
  });
  for(const [color,amount] of Object.entries(result.resources))charge(Number(color),amount,who);
@@ -720,7 +720,7 @@ const specialNames={attack:'Attack Arrowhead',energy:'Energy Conduit',strike:'St
 function specialBonus(owner,type){return tiles.filter(t=>t&&!t.locked&&t.special===type&&t.specialOwner===owner).length;}
 function specialStrengthTotal(owner,type){return tiles.reduce((sum,t)=>sum+(t&&!t.locked&&t.special===type&&t.specialOwner===owner?Math.max(0,Number(t.specialStrength??1)):0),0);}
 function spawnSpecial(type,owner='player',count=2){
- const available=tiles.filter(t=>t&&!t.trap&&!t.special&&!t.lore&&!t.hay&&!t.rat&&!t.returnShield&&(!lumbermillMode||!t.lumberFire)&&(!sluiceMode||!t.sluiceGear));
+ const available=tiles.filter(t=>t&&!(scavengersMode&&t.smoke)&&!t.trap&&!t.special&&!t.lore&&!t.hay&&!t.rat&&!t.returnShield&&(!lumbermillMode||!t.lumberFire)&&(!sluiceMode||!t.sluiceGear));
  let made=0;
  for(let i=0;i<count&&available.length;i++){
    const t=available.splice(rnd(available.length),1)[0];
@@ -1071,7 +1071,7 @@ function cardPatternCanChange(config,center){
    case 'unlock':return !!t.locked;
    case 'fortify':return t.lore?!t.loreFortified:!t.effectFortified;
    case 'destroy':return !lumbermillMode||!t.lumberFire;
-   case 'transform':return !(scavengersMode&&t.smoke)&&(!lumbermillMode||!t.lumberFire)&&t.v!==Number(config.color);
+   case 'transform':return (!lumbermillMode||!t.lumberFire)&&t.v!==Number(config.color);
    case 'create':return !t.special&&!t.lore&&!t.rat&&!t.trap&&!t.hay&&(!lumbermillMode||!t.lumberFire);
    default:return true;
   }
@@ -1089,7 +1089,7 @@ async function executeCardPattern(config,who='player',power=null){
 async function commitCardPatternCenter(t){
  const pending=pendingCardPattern;if(!pending)return false;
  const selectedConfig={...pending.config,centerMode:'selected',center:{x:t.c,y:t.r}};
- if(!cardPatternCanChange(selectedConfig,selectedConfig.center)){say('No eligible tiles in this pattern: they may already be the target color or be blocked by smoke. Choose another center; no energy spent.');banner('NO VALID TARGET');return false;}
+ if(!cardPatternCanChange(selectedConfig,selectedConfig.center)){say('Those tiles already have the target color. Choose another center; no energy spent.');banner('NO VALID TARGET');return false;}
  pendingCardPattern=null;
  $('targetPanel').classList.add('hidden');
  try{await executeCardPattern(selectedConfig,pending.who,pending.power);}
@@ -1394,7 +1394,7 @@ async function commitLine(t){
  if(x.remaining>1&&!ended){lineTarget={...x,remaining:x.remaining-1,paid:true};$('targetPanel').classList.remove('hidden');$('targetText').textContent='Sundering Line: choose second row. Cancel ends the power.';}
  render();
 }
-async function usePower(i,j,enemyIndex=null){let p=party[i].powers[j];if(busy||ended||energy[p[1]]<cost(i,j)||party[i].away)return;if(p[4]==='enemy-special-burst'&&!tiles.some(t=>t?.special&&t.specialOwner==='enemy'&&!t.locked)){say('No active enemy special tiles. No energy spent.');banner('NO VALID TARGET');return;}if(p[4]==='spawn-trap'&&!tiles.some(t=>t&&!t.special&&!t.trap&&!t.lore&&!t.hay&&!t.rat&&(!lumbermillMode||!t.lumberFire))){say('No eligible countdown positions. No energy spent.');banner('NO VALID TARGET');return;}if(p[4].startsWith('spawn-')&&!tiles.some(t=>t&&!t.trap&&!t.special&&!t.lore&&!t.hay&&!t.rat&&!t.returnShield&&(!lumbermillMode||!t.lumberFire))){say('No eligible tiles for special creation. No energy spent.');banner('NO VALID TARGET');return;}if(p[4].startsWith('heal')&&!party.some(t=>t.hp>0&&t.hp<t.max)){say('All allies are at full health. No energy spent.');banner('NO VALID TARGET');return;}if(p[4]==='convert'&&!tiles.some(t=>t&&t.v!==2&&!t.lore&&!t.hay&&!t.rat&&!t.trap&&!t.special&&!t.returnShield&&!t.power&&(!lumbermillMode||!t.lumberFire))){say('No non-blue ordinary tiles remain. No energy spent.');banner('NO VALID TARGET');return;}energy[p[1]]-=cost(i,j);busy=true;render();say(party[i].name+' uses '+p[0]);if(p[4]==='inspect'){say('Choose a target for Magnifying Glass before spending energy.');}
+async function usePower(i,j,enemyIndex=null){let p=party[i].powers[j];if(busy||ended||energy[p[1]]<cost(i,j)||party[i].away)return;if(p[4]==='enemy-special-burst'&&!tiles.some(t=>t?.special&&t.specialOwner==='enemy'&&!t.locked)){say('No active enemy special tiles. No energy spent.');banner('NO VALID TARGET');return;}if(p[4]==='spawn-trap'&&!tiles.some(t=>t&&!t.special&&!t.trap&&!t.lore&&!t.hay&&!t.rat&&(!lumbermillMode||!t.lumberFire))){say('No eligible countdown positions. No energy spent.');banner('NO VALID TARGET');return;}if(p[4].startsWith('spawn-')&&!tiles.some(t=>t&&!(scavengersMode&&t.smoke)&&!t.trap&&!t.special&&!t.lore&&!t.hay&&!t.rat&&!t.returnShield&&(!lumbermillMode||!t.lumberFire))){say('No eligible tiles for special creation. No energy spent.');banner('NO VALID TARGET');return;}if(p[4].startsWith('heal')&&!party.some(t=>t.hp>0&&t.hp<t.max)){say('All allies are at full health. No energy spent.');banner('NO VALID TARGET');return;}if(p[4]==='convert'&&!tiles.some(t=>t&&t.v!==2&&!t.lore&&!t.hay&&!t.rat&&!t.trap&&!t.special&&!t.returnShield&&!t.power&&(!lumbermillMode||!t.lumberFire))){say('No non-blue ordinary tiles remain. No energy spent.');banner('NO VALID TARGET');return;}energy[p[1]]-=cost(i,j);busy=true;render();say(party[i].name+' uses '+p[0]);if(p[4]==='inspect'){say('Choose a target for Magnifying Glass before spending energy.');}
  
  if(p[4]==='phantom-target'){const lv=level(i,j);phantomWard={hp:[20,30,45,60][lv-1],retaliate:[0,10,20,30][lv-1]};say('Prismatic Veil conjures a phantom with '+phantomWard.hp+' protection.');}
  if(p[4]==='shield-bash'){const lv=level(i,j);damageEnemy(12+8*lv+fortifiedCount()*(lv+1));enemyStunTarget=frontEnemy();enemyStunRounds=lv>=4?2:1;say('Shield Bash stuns the front enemy.');}
