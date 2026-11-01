@@ -30,7 +30,7 @@ body.embedded-party main>p:has(#save){margin:0;flex:none}
 body.embedded-party #save{width:100%;padding:10px;font-size:14px}
 @media(max-height:650px){body.embedded-party #partyHelp{display:none}body.embedded-party .hero,body.embedded-party .hero.front{min-height:80px}body.embedded-party .hero .face{font-size:24px}}
 </style><main><h1>ASSEMBLE YOUR HEROES</h1><p id="partyHelp">Tap a party slot, then tap a roster tile to assign that hero. Each hero can occupy only one slot. The center slot is your front line.</p><p id="status" role="status"></p><div class="formation-controls"><button id="rotateLeft" type="button" aria-label="Rotate party left">←</button><span>Rotate front line</span><button id="rotateRight" type="button" aria-label="Rotate party right">→</button></div><div class="stage" id="stage"></div><section class="card" style="margin:12px 0"><h2>🧪 Restorative Elixirs</h2><p id="healStatus" role="status">Checking cloud inventory…</p><p><small>Each recruited hero has their own health and healing controls below. Healing costs one cloud-verified elixir.</small></p></section><h2>YOUR ROSTER</h2><div class="roster-tools"><input id="rosterSearch" type="search" placeholder="Search heroes" aria-label="Search heroes"><select id="rosterSort" aria-label="Sort roster"><option value="name">Name</option><option value="rank">Star rank</option><option value="hp">Health</option></select></div><div class="roster-grid" id="cards"></div><details class="roster-detail"><summary>Character details, equipped powers and healing</summary><div class="grid" id="details"></div></details><p><button id="save">Save three-character party</button> <a href="combat49.html">Open match-3 →</a></p><p><a href="power-collection.html">Power Collection / Inbox</a> · <a href="card-manager.html">Card Manager</a> · <a href="power-test-lab.html">Power Test Lab</a></p></main><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script><script src="character-catalog.js?build=two-star-hp-20261018"></script><script>
-const catalog=RQCharacterCatalog,chosen=new Set();let focusedSlot=1,slotIds=[null,null,null];let recruits=[],userId='',loading=true,potions=0,healingBusy=false;
+const catalog=RQCharacterCatalog,chosen=new Set();let focusedSlot=1,slotIds=[null,null,null];let recruits=[],userId='',loading=true,potions=0,healingBusy=false;let recoveryRefreshBusy=false;
 const client=window.supabase.createClient('https://burtvenqfzextswpjziw.supabase.co','sb_publishable_eKBLY77ZQR4GKCKAuuMu_g_NCYupdt1',{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
 const colors=['Red','Yellow','Blue','Purple','Green','Gray (support)','Ivory'];
 const formationKey='rq-v2-cloud-formation-v1';
@@ -46,6 +46,33 @@ if(adventureEmbedded){
 }
 
 function personalHp(id,max){try{const value=localStorage.getItem("rq-v2-character-health-v1-"+userId+"-"+id);if(value!==null&&Number.isFinite(Number(value)))return Math.max(0,Math.min(max,Number(value)))}catch(e){}return null}function migratePartyHealth(){const ids=slotIds.slice(),hp=savedHealthFor(ids);if(!hp)return;ids.forEach((id,i)=>{const m=recruits.find(x=>x.id===id);if(!m)return;const key="rq-v2-character-health-v1-"+userId+"-"+id;if(localStorage.getItem(key)===null)localStorage.setItem(key,String(Math.max(0,Math.min(catalog.characters[Number(m.archetype)].max,Number(hp[i])||0))))})}function savedHealthFor(ids){if(!userId||ids.length!==3)return null;try{const data=JSON.parse(localStorage.getItem('rq-v2-cloud-combat-health-'+userId+'-'+ids.join('-'))||'null');if(Array.isArray(data?.hp)&&data.hp.length===3)return data.hp}catch{}return null}
+
+function recoveryLocalTimestamp(id,hp,max){if(hp>=max)return null;try{const raw=JSON.parse(localStorage.getItem('rq-v2-recovery-v1-'+userId+'-'+id)||'null');const at=Number(raw?.damagedAt);if(at>0&&at<=Date.now())return new Date(at).toISOString()}catch(e){}return null}
+async function refreshRosterRecovery(){
+ if(recoveryRefreshBusy||!userId||!recruits.length)return;
+ recoveryRefreshBusy=true;
+ try{
+  const {data:existing,error}=await client.from('rq_v2_character_recovery').select('character_id').eq('user_id',userId).in('character_id',recruits.map(m=>m.id));
+  if(error)throw error;
+  const known=new Set((existing||[]).map(r=>r.character_id));
+  for(const m of recruits){
+   const c=catalog.characters[Number(m.archetype)];if(!c)continue;
+   const max=c.max,local=personalHp(m.id,max);
+   const isNew=!known.has(m.id);
+   const args={p_character_id:m.id,p_max_hp:max,p_delta:isNew&&local!==null?Math.min(0,local-max):0};
+   if(isNew&&local!==null&&local<max){const timestamp=recoveryLocalTimestamp(m.id,local,max);if(timestamp)args.p_initial_damaged_at=timestamp}
+   const {data,error:syncError}=await client.rpc('rq_v2_recovery_apply',args);
+   if(syncError)throw syncError;
+   localStorage.setItem('rq-v2-character-health-v1-'+userId+'-'+m.id,String(data.hp));
+   localStorage.setItem('rq-v2-recovery-v1-'+userId+'-'+m.id,JSON.stringify({hp:data.hp,damagedAt:Number(data.damaged_at)||0}));
+  }
+  draw();
+ }catch(e){document.getElementById('status').textContent='Cloud recovery unavailable: '+e.message;console.error('Roster recovery sync failed',e)}
+ finally{recoveryRefreshBusy=false}
+}
+window.addEventListener('focus',()=>{if(!document.hidden&&!loading)refreshRosterRecovery()});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!loading)refreshRosterRecovery()});
+
 const powerColors=['#c34b54','#cda239','#398cce','#8b58bd','#2d9d78','#697586','#e8e3cf'];
 function powerSymbol(p){const name=String(p[0]||'').toLowerCase(),kind=String(p[4]||'').toLowerCase(),effect=String(p[5]?.effect||'').toLowerCase(),special=String(p[5]?.special||'').toLowerCase();if(kind.startsWith('heal')||name.includes('heal')||name.includes('rally'))return '⚗';if(special==='defense'||kind.includes('defense')||name.includes('shield')||name.includes('guard')||name.includes('bulwark')||kind==='return-shield')return '🛡';if(special==='attack'||kind.includes('attack')||kind.includes('damage')||kind==='snipe'||kind==='aoe'||kind==='shield-bash')return '⚔';if(kind.includes('rat')||kind.includes('trap'))return '◉';if(effect==='lock'||effect==='unlock'||kind.includes('unlock'))return '🔒';if(effect==='transform'||kind.includes('convert'))return '✦';if(kind.includes('energy')||kind==='resonance')return '◆';if(kind.includes('move')||kind.includes('shift')||kind==='swap')return '↔';return '✱'}
 function equippedPowers(m,c){return (Array.isArray(m.powers)?m.powers:[]).filter(j=>Number.isInteger(j)&&j>=0&&j<c.powers.length).map(j=>({power:c.powers[j],level:m.powerLevels?.[j]||1}));}
@@ -83,12 +110,15 @@ async function healCharacter(id){
   const {data,error}=await client.rpc('rq_v2_support_spend',{p_support:'potion',p_request_id:crypto.randomUUID()});
   if(error)throw error;
   if(Number.isSafeInteger(Number(data?.potion)))potions=Number(data.potion);
-  localStorage.setItem(key,String(max));
+  const {data:recoveryResult,error:recoveryError}=await client.rpc('rq_v2_recovery_apply',{p_character_id:id,p_max_hp:max,p_delta:max-old});
+  if(recoveryError)throw recoveryError;
+  localStorage.setItem(key,String(recoveryResult.hp));
+  localStorage.setItem('rq-v2-recovery-v1-'+userId+'-'+id,JSON.stringify({hp:recoveryResult.hp,damagedAt:Number(recoveryResult.damaged_at)||0}));
   const ids=slotIds.slice(),index=ids.indexOf(id);
   if(index>=0&&ids.length===3){const partyKey='rq-v2-cloud-combat-health-'+userId+'-'+ids.join('-');try{const state=JSON.parse(localStorage.getItem(partyKey)||'null');if(state&&Array.isArray(state.hp)&&state.hp.length===3){state.hp[index]=max;localStorage.setItem(partyKey,JSON.stringify(state))}}catch(e){}}
   status.textContent=m.name+' healed to '+max+' HP. '+potions+' elixir(s) remain.';
  }catch(e){status.textContent='Healing could not complete: '+e.message}
  finally{healingBusy=false;draw()}
 }
-(async()=>{try{const {data:{user},error}=await client.auth.getUser();if(error||!user)throw Error('Google sign-in required. Return to Task Manager to reconnect.');userId=user.id;const {data,error:rosterError}=await client.rpc('rq_v2_initialize');if(rosterError)throw rosterError;recruits=Array.isArray(data?.rosterMembers)?data.rosterMembers:[];const saved=JSON.parse(localStorage.getItem(formationKey)||'null');const ids=saved?.userId===userId&&Array.isArray(saved.ids)?saved.ids:[];const valid=ids.filter(id=>recruits.some(m=>m.id===id&&allowedRecruit(m)));(valid.length===3?valid:recruits.filter(allowedRecruit).slice(0,3).map(m=>m.id)).forEach((id,i)=>{slotIds[i]=id});syncChosen();const balance=await client.rpc('rq_v2_support_read');if(balance.error)throw balance.error;potions=Number(balance.data?.potion)||0;document.getElementById('healStatus').textContent=potions+' elixir(s) available';migratePartyHealth();for(const member of recruits){const c=catalog.characters[Number(member.archetype)];if(!c)continue;const key='rq-v2-character-health-v1-'+userId+'-'+member.id;if(localStorage.getItem(key)===null)localStorage.setItem(key,String(c.max))}loading=false;draw();if(adventureEmbedded)document.getElementById('status').textContent=backgroundOnly?'Village party · ★ background characters only':'Adventure party · choose three characters';}catch(e){loading=true;document.getElementById('status').textContent='Cloud roster unavailable: '+e.message;document.getElementById('save').disabled=true}})();
+(async()=>{try{const {data:{user},error}=await client.auth.getUser();if(error||!user)throw Error('Google sign-in required. Return to Task Manager to reconnect.');userId=user.id;const {data,error:rosterError}=await client.rpc('rq_v2_initialize');if(rosterError)throw rosterError;recruits=Array.isArray(data?.rosterMembers)?data.rosterMembers:[];const saved=JSON.parse(localStorage.getItem(formationKey)||'null');const ids=saved?.userId===userId&&Array.isArray(saved.ids)?saved.ids:[];const valid=ids.filter(id=>recruits.some(m=>m.id===id&&allowedRecruit(m)));(valid.length===3?valid:recruits.filter(allowedRecruit).slice(0,3).map(m=>m.id)).forEach((id,i)=>{slotIds[i]=id});syncChosen();const balance=await client.rpc('rq_v2_support_read');if(balance.error)throw balance.error;potions=Number(balance.data?.potion)||0;document.getElementById('healStatus').textContent=potions+' elixir(s) available';migratePartyHealth();for(const member of recruits){const c=catalog.characters[Number(member.archetype)];if(!c)continue;const key='rq-v2-character-health-v1-'+userId+'-'+member.id;if(localStorage.getItem(key)===null)localStorage.setItem(key,String(c.max))}loading=false;draw();await refreshRosterRecovery();if(adventureEmbedded)document.getElementById('status').textContent=backgroundOnly?'Village party · ★ background characters only':'Adventure party · choose three characters';}catch(e){loading=true;document.getElementById('status').textContent='Cloud roster unavailable: '+e.message;document.getElementById('save').disabled=true}})();
 </script></html>
