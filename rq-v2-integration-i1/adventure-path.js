@@ -38,7 +38,7 @@
         { id: 'sluice', type: 'puzzle', name: 'The Broken Sluice', encounterId: 'broken_sluice', requiresAny: ['lumbermill'], x: 0.24, y: 0.34 },
         { id: 'scavengers', type: 'combat', name: 'Scavengers in the Smoke', encounterId: 'smoke_scavengers', requiresAny: ['lumbermill'], x: 0.76, y: 0.34 },
         { id: 'grove', type: 'puzzle', name: 'The Ashen Grove', encounterId: 'ashen_grove_rescue', requiresAny: ['sluice'], x: 0.24, y: 0.58 },
-        { id: 'tower', type: 'hybrid', name: 'The Signal Tower', encounterId: 'signal_tower', requiresAny: ['scavengers'], x: 0.76, y: 0.58 },
+        { id: 'tower', type: 'combat', name: 'The Signal Tower', encounterId: 'signal_tower', requiresAny: ['scavengers'], x: 0.76, y: 0.58 },
         { id: 'captain', type: 'finale', name: 'The Ashen Captain', encounterId: 'ashen_captain', requiresAny: ['grove', 'tower'], x: 0.5, y: 0.83 }
       ]
     },
