@@ -1188,7 +1188,7 @@ onCombatEvent('tile-unlocked',({count})=>{
  }
  if(stolen)say('Hardened Tumblers steals '+stolen+' enemy energy.');
 });
-function unlockTiles(list){let count=0;const changed=[];for(const t of new Set(list)){if(!t)continue;let unlocked=false;if(t.locked||t.sluiceWaterlock){t.locked=false;t.sluiceWaterlock=false;if(t.lore){t.loreUnlocked=true;t.loreLockTimer=0;}unlocked=true;}if(unlocked){paint(t);changed.push(t);count++;}}if(count)emitCombatEvent('tile-unlocked',{count,tiles:changed});return count;}
+function unlockTiles(list){let count=0;const changed=[];for(const t of new Set(list)){if(!t||t.grovePetrified)continue;let unlocked=false;if(groveMode&&t.groveRoot){groveFreeRoot(t,'Release the Catch');unlocked=true;}if(!t.groveRoot&&(t.locked||t.sluiceWaterlock)){t.locked=false;t.sluiceWaterlock=false;if(t.lore){t.loreUnlocked=true;t.loreLockTimer=0;}unlocked=true;}if(unlocked){paint(t);changed.push(t);count++;}}if(count)emitCombatEvent('tile-unlocked',{count,tiles:changed});return count;}
 document.addEventListener('change',e=>{if(e.target?.id==='powerEmotePower'){const emote=document.getElementById('powerEmoteSymbol');if(emote)emote.value=powerEmote(e.target.value)}else if(e.target?.id==='powerEmoteSymbol'){const power=document.getElementById('powerEmotePower')?.value;if(power)try{localStorage.setItem('rq-v2-power-emote:'+power,e.target.value)}catch(err){}}});
 const powerEmoteDefaults={'Magnifying Glass':'🔎','Harvest Wisdom':'🍃'};
 const powerEmoteChoices=['✨','🍃','🌿','🔥','❄️','⚡','🔎','💫','🌪️','💥','🌟','🗝️','🪄'];
@@ -1198,15 +1198,15 @@ async function animatePowerTile(t,emote='🔎'){if(!t?.el)return Promise.resolve
 async function activateCardPower(i,j){const type=party[i].powers[j][4];if(type==='card-pattern'){const p=party[i].powers[j],config=p[5];if(!config||busy||ended||side!=='player'||party[i].away||energy[p[1]]<cost(i,j))return;chooseProgressedPattern(i,j);return;}if(['unlock-theft','uncanny-dodge'].includes(type)){say('This is an automatic passive ability.');return;}if(type==='enemy-special-burst'&&level(i,j)>=4){openModal('Feed the Chaos · Mastery choice','Deal amplified damage or disarm every unlocked enemy special tile.','No energy spent until you choose.',true,()=>{burstMasteryDisarm=false;usePower(i,j);});const button=document.createElement('button');button.type='button';button.className='btn';button.textContent='Disarm enemy specials';button.onclick=()=>{$('modal').classList.add('hidden');burstMasteryDisarm=true;usePower(i,j);};$('modalDesc').appendChild(document.createElement('br'));$('modalDesc').appendChild(button);return;}if(type==='inspect'){
  const lv=level(i,j),threshold=[2,3,4,6][lv-1],power=lv===4?2:1;
  const enemySpecial=q=>!!(q.special&&q.specialOwner==='enemy');
- const objective=q=>(sluiceMode&&q.sluiceGear)||(loreMode&&q.lore)||(puzzleMode&&!lumbermillMode&&q.hay)||(lumbermillMode&&q.lumberFire);
+ const objective=q=>(groveMode&&q.groveRoot)||(sluiceMode&&q.sluiceGear)||(loreMode&&q.lore)||(puzzleMode&&!lumbermillMode&&q.hay)||(lumbermillMode&&q.lumberFire);
  const ordinary=q=>!q.special&&!q.lore&&!q.hay&&!q.rat&&!q.trap&&!q.hiddenTrap&&!q.friendlyRat&&!q.returnShield&&!q.power;
  // One player-selected tile; status layers take priority over the tile's underlying identity.
- const eligible=q=>!!q&&(q.locked||q.effectFortified||q.loreFortified||objective(q)||(q.trap>0&&q.trapOwner!=='player')||q.rat||enemySpecial(q)||ordinary(q));
+ const eligible=q=>!!q&&!q.grovePetrified&&(q.locked||q.effectFortified||q.loreFortified||objective(q)||(q.trap>0&&q.trapOwner!=='player')||q.rat||enemySpecial(q)||ordinary(q));
  if(!tiles.some(eligible)){say('Magnifying Glass: no eligible targets. No energy spent.');return;}
  const apply=async q=>{
   await animatePowerTile(q,powerEmote('Magnifying Glass'));
   let remaining=power,removed=0,convertedToIvory=false;
-  if(q.locked&&remaining){q.locked=false;if(q.lore){q.loreUnlocked=true;q.loreLockTimer=0;}remaining--;removed++;say('Magnifying Glass unlocks the tile.');}
+  if(q.groveRoot){say('Magnifying Glass: root petrifies in '+q.groveTimer+' moves.');return;}if(q.locked&&remaining){q.locked=false;if(q.lore){q.loreUnlocked=true;q.loreLockTimer=0;}remaining--;removed++;say('Magnifying Glass unlocks the tile.');}
   if(remaining&&(q.loreFortified||q.effectFortified)){
    if(q.loreFortified){q.loreFortified=false;q.loreLockTimer=0;q.loreCracked=true;q.loreHits=1;q.loreTimer=0;}
    else q.effectFortified=false;
@@ -1242,16 +1242,16 @@ async function pickBackgroundTarget(t){
  const type=party[x.i].powers[x.j][4],lv=level(x.i,x.j),power=party[x.i].powers[x.j];
  if(groveMode&&type==='move-up'&&(t.groveRoot||t.grovePetrified)){say('Scurry Up cannot target roots. Target a freed villager or an ordinary tile instead.');return;}
  if(type==='friendly-rats'){const bottom=tiles[7*8+t.c];if(!bottom||bottom.groveRoot||bottom.groveVillager||bottom.grovePetrified||bottom.locked||bottom.rat||bottom.friendlyRat||bottom.special||bottom.trap||bottom.hay||bottom.lore||bottom.returnShield||bottom.hiddenTrap||bottom.lumberFire||x.columns?.includes(t.c)){say('Choose another available column. No energy spent.');return;}x.columns=x.columns||[];x.columns.push(t.c);bottom.el.classList.add('selected');$('targetText').textContent='Granary Uprising: '+x.columns.length+'/'+(lv+1)+' columns selected. Cancel is free.';if(x.columns.length<lv+1)return;if(energy[power[1]]<cost(x.i,x.j)){cancelTarget();return;}energy[power[1]]-=cost(x.i,x.j);for(const col of x.columns){const q=tiles[7*8+col];q.friendlyRat={damage:lv>=3?(lv===4?6:3):0,finish:[12,16,20,24][lv-1]};q.el.classList.remove('selected');paint(q);}backgroundTarget=null;$('targetPanel').classList.add('hidden');say('Granary Uprising deploys '+x.columns.length+' friendly rats in selected columns.');render();return;}
- if(type==='inspect'&&(!x.inspectEligible(t)||x.chosen?.includes(t))){say('Choose an eligible target not already selected.');return;}
+ if(groveMode&&t.grovePetrified){say('Petrified roots cannot be targeted. No energy spent.');return;}if(groveMode&&t.groveRoot&&type!=='inspect'&&type!=='accelerate-timer'){say('Roots are fixed. Use Release the Catch or adjacent matches.');return;}if(type==='inspect'&&(!x.inspectEligible(t)||x.chosen?.includes(t))){say('Choose an eligible target not already selected.');return;}
  if(type==='single-convert'&&lv>=4){
  // Six-square ascending leaf from the supplied grid reference; the selected tile is its lowest-left square.
  const pattern=[[0,0],[1,-1],[2,-1],[2,-2],[3,-2],[3,-3]];
  const chosen=pattern.map(([dc,dr])=>{const row=t.r+dr,col=t.c+dc;return row>=0&&row<8&&col>=0&&col<8?tiles[row*8+col]:null;});
- const eligible=chosen.filter(q=>q&&!(sluiceMode&&q.sluiceGear)&&!q.locked&&!q.special&&!q.lore&&!q.hay&&!q.rat&&!q.friendlyRat&&!q.trap&&!q.hiddenTrap&&!q.returnShield&&!q.power);
+ const eligible=chosen.filter(q=>q&&!q.groveRoot&&!q.grovePetrified&&!(sluiceMode&&q.sluiceGear)&&!q.locked&&!q.special&&!q.lore&&!q.hay&&!q.rat&&!q.friendlyRat&&!q.trap&&!q.hiddenTrap&&!q.returnShield&&!q.power);
  if(!eligible.length){say('Every leaf square is protected or occupied. No energy spent.');return;}
  if(energy[power[1]]<cost(x.i,x.j)){say('Not enough energy for Harvest Wisdom.');return;}
  energy[power[1]]-=cost(x.i,x.j);
- const extras=tiles.filter(q=>q&&!chosen.includes(q)&&q.v!==4&&!q.locked&&!q.special&&!q.lore&&!q.hay&&!q.rat&&!q.friendlyRat&&!q.trap&&!q.hiddenTrap&&!q.returnShield&&!q.power);const randomTargets=[];for(let k=0;k<3&&extras.length;k++)randomTargets.push(extras.splice(rnd(extras.length),1)[0]);await Promise.all([...eligible,...randomTargets].map(q=>animatePowerTile(q,powerEmote('Harvest Wisdom'))));eligible.forEach(q=>{q.v=4;paint(q);});
+ const extras=tiles.filter(q=>q&&!q.groveRoot&&!q.grovePetrified&&!chosen.includes(q)&&q.v!==4&&!q.locked&&!q.special&&!q.lore&&!q.hay&&!q.rat&&!q.friendlyRat&&!q.trap&&!q.hiddenTrap&&!q.returnShield&&!q.power);const randomTargets=[];for(let k=0;k<3&&extras.length;k++)randomTargets.push(extras.splice(rnd(extras.length),1)[0]);await Promise.all([...eligible,...randomTargets].map(q=>animatePowerTile(q,powerEmote('Harvest Wisdom'))));eligible.forEach(q=>{q.v=4;paint(q);});
  // Mastery bonus: transform up to three additional random ordinary tiles outside the leaf.
  let randomConverted=0;for(const q of randomTargets){q.v=4;paint(q);randomConverted++;}
  backgroundTarget=null;$('targetPanel').classList.add('hidden');
@@ -1263,14 +1263,14 @@ async function pickBackgroundTarget(t){
  if(type==='single-convert'&&(t.rat||t.hay||t.lore||t.trap||t.special||t.returnShield||t.power)){say('Harvest Wisdom requires an ordinary tile; special tiles cannot be converted.');return;}
  if(type==='single-remove'&&t.locked){say('Unlock this tile before removing it. No energy spent.');return;}
  if(type==='single-remove'&&(t.rat||t.hay||t.lore||t.trap||(t.special&&lv<4)||t.returnShield)){say('Choose an ordinary tile without a special function.');return;}
- if(type==='return-shield'&&lumbermillMode&&t.lumberFire){say('Stubborn Stand cannot target an active fire. Choose a non-burning tile; no energy spent.');return;}
+ if(groveMode&&t.groveVillager&&['single-remove','return-shield'].includes(type)){say('Cannot overwrite or destroy a freed villager.');return;}if(type==='return-shield'&&lumbermillMode&&t.lumberFire){say('Stubborn Stand cannot target an active fire. Choose a non-burning tile; no energy spent.');return;}
  if(type==='return-shield'&&sluiceMode&&t.sluiceGear){say('Stubborn Stand cannot target a gear. No energy spent.');return;}
  if(type==='return-shield'&&t.returnShield){say('This tile already has a returning shield. No energy spent.');return;}
  if(type==='return-shield'&&lv===1&&(t.rat||t.hay||t.lore||t.trap||t.special)){say('Level 1 shield needs an ordinary tile. Upgrade to overwrite special tiles.');return;}
  if(type==='consume-special'&&!t.special){say('Choose a special tile to consume. No energy spent.');return;}
  if(type==='move-up'&&(t.locked||t.r<Math.min(lv,3)||Array.from({length:Math.min(lv,3)},(_,k)=>tiles[(t.r-1-k)*8+t.c]).some(q=>q?.locked))){say('That tile cannot move upward. No energy spent.');return;}
  if(type==='shift-row'&&tiles.filter(q=>q&&q.r===t.r&&!q.locked).length<2){say('This row has no movable tiles. No energy spent.');return;}
- if(type==='accelerate-timer'&&!(t.trap>1||t.returnShield>1||t.loreTimer>1)){say('Choose a countdown with at least two turns remaining. No energy spent.');return;}
+ if(type==='accelerate-timer'&&!(t.groveRoot||t.groveVillager||t.trap>1||t.returnShield>1||t.loreTimer>1)){say('Choose a countdown with at least two turns remaining. No energy spent.');return;}
  if(type==='flip-owner'&&(!t.special||t.specialOwner==='player')){say('Choose an enemy-owned special tile. No energy spent.');return;}
  if(['move-up','shift-row','accelerate-timer','flip-owner','consume-special'].includes(type)&&lv>=4&&x.resolveMatches===undefined){x.selectedTile=t;const movement=['move-up','shift-row'].includes(type);openModal(movement?'Movement resolution':'Mastery choice',movement?'Choose whether to trigger matches and cascades after moving.':type==='accelerate-timer'?'Accelerate the countdown, or extend its remaining time?':type==='flip-owner'?'Capture this enemy special, or destroy it?':'Consume for damage, or restore 4 energy of this power color?','Energy is charged after choosing.',true,()=>{x.resolveMatches=true;pickBackgroundTarget(t);});const button=document.createElement('button');button.type='button';button.textContent=movement?'Reposition only':type==='accelerate-timer'?'Extend countdown':type==='flip-owner'?'Destroy special':'Restore energy';button.onclick=()=>{$('modal').classList.add('hidden');x.resolveMatches=false;pickBackgroundTarget(t);};$('modalDesc').appendChild(document.createElement('br'));$('modalDesc').appendChild(button);return;}
  if(!x.paid&&energy[power[1]]<cost(x.i,x.j)){cancelTarget();return;}
@@ -1278,8 +1278,8 @@ async function pickBackgroundTarget(t){
  if(type==='inspect'){busy=true;try{await x.inspectApply(t);}finally{busy=false;}x.chosen=x.chosen||[];x.chosen.push(t);
  }else if(type==='consume-special'){await animatePowerTile(t,powerEmote(power[0]));const powerValue=Math.max(1,Number(t.specialStrength??1));t.special=null;t.specialOwner=null;t.specialStrength=0;paint(t);if(lv>=4&&x.resolveMatches===false){charge(power[1],4,'player');say('Salvage Burst recycled a special tile into 4 energy.');}else{const damage=12+6*lv+powerValue*6;damageEnemy(damage);say('Salvage Burst consumed a special tile for '+damage+' damage.');}
  }else if(type==='move-up'){const distance=Math.min(lv,3);let moved=0;for(let step=0;step<distance;step++){if(t.r<=0||t.locked||t.groveRoot||t.grovePetrified||(sluiceMode&&(t.sluiceGear||t.sluiceWaterlock)))break;const other=tiles[(t.r-1)*8+t.c];if(other?.groveRoot||other?.grovePetrified||other?.locked||other?.lumberFire||(sluiceMode&&(other?.sluiceGear||other?.sluiceWaterlock)))break;const a=t.r*8+t.c,b=(t.r-1)*8+t.c;if(other){other.r=t.r;other.c=t.c;tiles[a]=other;place(other);}else tiles[a]=null;t.r--;tiles[b]=t;t.shuffleKeepRow=true;place(t);moved++;}say(moved?'Scurry Up moved a tile '+moved+' row(s) upward.':'Scurry Up cannot move through fixed or locked tiles.');if(moved&&x.resolveMatches!==false)await resolve('player');
- }else if(type==='shift-row'){const row=t.r,spots=[];for(let c=0;c<8;c++)if(!tiles[row*8+c]?.locked&&!(sluiceMode&&tiles[row*8+c]?.sluiceGear))spots.push(row*8+c);if(spots.length>1){for(let step=0;step<Math.min(lv,3);step++){const last=tiles[spots[spots.length-1]];for(let k=spots.length-1;k>0;k--)tiles[spots[k]]=tiles[spots[k-1]];tiles[spots[0]]=last;}for(const idx of spots){const q=tiles[idx];if(q){q.r=row;q.c=idx%8;place(q);}}}say('Sideways Swarm shifted the unlocked tiles '+Math.min(lv,3)+' column(s).');if(x.resolveMatches!==false)await resolve('player');
- }else if(type==='accelerate-timer'){const delta=Math.min(lv,3)*(lv>=4&&x.resolveMatches===false?-1:1);if(t.trap>0)t.trap=Math.max(1,t.trap-delta);else if(t.returnShield>0)t.returnShield=Math.max(1,t.returnShield-delta);else if(t.loreTimer>0)t.loreTimer=Math.max(1,t.loreTimer-delta);paint(t);say('Hasten the Hour changed the countdown by '+(-delta)+' turn(s).');
+ }else if(type==='shift-row'){const row=t.r,spots=[];for(let c=0;c<8;c++)if(!tiles[row*8+c]?.locked&&!tiles[row*8+c]?.groveRoot&&!tiles[row*8+c]?.grovePetrified&&!(sluiceMode&&tiles[row*8+c]?.sluiceGear))spots.push(row*8+c);if(spots.length>1){for(let step=0;step<Math.min(lv,3);step++){const last=tiles[spots[spots.length-1]];for(let k=spots.length-1;k>0;k--)tiles[spots[k]]=tiles[spots[k-1]];tiles[spots[0]]=last;}for(const idx of spots){const q=tiles[idx];if(q){q.r=row;q.c=idx%8;place(q);}}}say('Sideways Swarm shifted the unlocked tiles '+Math.min(lv,3)+' column(s).');if(x.resolveMatches!==false)await resolve('player');
+ }else if(type==='accelerate-timer'){const delta=Math.min(lv,3)*(lv>=4&&x.resolveMatches===false?-1:1);if(t.trap>0)t.trap=Math.max(1,t.trap-delta);else if(t.returnShield>0)t.returnShield=Math.max(1,t.returnShield-delta);else if(t.loreTimer>0)t.loreTimer=Math.max(1,t.loreTimer-delta);else if(t.groveRoot)t.groveTimer=Math.max(1,t.groveTimer-delta);else if(t.groveVillager)t.groveVillagerTimer=Math.max(1,t.groveVillagerTimer-delta);paint(t);say('Hasten the Hour changed the countdown by '+(-delta)+' turn(s).');
  }else if(type==='flip-owner'){if(lv>=4&&x.resolveMatches===false){await animatePowerTile(t,powerEmote(power[0]));t.special=null;t.specialOwner=null;t.specialStrength=0;say('Turncoat destroyed an enemy special tile.');}else{t.specialOwner='player';t.specialStrength=Math.max(1,Number(t.specialStrength??1))+lv-1;say('Turncoat captured and strengthened the enemy special tile.');}paint(t);
  }else if(type==='single-remove'){
    await animatePowerTile(t,powerEmote(power[0]));await collapseRemovedTile(t);
@@ -1293,7 +1293,7 @@ async function pickBackgroundTarget(t){
    t.returnShield=lv>=3?3:2;t.returnShieldEnergy=lv+1;paint(t);
    say('Stubborn Stand places a protective token; it returns energy after '+t.returnShield+' moves.');
  }
- if(lv>=2&&type==='single-convert'&&!ended){for(const [rr,cc] of [[0,0],[0,7],[7,0],[7,7]]){const corner=tiles[rr*8+cc];if(corner&&!corner.special&&!corner.locked&&!corner.lore&&!corner.hay&&!corner.rat&&!corner.trap){await animatePowerTile(corner,powerEmote('Harvest Wisdom'));corner.v=4;paint(corner);}}await resolve('player');}
+ if(lv>=2&&type==='single-convert'&&!ended){for(const [rr,cc] of [[0,0],[0,7],[7,0],[7,7]]){const corner=tiles[rr*8+cc];if(corner&&!corner.groveRoot&&!corner.grovePetrified&&!corner.special&&!corner.locked&&!corner.lore&&!corner.hay&&!corner.rat&&!corner.trap){await animatePowerTile(corner,powerEmote('Harvest Wisdom'));corner.v=4;paint(corner);}}await resolve('player');}
  x.remaining--;if(type==='inspect'&&lv===3&&x.remaining===0&&!ended){const choices=tiles.filter(q=>q&&typeof x.inspectEligible==='function'&&x.inspectEligible(q)&&!x.chosen.includes(q));if(choices.length){busy=true;try{await x.inspectApply(choices[rnd(choices.length)]);}finally{busy=false;}say('Magnifying Glass affected one additional random target.');}}if(x.remaining>0){$('targetText').textContent='Select one more tile ('+x.remaining+' remaining).';}else{backgroundTarget=null;$('targetPanel').classList.add('hidden');}
  render();
 }
@@ -1324,17 +1324,17 @@ async function destroyAllCorners(){
  }
  for(const color of removed)charge(color,1,'player');
  say('Corner bonus destroys all four corners and collects their energy.');
- if(puzzleMode&&!lumbermillMode&&!sluiceMode&&(loreMode?loreLeft===0:hayLeft===0)){finish(true);return;}
+ if(puzzleMode&&!groveMode&&!lumbermillMode&&!sluiceMode&&(loreMode?loreLeft===0:hayLeft===0)){finish(true);return;}
  await resolve('player');
 }
 async function collapseRemovedTile(t){
- if(sluiceMode&&t?.sluiceGear){say('A sluice gear cannot be destroyed.');return;}
+ if(groveMode&&(t?.groveRoot||t?.grovePetrified||t?.groveVillager)){say('Grove objectives cannot be destroyed.');return;}if(sluiceMode&&t?.sluiceGear){say('A sluice gear cannot be destroyed.');return;}
  if(lumbermillMode&&t?.lumberFire){t.lumberFire=false;say('Fire extinguished by support.');}
  if(alchemistBurns.has(t.r*8+t.c))alchemistBurns.delete(t.r*8+t.c);
  const c=t.c;
  t.el.remove();tiles[t.r*8+c]=null;
  const fixed=[],falling=[];
- for(let r=7;r>=0;r--){const tile=tiles[r*8+c];if(!tile)continue;(tile.locked?fixed:falling).push(tile);}
+ for(let r=7;r>=0;r--){const tile=tiles[r*8+c];if(!tile)continue;(tile.locked||tile.groveRoot||tile.grovePetrified?fixed:falling).push(tile);}
  for(let r=0;r<8;r++)tiles[r*8+c]=null;
  for(const tile of fixed)tiles[tile.r*8+c]=tile;
  let next=0;
