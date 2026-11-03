@@ -15,7 +15,25 @@ const characters=[
 ,{name:'Iris · Chronomancer',icon:'⌛',background:'Sage',max:90,powers:[['Delayed Danger',3,6,'Conceal friendly traps that grow more dangerous with age.','spawn-trap'],['Lengthen the Hour',2,5,'Extend a friendly concealed trap duration.','lengthen-trap'],power('Stop Time',6,6,'Lock a countdown tile.','lock')]}
 ,{name:'Elowen · Illusionist',icon:'🎭',background:'Charlatan',max:92,powers:[power('Ivory Mirage',6,6,'Turn eligible ordinary tiles Ivory.','transform',cell,1),['Turncoat',3,6,'Change ownership of a special tile.','flip-owner'],['Prismatic Veil',2,6,'Create a phantom target that absorbs and retaliates.','phantom-target']]}
 
-];const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist'];characters.forEach((c,i)=>{c.cardTitle=cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
+
+,{name:'Seren · Twilight Cleric',icon:'🌙',background:'Acolyte',max:103,powers:[
+ ['Moonlit Benediction',2,6,'Heal a wounded ally; at higher levels revive an unconscious ally.','twilight-heal'],
+ ['Sanctuary at Dusk',6,7,'Create protective defense tiles, fortified at level four.','twilight-sanctuary'],
+ ['Twilight Absolution',3,5,'Purify locks, hostile fortification and enemy special strength.','twilight-absolution']]}
+,{name:'Morrow · Fungus Druid',icon:'🍄',background:'Hermit',max:95,powers:[
+ ['Mycelial Network',4,6,'Grow a capped network that heals allies each turn.','mycelial-network'],
+ ['Spore of Slumber',3,6,'Plant a delayed spore that cascades stun through enemies.','spore-slumber'],
+ ['Spore Bloom',1,6,'Plant a spore that releases attack tiles when matched.','spore-bloom']]}
+,{name:'Tor · Juggernaut Barbarian',icon:'🔨',background:'Outlander',max:129,powers:[
+ ['Unstoppable Charge',0,7,'Smash ordinary tiles and break fortification with a charging strike.','unstoppable-charge'],
+ ['Rage Engine',1,0,'Passive: damage taken generates attack tiles at a rage threshold.','rage-engine'],
+ ['Immovable Object',4,6,'Fortify defenses and temporarily reduce incoming damage.','immovable-object']]}
+,{name:'Kael · Astral Self Monk',icon:'🪷',background:'Hermit',max:97,powers:[
+ ['Arms of the Astral Self',2,5,'Swap adjacent tiles, gaining sequential swaps at higher levels.','astral-arms'],
+ ['Astral Flurry',3,6,'Strike based on matches made during the current allied turn.','astral-flurry'],
+ ['Stillness Beyond Form',6,6,'Reduce damage and reposition ordinary tiles.','astral-stillness']]}
+
+];const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk'];characters.forEach((c,i)=>{c.cardTitle=cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
 const characterLevelProgress=(archetype,level)=>{const base=Number(archetype)>=6?100:1;const cap=base+99;return Math.max(0,Math.min(99,Math.floor(Number(level)||base)-base));};
 const characterDamageMultiplier=(archetype,level)=>1+characterLevelProgress(archetype,level)*0.002;
 const characterMaxHp=(character,archetype,level)=>Math.round(character.max*(1+characterLevelProgress(archetype,level)*0.0025));
