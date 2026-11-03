@@ -1081,6 +1081,40 @@ function absolutionEligible(t,lv){return !!t&&!t.grovePetrified&&!t.towerBrazier
 function sporeTargetEligible(t){return !!(t&&!t.locked&&!t.effectFortified&&!t.special&&!t.sporeSlumber&&!t.sporeBloom&&!t.lore&&!t.rat&&!t.trap&&!t.hay&&!t.hiddenTrap&&!t.groveRoot&&!t.groveVillager&&!t.grovePetrified&&!t.sluiceGear&&!t.sluiceWaterlock&&!t.lumberFire&&!t.towerBrazier&&!t.smoke);}
 function commitSelectedSpore(t,pending){const {i,j}=pending.power,p=party[i].powers[j],lv=level(i,j),kind=pending.config.effect;if(!sporeTargetEligible(t)){say('Choose an ordinary, unprotected tile. No energy spent.');return false;}if(energy[p[1]]<cost(i,j))return false;energy[p[1]]-=cost(i,j);for(const tile of tiles){if(kind==='spore-bloom'&&tile?.sporeBloom?.owner===i){delete tile.sporeBloom;paint(tile);}if(kind==='spore-slumber'&&tile?.sporeSlumber?.owner===i){delete tile.sporeSlumber;paint(tile);}}if(kind==='spore-bloom')t.sporeBloom={owner:i,level:lv};else t.sporeSlumber={owner:i,level:lv,remaining:lv===1?3:2,fresh:true};paint(t);say(kind==='spore-bloom'?'Spore Bloom planted on selected tile.':'Spore of Slumber planted on selected tile.');render();return true;}
 function commitTwilightAbsolution(t,pending){const {i,j}=pending.power,lv=level(i,j),p=party[i].powers[j];if(!absolutionEligible(t,lv)){say('Choose a locked or fortified tile. No energy spent.');return false;}const targets=[t];if(lv>=3){const neighbors=tiles.filter(q=>q&&Math.abs(q.r-t.r)+Math.abs(q.c-t.c)===1&&absolutionEligible(q,lv));targets.push(...(lv===3?neighbors.slice(0,1):neighbors));}if(energy[p[1]]<cost(i,j))return false;energy[p[1]]-=cost(i,j);let changed=0;for(const q of targets){if(q.locked){q.locked=false;changed++;}else if(lv>=2&&q.effectFortified){q.effectFortified=false;changed++;}if(lv===4&&q.specialOwner==='enemy'&&q.specialStrength>0){q.specialStrength=Math.max(0,q.specialStrength-2);changed++;}paint(q);}say('Twilight Absolution purifies '+changed+' condition(s).');render();return true;}
+function juggernautChargeEligible(t){return !!(t&&!t.locked&&!t.towerBrazier&&!t.groveRoot&&!t.grovePetrified&&!t.groveVillager&&!t.sluiceGear&&!t.sluiceWaterlock&&!t.lumberFire&&!t.smoke&&!t.lore&&!t.hay&&!t.rat&&!t.trap&&!t.hiddenTrap);}
+function juggernautChargeTargets(center,lv){
+ const span=lv===1?2:lv===4?5:3;
+ const candidates=[];
+ for(const [dr,dc] of [[0,1],[1,0]]){
+  for(let start=-(span-1);start<=0;start++){
+   const line=Array.from({length:span},(_,k)=>tiles[(center.r+(start+k)*dr)*8+center.c+(start+k)*dc]).filter(Boolean);
+   const valid=line.filter(t=>Math.abs(t.r-center.r)+Math.abs(t.c-center.c)<=span&&juggernautChargeEligible(t));
+   if(line.length===span&&valid.includes(center))candidates.push(valid);
+  }
+ }
+ candidates.sort((a,b)=>b.length-a.length);
+ return candidates[0]||[center];
+}
+async function commitJuggernautCharge(t,pending){
+ const {i,j}=pending.power,p=party[i].powers[j],lv=level(i,j);
+ if(!juggernautChargeEligible(t)){say('Choose an ordinary, unlocked tile for Unstoppable Charge. No energy spent.');return false;}
+ if(energy[p[1]]<cost(i,j))return false;
+ energy[p[1]]-=cost(i,j);busy=true;
+ try{
+  const targets=juggernautChargeTargets(t,lv);
+  let removed=0,stripped=0;
+  for(const tile of targets){
+   if(!tiles.includes(tile))continue;
+   if(tile.effectFortified){tile.effectFortified=false;tile.fortifyLayers=0;paint(tile);stripped++;continue;}
+   if(tile.special||tile.returnShield)continue;
+   await collapseRemovedTile(tile);removed++;
+  }
+  damageEnemy([12,18,24,32][lv-1]);
+  say('Unstoppable Charge: '+removed+' tiles destroyed, '+stripped+' fortifications stripped.');
+  if(!ended)await resolve('player');
+ }finally{busy=false;render();}
+ return true;
+}
 function chooseCardPatternCenter(config,who='player',power=null){
  if(pendingCardPattern||busy||ended||side!=='player')return false;
  pendingCardPattern={config,who,power};
@@ -1122,7 +1156,7 @@ async function executeCardPattern(config,who='player',power=null){
 }
 async function commitCardPatternCenter(t){
  const pending=pendingCardPattern;if(!pending)return false;
- if(pending.config.effect==='spore-slumber'||pending.config.effect==='spore-bloom'){if(!commitSelectedSpore(t,pending))return false;pendingCardPattern=null;$('targetPanel').classList.add('hidden');return true;}if(pending.config.effect==='twilight-absolution'){if(!commitTwilightAbsolution(t,pending))return false;pendingCardPattern=null;$('targetPanel').classList.add('hidden');return true;}
+ if(pending.config.effect==='spore-slumber'||pending.config.effect==='spore-bloom'){if(!commitSelectedSpore(t,pending))return false;pendingCardPattern=null;$('targetPanel').classList.add('hidden');return true;}if(pending.config.effect==='unstoppable-charge'){if(!await commitJuggernautCharge(t,pending))return false;pendingCardPattern=null;$('targetPanel').classList.add('hidden');return true;}if(pending.config.effect==='twilight-absolution'){if(!commitTwilightAbsolution(t,pending))return false;pendingCardPattern=null;$('targetPanel').classList.add('hidden');return true;}
  const selectedConfig={...pending.config,centerMode:'selected',center:{x:t.c,y:t.r}};
  if(!cardPatternCanChange(selectedConfig,selectedConfig.center)){say('Those tiles already have the target color. Choose another center; no energy spent.');banner('NO VALID TARGET');return false;}
  pendingCardPattern=null;
@@ -1430,7 +1464,7 @@ async function commitLine(t){
  if(x.remaining>1&&!ended){lineTarget={...x,remaining:x.remaining-1,paid:true};$('targetPanel').classList.remove('hidden');$('targetText').textContent='Sundering Line: choose second row. Cancel ends the power.';}
  render();
 }
-async function usePower(i,j,enemyIndex=null){let p=party[i].powers[j];if(busy||ended||side!=='player'||party[i].away||!isEquipped(i,j)||isPassivePower(i,j)||energy[p[1]]<cost(i,j))return;if(p[4]==='spore-slumber'||p[4]==='spore-bloom'){if(!tiles.some(sporeTargetEligible)){say('No eligible ordinary tile for the spore.');return;}chooseCardPatternCenter({effect:p[4],centerMode:'selected',cells:[{x:0,y:0}]},'player',{i,j});return;}if(p[4]==='twilight-absolution'){if(!tiles.some(t=>absolutionEligible(t,level(i,j)))){say('No valid purification targets.');return;}chooseCardPatternCenter({effect:'twilight-absolution',centerMode:'selected',cells:[{x:0,y:0}]},'player',{i,j});return;}if(busy||ended||energy[p[1]]<cost(i,j)||party[i].away)return;if(p[4]==='enemy-special-burst'&&!tiles.some(t=>t?.special&&t.specialOwner==='enemy'&&!t.locked)){say('No active enemy special tiles. No energy spent.');banner('NO VALID TARGET');return;}if(p[4]==='spawn-trap'&&!tiles.some(t=>t&&!t.towerBrazier&&!t.groveRoot&&!t.groveVillager&&!t.grovePetrified&&!t.special&&!t.trap&&!t.lore&&!t.hay&&!t.rat&&(!lumbermillMode||!t.lumberFire))){say('No eligible countdown positions. No energy spent.');banner('NO VALID TARGET');return;}if(p[4].startsWith('spawn-')&&!tiles.some(t=>t&&!t.towerBrazier&&!t.groveRoot&&!t.groveVillager&&!t.grovePetrified&&!(scavengersMode&&t.smoke)&&!t.trap&&!t.special&&!t.lore&&!t.hay&&!t.rat&&!t.returnShield&&(!lumbermillMode||!t.lumberFire))){say('No eligible tiles for special creation. No energy spent.');banner('NO VALID TARGET');return;}if(p[4].startsWith('heal')&&!party.some(t=>t.hp>0&&t.hp<t.max)){say('All allies are at full health. No energy spent.');banner('NO VALID TARGET');return;}if(p[4]==='convert'&&!tiles.some(t=>t&&!t.groveRoot&&!t.grovePetrified&&t.v!==2&&!t.lore&&!t.hay&&!t.rat&&!t.trap&&!t.special&&!t.returnShield&&!t.power&&(!lumbermillMode||!t.lumberFire))){say('No non-blue ordinary tiles remain. No energy spent.');banner('NO VALID TARGET');return;}energy[p[1]]-=cost(i,j);busy=true;render();say(party[i].name+' uses '+p[0]);if(p[4]==='inspect'){say('Choose a target for Magnifying Glass before spending energy.');}
+async function usePower(i,j,enemyIndex=null){let p=party[i].powers[j];if(busy||ended||side!=='player'||party[i].away||!isEquipped(i,j)||isPassivePower(i,j)||energy[p[1]]<cost(i,j))return;if(p[4]==='unstoppable-charge'){if(!tiles.some(juggernautChargeEligible)){say('No eligible tiles for Unstoppable Charge.');return;}chooseCardPatternCenter({effect:'unstoppable-charge',centerMode:'selected',cells:[{x:0,y:0}]},'player',{i,j});$('targetText').textContent='Tap the tile where Tor begins his charge. Cancel is free.';return;}if(p[4]==='spore-slumber'||p[4]==='spore-bloom'){if(!tiles.some(sporeTargetEligible)){say('No eligible ordinary tile for the spore.');return;}chooseCardPatternCenter({effect:p[4],centerMode:'selected',cells:[{x:0,y:0}]},'player',{i,j});return;}if(p[4]==='twilight-absolution'){if(!tiles.some(t=>absolutionEligible(t,level(i,j)))){say('No valid purification targets.');return;}chooseCardPatternCenter({effect:'twilight-absolution',centerMode:'selected',cells:[{x:0,y:0}]},'player',{i,j});return;}if(busy||ended||energy[p[1]]<cost(i,j)||party[i].away)return;if(p[4]==='enemy-special-burst'&&!tiles.some(t=>t?.special&&t.specialOwner==='enemy'&&!t.locked)){say('No active enemy special tiles. No energy spent.');banner('NO VALID TARGET');return;}if(p[4]==='spawn-trap'&&!tiles.some(t=>t&&!t.towerBrazier&&!t.groveRoot&&!t.groveVillager&&!t.grovePetrified&&!t.special&&!t.trap&&!t.lore&&!t.hay&&!t.rat&&(!lumbermillMode||!t.lumberFire))){say('No eligible countdown positions. No energy spent.');banner('NO VALID TARGET');return;}if(p[4].startsWith('spawn-')&&!tiles.some(t=>t&&!t.towerBrazier&&!t.groveRoot&&!t.groveVillager&&!t.grovePetrified&&!(scavengersMode&&t.smoke)&&!t.trap&&!t.special&&!t.lore&&!t.hay&&!t.rat&&!t.returnShield&&(!lumbermillMode||!t.lumberFire))){say('No eligible tiles for special creation. No energy spent.');banner('NO VALID TARGET');return;}if(p[4].startsWith('heal')&&!party.some(t=>t.hp>0&&t.hp<t.max)){say('All allies are at full health. No energy spent.');banner('NO VALID TARGET');return;}if(p[4]==='convert'&&!tiles.some(t=>t&&!t.groveRoot&&!t.grovePetrified&&t.v!==2&&!t.lore&&!t.hay&&!t.rat&&!t.trap&&!t.special&&!t.returnShield&&!t.power&&(!lumbermillMode||!t.lumberFire))){say('No non-blue ordinary tiles remain. No energy spent.');banner('NO VALID TARGET');return;}energy[p[1]]-=cost(i,j);busy=true;render();say(party[i].name+' uses '+p[0]);if(p[4]==='inspect'){say('Choose a target for Magnifying Glass before spending energy.');}
  
  if(p[4]==='twilight-heal'){const lv=level(i,j),fallen=party.filter(h=>h.hp<=0),wounded=party.filter(h=>h.hp>0&&h.hp<h.max);if(lv>=3&&fallen.length){const h=fallen[0];h.hp=Math.min(h.max,lv===3?20:35);saveHealth();say(h.name+' revived with '+h.hp+' HP.');}else if(wounded.length)heal([24,36,44,56][lv-1]);else{energy[p[1]]+=cost(i,j);busy=false;render();say('No eligible healing target. Energy refunded.');return;}}
  if(p[4]==='twilight-sanctuary'){const lv=level(i,j),pool=tiles.filter(t=>t&&!t.locked&&!t.effectFortified&&!t.special&&!t.trap&&!t.lore&&!t.rat&&!t.hay&&!t.groveRoot&&!t.groveVillager&&!t.grovePetrified&&!t.sluiceGear&&!t.sluiceWaterlock&&!t.lumberFire&&!t.towerBrazier&&!t.smoke);if(!pool.length){energy[p[1]]+=cost(i,j);busy=false;render();say('No eligible defense tiles. Energy refunded.');return;}for(let k=0;k<[2,3,3,3][lv-1]&&pool.length;k++){const t=pool.splice(rnd(pool.length),1)[0];t.special='defense';t.specialOwner='player';t.specialStrength=[2,2,3,3][lv-1];if(lv===4)t.effectFortified=true;paint(t);}say('Sanctuary at Dusk creates protective tiles.');}
