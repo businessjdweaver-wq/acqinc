@@ -1084,16 +1084,19 @@ function commitTwilightAbsolution(t,pending){const {i,j}=pending.power,lv=level(
 function juggernautChargeEligible(t){return !!(t&&!t.locked&&!t.towerBrazier&&!t.groveRoot&&!t.grovePetrified&&!t.groveVillager&&!t.sluiceGear&&!t.sluiceWaterlock&&!t.lumberFire&&!t.smoke&&!t.lore&&!t.hay&&!t.rat&&!t.trap&&!t.hiddenTrap);}
 function juggernautChargeTargets(center,lv){
  const span=lv===1?2:lv===4?5:3;
- const candidates=[];
- for(const [dr,dc] of [[0,1],[1,0]]){
-  for(let start=-(span-1);start<=0;start++){
-   const line=Array.from({length:span},(_,k)=>{const r=center.r+(start+k)*dr,c=center.c+(start+k)*dc;return r>=0&&r<8&&c>=0&&c<8?tiles[r*8+c]:null;}).filter(Boolean);
-   const valid=line.filter(t=>Math.abs(t.r-center.r)+Math.abs(t.c-center.c)<=span&&juggernautChargeEligible(t));
-   if(line.length===span&&valid.includes(center))candidates.push(valid);
-  }
- }
- candidates.sort((a,b)=>b.length-a.length);
- return candidates[0]||[center];
+ // The selected tile is the center whenever possible. Shift the segment at board edges.
+ const first=Math.max(0,Math.min(8-span,center.c-Math.floor(span/2)));
+ return Array.from({length:span},(_,k)=>tiles[center.r*8+first+k]).filter(t=>t&&juggernautChargeEligible(t));
+}
+async function showJuggernautChargePreview(targets){
+ // Use Tor's existing hammer emoji, not a custom-drawn icon.
+ const overlays=targets.map(tile=>{
+  const marker=document.createElement('span');
+  marker.textContent='🔨';marker.setAttribute('aria-label','Unstoppable Charge target');
+  marker.style.cssText='position:absolute;inset:4px;z-index:20;display:grid;place-items:center;background:#671e26bd;border:2px solid #f5d5a0;border-radius:6px;font-size:clamp(21px,6vw,34px);pointer-events:none;text-shadow:0 2px 3px #000b';
+  tile.el.appendChild(marker);return marker;
+ });
+ try{await new Promise(resolve=>setTimeout(resolve,550));}finally{overlays.forEach(marker=>marker.remove());}
 }
 async function commitJuggernautCharge(t,pending){
  const {i,j}=pending.power,p=party[i].powers[j],lv=level(i,j);
@@ -1102,6 +1105,7 @@ async function commitJuggernautCharge(t,pending){
  energy[p[1]]-=cost(i,j);busy=true;
  try{
   const targets=juggernautChargeTargets(t,lv);
+  await showJuggernautChargePreview(targets);
   let removed=0,stripped=0;
   for(const tile of targets){
    if(!tiles.includes(tile))continue;
