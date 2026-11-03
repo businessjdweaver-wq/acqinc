@@ -355,7 +355,7 @@ const $=id=>document.getElementById(id),board=$('board'),overlay=$('overlay');co
 const SUPPORT_STORAGE_PREFIX='rq-v2-combat-support-inventory-v1-';
 let supportStorageKey=null;let supportCloudClient=null;let supportCloudReady=false;
 function saveSupportInventory(){
- if(!supportStorageKey)return;
+ if(combatSandbox||!supportStorageKey)return;
  try{localStorage.setItem(supportStorageKey,JSON.stringify({version:1,charges:Object.fromEntries(Object.keys(inventory).map(k=>[k,inventory[k]]))}));}catch(e){console.warn('Support inventory local save failed',e);}
 }
 function loadSupportInventory(userId){
@@ -389,7 +389,7 @@ function applyCloudRecoveryRecord(i,data){const p=party[i];if(!p||!data)return;p
 async function loadCloudRecovery(){if(!recoveryCloudClient||!cloudHealthUserId)return;recoveryCloudReady=false;const {data:existing,error}=await recoveryCloudClient.from('rq_v2_character_recovery').select('character_id').eq('user_id',cloudHealthUserId).in('character_id',party.map(p=>p.id));if(error)throw error;const ids=new Set((existing||[]).map(x=>x.character_id));for(let i=0;i<party.length;i++){const p=party[i];const legacy=0;let originalDamage=null;if(legacy<0){try{const old=JSON.parse(localStorage.getItem(recoveryKey(p,i))||'null');const at=Number(old?.damagedAt);if(at>0&&at<=Date.now())originalDamage=new Date(at).toISOString()}catch(e){}}const {data,error:err}=await recoveryCloudClient.rpc('rq_v2_recovery_apply',{p_character_id:p.id,p_max_hp:p.max,p_delta:legacy,...(originalDamage?{p_initial_damaged_at:originalDamage}:{})});if(err)throw err;applyCloudRecoveryRecord(i,data)}recoveryCloudReady=true;healthData.hp=party.map(p=>p.hp);}
 function queueCloudRecovery(i,delta){if(combatSandbox||!recoveryCloudReady||!recoveryCloudClient||!party[i]?.id||!delta)return;const id=party[i].id,max=party[i].max;recoveryCloudPending++;recoveryCloudQueue=recoveryCloudQueue.catch(()=>{}).then(async()=>{const {data,error}=await recoveryCloudClient.rpc('rq_v2_recovery_apply',{p_character_id:id,p_max_hp:max,p_delta:delta});if(error)throw error;if(recoveryCloudPending===1&&$('game').classList.contains('hidden')){const index=party.findIndex(p=>p.id===id);if(index>=0){applyCloudRecoveryRecord(index,data);healthView()}}}).catch(e=>{console.error('Cloud recovery sync failed',e);const el=$('restStatus');if(el)el.textContent='Recovery sync failed; reconnect before playing on another device.'}).finally(()=>{recoveryCloudPending--});}
 async function refreshCloudRecovery(){if(!recoveryCloudReady||recoveryCloudPending||!$('game').classList.contains('hidden'))return;try{await recoveryCloudQueue;for(let i=0;i<party.length;i++){const p=party[i];const {data,error}=await recoveryCloudClient.rpc('rq_v2_recovery_apply',{p_character_id:p.id,p_max_hp:p.max,p_delta:0});if(error)throw error;applyCloudRecoveryRecord(i,data)}healthView()}catch(e){console.warn('Recovery refresh failed',e)}}
-function characterHealthKey(id){return 'rq-v2-character-health-v1-'+cloudHealthUserId+'-'+id}const RECOVERY_MS=21600000;let recoveryRecords=[];function recoveryKey(p,i){return 'rq-v2-recovery-v1-'+(cloudHealthUserId||'prototype')+'-'+(p.id||selectedCharacterIds[i]||i)}function initializeRecovery(){const now=Date.now();recoveryRecords=party.map((p,i)=>{let old=null;try{old=JSON.parse(localStorage.getItem(recoveryKey(p,i))||'null')}catch(e){}let at=Number(old?.damagedAt)||0;if(p.hp>=p.max)at=0;else if(!at||at>now||Number(old?.hp)>p.hp)at=now;if(at&&now-at>=RECOVERY_MS&&!cloudHealthUserId){p.hp=p.max;at=0;}const rec={hp:p.hp,damagedAt:at};try{localStorage.setItem(recoveryKey(p,i),JSON.stringify(rec));if(cloudHealthUserId&&p.id)localStorage.setItem(characterHealthKey(p.id),String(p.hp))}catch(e){}return rec;});healthData.hp=party.map(p=>p.hp)}function applyElapsedRecovery(){if(combatSandbox||recoveryCloudReady)return;const now=Date.now();let changed=false;party.forEach((p,i)=>{const rec=recoveryRecords[i];if(rec?.damagedAt&&now-rec.damagedAt>=RECOVERY_MS){p.hp=p.max;rec.hp=p.max;rec.damagedAt=0;changed=true}});if(changed)saveHealth()}function saveHealth(){if(combatSandbox)return;const now=Date.now();party.forEach((p,i)=>{const old=recoveryRecords[i]||{hp:p.hp,damagedAt:p.hp<p.max?now:0};const at=p.hp>=p.max?0:(p.hp<old.hp||!old.damagedAt?now:old.damagedAt);const rec={hp:p.hp,damagedAt:at};recoveryRecords[i]=rec;if(cloudHealthUserId&&recoveryCloudReady)queueCloudRecovery(i,p.hp-old.hp);try{localStorage.setItem(recoveryKey(p,i),JSON.stringify(rec))}catch(e){}});healthData.hp=party.map(p=>p.hp);try{localStorage.setItem(HEALTH_KEY,JSON.stringify(healthData));if(cloudHealthUserId)party.forEach((p,i)=>{if(p.id)localStorage.setItem(characterHealthKey(p.id),String(p.hp))})}catch(e){}}
+function characterHealthKey(id){return 'rq-v2-character-health-v1-'+cloudHealthUserId+'-'+id}const RECOVERY_MS=21600000;let recoveryRecords=[];function recoveryKey(p,i){return 'rq-v2-recovery-v1-'+(cloudHealthUserId||'prototype')+'-'+(p.id||selectedCharacterIds[i]||i)}function initializeRecovery(){if(combatSandbox){recoveryRecords=party.map(h=>({hp:h.max,damagedAt:0}));return;}const now=Date.now();recoveryRecords=party.map((p,i)=>{let old=null;try{old=JSON.parse(localStorage.getItem(recoveryKey(p,i))||'null')}catch(e){}let at=Number(old?.damagedAt)||0;if(p.hp>=p.max)at=0;else if(!at||at>now||Number(old?.hp)>p.hp)at=now;if(at&&now-at>=RECOVERY_MS&&!cloudHealthUserId){p.hp=p.max;at=0;}const rec={hp:p.hp,damagedAt:at};try{localStorage.setItem(recoveryKey(p,i),JSON.stringify(rec));if(cloudHealthUserId&&p.id)localStorage.setItem(characterHealthKey(p.id),String(p.hp))}catch(e){}return rec;});healthData.hp=party.map(p=>p.hp)}function applyElapsedRecovery(){if(combatSandbox||recoveryCloudReady)return;const now=Date.now();let changed=false;party.forEach((p,i)=>{const rec=recoveryRecords[i];if(rec?.damagedAt&&now-rec.damagedAt>=RECOVERY_MS){p.hp=p.max;rec.hp=p.max;rec.damagedAt=0;changed=true}});if(changed)saveHealth()}function saveHealth(){if(combatSandbox)return;const now=Date.now();party.forEach((p,i)=>{const old=recoveryRecords[i]||{hp:p.hp,damagedAt:p.hp<p.max?now:0};const at=p.hp>=p.max?0:(p.hp<old.hp||!old.damagedAt?now:old.damagedAt);const rec={hp:p.hp,damagedAt:at};recoveryRecords[i]=rec;if(cloudHealthUserId&&recoveryCloudReady)queueCloudRecovery(i,p.hp-old.hp);try{localStorage.setItem(recoveryKey(p,i),JSON.stringify(rec))}catch(e){}});healthData.hp=party.map(p=>p.hp);try{localStorage.setItem(HEALTH_KEY,JSON.stringify(healthData));if(cloudHealthUserId)party.forEach((p,i)=>{if(p.id)localStorage.setItem(characterHealthKey(p.id),String(p.hp))})}catch(e){}}
 function healthView(){const el=$('healthSummary'),picker=$('fieldHealTarget');if(picker){const selected=picker.value;picker.innerHTML=party.map((p,i)=>'<option value="'+i+'">'+p.icon+' '+p.name+' · '+p.hp+'/'+p.max+' HP</option>').join('');if(selected)picker.value=selected;$('fieldHeal').disabled=inventory.potion<1||party.every(p=>p.hp>=p.max)}if(!el)return;el.textContent=party.map(p=>p.icon+' '+p.name+': '+p.hp+'/'+p.max+' HP').join(' · ');const now=Date.now();$('restStatus').textContent=party.map((p,i)=>p.hp>=p.max?p.name+': fully rested':p.name+': full recovery in '+Math.ceil(Math.max(0,RECOVERY_MS-(now-(recoveryRecords[i]?.damagedAt||now)))/60000)+' min').join(' · ')}
 initializeRecovery();window.addEventListener('focus',()=>{if($('game').classList.contains('hidden')){applyElapsedRecovery();healthView();refreshCloudRecovery()}});document.addEventListener('visibilitychange',()=>{if(!document.hidden&&$('game').classList.contains('hidden')){applyElapsedRecovery();healthView();refreshCloudRecovery()}});setInterval(()=>{if($('game').classList.contains('hidden')){if(recoveryCloudReady)void refreshCloudRecovery();else applyElapsedRecovery();healthView()}},60000);
 let restRequestCounter=0;const restPending=new Map();function remoteRestRequest(action){return new Promise((resolve,reject)=>{const id='rest-'+(++restRequestCounter);const timeout=setTimeout(()=>{restPending.delete(id);reject(Error('Remote calendar did not respond. No rest granted.'))},12000);restPending.set(id,{resolve,reject,timeout});window.parent.postMessage({type:'rq-v2-rest-request',id,action},location.origin)})}window.addEventListener('message',event=>{if(event.origin!==location.origin||event.source!==window.parent)return;const data=event.data;if(data?.type!=='rq-v2-rest-result')return;const pending=restPending.get(data.id);if(!pending)return;clearTimeout(pending.timeout);restPending.delete(data.id);if(data.error)pending.reject(Error(data.error));else pending.resolve(data.result)});
@@ -1579,6 +1579,7 @@ async function pickSupportTarget(t){
 }
 let standaloneTicketKey=null;
 async function redeemStandaloneTicket(){
+ if(combatSandbox)return;
  if(window.parent!==window||new URLSearchParams(location.search).has('ticketEncounter')||new URLSearchParams(location.search).has('encounter')||new URLSearchParams(location.search).has('adventureAdmission'))return;
  if(!standaloneTicketKey||!supportCloudClient){say('Ticket redemption unavailable: sign in to verify your ticket balance.');return;}
  try{
@@ -1590,6 +1591,7 @@ async function redeemStandaloneTicket(){
 }
 let rewardEncounterId=null;
 async function awardVictorySupport(encounterId,supportId){
+ if(combatSandbox)return;
  const message=$('resultText');
  if(!supportCloudClient||!supportCloudReady){message.textContent+=' Support reward awaiting cloud sign-in; no charge credited.';return;}
  try{
@@ -1614,8 +1616,8 @@ function finish(win){
  if(lumbermillMode&&win&&(tiles.some(t=>t?.lumberFire)||alchemistBurns.size>0)){say('Lumbermill victory blocked: fire remains.');return;}
  if(ended)return;ended=true;busy=true;if(!combatSandbox&&groveMode){try{const key='rq_v2_ashes_01_grove_best';localStorage.setItem(key,String(Math.max(groveSaved,Number(localStorage.getItem(key))||0)));}catch(e){}}
  // Terminal outcomes cannot be resumed or replayed for rewards.
- if(ADVENTURE_CHECKPOINT_KEY){try{localStorage.removeItem(ADVENTURE_CHECKPOINT_KEY)}catch(e){}e3Restore=null;e3LastSignature='';}
- if(win&&new URLSearchParams(location.search).get('adventureNode')==='crisis'){
+ if(!combatSandbox&&ADVENTURE_CHECKPOINT_KEY){try{localStorage.removeItem(ADVENTURE_CHECKPOINT_KEY)}catch(e){}e3Restore=null;e3LastSignature='';}
+ if(!combatSandbox&&win&&new URLSearchParams(location.search).get('adventureNode')==='crisis'){
   const story=document.createElement('section');
   story.style.cssText='border:1px solid #c7a96b;border-radius:12px;padding:14px;margin:12px 0;text-align:left;line-height:1.55';
   const heading=document.createElement('h3');heading.textContent='The Thornclaw Raid — Aftermath';story.append(heading);
@@ -1630,14 +1632,14 @@ function finish(win){
  if(win&&new URLSearchParams(location.search).has('adventureAdmission')){
   const note=document.createElement('p');note.id='adventureSavePending';note.textContent='Adventure Path victory: awaiting cloud confirmation before this clear counts. Do not exit until confirmed.';$('results').append(note);
  }
- void redeemStandaloneTicket();
- try{if(window.parent!==window)window.parent.postMessage({type:'rq-v2-combat-completed',encounter:new URLSearchParams(location.search).get('ticketEncounter')||new URLSearchParams(location.search).get('encounter'),won:!!win},location.origin);}catch(e){console.warn('Combat completion notification unavailable',e);}
+ if(!combatSandbox)void redeemStandaloneTicket();
+ try{if(!combatSandbox&&window.parent!==window)window.parent.postMessage({type:'rq-v2-combat-completed',encounter:new URLSearchParams(location.search).get('ticketEncounter')||new URLSearchParams(location.search).get('encounter'),won:!!win},location.origin);}catch(e){console.warn('Combat completion notification unavailable',e);}
  banner(win?'CHALLENGE COMPLETE!':'TRY AGAIN LATER');
  $('resultTitle').textContent=win?currentEncounter.title+' · Complete':currentEncounter.title+' · Unfinished';
  const outcomeReason=towerMode?(towerFired?'The signal was transmitted. ':'The signal was prevented. '):groveMode?'Rescued '+groveSaved+' of 6 villagers; '+groveLost+' unreachable.':win?(scavengersMode?(suppliesRecovered>=3?'All scavengers defeated; supplies recovered for a full victory.':'All scavengers defeated; fewer than three supplies recovered (narrow victory).'):lumbermillMode?'All fires extinguished.':'All opponents defeated.'):party.every(p=>p.hp<=0)?'All party members were incapacitated.':puzzleMode&&turnsUsed>=turnLimit?'Turn limit reached ('+turnsUsed+'/'+turnLimit+').':'Unexpected encounter termination; investigate battle log.';
- $('resultText').textContent=outcomeReason+' '+(win?currentEncounter.win:currentEncounter.loss)+' '+(win?'Support reward verification in progress.':puzzleMode?(loreMode?'The archive closed before all pages were recovered. No stamina was lost.':'The storm arrived before all haystacks were gathered. No stamina was lost.'):'Fatigue persists on retry; resting restores stamina.')+' Final HP: party '+party.map(p=>p.name+' '+p.hp+'/'+p.max).join(', ')+'; enemies '+enemies.map(e=>e.name+' '+e.hp+'/'+e.max).join(', ')+'.';
+ $('resultText').textContent=outcomeReason+' '+(win?currentEncounter.win:currentEncounter.loss)+' '+(combatSandbox?'Sandbox test: no rewards or progression saved.':win?'Support reward verification in progress.':puzzleMode?(loreMode?'The archive closed before all pages were recovered. No stamina was lost.':'The storm arrived before all haystacks were gathered. No stamina was lost.'):'Fatigue persists on retry; resting restores stamina.')+' Final HP: party '+party.map(p=>p.name+' '+p.hp+'/'+p.max).join(', ')+'; enemies '+enemies.map(e=>e.name+' '+e.hp+'/'+e.max).join(', ')+'.';
  saveHealth();
- if(win&&!new URLSearchParams(location.search).has('adventureAdmission')){
+ if(win&&!combatSandbox&&!new URLSearchParams(location.search).has('adventureAdmission')){
   const chosen=supports[rnd(supports.length)];
   const encounterId=rewardEncounterId||crypto.randomUUID();
   rewardEncounterId=encounterId;
@@ -1764,6 +1766,7 @@ function e3Apply(s){
  render();healthView();return true;
 }
 function e3SendCheckpoint(){
+ if(combatSandbox)return;
  const snapshot=e3Snapshot();if(!snapshot)return;
  const signature=JSON.stringify(snapshot);if(signature===e3LastSignature)return;
  e3LastSignature=signature;
@@ -1774,7 +1777,7 @@ window.addEventListener('message',event=>{
  if(event.origin!==location.origin||event.source!==window.parent||event.data?.type!=='rq-v2-checkpoint-load'||event.data.encounter!==E3_ID)return;
  if(event.data.checkpoint){e3Restore=event.data.checkpoint;try{if(e3Apply(e3Restore))e3LastSignature=JSON.stringify(e3Restore)}catch(e){console.error('Checkpoint restore failed',e)}}
 });
-if(E3_ID){
+if(E3_ID&&!combatSandbox){
  try{e3Restore=JSON.parse(localStorage.getItem('rq_v2_e3_checkpoint_'+E3_ID)||'null')}catch(e){}
  setTimeout(()=>{if(!ADVENTURE_CHECKPOINT_ID&&window.parent!==window)window.parent.postMessage({type:'rq-v2-checkpoint-request',encounter:E3_ID},location.origin);if(e3Restore)try{e3Apply(e3Restore)}catch(e){console.error(e)}},100);
  setInterval(e3SendCheckpoint,1000);
