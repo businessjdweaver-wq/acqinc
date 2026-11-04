@@ -20345,7 +20345,7 @@ function ecbEditType(i){
   matches.forEach(x=>{if(label)x._encounterTypeName=label;else delete x._encounterTypeName;});
  }else{if(label)m._encounterTypeName=label;else delete m._encounterTypeName;}
  markDirty();renderEncounterBuilder();
-}}
+}
 // References live in encounter-specific snapshots; source template names remain unchanged.
 function ecbReferenceName(m,node){return String(m?.nameOverride||m?.snapshot?.name||'Monster').trim();}
 function ecbResolveText(text,m,node){
