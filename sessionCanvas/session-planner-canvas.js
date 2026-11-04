@@ -20372,6 +20372,7 @@ function ecbMatchingTypeInstances(node,m){
 function ecbTypeLabel(node,m){
  const explicit=String(m._encounterTypeName||'').trim();if(explicit)return explicit;
  const original=String(m.snapshot?.name||'').trim(),display=ecbReferenceName(m,node);
+ if(/guardpost/i.test(ecbGroup(m))&&/^(pik|tik)$/i.test(display))return 'Runeforged Ice-Goblin Guard';
  if(original&&original!==display)return original;
  const matches=ecbMatchingTypeInstances(node,m);
  return original||'Unknown creature type';
