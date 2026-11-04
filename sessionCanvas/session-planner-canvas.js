@@ -1,3 +1,4 @@
+// v1.3.107 — Google OAuth login and callback handling.
 // v1.3.106 — Reorder encounter groups and display/edit creature stat-block types
 // v1.3.105 — Dynamic creature references and reviewed legacy name conversion.
 // v1.3.103 — Encounter instance rename and rider/mount linking.
@@ -499,6 +500,42 @@ function rqShowAuthError(msg) {
 function rqClearAuthError() {
   const e = document.getElementById('rqAuthErr');
   if (e) { e.textContent = ''; e.classList.remove('visible'); }
+}
+
+// Google OAuth uses the existing Supabase Auth identity; no new application account is created here.
+// Supabase returns an implicit-flow token fragment to this same page.
+function rqSignInWithGoogle() {
+  rqClearAuthError();
+  try {
+    const redirectTo = location.origin + location.pathname;
+    const url = SB_URL + '/auth/v1/authorize?provider=google&redirect_to=' + encodeURIComponent(redirectTo);
+    location.assign(url);
+  } catch (e) { rqShowAuthError('Unable to start Google sign-in: ' + e.message); }
+}
+window.rqSignInWithGoogle = rqSignInWithGoogle;
+
+function rqConsumeOAuthCallback() {
+  const hash = location.hash || '';
+  if (!/(?:^#|&)access_token=/.test(hash) && !/(?:^#|&)error=/.test(hash)) return false;
+  const p = new URLSearchParams(hash.slice(1));
+  const token = p.get('access_token'), refresh = p.get('refresh_token');
+  // Remove credentials from address bar and browser history immediately.
+  history.replaceState(null, '', location.pathname + location.search);
+  if (!token || !refresh) {
+    rqShowAuthError(p.get('error_description') || p.get('error') || 'Google sign-in did not return a session.');
+    return false;
+  }
+  rqSetAuth({
+    access_token: token,
+    refresh_token: refresh,
+    expires_at: Math.floor(Date.now() / 1000) + (Number(p.get('expires_in')) || 3600),
+    user: null
+  });
+  // A successful OAuth return must not silently switch to an offline session.
+  try { localStorage.removeItem('spc_local_only_enabled'); localStorage.removeItem('spc_cloud_paused'); } catch (_) {}
+  window.SPC_LOCAL_ONLY = false;
+  window.SPC_SUPABASE_OFFLINE = false;
+  return true;
 }
 
 async function rqDoLogin() {
@@ -19563,6 +19600,7 @@ window.spcExitLocalOnlyMode = spcExitLocalOnlyMode;
 
 function boot() {
   applyTransform();
+  rqConsumeOAuthCallback();
   try {
     if (localStorage.getItem('spc_local_only_enabled') === '1' || localStorage.getItem('spc_cloud_paused') === '1') {
       spcEnterLocalOnlyMode();
