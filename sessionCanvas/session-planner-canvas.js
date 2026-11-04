@@ -20383,6 +20383,7 @@ function ecbAreaNotes(node,group){
  const notes=node.fields.encounterAreaNotes||{};
  return Array.isArray(notes[group])?notes[group]:[];
 }
+let ecbAreaNoteEditing=null;
 function ecbAddAreaNote(node,group,type){
  const def=BLOCK_TYPES[type];if(!def)return;
  if(!node.fields.encounterAreaNotes)node.fields.encounterAreaNotes={};
@@ -20390,23 +20391,29 @@ function ecbAddAreaNote(node,group,type){
  const item={id:'area-note-'+Date.now()+'-'+Math.random().toString(36).slice(2,7),type,title:def.defaultTitle||def.label,fields:{},summary:''};
  if(def.isTable)item.table=JSON.parse(JSON.stringify(def.defaultTable));
  if(def.isBrainstorm)item.brainstorm=JSON.parse(JSON.stringify(def.defaultBrainstorm));
- notes.push(item);markDirty();renderEncounterBuilder();
+ notes.push(item);
+ ecbAreaNoteEditing={group,id:item.id};
+ markDirty();renderEncounterBuilder();
+ const field=document.querySelector('.ecb-area-note-tile[data-note-id="'+item.id+'"] .ecb-note-title-input');
+ if(field){field.focus();field.select();}
 }
 function ecbEditAreaNote(node,group,id){
  const item=ecbAreaNotes(node,group).find(n=>n.id===id);if(!item)return;
- const def=BLOCK_TYPES[item.type]||{};
- const title=prompt('Note title:',item.title||def.defaultTitle||'Note');if(title===null)return;
- item.title=title.slice(0,160);
- // Keep a concise editable body for the area tile; the full canvas note remains independent.
- const body=prompt('Area note text (shown in this tile):',item.summary||'');
- if(body!==null)item.summary=body.slice(0,10000);
- markDirty();renderEncounterBuilder();
+ ecbAreaNoteEditing={group,id};renderEncounterBuilder();
+ const field=document.querySelector('.ecb-area-note-tile[data-note-id="'+id+'"] .ecb-note-title-input');
+ if(field)field.focus();
+}
+function ecbSaveAreaNote(node,group,id,tile){
+ const item=ecbAreaNotes(node,group).find(n=>n.id===id);if(!item||!tile)return;
+ item.title=(tile.querySelector('.ecb-note-title-input')?.value||'').trim().slice(0,160)||(BLOCK_TYPES[item.type]?.defaultTitle||'Note');
+ item.summary=(tile.querySelector('.ecb-note-body-input')?.value||'').slice(0,10000);
+ ecbAreaNoteEditing=null;markDirty();renderEncounterBuilder();
 }
 function ecbAreaNotesMarkup(node,group){
  const notes=ecbAreaNotes(node,group);
  return '<div class="ecb-area-notes"><div class="ecb-area-notes-title">Area notes</div><div class="ecb-area-note-tools">'+
  ECB_AREA_NOTE_TYPES.map(type=>{const def=BLOCK_TYPES[type];return '<button type="button" data-ecb-note-add="'+escHtml(group)+'::'+type+'" title="Add '+escHtml(def.label)+'">'+def.icon+' '+escHtml(def.label)+'</button>';}).join('')+'</div>'+
- '<div class="ecb-area-note-tiles">'+notes.map(item=>'<div class="ecb-area-note-tile"><div class="ecb-area-note-head"><strong>'+escHtml((BLOCK_TYPES[item.type]||{}).icon||'📝')+' '+escHtml(item.title||'Note')+'</strong><button type="button" data-ecb-note-edit="'+escHtml(group)+'::'+escHtml(item.id)+'">Edit</button><button type="button" data-ecb-note-remove="'+escHtml(group)+'::'+escHtml(item.id)+'" title="Remove area note">×</button></div><div class="ecb-area-note-body">'+escHtml(item.summary||'Click Edit to add a note.')+'</div></div>').join('')+'</div></div>';
+ '<div class="ecb-area-note-tiles">'+notes.map(item=>{const editing=ecbAreaNoteEditing?.group===group&&ecbAreaNoteEditing?.id===item.id;return '<div class="ecb-area-note-tile" data-note-id="'+escHtml(item.id)+'">'+(editing?'<div class="ecb-note-edit-form"><label>Title<input class="ecb-note-title-input" maxlength="160" value="'+escHtml(item.title||'')+'"></label><label>Notes<textarea class="ecb-note-body-input" rows="5">'+escHtml(item.summary||'')+'</textarea></label><div class="ecb-note-edit-actions"><button type="button" data-ecb-note-save="'+escHtml(group)+'::'+escHtml(item.id)+'">Save</button><button type="button" data-ecb-note-cancel>Cancel</button></div></div>':'<div class="ecb-area-note-head"><strong>'+escHtml((BLOCK_TYPES[item.type]||{}).icon||'📝')+' '+escHtml(item.title||'Note')+'</strong><button type="button" data-ecb-note-edit="'+escHtml(group)+'::'+escHtml(item.id)+'">Edit</button><button type="button" data-ecb-note-remove="'+escHtml(group)+'::'+escHtml(item.id)+'" title="Remove area note">×</button></div><div class="ecb-area-note-body">'+escHtml(item.summary||'Click Edit to add a note.')+'</div>')+'</div>';}).join('')+'</div></div>';
 }
 function ecbEditType(i){
  const node=encounterBuilderNode(),m=node?.fields?.monsters?.[i];if(!m)return;
@@ -20578,6 +20585,8 @@ function renderEncounterBuilder(){
  host.querySelector('#ecb-review-names').onclick=ecbReviewLegacyNames;
  host.querySelectorAll('[data-ecb-note-add]').forEach(b=>b.onclick=()=>{const p=b.dataset.ecbNoteAdd.split('::');ecbAddAreaNote(node,p[0],p[1]);});
  host.querySelectorAll('[data-ecb-note-edit]').forEach(b=>b.onclick=()=>{const p=b.dataset.ecbNoteEdit.split('::');ecbEditAreaNote(node,p[0],p[1]);});
+ host.querySelectorAll('[data-ecb-note-save]').forEach(b=>b.onclick=()=>{const p=b.dataset.ecbNoteSave.split('::');ecbSaveAreaNote(node,p[0],p[1],b.closest('.ecb-area-note-tile'));});
+ host.querySelectorAll('[data-ecb-note-cancel]').forEach(b=>b.onclick=()=>{ecbAreaNoteEditing=null;renderEncounterBuilder();});
  host.querySelectorAll('[data-ecb-note-remove]').forEach(b=>b.onclick=()=>{const p=b.dataset.ecbNoteRemove.split('::');if(!confirm('Remove this area note?'))return;node.fields.encounterAreaNotes[p[0]]=ecbAreaNotes(node,p[0]).filter(x=>x.id!==p[1]);markDirty();renderEncounterBuilder();});
  host.querySelector('#ecb-add-group').onclick=()=>{const name=prompt('Area or wave name (e.g. North Gate, Wave 2):');if(!name||!name.trim())return;const g=name.trim().slice(0,80);node.fields.encounterGroups=[...new Set([...(node.fields.encounterGroups||[]),g])];markDirty();renderEncounterBuilder();};
  host.querySelectorAll('[data-ecb-group-move]').forEach(b=>b.onclick=()=>{const [i,d]=b.dataset.ecbGroupMove.split(':').map(Number);ecbMoveGroup(node,groups[i],d);});
