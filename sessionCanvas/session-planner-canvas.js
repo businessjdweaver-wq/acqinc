@@ -1,3 +1,4 @@
+// v1.3.106 — Reorder encounter groups and display/edit creature stat-block types
 // v1.3.105 — Dynamic creature references and reviewed legacy name conversion.
 // v1.3.103 — Encounter instance rename and rider/mount linking.
 // v1.3.102 — Inline Encounter Builder action categories with compact separators.
@@ -20313,6 +20314,38 @@ function openEncounterBuilderFromFocus(){const id=encounterFocusState&&encounter
 function closeEncounterBuilder(){closeEncounterBuilderDetail();document.getElementById('encounter-builder-overlay').classList.remove('open');document.body.classList.remove('encounter-builder-active');const node=encounterBuilderNode();encounterBuilderNodeId=null;if(node)refreshNodeFace(node);}
 function ecbGroup(m){return String(m._encounterGroup||'Unassigned');}
 function ecbGroups(node){return [...new Set([...(node.fields.encounterGroups||[]),...(node.fields.monsters||[]).map(ecbGroup),'Unassigned'])];}
+function ecbMoveGroup(node,group,delta){
+ const groups=ecbGroups(node),index=groups.indexOf(group),next=index+delta;
+ if(index<0||next<0||next>=groups.length)return;
+ [groups[index],groups[next]]=[groups[next],groups[index]];
+ node.fields.encounterGroups=groups;markDirty();renderEncounterBuilder();
+}
+function ecbTypeSignature(m){
+ const sn=m?.snapshot||{},copy={...sn};delete copy.name;delete copy.description;
+ return JSON.stringify(copy);
+}
+function ecbMatchingTypeInstances(node,m){
+ const sig=ecbTypeSignature(m);
+ return (node.fields.monsters||[]).filter(x=>ecbTypeSignature(x)===sig);
+}
+function ecbTypeLabel(node,m){
+ const explicit=String(m._encounterTypeName||'').trim();if(explicit)return explicit;
+ const original=String(m.snapshot?.name||'').trim(),display=ecbReferenceName(m,node);
+ if(original&&original!==display)return original;
+ const matches=ecbMatchingTypeInstances(node,m);
+ return matches.length>1?'Shared stat block · '+matches.length+' creatures':original||'Unknown creature type';
+}
+function ecbEditType(i){
+ const node=encounterBuilderNode(),m=node?.fields?.monsters?.[i];if(!m)return;
+ const matches=ecbMatchingTypeInstances(node,m);
+ const next=prompt('Stat-block type (shown below each creature name):',String(m._encounterTypeName||((m.snapshot?.name!==ecbReferenceName(m,node))?m.snapshot.name:'')));
+ if(next===null)return;
+ const label=next.trim().slice(0,120);
+ if(matches.length>1&&confirm('Apply this type label to all '+matches.length+' creatures with the same underlying stat block?')){
+  matches.forEach(x=>{if(label)x._encounterTypeName=label;else delete x._encounterTypeName;});
+ }else{if(label)m._encounterTypeName=label;else delete m._encounterTypeName;}
+ markDirty();renderEncounterBuilder();
+}}
 // References live in encounter-specific snapshots; source template names remain unchanged.
 function ecbReferenceName(m,node){return String(m?.nameOverride||m?.snapshot?.name||'Monster').trim();}
 function ecbResolveText(text,m,node){
@@ -20465,12 +20498,14 @@ function renderEncounterBuilder(){
   const sn=normalizeWorkshopMonsterSnapshot(ecbResolvedMonster(m,node).snapshot),name=_monsterDisplayName(m,node)||_encFocusMonsterName(node,m,i);
   const partner=ecbLinkedPartner(node,m),linked=!!partner,mounted=!!m._encounterMounted;
   const relation=linked?`<div class="ecb-relationship">${mounted?'🦅 Mounted':'🔗 Linked'} with ${escHtml(_monsterDisplayName(partner,node))} <button type="button" data-ecb-mounted="${i}">${mounted?'Dismount':'Mount'}</button></div>`:'';
-  return `<tr class="${linked?'ecb-linked-row':''}"><td><strong>${escHtml(name)}</strong>${relation}<br><button type="button" data-ecb-rename="${i}" title="Change this instance's VTT-facing name">✎ Rename</button> <button type="button" data-ecb-link="${i}">${linked?'⛓ Unlink':'🔗 Link / mount'}</button> <button type="button" data-ecb-stats="${i}">📖 Rollable stats</button> <button type="button" data-ecb-duplicate="${i}" title="Create independent creature copy in another area or wave">⧉ Duplicate</button></td><td><select aria-label="Challenge rating for ${escHtml(name)}" data-ecb-cr="${i}">${crOptions.map(cr=>`<option value="${escHtml(cr)}" ${String(sn.cr)===cr?'selected':''}>${escHtml(cr)}</option>`).join('')}</select></td><td>AC ${escHtml(String(sn.ac??'—'))}</td><td>HP ${escHtml(String(sn.hp??'—'))}</td><td><select aria-label="Area or wave for ${escHtml(name)}" data-ecb-group="${i}">${groups.map(g=>`<option value="${escHtml(g)}" ${ecbGroup(m)===g?'selected':''}>${escHtml(g)}</option>`).join('')}</select><div class="ecb-order"><button data-ecb-move="${i}:-1" title="Move earlier in group">↑</button><button data-ecb-move="${i}:1" title="Move later in group">↓</button></div></td><td>${buttonsFor(sn,i)||'<span>No actions</span>'}</td></tr>`;
+  return `<tr class="${linked?'ecb-linked-row':''}"><td><strong>${escHtml(name)}</strong><div class="ecb-creature-type" title="Underlying stat-block type">${escHtml(ecbTypeLabel(node,m))} <button type="button" data-ecb-edit-type="${i}" title="Edit stat-block type label">✎</button></div>${relation}<br><button type="button" data-ecb-rename="${i}" title="Change this instance's VTT-facing name">✎ Rename</button> <button type="button" data-ecb-link="${i}">${linked?'⛓ Unlink':'🔗 Link / mount'}</button> <button type="button" data-ecb-stats="${i}">📖 Rollable stats</button> <button type="button" data-ecb-duplicate="${i}" title="Create independent creature copy in another area or wave">⧉ Duplicate</button></td><td><select aria-label="Challenge rating for ${escHtml(name)}" data-ecb-cr="${i}">${crOptions.map(cr=>`<option value="${escHtml(cr)}" ${String(sn.cr)===cr?'selected':''}>${escHtml(cr)}</option>`).join('')}</select></td><td>AC ${escHtml(String(sn.ac??'—'))}</td><td>HP ${escHtml(String(sn.hp??'—'))}</td><td><select aria-label="Area or wave for ${escHtml(name)}" data-ecb-group="${i}">${groups.map(g=>`<option value="${escHtml(g)}" ${ecbGroup(m)===g?'selected':''}>${escHtml(g)}</option>`).join('')}</select><div class="ecb-order"><button data-ecb-move="${i}:-1" title="Move earlier in group">↑</button><button data-ecb-move="${i}:1" title="Move later in group">↓</button></div></td><td>${buttonsFor(sn,i)||'<span>No actions</span>'}</td></tr>`;
  }).join('');
  const host=document.getElementById('ecb-table-wrap');
- host.innerHTML=`<div class="ecb-group-tools"><button type="button" id="ecb-add-group">+ Add area / wave</button> <button type="button" id="ecb-review-names" title="Preview and convert legacy hard-coded creature names into dynamic references">Review name references</button><span>Move monsters between groups using the dropdown. Use arrows to set order within each group.</span></div><table class="ecb-table"><thead><tr><th>Monster / VTT name</th><th>CR</th><th>AC</th><th>HP (reference)</th><th>Area / wave</th><th>Actions</th></tr></thead><tbody>${groups.map(g=>`<tr class="ecb-group-header"><td colspan="6"><button type="button" data-ecb-collapse="${escHtml(g)}" aria-expanded="${!ecbCollapsedGroups.has(g)}">${ecbCollapsedGroups.has(g)?'▸':'▾'} ${escHtml(g)} (${monsters.filter(m=>ecbGroup(m)===g).length})</button></td></tr>${ecbCollapsedGroups.has(g)?'':rowsFor(g)}`).join('')}${!monsters.length?'<tr><td colspan="6">No monsters. Import a ChatGPT encounter JSON package to begin.</td></tr>':''}</tbody></table>`;
+ host.innerHTML=`<div class="ecb-group-tools"><button type="button" id="ecb-add-group">+ Add area / wave</button> <button type="button" id="ecb-review-names" title="Preview and convert legacy hard-coded creature names into dynamic references">Review name references</button><span>Move monsters between groups using the dropdown. Use header arrows to reorder groups, or row arrows to reorder creatures.</span></div><table class="ecb-table"><thead><tr><th>Monster / VTT name</th><th>CR</th><th>AC</th><th>HP (reference)</th><th>Area / wave</th><th>Actions</th></tr></thead><tbody>${groups.map((g,gi)=>`<tr class="ecb-group-header"><td colspan="6"><div class="ecb-group-heading"><button type="button" data-ecb-collapse="${escHtml(g)}" aria-expanded="${!ecbCollapsedGroups.has(g)}">${ecbCollapsedGroups.has(g)?'▸':'▾'} ${escHtml(g)} (${monsters.filter(m=>ecbGroup(m)===g).length})</button><span class="ecb-group-reorder"><button type="button" data-ecb-group-move="${gi}:-1" title="Move entire group up" aria-label="Move ${escHtml(g)} up" ${gi===0?'disabled':''}>↑</button><button type="button" data-ecb-group-move="${gi}:1" title="Move entire group down" aria-label="Move ${escHtml(g)} down" ${gi===groups.length-1?'disabled':''}>↓</button></span></div></td></tr>${ecbCollapsedGroups.has(g)?'':rowsFor(g)}`).join('')}${!monsters.length?'<tr><td colspan="6">No monsters. Import a ChatGPT encounter JSON package to begin.</td></tr>':''}</tbody></table>`;
  host.querySelector('#ecb-review-names').onclick=ecbReviewLegacyNames;
  host.querySelector('#ecb-add-group').onclick=()=>{const name=prompt('Area or wave name (e.g. North Gate, Wave 2):');if(!name||!name.trim())return;const g=name.trim().slice(0,80);node.fields.encounterGroups=[...new Set([...(node.fields.encounterGroups||[]),g])];markDirty();renderEncounterBuilder();};
+ host.querySelectorAll('[data-ecb-group-move]').forEach(b=>b.onclick=()=>{const [i,d]=b.dataset.ecbGroupMove.split(':').map(Number);ecbMoveGroup(node,groups[i],d);});
+ host.querySelectorAll('[data-ecb-edit-type]').forEach(b=>b.onclick=()=>ecbEditType(+b.dataset.ecbEditType));
  host.querySelectorAll('[data-ecb-collapse]').forEach(b=>b.onclick=()=>{const g=b.dataset.ecbCollapse;ecbCollapsedGroups.has(g)?ecbCollapsedGroups.delete(g):ecbCollapsedGroups.add(g);renderEncounterBuilder();});
  host.querySelectorAll('[data-ecb-group]').forEach(sel=>sel.onchange=()=>{const m=monsters[+sel.dataset.ecbGroup];m._encounterGroup=sel.value;const partner=ecbLinkedPartner(node,m);if(partner)partner._encounterGroup=sel.value;markDirty();renderEncounterBuilder();});
  host.querySelectorAll('[data-ecb-move]').forEach(b=>b.onclick=()=>{
@@ -20509,17 +20544,17 @@ function validateEncounterBuilderPackage(pkg){
   const id=String(entry.id||'').trim();if(!id||ids.has(id))throw Error('Each monster needs a unique, stable id.');ids.add(id);
   const sn=normalizeWorkshopMonsterSnapshot(JSON.parse(JSON.stringify(entry.snapshot)));
   if(!sn.name||!CANVAS_CR_TABLE[String(sn.cr)])throw Error('Monster '+id+' needs a name and supported CR.');
-  return {id,nameOverride:String(entry.name||sn.name).slice(0,160),snapshot:sn,group:String(entry.group||'Unassigned').slice(0,80),mountPartnerId:String(entry.mountPartnerId||''),mounted:entry.mounted===true};
+  return {id,nameOverride:String(entry.name||sn.name).slice(0,160),snapshot:sn,group:String(entry.group||'Unassigned').slice(0,80),mountPartnerId:String(entry.mountPartnerId||''),mounted:entry.mounted===true,typeName:String(entry.typeName||'').slice(0,120)};
  });
 }
 async function importEncounterBuilderFile(input){const file=input.files?.[0];input.value='';if(!file)return;try{
  if(file.size>1500000)throw Error('Encounter JSON must be smaller than 1.5 MB.');
  const pkg=JSON.parse(await file.text()),incoming=validateEncounterBuilderPackage(pkg),node=encounterBuilderNode();if(!node)return;
  const old=Array.isArray(node.fields.monsters)?node.fields.monsters:[],previous=new Map(old.filter(m=>m._encounterImportId).map(m=>[m._encounterImportId,m]));
- const updated=incoming.map(m=>{const prior=previous.get(m.id);return {...(prior||{}),...m,_encounterGroup:m.group==='Unassigned'?(prior?ecbGroup(prior):'Unassigned'):m.group,_encounterImportId:m.id,_encounterInstanceId:(prior?ecbInstanceId(prior):m.id),_encounterMountPartnerId:m.mountPartnerId||undefined,_encounterMounted:m.mounted||false,_encounterImportKey:String(pkg.encounterId||''),_originalSnapshot:undefined,_scaledFromCr:undefined};});
+ const updated=incoming.map(m=>{const prior=previous.get(m.id);return {...(prior||{}),...m,_encounterTypeName:m.typeName||(prior?prior._encounterTypeName:undefined),_encounterGroup:m.group==='Unassigned'?(prior?ecbGroup(prior):'Unassigned'):m.group,_encounterImportId:m.id,_encounterInstanceId:(prior?ecbInstanceId(prior):m.id),_encounterMountPartnerId:m.mountPartnerId||undefined,_encounterMounted:m.mounted||false,_encounterImportKey:String(pkg.encounterId||''),_originalSnapshot:undefined,_scaledFromCr:undefined};});
  const sameKey=old.filter(m=>m._encounterImportKey===String(pkg.encounterId||'')),keep=old.filter(m=>m._encounterImportKey!==String(pkg.encounterId||''));
  if(!confirm(`Import ${updated.length} creatures into ${node.title}? ${sameKey.length} previously imported creatures with the same encounter ID will be replaced; ${keep.length} other creatures will remain.`))return;
  node.fields.monsters=[...keep,...updated];const importedById=new Map(updated.map(m=>[m._encounterImportId,m]));for(const m of updated){if(m._encounterMountPartnerId){const partner=importedById.get(m._encounterMountPartnerId);m._encounterMountPartnerId=partner?ecbInstanceId(partner):undefined;}}ecbKeepPairsAdjacent(node);node.fields.encounterGroups=[...new Set([...(node.fields.encounterGroups||[]),...(Array.isArray(pkg.groups)?pkg.groups.map(String):[]),...updated.map(ecbGroup)])];if(pkg.title)node.title=String(pkg.title).slice(0,160);markDirty();renderEncounterBuilder();
  }catch(err){alert('Encounter import failed: '+err.message);}}
-function exportEncounterBuilderJson(){const node=encounterBuilderNode();if(!node)return;const pkg={format:'session-canvas-encounter',schemaVersion:1,encounterId:String(node.id),title:node.title,groups:ecbGroups(node),monsters:(node.fields.monsters||[]).map((m,i)=>({id:String(m._encounterImportId||'creature-'+(i+1)),name:m.nameOverride||m.snapshot?.name||'Monster',group:ecbGroup(m),mountPartnerId:(ecbLinkedPartner(node,m)?ecbLinkedPartner(node,m)._encounterImportId:undefined),mounted:!!m._encounterMounted,snapshot:m.snapshot}))};const blob=new Blob([JSON.stringify(pkg,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='session-canvas-encounter.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+function exportEncounterBuilderJson(){const node=encounterBuilderNode();if(!node)return;const pkg={format:'session-canvas-encounter',schemaVersion:1,encounterId:String(node.id),title:node.title,groups:ecbGroups(node),monsters:(node.fields.monsters||[]).map((m,i)=>({id:String(m._encounterImportId||'creature-'+(i+1)),name:m.nameOverride||m.snapshot?.name||'Monster',typeName:m._encounterTypeName||undefined,group:ecbGroup(m),mountPartnerId:(ecbLinkedPartner(node,m)?ecbLinkedPartner(node,m)._encounterImportId:undefined),mounted:!!m._encounterMounted,snapshot:m.snapshot}))};const blob=new Blob([JSON.stringify(pkg,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='session-canvas-encounter.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 window.openEncounterBuilder=openEncounterBuilder;window.openEncounterBuilderFromFocus=openEncounterBuilderFromFocus;window.closeEncounterBuilder=closeEncounterBuilder;window.importEncounterBuilderFile=importEncounterBuilderFile;window.exportEncounterBuilderJson=exportEncounterBuilderJson;window.closeEncounterBuilderDetail=closeEncounterBuilderDetail;
