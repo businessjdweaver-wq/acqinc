@@ -513,6 +513,8 @@ function rqSignInWithGoogle() {
   } catch (e) { rqShowAuthError('Unable to start Google sign-in: ' + e.message); }
 }
 window.rqSignInWithGoogle = rqSignInWithGoogle;
+const rqGoogleBtn = document.getElementById('rqGoogleAuthBtn');
+if (rqGoogleBtn) rqGoogleBtn.addEventListener('click', rqSignInWithGoogle);
 
 function rqConsumeOAuthCallback() {
   const hash = location.hash || '';
