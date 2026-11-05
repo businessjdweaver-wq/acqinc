@@ -35,7 +35,14 @@ const characters=[
 
 ];const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk'];characters.forEach((c,i)=>{c.cardTitle=cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
 const characterLevelProgress=(archetype,level)=>{const base=Number(archetype)>=6?100:1;const cap=base+99;return Math.max(0,Math.min(99,Math.floor(Number(level)||base)-base));};
-const characterDamageMultiplier=(archetype,level)=>1+characterLevelProgress(archetype,level)*0.002;
+// Rank sets the baseline; card mastery and character progression are independent.
+const characterDamageMultiplier=(archetype,level)=>1+characterLevelProgress(archetype,level)*(Number(archetype)>=6?0.005:0.002);
+const characterColorStrength=(archetype,level,color,isNatural,powerLevel=0)=>{
+ const twoStar=Number(archetype)>=6;
+ const base=isNatural?(twoStar?15:10):(twoStar?4:2);
+ const mastery=isNatural&&powerLevel>0?[1,1.08,1.18,1.35][Math.max(0,Math.min(3,powerLevel-1))]:1;
+ return Math.round(base*mastery*characterDamageMultiplier(archetype,level));
+};
 const characterMaxHp=(character,archetype,level)=>Math.round(character.max*(1+characterLevelProgress(archetype,level)*0.0025));
-return{characters,characterLevelProgress,characterDamageMultiplier,characterMaxHp,defaultSelection:[0,1,2],storageKey:'rq-v2-character-selection-v1'};
+return{characters,characterLevelProgress,characterDamageMultiplier,characterColorStrength,characterMaxHp,defaultSelection:[0,1,2],storageKey:'rq-v2-character-selection-v1'};
 });
