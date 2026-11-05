@@ -21,7 +21,7 @@ const characters=[
  ['Sanctuary at Dusk',6,7,'Create protective defense tiles, fortified at level four.','twilight-sanctuary'],
  ['Twilight Absolution',3,5,'Purify locks, hostile fortification and enemy special strength.','twilight-absolution']]}
 ,{name:'Morrow · Fungus Druid',icon:'🍄',background:'Hermit',max:95,powers:[
- ['Mycelial Network',4,6,'Grow a capped network that heals allies each turn.','mycelial-network'],
+ ['Mycelial Network',4,6,'Grow a capped healing network; recasting strengthens existing network healing by 50% without removing tiles.','mycelial-network'],
  ['Spore of Slumber',3,6,'Plant a delayed spore that cascades stun through enemies.','spore-slumber'],
  ['Spore Bloom',1,6,'Plant a spore that releases attack tiles when matched.','spore-bloom']]}
 ,{name:'Tor · Juggernaut Barbarian',icon:'🔨',background:'Outlander',max:129,powers:[
