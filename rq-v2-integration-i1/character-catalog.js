@@ -29,7 +29,7 @@ const characters=[
  ['Rage Engine',1,0,'Passive: damage taken generates attack tiles at a rage threshold.','rage-engine'],
  ['Immovable Object',4,6,'Fortify defenses and temporarily reduce incoming damage.','immovable-object']]}
 ,{name:'Kael · Astral Self Monk',icon:'🪷',background:'Hermit',max:97,powers:[
- ['Arms of the Astral Self',2,5,'L1: one free adjacent swap (5 blue). L2: one swap (4 blue). L3: two swaps (4 blue). L4: two swaps (3 blue). A normal match follows.','astral-arms'],
+ ['Arms of the Astral Self',2,6,'L1: one free adjacent swap (6 blue). L2: one swap (5 blue). L3: two swaps (7 blue). L4: two swaps (6 blue). A normal match follows.','astral-arms'],
  ['Astral Flurry',3,6,'Strike based on matches made during the current allied turn.','astral-flurry'],
  ['Stillness Beyond Form',6,6,'Reduce damage and reposition ordinary tiles.','astral-stillness']]}
 
