@@ -1,31 +1,36 @@
 from PIL import Image
 from pathlib import Path
 import json
-p=Path("rq-v2-integration-i1/assets/sprites/clean/rqv2-vex-idle.png")
-im=Image.open(p).convert("RGBA")
-w,h=im.size
-px=im.load()
-# Run on source PNG; fail closed if the detached fragment cannot be identified.\n# Connected-component analysis with 8-neighbor connectivity prevents removal
-# of anything attached to the cloak, hood, arms, or other legitimate silhouette.
-occupied={(x,y) for y in range(h) for x in range(w) if px[x,y][3]>=32}
-components=[]
-while occupied:
- seed=next(iter(occupied)); occupied.remove(seed); stack=[seed]; group=[seed]
- while stack:
-  x,y=stack.pop()
-  for dx in (-1,0,1):
-   for dy in (-1,0,1):
-    q=(x+dx,y+dy)
-    if q in occupied:occupied.remove(q);stack.append(q);group.append(q)
- components.append(group)
-components.sort(key=len,reverse=True)
-print(json.dumps({"size":[w,h],"components":[{"pixels":len(c),"bounds":[min(x for x,y in c),min(y for x,y in c),max(x for x,y in c),max(y for x,y in c)]} for c in components]}))
-main=components[0]
-main_minx=min(x for x,y in main)
-# Only delete tiny isolated remnants well left of the main sprite.
-remnants=[c for c in components[1:] if len(c)<=32 and max(x for x,y in c)<main_minx-3]
-if not remnants:raise RuntimeError("No safely isolated left-edge remnant detected; refusing an arbitrary crop")
-for c in remnants:
- for x,y in c:px[x,y]=(0,0,0,0)
-im.save(p,optimize=True)
-print("Removed",sum(map(len,remnants)),"isolated pixels in",len(remnants),"components")
+
+# Remove the stray source-art sliver by cropping at the transparent column
+# separating it from Vex. Never cut into occupied artwork.
+p = Path("rq-v2-integration-i1/assets/sprites/clean/rqv2-vex-idle.png")
+im = Image.open(p).convert("RGBA")
+w, h = im.size
+alpha = im.getchannel("A")
+occupied_columns = [
+    x for x in range(w)
+    if alpha.crop((x, 0, x + 1, h)).getbbox() is not None
+]
+if not occupied_columns:
+    raise RuntimeError("Sprite is empty")
+runs = []
+for x in occupied_columns:
+    if not runs or x > runs[-1][-1] + 1:
+        runs.append([x])
+    else:
+        runs[-1].append(x)
+print(json.dumps({"width": w, "height": h,
+                  "occupied_runs": [[v[0], v[-1]] for v in runs]}))
+if len(runs) < 2:
+    raise RuntimeError("No transparent gap separates a left artifact; refusing to crop artwork")
+# A narrow, far-left sliver separated by transparent columns from the main image.
+first, second = runs[0], runs[1]
+if first[0] > w * .20 or len(first) > max(12, w * .08) or second[0] - first[-1] < 2:
+    raise RuntimeError("Left component is not a safely isolated narrow edge sliver")
+crop_left = second[0]
+# Keep the original canvas dimensions and alignment: make the cropped strip
+# transparent instead of shifting the sprite right/left.
+im.paste((0, 0, 0, 0), (0, 0, crop_left, h))
+im.save(p, optimize=True)
+print(f"Cropped left {crop_left} columns to transparency without changing canvas dimensions")
