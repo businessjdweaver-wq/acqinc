@@ -95,6 +95,41 @@ for path in sorted(set(root.glob("rqv2-*-idle.png")) | set(root.glob("*_idle_01.
                 for yy in run:
                     rr,gg,bb,_=pixels[x,yy]
                     pixels[x,yy]=(rr,gg,bb,0)
+    # Remove sprite-sheet guides using a global column profile. Unlike the
+    # prior run-based test, this catches dashed lines and lines interrupted by
+    # the sprite silhouette. Only remove neutral pixels on a guide column;
+    # colorful costume and weapon pixels remain intact.
+    guide_columns=[]
+    for x in range(w):
+        neutral=[]
+        for y in range(h):
+            rr,gg,bb,aa=pixels[x,y]
+            if aa and max(rr,gg,bb)-min(rr,gg,bb)<=18:
+                neutral.append((y,(rr+gg+bb)//3))
+        if len(neutral)<max(9,int(h*.24)):continue
+        from collections import Counter
+        levels=Counter((v//12)*12 for _,v in neutral)
+        tone,count=levels.most_common(1)[0]
+        matching=[y for y,v in neutral if abs(v-tone)<=14]
+        if len(matching)<max(9,int(h*.23)):continue
+        if max(matching)-min(matching)<int(h*.38):continue
+        guide_columns.append((x,tone))
+    for x,tone in guide_columns:
+        for y in range(h):
+            rr,gg,bb,aa=pixels[x,y]
+            if aa and max(rr,gg,bb)-min(rr,gg,bb)<=20 and abs((rr+gg+bb)//3-tone)<=18:
+                pixels[x,y]=(rr,gg,bb,0)
+
+    # A guide can have one-pixel antialiased fringes. Remove only matching
+    # neutral fringe colors directly adjacent to a detected guide column.
+    for x,tone in guide_columns:
+        for xx in (x-1,x+1):
+            if xx<0 or xx>=w:continue
+            for y in range(h):
+                rr,gg,bb,aa=pixels[xx,y]
+                if aa and max(rr,gg,bb)-min(rr,gg,bb)<=16 and abs((rr+gg+bb)//3-tone)<=12:
+                    pixels[xx,y]=(rr,gg,bb,0)
+    print(path.name, 'detected guide columns:',guide_columns)
     bounds=image.getbbox()
     if bounds:image=image.crop(bounds)
     output=dest/path.name
