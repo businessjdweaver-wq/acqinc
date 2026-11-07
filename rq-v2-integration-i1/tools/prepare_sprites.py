@@ -66,6 +66,35 @@ for path in sorted(set(root.glob("rqv2-*-idle.png")) | set(root.glob("*_idle_01.
                 for cx,cy in component:
                     red,green,blue,_=pixels[cx,cy]
                     pixels[cx,cy]=(red,green,blue,0)
+    # Detect long, nearly monochrome vertical guide-line remnants.
+    # These are characteristic of the source sprite sheets, not pixel art.
+    # Require a thin run of >= 9 pixels with little RGB variation, and
+    # no colorful immediate neighbors, to protect outlines and equipment.
+    for x in range(w):
+        y=0
+        while y<h:
+            r,g,b,a=pixels[x,y]
+            if not a or max(r,g,b)-min(r,g,b)>18:
+                y+=1;continue
+            start=y;run=[]
+            while y<h:
+                rr,gg,bb,aa=pixels[x,y]
+                if not aa or max(rr,gg,bb)-min(rr,gg,bb)>18 or max(abs(rr-r),abs(gg-g),abs(bb-b))>12:break
+                run.append(y);y+=1
+            if len(run)<9:continue
+            # Protect segments adjoining colorful sprite detail.
+            colorful=False
+            for yy in run:
+                for xx in (x-1,x+1):
+                    if 0<=xx<w:
+                        nr,ng,nb,na=pixels[xx,yy]
+                        if na and max(nr,ng,nb)-min(nr,ng,nb)>40:
+                            colorful=True;break
+                if colorful:break
+            if not colorful:
+                for yy in run:
+                    rr,gg,bb,_=pixels[x,yy]
+                    pixels[x,yy]=(rr,gg,bb,0)
     bounds=image.getbbox()
     if bounds:image=image.crop(bounds)
     output=dest/path.name
