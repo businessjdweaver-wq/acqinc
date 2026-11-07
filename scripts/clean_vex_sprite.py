@@ -5,7 +5,7 @@ p=Path("rq-v2-integration-i1/assets/sprites/clean/rqv2-vex-idle.png")
 im=Image.open(p).convert("RGBA")
 w,h=im.size
 px=im.load()
-# Connected-component analysis with 8-neighbor connectivity prevents removal
+# Run on source PNG; fail closed if the detached fragment cannot be identified.\n# Connected-component analysis with 8-neighbor connectivity prevents removal
 # of anything attached to the cloak, hood, arms, or other legitimate silhouette.
 occupied={(x,y) for y in range(h) for x in range(w) if px[x,y][3]>=32}
 components=[]
