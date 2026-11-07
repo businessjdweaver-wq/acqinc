@@ -22,3 +22,5 @@ for path, x_limit, y_limit in paths:
     print(f"{path}: removed {removed} brown/orange pixels")
     if removed:
         image.save(path, optimize=True)
+
+# Workflow rerun with both asset paths staged.
