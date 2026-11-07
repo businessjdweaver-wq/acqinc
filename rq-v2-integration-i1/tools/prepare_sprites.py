@@ -130,6 +130,51 @@ for path in sorted(set(root.glob("rqv2-*-idle.png")) | set(root.glob("*_idle_01.
                 if aa and max(rr,gg,bb)-min(rr,gg,bb)<=16 and abs((rr+gg+bb)//3-tone)<=12:
                     pixels[xx,y]=(rr,gg,bb,0)
     print(path.name, 'detected guide columns:',guide_columns)
+    # Final geometry-aware cleanup. Sprite-sheet guide remnants are thin,
+    # vertically aligned neutral pixels outside the colorful character body.
+    # Find a column's guide evidence from small neutral clusters, not from
+    # the full column (which could contain legitimate gray equipment).
+    candidates=[]
+    for x in range(w):
+        ys=[]
+        for y in range(h):
+            rr,gg,bb,aa=pixels[x,y]
+            if aa<100 or max(rr,gg,bb)-min(rr,gg,bb)>15:continue
+            colorful_neighbors=0
+            for xx in range(max(0,x-2),min(w,x+3)):
+                for yy in range(max(0,y-1),min(h,y+2)):
+                    nr,ng,nb,na=pixels[xx,yy]
+                    if na>=100 and max(nr,ng,nb)-min(nr,ng,nb)>35:
+                        colorful_neighbors+=1
+            if colorful_neighbors==0:ys.append(y)
+        if len(ys)>=5 and max(ys)-min(ys)>=max(12,int(h*.27)):
+            candidates.append((x,set(ys)))
+    for x,ys in candidates:
+        for y in ys:
+            rr,gg,bb,_=pixels[x,y]
+            pixels[x,y]=(rr,gg,bb,0)
+    # Drop small disconnected neutral dust clusters; preserve colorful
+    # detached effects such as sparkles and weapon highlights.
+    visited=bytearray(w*h)
+    removed_dust=0
+    for y in range(h):
+        for x in range(w):
+            if visited[y*w+x] or pixels[x,y][3]<100:continue
+            stack=[(x,y)];visited[y*w+x]=1;component=[]
+            while stack:
+                xx,yy=stack.pop();component.append((xx,yy))
+                for dx,dy in ((1,0),(-1,0),(0,1),(0,-1),(1,1),(-1,-1),(1,-1),(-1,1)):
+                    nx,ny=xx+dx,yy+dy
+                    if not (0<=nx<w and 0<=ny<h):continue
+                    idx=ny*w+nx
+                    if not visited[idx] and pixels[nx,ny][3]>=100:
+                        visited[idx]=1;stack.append((nx,ny))
+            if len(component)<=12 and all(max(pixels[xx,yy][:3])-min(pixels[xx,yy][:3])<=22 for xx,yy in component):
+                for xx,yy in component:
+                    rr,gg,bb,_=pixels[xx,yy]
+                    pixels[xx,yy]=(rr,gg,bb,0)
+                removed_dust+=len(component)
+    print(path.name,'neutral guide candidates:',len(candidates),'dust pixels:',removed_dust)
     bounds=image.getbbox()
     if bounds:image=image.crop(bounds)
     output=dest/path.name
