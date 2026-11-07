@@ -8,7 +8,7 @@ root=Path("rq-v2-integration-i1/assets/sprites")
 dest=root/"clean"
 dest.mkdir(exist_ok=True)
 manifest={}
-for path in sorted(root.glob("rqv2-*-idle.png")):
+for path in sorted(set(root.glob("rqv2-*-idle.png")) | set(root.glob("*_idle_01.png"))):
     image=Image.open(path).convert("RGBA")
     w,h=image.size
     pixels=image.load()
@@ -37,7 +37,7 @@ for path in sorted(root.glob("rqv2-*-idle.png")):
     if bounds:image=image.crop(bounds)
     output=dest/path.name
     image.save(output,optimize=True)
-    manifest[path.stem.replace("rqv2-","").replace("-idle","")]={
+    manifest[path.stem.replace("rqv2-","").replace("-idle","").replace("_idle_01","")]={
         "file":"clean/"+path.name,"width":image.width,"height":image.height
     }
     print(path.name,"=>",output,image.size)
