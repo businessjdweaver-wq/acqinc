@@ -44,5 +44,19 @@ const characterColorStrength=(archetype,level,color,isNatural,powerLevel=0)=>{
  return Math.round(base*mastery*characterDamageMultiplier(archetype,level));
 };
 const characterMaxHp=(character,archetype,level)=>Math.round(character.max*(1+characterLevelProgress(archetype,level)*0.0025));
-return{characters,characterLevelProgress,characterDamageMultiplier,characterColorStrength,characterMaxHp,defaultSelection:[0,1,2],storageKey:'rq-v2-character-selection-v1'};
+// Sandbox characters are separate from the recruitable catalog and reward pools.
+const sandboxCharacters = [{
+ name:'Rook · Battle Master Fighter',
+ rosterTitle:'Battle Master Fighter',
+ icon:'⛏️',
+ background:'Soldier',
+ starTier:2,
+ max:Math.round(108*1.9),
+ powers:[
+  ['Over the Line',3,6,'Throw a pickaxe at a rank 2 or rank 3 enemy.','rook-throw',{damage:[[24,32],[28,38],[32,44],[36,50]]}],
+  ['Step Into the Blow',1,0,'Intercept a knockout hit aimed at an ally ahead of Rook.','rook-intercept',{reduction:[20,30,40,50]}],
+  ['Break Formation',0,6,'Damage and shove the frontline enemy back one rank.','rook-shove',{damage:[12,16,20,20],cost:[6,6,6,5]}]
+ ]
+}];
+return{characters,sandboxCharacters,characterLevelProgress,characterDamageMultiplier,characterColorStrength,characterMaxHp,defaultSelection:[0,1,2],storageKey:'rq-v2-character-selection-v1'};
 });
