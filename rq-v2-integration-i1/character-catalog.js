@@ -45,8 +45,16 @@ const characters=[
   ['Step Into the Blow',1,0,'Intercept a knockout hit aimed at an ally ahead of Rook.','rook-intercept',{reduction:[20,30,40,50]}],
   ['Break Formation',0,6,'Damage and shove the frontline enemy back one rank.','rook-shove',{damage:[12,16,20,20],cost:[6,6,6,5]}]
  ]
+},
+{
+ name:'Malvek · Fiend Warlock',rosterTitle:'Fiend Warlock',cardTitle:'Fiend Warlock',icon:'🔥',background:'Charlatan',starTier:2,max:100,
+ powers:[
+ ['Siphon Life',0,6,'Drain the frontline enemy and restore a wounded ally.','malvek-siphon',{damage:[16,22,28,36],heal:[8,12,16,22]}],
+ ['Faustian Bargain',3,0,'Gain blue energy. Optionally invoke your patron for greater power at the price of Patron Debt.','malvek-bargain',{energy:[4,6,8,10]}],
+ ["Patron's Claim",4,6,'Mark the frontline enemy; its defeat yields a Patron Debt counter with two extra turns.','malvek-claim',{damage:[10,14,18,24]}]
+ ]
 }
-];const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter'];characters.forEach((c,i)=>{c.rosterTitle=i===13?'Shroomkeeper':cardTitles[i];c.cardTitle=cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
+];const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock'];characters.forEach((c,i)=>{c.rosterTitle=i===13?'Shroomkeeper':cardTitles[i];c.cardTitle=cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
 const characterLevelProgress=(archetype,level)=>{const base=Number(archetype)>=6?100:1;const cap=base+99;return Math.max(0,Math.min(99,Math.floor(Number(level)||base)-base));};
 // Rank sets the baseline; card mastery and character progression are independent.
 const characterDamageMultiplier=(archetype,level)=>1+characterLevelProgress(archetype,level)*(Number(archetype)>=6?0.005:0.002);
