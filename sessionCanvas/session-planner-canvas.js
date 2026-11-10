@@ -1,3 +1,4 @@
+// v1.3.112 — Run Session sections with linked canvas cards and combat handoff.
 // v1.3.108 — area note tiles and descriptive creature types
 // v1.3.107 — Google OAuth login and callback handling.
 // v1.3.106 — Reorder encounter groups and display/edit creature stat-block types
@@ -1696,6 +1697,7 @@ const sessionState = {
   currentSessionId: null,
   canvasGroups: [],       // Stage 58: per-session named groups of canvas node ids
   activeCanvasGroupId: '',
+  runSections: [],
   // Campaign-scope tracking. The current session belongs to one campaign;
   // we cache that campaign's full blocks JSONB here so the left frame can
   // render across sessions without re-fetching. Edits write back via PATCH
@@ -1957,7 +1959,9 @@ function buildWrapCarryForwardPayload() {
     return found ? found.id : '';
   })();
 
-  return { nodes, edges, canvas_groups, active_canvas_group_id, idMap };
+  return { nodes, edges, canvas_groups, active_canvas_group_id, idMap,
+    run_sections: copyRunSections(idMap),
+  };
 }
 
 function _rqNodeRepairSignature(n) {
@@ -2189,6 +2193,7 @@ async function applyWrapSessionPromotions() {
       edges: [...(Array.isArray(destBlocks.edges) ? destBlocks.edges : []), ...carry.edges],
       canvas_groups: [...(Array.isArray(destBlocks.canvas_groups) ? destBlocks.canvas_groups : []), ...carry.canvas_groups],
       active_canvas_group_id: carry.active_canvas_group_id || destBlocks.active_canvas_group_id || '',
+      run_sections: [...readRunSections(destBlocks.run_sections), ...carry.run_sections],
     };
     await sbFetch('sessions?id=eq.' + encodeURIComponent(next.id), {
       method: 'PATCH', prefer: 'return=minimal',
@@ -3576,6 +3581,7 @@ async function confirmCopyToSession() {
       version: 1,
       nodes: newNodes,
       edges: newEdges,
+      run_sections: [...(replace ? [] : readRunSections(destBlocks.run_sections)), ...copyRunSections(idMap)],
     };
 
     // 4. PATCH the destination row.
@@ -4023,6 +4029,9 @@ function serializeCanvas() {
       created_at: g.created_at || new Date().toISOString(),
     })) : [],
     active_canvas_group_id: sessionState.activeCanvasGroupId || '',
+    run_sections: sessionState.runSections.map(section => ({
+      ...section, node_ids: section.node_ids.filter(id => state.nodes.has(id)),
+    })),
     frame_view: {
       diminished_node_ids:           Array.from(sessionState.diminishedNodeIds           || []),
       diminished_collection_ids:     Array.from(sessionState.diminishedCollectionIds     || []),
@@ -4052,6 +4061,7 @@ function deserializeCanvas(data) {
     created_at: g.created_at || new Date().toISOString(),
   })) : [];
   sessionState.activeCanvasGroupId = data.active_canvas_group_id || '';
+  sessionState.runSections = readRunSections(data.run_sections);
 
   let maxIdSeq = 0;
   // Helper to instantiate a single node onto the canvas — used both for
@@ -5707,6 +5717,15 @@ window.addEventListener('keydown', (e) => {
     if (!isTypingTarget(e.target) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       stepEncounterFocus(e.key === 'ArrowLeft' ? -1 : 1); e.preventDefault(); return;
     }
+    if (runSessionReturn) return;
+  }
+  if (runSessionReturn && document.body.classList.contains('encounter-builder-active')) {
+    if (e.key === 'Escape') {
+      if (document.getElementById('ecb-detail').hidden) closeEncounterBuilder();
+      else closeEncounterBuilderDetail();
+      e.preventDefault();
+    }
+    return;
   }
   // Highest priority: Esc exits focus mode if active. (Focus mode trumps
   // every other modal because it's the most distracting visual state.)
@@ -5778,7 +5797,7 @@ window.addEventListener('keydown', (e) => {
 
 // Space-as-pan-modifier (so dragging a node header doesn't conflict)
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'Space' && !state.isSpaceDown && !isTypingTarget(e.target)) {
+  if (!runSessionReturn && e.code === 'Space' && !state.isSpaceDown && !isTypingTarget(e.target)) {
     state.isSpaceDown = true;
     wrap.classList.add('spacedown');
     e.preventDefault();
@@ -11687,7 +11706,7 @@ function enterEncounterFocusMode(nodeId) {
   renderEncounterFocusMode();
 }
 
-function exitEncounterFocusMode() {
+function exitEncounterFocusMode(returnToRunSession = true) {
   if (!inEncounterFocusMode) return;
   const node = getEncounterFocusNode();
   inEncounterFocusMode = false;
@@ -11704,6 +11723,7 @@ function exitEncounterFocusMode() {
   redrawEdges();
   // Persist any combat-state edits only after the canvas is visible again.
   if (saveGen > lastSavedGen && !saveTimer4c) saveTimer4c = setTimeout(attemptAutosave, 0);
+  if (returnToRunSession) resumeRunSession();
 }
 window.enterEncounterFocusMode = enterEncounterFocusMode;
 window.exitEncounterFocusMode = exitEncounterFocusMode;
@@ -19109,6 +19129,7 @@ function renderMobileScreen() {
   if (!content) return;
   if (back) back.classList.toggle('hidden', screen === 'sessions');
   if (counterEl) counterEl.textContent = '';
+  document.getElementById('mob-run-session').hidden = screen !== 'nodes';
   renderCanvasGroupBar();
 
   if (screen === 'sessions') {
@@ -19564,6 +19585,10 @@ function spcOpenBlankLocalSession() {
   deserializeCanvas(row.blocks);
   setCanvasSavedState('saved');
   updateEmptyHint();
+  if (document.body.classList.contains('mobile-mode')) {
+    mobileState.screen = 'nodes';
+    renderMobileScreen();
+  }
 }
 async function spcEnterLocalOnlyMode() {
   window.SPC_LOCAL_ONLY = true;
@@ -19577,7 +19602,7 @@ async function spcEnterLocalOnlyMode() {
   if (idbBackup) {
     try {
       const file = new File([JSON.stringify(idbBackup)], 'latest-offline-backup.json', {type:'application/json'});
-      importFocusedSessionJsonOffline(file, true);
+      importFocusedSessionJsonOffline(file, true, true);
       return;
     } catch (_) {}
   }
@@ -19587,7 +19612,7 @@ async function spcEnterLocalOnlyMode() {
   if (latest && latest.text) {
     try {
       const file = new File([latest.text], 'latest-offline-backup.json', {type:'application/json'});
-      importFocusedSessionJsonOffline(file, true);
+      importFocusedSessionJsonOffline(file, true, true);
       return;
     } catch (_) {}
   }
@@ -19697,8 +19722,311 @@ function focusDeepLinkedNode(nodeId) {
   // Couldn't find it — quiet fail. The session loaded; the user can search again.
 }
 
+// ── RUN SESSION ──
+// Sections store references to the current canvas. The cards and combat
+// screen both read the live nodes, including changes made since autosave.
+function readRunSections(raw) {
+  const ids = new Set();
+  return (Array.isArray(raw) ? raw : []).filter(section => {
+    if (typeof section?.id !== 'string' || !section.id || ids.has(section.id)) return false;
+    ids.add(section.id);
+    return true;
+  }).map(section => ({
+    id: section.id,
+    name: String(section.name || 'Untitled section').slice(0, 100),
+    node_ids: Array.isArray(section.node_ids)
+      ? [...new Set(section.node_ids.filter(id => typeof id === 'string'))] : [],
+  }));
+}
+
+function newRunSectionId() {
+  return 'run_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9);
+}
+
+function copyRunSections(idMap) {
+  return sessionState.runSections.map(section => ({
+    id: newRunSectionId(),
+    name: section.name,
+    node_ids: section.node_ids.map(id => idMap.get(id)).filter(Boolean),
+  })).filter(section => section.node_ids.length);
+}
+
+const runSessionDialog = document.getElementById('run-session-dialog');
+const runSessionNav = document.getElementById('run-session-sections');
+const runSessionContent = document.getElementById('run-session-content');
+const runSessionStatus = document.getElementById('run-session-status');
+const runSessionNewForm = document.getElementById('run-session-new');
+const runSessionOrganize = document.getElementById('run-session-organize');
+let runSessionSectionId = '';
+let runSessionEditing = false;
+let runSessionReturn = null;
+
+function openRunSession() {
+  if (!sessionState.currentSessionId || loadingSession) {
+    alert('Open a session first.');
+    return;
+  }
+  if (runSessionDialog.open) return;
+  if (sidePanel.classList.contains('open')) closeSidePanel();
+  if (inFocusMode) exitFocusMode();
+  runSessionSectionId = sessionState.runSections[0]?.id || '';
+  runSessionEditing = !runSessionSectionId;
+  document.getElementById('run-session-title').textContent =
+    document.getElementById('topbarSession').textContent;
+  runSessionStatus.textContent = '';
+  renderRunSession();
+  runSessionContent.scrollTop = 0;
+  runSessionDialog.showModal();
+}
+
+function closeRunSession() {
+  runSessionDialog.close();
+}
+
+function launchRunSessionEncounter(node, button) {
+  runSessionReturn = {
+    sessionId: sessionState.currentSessionId,
+    scrollTop: runSessionContent.scrollTop,
+    button,
+  };
+  // Close the modal during combat so the existing encounter overlay can
+  // receive input. Keep its contents mounted to retain expanded cards.
+  runSessionDialog.close();
+  document.getElementById('encounter-focus-close').textContent = '✕ Return to Run Session';
+  document.getElementById('encounter-focus-close').title = 'Return to Run Session (Esc)';
+  enterEncounterFocusMode(node.id);
+  document.getElementById('encounter-focus-close').focus();
+}
+
+function resumeRunSession() {
+  const previous = runSessionReturn;
+  if (!previous) return;
+  runSessionReturn = null;
+  document.getElementById('encounter-focus-close').textContent = '✕ Return to Canvas';
+  document.getElementById('encounter-focus-close').title = 'Return to canvas (Esc)';
+  if (previous.sessionId !== sessionState.currentSessionId) return;
+  runSessionDialog.showModal();
+  previous.button.focus({ preventScroll: true });
+  runSessionContent.scrollTop = previous.scrollTop;
+}
+
+function renderRunSession() {
+  const sections = sessionState.runSections;
+  const index = sections.findIndex(section => section.id === runSessionSectionId);
+  const section = sections[index];
+  runSessionOrganize.setAttribute('aria-pressed', String(runSessionEditing));
+  runSessionOrganize.textContent = runSessionEditing ? 'Done Organizing' : 'Organize';
+  runSessionNewForm.hidden = !runSessionEditing;
+  runSessionNav.innerHTML = sections.map(item => `
+    <button type="button" data-run-section="${escAttr(item.id)}"
+      aria-current="${item === section ? 'true' : 'false'}">${escHtml(item.name)}</button>
+  `).join('');
+  if (!section) {
+    delete runSessionContent.dataset.section;
+    runSessionContent.innerHTML = '<p class="run-session-empty">Create a section for an area, scene, or phase of the session. Then add the canvas cards you want at the table.</p>';
+    return;
+  }
+
+  const cardStates = new Map(Array.from(runSessionContent.querySelectorAll('details[data-run-card]'),
+    el => [el.dataset.runCard, el.open]));
+  const sameSection = runSessionContent.dataset.section === section.id;
+  const cards = section.node_ids.map(id => state.nodes.get(id)).filter(Boolean);
+  runSessionContent.dataset.section = section.id;
+  runSessionContent.innerHTML = `
+    <div class="run-session-section-head">
+      <h3>${escHtml(section.name)}</h3>
+      ${runSessionEditing ? `<div class="run-session-tools">
+        <button type="button" data-run-action="earlier" ${index === 0 ? 'disabled' : ''}>Move Earlier</button>
+        <button type="button" data-run-action="later" ${index === sections.length - 1 ? 'disabled' : ''}>Move Later</button>
+        <button type="button" data-run-action="rename">Rename</button>
+        <button type="button" data-run-action="delete">Delete Section</button>
+        <button type="button" data-run-action="search" aria-expanded="false" aria-controls="run-session-picker">+ Add Existing Node</button>
+      </div>` : ''}
+    </div>
+    ${runSessionEditing ? `<div id="run-session-picker" hidden>
+      <label for="run-session-query">Search this canvas</label>
+      <input type="search" id="run-session-query" placeholder="Title, type, or content" autocomplete="off">
+      <div id="run-session-results" aria-label="Matching canvas nodes"></div>
+    </div>` : ''}
+    ${cards.length ? `<div class="run-session-cards">${cards.map(node => {
+      const def = BLOCK_TYPES[node.type] || BLOCK_TYPES.scene;
+      const title = node.title || def.defaultTitle;
+      const expanded = (sameSection ? cardStates.get(node.id) : undefined)
+        ?? ['scene', 'npc', 'encounter'].includes(node.type);
+      return `<article class="run-session-card">
+        <details data-run-card="${escAttr(node.id)}" ${expanded ? 'open' : ''}>
+          <summary><span class="run-session-card-type">${escHtml(def.label)}</span> ${escHtml(title)}</summary>
+          <div class="run-session-card-body">${renderRunSessionCardBody(node, def)}</div>
+        </details>
+        ${node.type === 'encounter' || runSessionEditing ? `<div class="run-session-card-actions">
+          ${node.type === 'encounter' ? `<button type="button" data-run-action="encounter" data-node-id="${escAttr(node.id)}">⚔ Run Encounter</button>` : ''}
+          ${runSessionEditing ? `<button type="button" data-run-action="unlink" data-node-id="${escAttr(node.id)}" aria-label="Remove ${escAttr(title)} from section">Remove Link</button>` : ''}
+        </div>` : ''}
+      </article>`;
+    }).join('')}</div>` : `<p class="run-session-empty">${runSessionEditing ? 'Use Add Existing Node to choose cards for this section.' : 'This section is empty. Open Organize to add canvas cards.'}</p>`}
+  `;
+  if (!sameSection) runSessionContent.scrollTop = 0;
+}
+
+function renderRunSessionCardBody(node, def) {
+  const fields = node.fields || {};
+  let html = (def.fields || []).filter(field => {
+    const value = fields[field.key];
+    return value != null && value !== '' && typeof value !== 'object';
+  }).map(field => renderFocusFieldBlock(field, fields[field.key])).join('');
+  if (!html && node.summary) {
+    html = renderFocusFieldBlock({ label: 'Summary' }, node.summary);
+  }
+  if (node.type === 'encounter') {
+    const count = Array.isArray(fields.monsters) ? fields.monsters.length : 0;
+    html += `<p class="run-session-muted">${count} combatant${count === 1 ? '' : 's'}</p>`;
+  } else if (def.isImage && node.image && !node.image.disabled) {
+    const src = imagePayloadDisplaySrc(node.image);
+    if (src) html += `<img class="run-session-image" loading="lazy" src="${escAttr(src)}" alt="${escAttr(node.image.name || node.title || 'Canvas image')}">`;
+  } else if (def.isTable && node.table?.headers?.length) {
+    const { headers, rows } = node.table;
+    html += `<div class="run-session-table"><table><thead><tr>${headers.map(cell => `<th scope="col">${escHtml(cell)}</th>`).join('')}</tr></thead>
+      <tbody>${(rows || []).map(row => `<tr>${headers.map((_, i) => `<td>${escHtml(String(row?.[i] ?? ''))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  } else if (def.isBrainstorm && node.brainstorm?.items?.length) {
+    html += `<ul>${node.brainstorm.items.map(item => `<li>${escHtml(item)}</li>`).join('')}</ul>`;
+  }
+  return html || '<p class="run-session-muted">No content yet.</p>';
+}
+
+function renderRunSessionResults(section) {
+  const query = document.getElementById('run-session-query').value.trim().toLowerCase();
+  const linked = new Set(section.node_ids);
+  const results = Array.from(state.nodes.values()).filter(node => !linked.has(node.id)).map(node => {
+    const hit = makeIndexEntry(node, node.scope, null);
+    return { ...hit, label: BLOCK_TYPES[node.type]?.label || node.type };
+  }).filter(hit => !query || hit.searchText.includes(query) || hit.label.toLowerCase().includes(query));
+  results.sort((a, b) => Number(b.title.toLowerCase().includes(query)) - Number(a.title.toLowerCase().includes(query))
+    || a.title.localeCompare(b.title));
+  const list = document.getElementById('run-session-results');
+  list.innerHTML = results.slice(0, 50).map(hit => `
+    <button type="button" data-run-action="link" data-node-id="${escAttr(hit.id)}">
+      <span>${escHtml(hit.title)}</span> <small>${escHtml(hit.label)}</small>
+    </button>
+  `).join('') || '<p>No available nodes match.</p>';
+  if (results.length > 50) list.insertAdjacentHTML('beforeend', '<p>Showing 50 results. Refine your search to see more.</p>');
+}
+
+function handleRunSessionEscape() {
+  const picker = document.getElementById('run-session-picker');
+  if (picker && !picker.hidden) {
+    runSessionContent.querySelector('[data-run-action="search"]').click();
+  } else {
+    closeRunSession();
+  }
+}
+
+runSessionDialog.addEventListener('keydown', event => {
+  event.stopPropagation();
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    handleRunSessionEscape();
+  }
+});
+runSessionDialog.addEventListener('cancel', event => {
+  event.preventDefault();
+  handleRunSessionEscape();
+});
+runSessionOrganize.addEventListener('click', () => {
+  runSessionEditing = !runSessionEditing;
+  renderRunSession();
+  if (runSessionEditing && !sessionState.runSections.length) {
+    document.getElementById('run-session-new-name').focus();
+  }
+});
+runSessionNewForm.addEventListener('submit', event => {
+  event.preventDefault();
+  const input = document.getElementById('run-session-new-name');
+  const name = input.value.trim();
+  if (!name) return;
+  const section = { id: newRunSectionId(), name, node_ids: [] };
+  sessionState.runSections.push(section);
+  runSessionSectionId = section.id;
+  input.value = '';
+  markDirty();
+  renderRunSession();
+  input.focus();
+});
+runSessionNav.addEventListener('click', event => {
+  const button = event.target.closest('[data-run-section]');
+  if (!button || button.dataset.runSection === runSessionSectionId) return;
+  runSessionSectionId = button.dataset.runSection;
+  runSessionStatus.textContent = '';
+  renderRunSession();
+  runSessionNav.querySelector('[aria-current="true"]').focus({ preventScroll: true });
+});
+runSessionContent.addEventListener('input', event => {
+  if (event.target.id !== 'run-session-query') return;
+  const section = sessionState.runSections.find(item => item.id === runSessionSectionId);
+  if (section) renderRunSessionResults(section);
+});
+runSessionContent.addEventListener('click', event => {
+  const button = event.target.closest('[data-run-action]');
+  if (!button) return;
+  const sections = sessionState.runSections;
+  const index = sections.findIndex(item => item.id === runSessionSectionId);
+  const section = sections[index];
+  if (!section) return;
+  const { runAction: action, nodeId } = button.dataset;
+  const node = state.nodes.get(nodeId);
+  if (action === 'encounter') {
+    if (node?.type === 'encounter') launchRunSessionEncounter(node, button);
+    return;
+  }
+  if (!runSessionEditing) return;
+  if (action === 'search') {
+    const picker = document.getElementById('run-session-picker');
+    picker.hidden = !picker.hidden;
+    button.setAttribute('aria-expanded', String(!picker.hidden));
+    if (picker.hidden) button.focus();
+    else {
+      renderRunSessionResults(section);
+      document.getElementById('run-session-query').focus();
+    }
+    return;
+  }
+  if (action === 'link') {
+    if (!node || section.node_ids.includes(nodeId)) return;
+    const query = document.getElementById('run-session-query').value;
+    section.node_ids.push(nodeId);
+    markDirty();
+    renderRunSession();
+    document.getElementById('run-session-query').value = query;
+    runSessionContent.querySelector('[data-run-action="search"]').click();
+    runSessionStatus.textContent = 'Added ' + node.title + ' to ' + section.name + '.';
+    return;
+  }
+  if (action === 'unlink') {
+    section.node_ids = section.node_ids.filter(id => id !== nodeId);
+  } else if (action === 'rename') {
+    const name = prompt('Section name:', section.name)?.trim();
+    if (!name) return;
+    section.name = name.slice(0, 100);
+  } else if (action === 'delete') {
+    if (!confirm('Delete the section "' + section.name + '"? Its canvas nodes will remain on the canvas.')) return;
+    sections.splice(index, 1);
+    runSessionSectionId = (sections[index] || sections[index - 1])?.id || '';
+  } else if (action === 'earlier' || action === 'later') {
+    const next = index + (action === 'earlier' ? -1 : 1);
+    if (!sections[next]) return;
+    [sections[index], sections[next]] = [sections[next], sections[index]];
+  } else {
+    return;
+  }
+  markDirty();
+  runSessionStatus.textContent = '';
+  renderRunSession();
+  (runSessionNav.querySelector('[aria-current="true"]') || document.getElementById('run-session-new-name'))
+    .focus({ preventScroll: true });
+});
+
 wireCanvasGroupBar();
-boot();
+// Let the offline backup store initialize before boot tries to restore it.
+queueMicrotask(boot);
 
 
 // v1.3.28 — Canvas/Workshop action handoff diagnostics.
@@ -20229,7 +20557,7 @@ async function exportFocusedSessionJsonOffline() {
   spcDownloadText(title + '-offline-backup-' + stamp + '.json', text, 'application/json');
   if (typeof showToast === 'function') showToast('Offline JSON backup exported.');
 }
-function importFocusedSessionJsonOffline(file, skipConfirm) {
+function importFocusedSessionJsonOffline(file, skipConfirm, quietRestore = false) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = async function() {
@@ -20260,10 +20588,16 @@ function importFocusedSessionJsonOffline(file, skipConfirm) {
       renderCanvasGroupBar();
       loadingSession = false;
       saveGen = lastSavedGen = 0;
-      setCanvasSavedState('dirty');
+      setCanvasSavedState(quietRestore ? 'saved' : 'dirty');
       updateEmptyHint();
-      await saveOfflineSessionSnapshot('imported_backup');
-      alert('Offline backup imported locally. Use Save/Sync only after Supabase is healthy.');
+      if (document.body.classList.contains('mobile-mode')) {
+        mobileState.screen = 'nodes';
+        renderMobileScreen();
+      }
+      if (!quietRestore) {
+        await saveOfflineSessionSnapshot('imported_backup');
+        alert('Offline backup imported locally. Use Save/Sync only after Supabase is healthy.');
+      }
     } catch (err) {
       loadingSession = false;
       alert('Import failed: ' + (err && err.message ? err.message : err));
@@ -20346,13 +20680,14 @@ const ecbCollapsedGroups = new Set();
 function encounterBuilderNode(){return encounterBuilderNodeId == null ? null : state.nodes.get(encounterBuilderNodeId);}
 function openEncounterBuilder(nodeId){
  const node=state.nodes.get(nodeId);if(!node||node.type!=='encounter')return;
- if(inEncounterFocusMode)exitEncounterFocusMode();
+ if(inEncounterFocusMode)exitEncounterFocusMode(false);
+ document.getElementById('ecb-close').textContent = runSessionReturn ? '✕ Return to Run Session' : '✕ Return to Canvas';
  encounterBuilderNodeId=nodeId;ecbCollapsedGroups.clear();
  document.body.classList.add('encounter-builder-active');
  document.getElementById('encounter-builder-overlay').classList.add('open');renderEncounterBuilder();
 }
 function openEncounterBuilderFromFocus(){const id=encounterFocusState&&encounterFocusState.nodeId;if(id!=null)openEncounterBuilder(id);}
-function closeEncounterBuilder(){closeEncounterBuilderDetail();document.getElementById('encounter-builder-overlay').classList.remove('open');document.body.classList.remove('encounter-builder-active');const node=encounterBuilderNode();encounterBuilderNodeId=null;if(node)refreshNodeFace(node);}
+function closeEncounterBuilder(){closeEncounterBuilderDetail();document.getElementById('encounter-builder-overlay').classList.remove('open');document.body.classList.remove('encounter-builder-active');const node=encounterBuilderNode();encounterBuilderNodeId=null;if(node)refreshNodeFace(node);resumeRunSession();}
 function ecbGroup(m){return String(m._encounterGroup||'Unassigned');}
 function ecbGroups(node){return [...new Set([...(node.fields.encounterGroups||[]),...(node.fields.monsters||[]).map(ecbGroup),'Unassigned'])];}
 function ecbMoveGroup(node,group,delta){
