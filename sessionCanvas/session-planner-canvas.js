@@ -1,3 +1,4 @@
+// v1.3.113 — Make the Focus button toggle Focus Mode.
 // v1.3.112 — Run Session sections with linked canvas cards and combat handoff.
 // v1.3.108 — area note tiles and descriptive creature types
 // v1.3.107 — Google OAuth login and callback handling.
@@ -5789,8 +5790,7 @@ window.addEventListener('keydown', (e) => {
   } else if (e.key === 'z' || e.key === 'Z') {
     // Z toggles focus mode. Avoids conflict with Ctrl/Cmd+Z (undo).
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (inFocusMode) exitFocusMode();
-    else             enterFocusMode();
+    toggleFocusMode();
     e.preventDefault();
   }
 });
@@ -18423,7 +18423,13 @@ function updateFocusBtnState() {
   const total = state.selectedNodes.size
               + state.selectedFrameNodes.size
               + state.selectedArcFrameNodes.size;
-  btn.disabled = (total === 0);
+  btn.disabled = !inFocusMode && total === 0;
+  btn.setAttribute('aria-pressed', String(inFocusMode));
+}
+
+function toggleFocusMode() {
+  if (inFocusMode) exitFocusMode();
+  else enterFocusMode();
 }
 
 // Wire the 🔍 button on a node's header.
@@ -18528,6 +18534,7 @@ function enterFocusModeForNodes(nodes) {
   wireFocusNotesEditors();
 
   overlay.classList.add('open');
+  updateFocusBtnState();
 }
 
 function exitFocusMode() {
@@ -18537,6 +18544,7 @@ function exitFocusMode() {
   // Clear out tiles to free memory and detach listeners
   const grid = document.getElementById('focus-overlay-grid');
   if (grid) grid.innerHTML = '';
+  updateFocusBtnState();
 }
 
 // Per-type body renderer for the focus tile. The strategy is generic:
