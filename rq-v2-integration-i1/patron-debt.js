@@ -10,13 +10,13 @@ const BARGAIN=Object.freeze([
  Object.freeze({energy:10,counters:3,countdown:4,damage:12})
 ]);
 function levelConfig(level){return BARGAIN[Math.max(0,Math.min(3,Math.floor(Number(level)||1)-1))];}
-function attach(tile,owner,level,extraCountdown=0){
+function attach(tile,owner,level,extraCountdown=0,fortified=false){
  if(!tile||tile.patronDebt) return false;
  const cfg=levelConfig(level);
- tile.patronDebt={owner,remaining:cfg.countdown+Math.max(0,extraCountdown),damage:cfg.damage};
+ tile.patronDebt={owner,remaining:cfg.countdown+Math.max(0,extraCountdown),damage:cfg.damage,fortified:!!fortified,hitsRemaining:fortified?2:1};
  return true;
 }
-function settle(tile){if(!tile?.patronDebt)return false;delete tile.patronDebt;return true;}
+function settle(tile){if(!tile?.patronDebt)return false;if(tile.patronDebt.hitsRemaining>1){tile.patronDebt.hitsRemaining--;return false;}delete tile.patronDebt;return true;}
 function defer(tile){if(!tile?.patronDebt)return false;tile.patronDebt.remaining+=2;return true;}
 function advance(tiles,damageOwner){
  const expired=[];
@@ -26,6 +26,7 @@ function advance(tiles,damageOwner){
  for(const debt of expired)damageOwner(debt.owner,debt.damage);
  return expired.length;
 }
+function endEncounter(tiles,damageOwner){let damage=0;for(const tile of tiles){if(tile?.patronDebt?.fortified){const debt=tile.patronDebt;damage+=debt.damage;damageOwner(debt.owner,debt.damage);}}clear(tiles);return damage;}
 function clear(tiles){let count=0;for(const tile of tiles){if(tile?.patronDebt){delete tile.patronDebt;count++;}}return count;}
 function invoke({tiles,owner,level,random=Math.random}){
  const cfg=levelConfig(level),eligible=tiles.filter(t=>t&&!t.patronDebt&&!t.locked&&!t.lumberFire&&!t.groveRoot&&!t.towerBrazier);
@@ -34,5 +35,5 @@ function invoke({tiles,owner,level,random=Math.random}){
  for(let i=0;i<cfg.counters;i++){const index=Math.min(pool.length-1,Math.max(0,Math.floor(random()*pool.length)));const tile=pool.splice(index,1)[0];attach(tile,owner,level);assigned.push(tile);}
  return {ok:true,energy:cfg.energy,tiles:assigned};
 }
-return {BARGAIN,levelConfig,attach,settle,defer,advance,clear,invoke};
+return {BARGAIN,levelConfig,attach,settle,defer,advance,clear,endEncounter,invoke};
 });
