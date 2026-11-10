@@ -50,7 +50,7 @@ const characters=[
  name:'Malvek · Fiend Warlock',rosterTitle:'Fiend Warlock',cardTitle:'Fiend Warlock',icon:'🔥',background:'Charlatan',starTier:2,max:100,
  powers:[
  ['Siphon Life',0,6,'Drain the frontline enemy and restore a wounded ally.','malvek-siphon',{damage:[16,22,28,36],heal:[8,12,16,22]}],
- ['Faustian Bargain',2,0,'Gain blue energy. Optionally invoke your patron for greater power at the price of Patron Debt.','malvek-bargain',{energy:[4,6,8,10]}],
+ ['Faustian Bargain',4,2,'Spend 2 green energy to gain blue energy: half the normal reward without debt, or the full reward when invoking Patron Debt.','malvek-bargain',{energy:[4,6,8,10]}],
  ["Patron's Claim",4,6,'Mark the frontline enemy; its defeat yields a Patron Debt counter with two extra turns.','malvek-claim',{damage:[10,14,18,24]}]
  ]
 }
