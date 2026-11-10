@@ -51,7 +51,7 @@ const characters=[
  powers:[
  ['Siphon Life',3,6,'Drain the frontline enemy and restore a wounded ally.','malvek-siphon',{damage:[16,22,28,36],heal:[8,12,16,22]}],
  ['Faustian Bargain',1,2,'Spend 2 yellow energy to gain red energy: half the normal reward without debt, or the full reward when invoking Patron Debt.','malvek-bargain',{energy:[4,6,8,10]}],
- ['Hellfire Covenant',0,10,'Deal damage to all enemies; accept additional fortified Patron Debt for stronger area damage.','malvek-hellfire',{base:[10,14,18,24],bonus:[6,8,10,12]}]
+ ['Hellfire Covenant',0,10,'Deal damage to all enemies; accept additional fortified Patron Debt for stronger area damage.','malvek-hellfire',{base:[8,12,16,20],bonus:[4,5,6,8]}]
  ]
 }
 ];const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock'];characters.forEach((c,i)=>{c.rosterTitle=i===13?'Shroomkeeper':cardTitles[i];c.cardTitle=cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
