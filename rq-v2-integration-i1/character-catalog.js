@@ -65,5 +65,17 @@ const characterColorStrength=(archetype,level,color,isNatural,powerLevel=0)=>{
  return Math.round(base*mastery*characterDamageMultiplier(archetype,level));
 };
 const characterMaxHp=(character,archetype,level)=>Math.round(character.max*(1+characterLevelProgress(archetype,level)*0.0025));
-return{characters,characterLevelProgress,characterDamageMultiplier,characterColorStrength,characterMaxHp,defaultSelection:[0,1,2],storageKey:'rq-v2-character-selection-v1'};
+const tileColors=['#d94d57','#d8ad3c','#388bdc','#8b5fc8','#35a579','#748095','#f0e6ca'];
+const tileColorNames=['red','yellow','blue','purple','green','gray','ivory'];
+function characterCombatStrengths(character, member) {
+ const powers=character.powers;
+ return tileColorNames.map((_,color)=>{
+  if(color===5)return 0;
+  const natural=powers.some(power=>power[1]===color);
+  const slot=powers.findIndex((power,index)=>power[1]===color&&(member.powers||[]).includes(index));
+  const rank=slot<0?0:Math.max(1,Math.min(4,Number(member.powerLevels?.[slot])||1));
+  return characterColorStrength(member.archetype,member.level,color,natural,rank);
+ });
+}
+return{characters,tileColors,tileColorNames,characterCombatStrengths,characterLevelProgress,characterDamageMultiplier,characterColorStrength,characterMaxHp,defaultSelection:[0,1,2],storageKey:'rq-v2-character-selection-v1'};
 });
