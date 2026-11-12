@@ -1181,7 +1181,7 @@ window.addEventListener('keydown',e=>{
  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();el('undo').click()}
 });
 el('save').onclick=()=>{
- const url=URL.createObjectURL(new Blob([JSON.stringify({version:2,pieces,tokens,areas},null,2)],{type:'application/json'}));
+ const url=URL.createObjectURL(new Blob([JSON.stringify({version:2,pieces,tokens,areas,view:savePanelView()},null,2)],{type:'application/json'}));
  const a=document.createElement('a');a.href=url;a.download='battlemap.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
 el('load').onclick=()=>el('file').click();
@@ -1221,13 +1221,13 @@ el('file').onchange=async e=>{
   }
   const incomingAreas=data.areas??[];
   if(!Array.isArray(incomingAreas)||incomingAreas.some(a=>!a||!['line','circle','square','cone','sphere','cube','cone3d'].includes(a.shape)||!Number.isInteger(a.size)||a.size<1||a.size>40||!Array.isArray(a.origin)||a.origin.length!==3||!a.origin.every(Number.isFinite)||!Number.isFinite(a.angle)||(a.pitch!==undefined&&(!Number.isFinite(a.pitch)||Math.abs(a.pitch)>90))))throw Error();
-  exitTool();remember();areas=incomingAreas;pieces=incoming;tokens=importedTokens;selected=null;group.clear();tool=null;tokenTool=null;ghost=null;refresh();message('Map imported.');
+  exitTool();remember();areas=incomingAreas;pieces=incoming;tokens=importedTokens;selected=null;group.clear();tool=null;tokenTool=null;ghost=null;restorePanelView(data.view);refresh();message('Map imported.');
  }catch{message('Could not import this map. Choose a Battlemap Studio JSON export.')}
 };
 function showRolls(open){
  el('rollsPanel').hidden=!open||panelIsDetached('rolls');
  if(open){const feed=el('rollsFeed');feed.scrollTop=feed.scrollHeight;}
- el('rollsToggle').setAttribute('aria-expanded',String(open));
+ el('rollsToggle').setAttribute('aria-expanded',String(open));queueRecovery();
 }
 el('rollsToggle').onclick=()=>{if(panelIsDetached('rolls'))detachedPanels.get('rolls').win.focus();else showRolls(el('rollsPanel').hidden)};
 el('rollsClear').onclick=()=>{el('rollsFeed').replaceChildren();queueRecovery()};
@@ -1626,7 +1626,7 @@ function updateInitiativePanel(){
 }
 function showInitiative(open){
  el('initiativePanel').hidden=!open||panelIsDetached('initiative');
- el('initiativeToggle').setAttribute('aria-expanded',String(open));
+ el('initiativeToggle').setAttribute('aria-expanded',String(open));queueRecovery();
 }
 el('initiativeToggle').onclick=()=>{if(panelIsDetached('initiative'))detachedPanels.get('initiative').win.focus();else showInitiative(el('initiativePanel').hidden)};
 el('initiativeClear').onclick=()=>{initiativeEntries.clear();activeInitiative=null;linkingInitiative=null;refresh()};
@@ -1851,7 +1851,7 @@ function restoreCard(data){
  return node;
 }
 async function saveRecovery(){
- const state={pieces,tokens,areas,playing,zoom,panX,panY,angle,tilt,initiative:[...initiativeEntries],activeInitiative,chatOrder:'chronological',chat:[...el('rollsFeed').children].map(cardData)};
+ const state={pieces,tokens,areas,playing,zoom,panX,panY,angle,tilt,initiative:[...initiativeEntries],activeInitiative,view:savePanelView(),chatOrder:'chronological',chat:[...el('rollsFeed').children].map(cardData)};
  const ok=await storeValue(recoveryKey,state);
  el('sceneStatus').textContent=ok?'Session recovery is up to date.':'Browser storage is full or unavailable. Export the map to keep a backup.';
  return ok;
@@ -1868,6 +1868,7 @@ async function recoverSession(){
   const cards=state.chatOrder==='chronological'?state.chat.slice(-100):state.chat.slice(0,100).reverse();
   el('rollsFeed').append(...cards.map(restoreCard));
  }
+ restorePanelView(state.view);
  message('Previous session restored.');
 }
 let recoveryReady=false;
@@ -1894,6 +1895,7 @@ function renderScenes(){
     if(label==='Delete'){if(confirm('Delete scene '+scene.name+'?'))changeScenes(scenes.filter(x=>x!==scene));return}
     exitTool();remember();
     ({pieces,tokens,areas}=structuredClone(scene.map));
+    restorePanelView(scene.map.view);
     group.clear();selected=null;
     el('sceneDialog').close();message('Loaded '+scene.name+'.');refresh();
    };
@@ -1908,7 +1910,7 @@ el('sceneForm').onsubmit=e=>{
  const name=el('sceneName').value.trim();
  if(!name)return;
  if(scenes.some(scene=>scene.name===name)&&!confirm('Replace scene '+name+'?'))return;
- changeScenes([...scenes.filter(scene=>scene.name!==name),{name,map:structuredClone({pieces,tokens,areas})}]);
+ changeScenes([...scenes.filter(scene=>scene.name!==name),{name,map:structuredClone({pieces,tokens,areas,view:savePanelView()})}]);
 };
 const areaSizes={line:30,circle:20,square:30,cone:15,sphere:20,cube:30,cone3d:15};
 const areaLabels={circle:'Radius (ft)',sphere:'Radius (ft)',square:'Side (ft)',cube:'Side (ft)'};
@@ -2140,6 +2142,50 @@ el('areaShape').onchange=()=>{
 el('coneAim').onchange=el('coneCenterOrigin').onchange=()=>{areaOrigin=null;areaPreview=null;refresh()};
 el('clearAreas').onclick=()=>{if(areas.length){remember();areas=[];refresh()}};
 const detachedPanels=new Map();
+const panelKeys=['rolls','initiative'];
+const panelPlacement={rolls:{},initiative:{}};
+function windowBounds(win){
+ return {left:win.screenX,top:win.screenY,width:win.outerWidth,height:win.outerHeight};
+}
+function savePanelView(){
+ const panels={};
+ for(const key of panelKeys){
+  const detached=detachedPanels.get(key);
+  if(detached&&!detached.win.closed)Object.assign(panelPlacement[key],windowBounds(detached.win),{detached:true});
+  panels[key]={...panelPlacement[key],open:panelIsDetached(key)||!el(key+'Panel').hidden};
+ }
+ return {panels,markerSize:preferences.markerSize,markerColor:preferences.markerColor};
+}
+function restorePanelView(view){
+ if(!view||typeof view!=='object')return;
+ for(const key of panelKeys){
+  const saved=view.panels?.[key];
+  if(!saved||typeof saved.open!=='boolean')continue;
+  const current=detachedPanels.get(key);
+  if(current){detachedPanels.delete(key);current.observer.disconnect();current.win.close()}
+  const placement={detached:saved.detached===true};
+  for(const field of ['left','top','width','height'])if(Number.isFinite(saved[field]))placement[field]=Math.round(saved[field]);
+  panelPlacement[key]=placement;
+  el(key+'Popout').textContent=placement.detached?'Reopen window':'Pop out';
+  if(key==='rolls')showRolls(saved.open);else showInitiative(saved.open);
+ }
+ if(Number.isFinite(view.markerSize)&&view.markerSize>=50&&view.markerSize<=200){
+  preferences.markerSize=view.markerSize;el('markerSize').value=view.markerSize;el('markerSizeValue').textContent=view.markerSize+'%';
+ }
+ if(typeof view.markerColor==='string'&&/^#[0-9a-f]{6}$/i.test(view.markerColor)){
+  preferences.markerColor=view.markerColor;el('markerColor').value=view.markerColor;
+ }
+}
+setInterval(()=>{
+ for(const [key,{win}] of detachedPanels){
+  if(win.closed)continue;
+  const bounds=windowBounds(win);
+  if(Object.keys(bounds).some(field=>bounds[field]!==panelPlacement[key][field])){
+   Object.assign(panelPlacement[key],bounds);queueRecovery();
+  }
+ }
+},2000);
+
 function panelIsDetached(key){
  const entry=detachedPanels.get(key);
  return !!entry&&!entry.win.closed;
@@ -2147,7 +2193,11 @@ function panelIsDetached(key){
 function detachPanel(key,title){
  const existing=detachedPanels.get(key);
  if(existing&&!existing.win.closed){existing.win.focus();return}
- const win=window.open('','_blank','popup,width=430,height=680');
+ const placement=panelPlacement[key];
+ const width=Math.max(280,Math.min(2000,placement.width||430));
+ const height=Math.max(240,Math.min(1600,placement.height||680));
+ const coordinates=['left','top'].filter(field=>Number.isFinite(placement[field])).map(field=>field+'='+placement[field]);
+ const win=window.open('','_blank',['popup','width='+width,'height='+height,...coordinates].join(','));
  if(!win){message('Allow pop-ups for this site to open '+title+' in a separate window.');return}
  const source=el(key+'Panel'),doc=win.document;
  doc.title=title+' · Battlemap Studio';
@@ -2200,20 +2250,24 @@ function detachPanel(key,title){
  const observer=new MutationObserver(sync);
  observer.observe(source,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['disabled','aria-current','hidden']});
  detachedPanels.set(key,{win,observer});
+ Object.assign(panelPlacement[key],windowBounds(win),{detached:true});
+ queueRecovery();
  source.hidden=true;
  sync();
  win.addEventListener('pagehide',()=>{
   observer.disconnect();
   if(detachedPanels.get(key)?.win!==win)return;
   detachedPanels.delete(key);
+  panelPlacement[key].detached=false;el(key+'Popout').textContent='Pop out';
   if(key==='rolls')showRolls(true);else showInitiative(true);
  },{once:true});
 }
 el('rollsPopout').onclick=()=>detachPanel('rolls','Rolls');
 el('initiativePopout').onclick=()=>detachPanel('initiative','Initiative');
 window.addEventListener('pagehide',()=>{
- for(const {win,observer} of detachedPanels.values()){observer.disconnect();if(!win.closed)win.close()}
+ const openPanels=[...detachedPanels.values()];
  detachedPanels.clear();
+ for(const {win,observer} of openPanels){observer.disconnect();if(!win.closed)win.close()}
 });
 let facingTarget=null,pathKey='w';
 const pathChoices='abcdefghijklmnopqstuvwxyz';
