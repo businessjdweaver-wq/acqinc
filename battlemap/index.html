@@ -1542,22 +1542,56 @@ const preferenceFields=[
  ['markerColor','battlemap.initiativeMarkerColor','#f3e2b8',value=>/^#[0-9a-f]{6}$/i.test(value)]
 ];
 const preferences={};
+const persistentDisplayFields=new Set(['standeeReadoutSize','standeeNameDefault','graphicsQuality']);
+const displayPreferenceRecords=new Map();
+function displayPreferenceRecord(key){
+ try{
+  const raw=localStorage.getItem(key+'.record');
+  return raw?JSON.parse(raw):null;
+ }catch{return null}
+}
+function setPreferenceControl(id,value){
+ const input=el(id),output=el(id+'Value');
+ input.value=value;
+ preferences[id]=id==='markerColor'?input.value:Number(input.value);
+ if(output)output.textContent=input.value+'%';
+}
+async function recoverDisplayPreferences(){
+ await Promise.all(preferenceFields.filter(([id])=>persistentDisplayFields.has(id)).map(async ([id,key,,valid])=>{
+  const backup=await savedValue(key+'.record',null),local=displayPreferenceRecords.get(id);
+  if(backup&&valid(String(backup.value))&&Number.isFinite(backup.at)&&(!local||backup.at>local.at)){
+   displayPreferenceRecords.set(id,backup);setPreferenceControl(id,backup.value);
+  }
+ }));
+}
 let preferencePreview=null;
 for(const [id,key,fallback,valid] of preferenceFields){
  let saved;
  try{saved=localStorage.getItem(key)}catch{}
- const input=el(id),output=el(id+'Value');
- input.value=saved&&valid(saved)?saved:fallback;
- function apply(){
-  preferences[id]=id==='markerColor'?input.value:Number(input.value);
-  if(output)output.textContent=input.value+'%';
+ const input=el(id);
+ const record=persistentDisplayFields.has(id)?displayPreferenceRecord(key):null;
+ if(record&&valid(String(record.value))&&Number.isFinite(record.at)){
+  displayPreferenceRecords.set(id,record);saved=String(record.value);
  }
- apply();
- input.oninput=()=>{
-  apply();
-  try{localStorage.setItem(key,input.value)}catch{}
-  drawPreferencePreview();
- };
+ setPreferenceControl(id,saved&&valid(saved)?saved:fallback);
+ function save(){
+  const value=input.value;
+  if(!valid(value))return;
+  setPreferenceControl(id,value);
+  try{localStorage.setItem(key,value)}catch{}
+  if(persistentDisplayFields.has(id)){
+   const previous=displayPreferenceRecords.get(id);
+   if(previous?.value!==value){
+    const next={value,at:Date.now()};
+    displayPreferenceRecords.set(id,next);
+    try{localStorage.setItem(key+'.record',JSON.stringify(next))}catch{}
+    storeValue(key+'.record',next);
+   }
+  }
+  queueRecovery();drawPreferencePreview();
+ }
+ input.oninput=save;
+ input.onchange=save;
 }
 function drawPreferencePreview(){
  if(!preferencePreview){draw();return}
@@ -2656,6 +2690,7 @@ async function startStudio(){
   const savedScenes=await savedValue(scenesKey,[]);
   if(Array.isArray(savedScenes))scenes=savedScenes;
   await recoverSession();
+  await recoverDisplayPreferences();
  }finally{surfaces.forEach(surface=>surface.inert=false)}
  recoveryReady=true;
  if(typeof ResizeObserver==='function')new ResizeObserver(draw).observe(canvas);
