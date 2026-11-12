@@ -347,7 +347,7 @@ function candidate(x,y,p,dx=0,dy=0){
 function remember(){history.push(JSON.stringify({pieces,tokens}));if(history.length>60)history.shift()}
 function refresh(){
  el('selection').textContent=selected?(selected.type==='standee'?selected.name:types[selected.type][0])+' · base '+selected.z*5+' ft · top '+(selected.z+dimensions(selected)[2])*5+' ft':'Select terrain to move it.';
- if(group.size>1)el('selection').textContent=group.size+' terrain pieces selected. Ctrl/Cmd+C to copy.';
+ if(group.size>1)el('selection').textContent=group.size+' terrain pieces selected. Ctrl/Cmd+C to copy or Ctrl/Cmd+X to cut.';
  el('edit').querySelectorAll('button').forEach(b=>b.disabled=!selected);
  for(const kind of ['chamfer','fillet','square','wash','eraseWash'])el(kind).setAttribute('aria-pressed',String(brush===kind));
  canvas.style.cursor=brush||measuring||carry?'crosshair':'';
@@ -556,13 +556,18 @@ function rotateTerrain(turn){
  change({r:(selected.r+turn+4)%4,cuts:rotate(selected.cuts),wash:rotate(selected.wash)});
 }
 el('rotate').onclick=()=>rotateTerrain(1);
-function copyTerrain(){
+function copyTerrain(cut=false){
  const selection=[...group];
  if(!selection.length)return;
+ const remaining=cut?pieces.filter(p=>!group.has(p)):null;
+ if(cut&&!tokens.every(t=>supported(t,remaining))){
+  message('Move the standees off the selected terrain before cutting.');return;
+ }
  const min=key=>Math.min(...selection.map(p=>p[key]));
  const x=min('x'),y=min('y'),z=min('z');
  copiedTerrain=selection.map(p=>({...structuredClone(p),x:p.x-x,y:p.y-y,z:p.z-z}));
- message(selection.length+' terrain piece(s) copied. Point at the map and paste.');
+ if(cut){remember();pieces=remaining;group.clear();selected=null;refresh()}
+ message(selection.length+' terrain piece(s) '+(cut?'cut':'copied')+'. Point at the map and paste.');
 }
 function pasteTerrain(){
  if(!copiedTerrain.length)return;
@@ -628,9 +633,9 @@ window.addEventListener('keydown',e=>{
  const editing=e.target?.matches?.('input, select, textarea, [contenteditable]');
  if(!playing&&!editing&&!drag){
   const key=e.key.toLowerCase();
-  if((e.ctrlKey||e.metaKey)&&(key==='c'||key==='v')){
-   if(key==='c'?group.size:copiedTerrain.length){
-    e.preventDefault();if(key==='c')copyTerrain();else pasteTerrain();
+  if((e.ctrlKey||e.metaKey)&&(['c','x','v'].includes(key))){
+   if(key==='v'?copiedTerrain.length:group.size){
+    e.preventDefault();if(key==='v')pasteTerrain();else copyTerrain(key==='x');
    }
    return;
   }
