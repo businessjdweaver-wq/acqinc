@@ -610,8 +610,7 @@ function movementSegment(start,end,mover){
  const half=mover.size/2,intervals=[];
  if(start[2]===0&&end[2]===0)for(const area of areas){
   if(area.shape!=='difficult')continue;
-  const extent=area.size/2+half;
-  const interval=movementInterval(start,end,area.origin.slice(0,2).map(v=>[v-extent,v+extent]));
+  const interval=movementInterval(start,end,difficultBounds(area).map(([lo,hi])=>[lo-half,hi+half]));
   if(interval)intervals.push(interval);
  }
  for(const token of tokens){
@@ -938,6 +937,10 @@ canvas.onpointerdown=e=>{
  }
  if(playing&&!e.shiftKey)playStandeeGroup.clear();
  if(carry){drag={drop:true};updateCarry(x,y);draw();return}
+ if(canEditDifficultTerrain()&&!brush&&!measuring&&!tool&&!tokenTool&&!carry&&linkingInitiative===null){
+  const edge=difficultEdge(x,y);
+  if(edge){const coordinate=inverse(x,y,0)[edge.axis];drag={resizeTerrain:edge,coordinate,x,y};return}
+ }
  if(areaMode||(!brush&&!measuring&&!tool&&!tokenTool&&!carry&&linkingInitiative===null&&f?.p?.type!=='standee')){
   const area=areaMode&&conePointAim()&&f?.standee?null:hitAreaOrigin(x,y);
   if(area&&(area.shape!=='difficult'||canEditDifficultTerrain())){drag={area,x,y};return}
@@ -1014,6 +1017,11 @@ canvas.onpointermove=e=>{
  const hover=hit(x,y)?.p;
  const nextHover=hover?.type==='standee'?hover:null;
  if(nextHover!==hoveredStandee){hoveredStandee=nextHover;if(!drag&&!carry)draw()}
+ if(drag?.resizeTerrain){
+  const {area,axis,side}=drag.resizeTerrain;
+  const delta=inverse(x,y,0)[axis]-drag.coordinate;
+  drag.preview=resizeDifficultArea(area,axis,side,difficultBounds(area)[axis][side]+delta);draw();return;
+ }
  if(facingTarget&&!drag)return;
  if(drag?.pan){panX=drag.panX+x-drag.x;panY=drag.panY+y-drag.y;draw();return}
  if(drag?.orbit){if(Math.hypot(x-drag.x,y-drag.y)>5)drag.moved=true;orbit(x,y);return}
@@ -1058,6 +1066,11 @@ canvas.onpointerup=e=>{
    else pauseMove();
   }else refresh();
   return;
+ }
+ if(drag.resizeTerrain){
+  const {area,axis}=drag.resizeTerrain,preview=drag.preview;
+  if(preview&&difficultBounds(area)[axis].some((edge,i)=>edge!==difficultBounds(preview)[axis][i])){remember();Object.assign(area,preview)}
+  drag=null;refresh();return;
  }
  if(drag.area){drag=null;refresh();return}
  if(drag.pan||drag.orbit){drag=null;refresh();return}
@@ -1310,7 +1323,7 @@ el('file').onchange=async e=>{
    }
   }
   const incomingAreas=data.areas??[];
-  if(!Array.isArray(incomingAreas)||incomingAreas.some(a=>!a||!['line','circle','square','cone','sphere','cube','cone3d','difficult'].includes(a.shape)||!Number.isInteger(a.size)||a.size<1||a.size>40||!Array.isArray(a.origin)||a.origin.length!==3||!a.origin.every(Number.isFinite)||!Number.isFinite(a.angle)||(a.pitch!==undefined&&(!Number.isFinite(a.pitch)||Math.abs(a.pitch)>90))))throw Error();
+  if(!Array.isArray(incomingAreas)||incomingAreas.some(a=>!a||!['line','circle','square','cone','sphere','cube','cone3d','difficult'].includes(a.shape)||(a.shape==='difficult'&&a.width!==undefined&&(!Number.isInteger(a.width)||a.width<1||a.width>40))||!Number.isInteger(a.size)||a.size<1||a.size>40||!Array.isArray(a.origin)||a.origin.length!==3||!a.origin.every(Number.isFinite)||!Number.isFinite(a.angle)||(a.pitch!==undefined&&(!Number.isFinite(a.pitch)||Math.abs(a.pitch)>90))))throw Error();
   exitTool();remember();areas=incomingAreas;pieces=incoming;tokens=importedTokens;selected=null;group.clear();tool=null;tokenTool=null;ghost=null;roomDraftAttached=false;restorePanelView(data.view);refresh();message('Map imported.');
  }catch{message('Could not import this map. Choose a Battlemap Studio JSON export.')}
 };
@@ -2110,12 +2123,40 @@ function placeArea(x,y){
 }
 const areaLayer=document.createElement('canvas'),areaCtx=areaLayer.getContext('2d');
 let editingArea=null;
+function difficultBounds(area){
+ return [area.size,area.width??area.size].map((length,axis)=>[area.origin[axis]-length/2,area.origin[axis]+length/2]);
+}
+function difficultCorners(area){
+ const [[left,right],[top,bottom]]=difficultBounds(area);
+ return [[left,top],[right,top],[right,bottom],[left,bottom]];
+}
+function difficultEdge(x,y){
+ for(const area of areas.toReversed()){
+  if(area.shape!=='difficult')continue;
+  const corners=difficultCorners(area).map(v=>point(...v,0));
+  for(const [edge,[axis,side]] of [[1,0],[0,1],[1,1],[0,0]].entries()){
+   const [ax,ay]=corners[edge],[bx,by]=corners[(edge+1)%4],dx=bx-ax,dy=by-ay;
+   const t=Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/(dx*dx+dy*dy||1)));
+   if(Math.hypot(x-ax-t*dx,y-ay-t*dy)<=7&&areaOriginVisible(area,x,y))return {area,axis,side};
+  }
+ }
+ return null;
+}
+function resizeDifficultArea(area,axis,side,coordinate){
+ const bounds=difficultBounds(area),[low,high]=bounds[axis],fixed=side?low:high;
+ const distance=(side?1:-1)*(coordinate-fixed);
+ const length=Math.max(1,Math.min(N,Math.round(distance)));
+ const origin=[...area.origin];
+ origin[axis]=fixed+(side?1:-1)*length/2;
+ return {...area,origin,size:axis===0?length:area.size,width:axis===1?length:area.width??area.size};
+}
 function areaOutline(area){
  const {shape,size,origin,angle}=area;
  const c=Math.cos(angle),d=Math.sin(angle);
  let vertices;
  if(shape==='circle'||shape==='sphere')vertices=Array.from({length:48},(_,i)=>[size*Math.cos(i*Math.PI/24),size*Math.sin(i*Math.PI/24)]);
- else if(shape==='square'||shape==='cube'||shape==='difficult')vertices=[[-size/2,-size/2],[size/2,-size/2],[size/2,size/2],[-size/2,size/2]];
+ else if(shape==='difficult')return difficultCorners(area).map(v=>point(...v,0));
+ else if(shape==='square'||shape==='cube')vertices=[[-size/2,-size/2],[size/2,-size/2],[size/2,size/2],[-size/2,size/2]];
  else if(shape==='line')vertices=[[0,-.5],[size,-.5],[size,.5],[0,.5]];
  else vertices=[[0,0],[size,-size/2],[size,size/2]];
  return vertices.map(([u,v])=>point(origin[0]+u*c-v*d,origin[1]+u*d+v*c,origin[2]));
@@ -2150,7 +2191,7 @@ function drawAreaTemplates(){
  areaCtx.setTransform(canvas.width/W,0,0,canvas.height/H,0,0);
  const masksByHeight=new Map();
  for(const item of areaPreview?[...areas,areaPreview]:areas){
-  const area=item===editingArea?editedAreaPreview():item;
+  const area=item===drag?.resizeTerrain?.area&&drag.preview?drag.preview:item===editingArea?editedAreaPreview():item;
   const height=area.origin[2];
   if(!masksByHeight.has(height))masksByHeight.set(height,areaOccluders(height));
   areaCtx.clearRect(0,0,W,H);
@@ -2162,7 +2203,16 @@ function drawAreaTemplates(){
   for(const mask of masksByHeight.get(height)){areaPath(mask);areaCtx.fill()}
   ctx.drawImage(areaLayer,0,0,W,H);
   drawAreaVolume(area);
-  if(item!==areaPreview)drawAreaOrigin(area,masksByHeight.get(height));
+  if(item!==areaPreview){
+   const masks=masksByHeight.get(height);
+   drawAreaOrigin(area,masks);
+   if(area.shape==='difficult'&&canEditDifficultTerrain()){
+    const corners=difficultCorners(area);
+    ctx.save();ctx.fillStyle='#f4ce73';ctx.strokeStyle='#67421c';
+    corners.forEach(([x,y],i)=>{const [u,v]=corners[(i+1)%4],[px,py]=point((x+u)/2,(y+v)/2,0);if(areaOriginVisible(area,px,py,masks)){ctx.fillRect(px-3,py-3,6,6);ctx.strokeRect(px-3,py-3,6,6)}});
+    ctx.restore();
+   }
+  }
  }
 }
 function drawAreaVolume(area){
@@ -2231,6 +2281,7 @@ function editedAreaPreview(){
  const size=el('areaEditSize'),rotation=el('areaEditRotation');
  const next={...editingArea,size:size.validity.valid?Number(size.value)/5:editingArea.size,
   angle:!rotation.disabled&&rotation.validity.valid?Number(rotation.value)*Math.PI/180:editingArea.angle};
+ if(next.shape==='difficult')next.width=editingArea.width??editingArea.size;
  const altitude=el('areaAltitude'),pitch=el('areaPitch');
  if(!altitude.disabled&&altitude.validity.valid&&altitude.value!=='')next.origin=[...next.origin.slice(0,2),Number(altitude.value)/5];
  if(next.shape==='cone3d'&&pitch.validity.valid&&pitch.value!=='')next.pitch=Number(pitch.value);
@@ -2243,7 +2294,7 @@ for(const [fieldId,sliderId] of [['areaEditSize','areaSizeSlider'],['areaEditRot
 }
 function openAreaEditor(area,x,y){
  editingArea=area;
- el('areaEditSizeLabel').textContent=areaLabels[area.shape]||'Length (ft)';
+ el('areaEditSizeLabel').textContent=area.shape==='difficult'?'Length (ft)':areaLabels[area.shape]||'Length (ft)';
  el('areaEditSize').value=area.size*5;
  const degrees=Math.round(area.angle*180/Math.PI);
  el('areaEditRotation').value=(degrees%360+360)%360;
