@@ -1,3 +1,4 @@
+// v1.3.114 — Add Beyond20 initiative rolls to encounter monsters.
 // v1.3.113 — Make the Focus button toggle Focus Mode.
 // v1.3.112 — Run Session sections with linked canvas cards and combat handoff.
 // v1.3.108 — area note tiles and descriptive creature types
@@ -12749,6 +12750,7 @@ function renderOneMonsterCard(m, idx, isSingleton) {
         ${nameSlot}
         ${isSingleton ? `<span class="node-mon-stats">${escHtml(stats)}</span>` : ''}
         ${crDropdown}
+        <button class="node-mon-balance-btn" data-mon-initiative="${idx}" type="button" title="Roll initiative through Beyond20">Initiative</button>
         <button class="node-mon-balance-btn" data-mon-balance="${idx}" type="button"
                 title="Open full-screen Encounter Balance Wizard for this monster">⚖ Wizard</button>
         <button class="node-mon-deact-btn ${isDeactivated ? 'is-deactivated' : ''}"
@@ -15540,6 +15542,7 @@ function wireMonsterRollClicks(nodeEl, node) {
     'button[data-peek-toggle]',
     'button[data-peek-deact]',
     'button[data-mon-balance]',
+    'button[data-mon-initiative]',
     'button[data-flavor-fill-group]',
     'button[data-flavor-reroll]',
     'button[data-mon-hp-adjust]',
@@ -15583,6 +15586,14 @@ function wireMonsterRollClicks(nodeEl, node) {
   });
 
   const monsters = (node.fields && node.fields.monsters) || [];
+
+  nodeEl.querySelectorAll('button[data-mon-initiative]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const monster = monsters[Number(btn.dataset.monInitiative)];
+      if (monster) dispatchMonsterInitiative(ecbResolvedMonster(monster,node), _advFromEvent(e), node);
+    });
+  });
 
   // Action attack / save-or-damage buttons (existing)
   nodeEl.querySelectorAll('button[data-mon-roll]').forEach(btn => {
@@ -17354,6 +17365,22 @@ function dispatchMonsterSpell(imported, attachRef, advantage, dispatchNode) {
     higher_levels: _substituteNpcSkinName(spell.higher_levels || '', sn.name, displayName),
   });
   b20RollMonsterSpell(displayName, cr, ac, hp, subbed, attachRef, dc, ab, advantage);
+}
+
+function dispatchMonsterInitiative(imported, advantage, node) {
+  const sn = imported.snapshot || {};
+  const explicit = String(sn.initiative_modifier ?? sn.initiative ?? '').trim();
+  const modifier = /^[+-]?\d+$/.test(explicit) ? Number(explicit) : _modOf(_scoreOf(sn.abilities?.dex));
+  b20Send({
+    action: 'roll',
+    type: 'initiative',
+    character: b20MakeMonsterChar(_monsterDisplayName(imported, node), sn.cr || '', sn.ac || '', sn.hp || ''),
+    name: 'Initiative',
+    roll: '1d20' + _fmtMod(modifier),
+    initiative: _fmtMod(modifier),
+    advantage: advantage || 0,
+    whisper: 0
+  });
 }
 
 function dispatchMonsterRoll(imported, action, advantage, dispatchNode) {
@@ -20938,7 +20965,7 @@ function renderEncounterBuilder(){
   const sn=normalizeWorkshopMonsterSnapshot(ecbResolvedMonster(m,node).snapshot),name=_monsterDisplayName(m,node)||_encFocusMonsterName(node,m,i);
   const partner=ecbLinkedPartner(node,m),linked=!!partner,mounted=!!m._encounterMounted;
   const relation=linked?`<div class="ecb-relationship">${mounted?'🦅 Mounted':'🔗 Linked'} with ${escHtml(_monsterDisplayName(partner,node))} <button type="button" data-ecb-mounted="${i}">${mounted?'Dismount':'Mount'}</button></div>`:'';
-  return `<tr class="${linked?'ecb-linked-row':''}"><td><strong>${escHtml(name)}</strong><div class="ecb-creature-type" title="Underlying stat-block type">${escHtml(ecbTypeLabel(node,m))}${ecbMatchingTypeInstances(node,m).length>1?` <small>(${ecbMatchingTypeInstances(node,m).length} instances)</small>`:""} <button type="button" data-ecb-edit-type="${i}" title="Edit stat-block type label">✎</button></div>${relation}<br><button type="button" data-ecb-rename="${i}" title="Change this instance's VTT-facing name">✎ Rename</button> <button type="button" data-ecb-link="${i}">${linked?'⛓ Unlink':'🔗 Link / mount'}</button> <button type="button" data-ecb-stats="${i}">📖 Rollable stats</button> <button type="button" data-ecb-duplicate="${i}" title="Create independent creature copy in another area or wave">⧉ Duplicate</button></td><td><select aria-label="Challenge rating for ${escHtml(name)}" data-ecb-cr="${i}">${crOptions.map(cr=>`<option value="${escHtml(cr)}" ${String(sn.cr)===cr?'selected':''}>${escHtml(cr)}</option>`).join('')}</select></td><td>AC ${escHtml(String(sn.ac??'—'))}</td><td>HP ${escHtml(String(sn.hp??'—'))}</td><td><select aria-label="Area or wave for ${escHtml(name)}" data-ecb-group="${i}">${groups.map(g=>`<option value="${escHtml(g)}" ${ecbGroup(m)===g?'selected':''}>${escHtml(g)}</option>`).join('')}</select><div class="ecb-order"><button data-ecb-move="${i}:-1" title="Move earlier in group">↑</button><button data-ecb-move="${i}:1" title="Move later in group">↓</button></div></td><td>${buttonsFor(sn,i)||'<span>No actions</span>'}</td></tr>`;
+  return `<tr class="${linked?'ecb-linked-row':''}"><td><strong>${escHtml(name)}</strong><div class="ecb-creature-type" title="Underlying stat-block type">${escHtml(ecbTypeLabel(node,m))}${ecbMatchingTypeInstances(node,m).length>1?` <small>(${ecbMatchingTypeInstances(node,m).length} instances)</small>`:""} <button type="button" data-ecb-edit-type="${i}" title="Edit stat-block type label">✎</button></div>${relation}<br><button type="button" data-ecb-rename="${i}" title="Change this instance's VTT-facing name">✎ Rename</button> <button type="button" data-ecb-link="${i}">${linked?'⛓ Unlink':'🔗 Link / mount'}</button> <button type="button" data-ecb-initiative="${i}" title="Roll initiative through Beyond20">Initiative</button> <button type="button" data-ecb-stats="${i}">📖 Rollable stats</button> <button type="button" data-ecb-duplicate="${i}" title="Create independent creature copy in another area or wave">⧉ Duplicate</button></td><td><select aria-label="Challenge rating for ${escHtml(name)}" data-ecb-cr="${i}">${crOptions.map(cr=>`<option value="${escHtml(cr)}" ${String(sn.cr)===cr?'selected':''}>${escHtml(cr)}</option>`).join('')}</select></td><td>AC ${escHtml(String(sn.ac??'—'))}</td><td>HP ${escHtml(String(sn.hp??'—'))}</td><td><select aria-label="Area or wave for ${escHtml(name)}" data-ecb-group="${i}">${groups.map(g=>`<option value="${escHtml(g)}" ${ecbGroup(m)===g?'selected':''}>${escHtml(g)}</option>`).join('')}</select><div class="ecb-order"><button data-ecb-move="${i}:-1" title="Move earlier in group">↑</button><button data-ecb-move="${i}:1" title="Move later in group">↓</button></div></td><td>${buttonsFor(sn,i)||'<span>No actions</span>'}</td></tr>`;
  }).join('');
  const host=document.getElementById('ecb-table-wrap');
  host.innerHTML=`<div class="ecb-group-tools"><button type="button" id="ecb-add-group">+ Add area / wave</button> <button type="button" id="ecb-review-names" title="Preview and convert legacy hard-coded creature names into dynamic references">Review name references</button><span>Move monsters between groups using the dropdown. Use header arrows to reorder groups, or row arrows to reorder creatures.</span></div><table class="ecb-table"><thead><tr><th>Area notes</th><th>Monster / VTT name</th><th>CR</th><th>AC</th><th>HP (reference)</th><th>Area / wave</th><th>Actions</th></tr></thead><tbody>${groups.map((g,gi)=>`<tr class="ecb-group-header"><td colspan="7"><div class="ecb-group-heading"><button type="button" data-ecb-collapse="${escHtml(g)}" aria-expanded="${!ecbCollapsedGroups.has(g)}">${ecbCollapsedGroups.has(g)?'▸':'▾'} ${escHtml(g)} (${monsters.filter(m=>ecbGroup(m)===g).length})</button><span class="ecb-group-reorder"><button type="button" data-ecb-group-move="${gi}:-1" title="Move entire group up" aria-label="Move ${escHtml(g)} up" ${gi===0?'disabled':''}>↑</button><button type="button" data-ecb-group-move="${gi}:1" title="Move entire group down" aria-label="Move ${escHtml(g)} down" ${gi===groups.length-1?'disabled':''}>↓</button></span></div></td></tr>${ecbCollapsedGroups.has(g)?'':('<tr class="ecb-area-content'+(ecbExpandedNoteAreas.has(g)?' ecb-notes-expanded':'')+'"><td class="ecb-area-note-cell"'+(ecbExpandedNoteAreas.has(g)?' colspan="7"':'')+'><div class="ecb-area-note-panel">'+ecbAreaNotesMarkup(node,g)+'<button type="button" class="ecb-note-width-handle" data-ecb-note-width="'+escHtml(g)+'" aria-label="'+(ecbExpandedNoteAreas.has(g)?'Collapse':'Expand')+' notes for '+escHtml(g)+'" aria-expanded="'+ecbExpandedNoteAreas.has(g)+'" title="'+(ecbExpandedNoteAreas.has(g)?'Collapse notes':'Expand notes across monster area')+'"><span>'+ (ecbExpandedNoteAreas.has(g)?'❮':'❯')+'</span></button></div></td>'+(ecbExpandedNoteAreas.has(g)?'':'<td colspan="6"><table class="ecb-area-monsters"><tbody>'+rowsFor(g)+'</tbody></table></td>')+'</tr>')}`).join('')}${!monsters.length?'<tr><td colspan="7">No monsters. Import a ChatGPT encounter JSON package to begin.</td></tr>':''}</tbody></table>`;
@@ -20976,6 +21003,10 @@ function renderEncounterBuilder(){
  host.querySelectorAll('[data-ecb-rename]').forEach(b=>b.onclick=()=>ecbRenameCreature(+b.dataset.ecbRename));
  host.querySelectorAll('[data-ecb-link]').forEach(b=>b.onclick=()=>ecbLinkCreature(+b.dataset.ecbLink));
  host.querySelectorAll('[data-ecb-mounted]').forEach(b=>b.onclick=()=>ecbToggleMounted(+b.dataset.ecbMounted));
+ host.querySelectorAll('[data-ecb-initiative]').forEach(b=>b.onclick=e=>{
+  const monster=monsters[Number(b.dataset.ecbInitiative)];
+  if(monster)dispatchMonsterInitiative(ecbResolvedMonster(monster,node),_advFromEvent(e),node);
+ });
  host.querySelectorAll('[data-ecb-stats]').forEach(b=>b.onclick=()=>openEncounterBuilderDetail(+b.dataset.ecbStats));
  host.querySelectorAll('[data-ecb-duplicate]').forEach(b=>b.onclick=()=>ecbDuplicateCreature(+b.dataset.ecbDuplicate));
  host.querySelectorAll('[data-ecb-info]').forEach(b=>b.onclick=()=>{const [idx,field,key]=b.dataset.ecbInfo.split(':'),m=monsters[+idx],a=normalizeWorkshopMonsterSnapshot(m.snapshot||{})[field]?.[+key];if(a)ecbShowInfo(m,a,node);});
