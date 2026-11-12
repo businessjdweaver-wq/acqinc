@@ -675,6 +675,7 @@ function candidate(x,y,p,dx=0,dy=0){
 function remember(withInitiative=false){
  scheduleRoomPatch();history.push(JSON.stringify({pieces,tokens,areas,...(withInitiative?{initiative:[...initiativeEntries],activeInitiative}:{})}));if(history.length>60)history.shift()}
 function refresh(){
+ scheduleRoomPatch();
  if(hudToken&&(!tokens.includes(hudToken)||standeeHidden(hudToken)||!canSeeStandeeStats(hudToken)))closeStandeeHud();
  for(const item of el('rollsFeed').children)if(item.dataset.audience==='gm')item.hidden=roomProfile?!roomProfile.gm:playing;
  const count=selectedStandees().length;
@@ -1394,7 +1395,7 @@ el('bulkMarkerButton').onclick=()=>{
 function markerInputs(){return [...el('standeeMarks').querySelectorAll('#standeeTargeted, [data-condition]')]}
 function configureMarkerEditor(bulk){
  el('squadControls').hidden=bulk||playing;
- el('incognitoControls').hidden=bulk||playing;
+ el('incognitoControls').hidden=bulk||(roomProfile?!roomProfile.gm:playing);
  el('standeeNameVisibility').disabled=playing;
  el('standeeFlightRow').hidden=bulk;
  el('standeeLooks').hidden=bulk;el('standeeMovement').hidden=bulk;el('artLookName').required=!bulk;
@@ -1529,7 +1530,7 @@ el('standeeArtForm').onsubmit=e=>{
  if(hudToken===token)openStandeeHud(token);
  token.displayName=el('standeeDisplayName').value.trim();
  if(!playing)token.nameVisibility=Number(el('standeeNameVisibility').value);
- if(!playing){token.incognito=el('standeeIncognito').checked;token.squad=el('standeeSquad').value}
+ if(roomProfile?roomProfile.gm:!playing){token.incognito=el('standeeIncognito').checked;token.squad=el('standeeSquad').value}
  const wasTargeted=token.manualTarget;
  token.manualTarget=el('standeeTargeted').checked;
  if(token.manualTarget&&!wasTargeted)faceTarget(token);
@@ -2504,8 +2505,8 @@ const roomKey="sb_publishable_eKBLY77ZQR4GKCKAuuMu_g_NCYupdt1";
 let roomProfile=null,roomRevision=-1,roomState={},roomMoving=false,roomPolling=false,roomDraftTitle='Battlemap',roomPulse=0,roomDraftAttached=false;
 async function roomRpc(name,args){
  const response=await fetch(roomApi+name,{method:'POST',headers:{apikey:roomKey,'Content-Type':'application/json'},body:JSON.stringify(args)});
- if(!response.ok)throw Error('The session server is unavailable. Try again.');
- const data=await response.json();
+ const data=await response.json().catch(()=>null);
+ if(!response.ok){console.error('Battlemap room request failed',name,data?.code,data?.message);throw Error('The session server rejected the update. Try again.');}
  if(data?.error)throw Error(data.error);
  return data;
 }
@@ -2787,13 +2788,15 @@ async function pollRoom(){
    await roomRpc('gm',{ticket:roomProfile.token,operation:'heartbeat'});roomPulse=Date.now();
   }
   let update=await roomRpc('sync',{ticket:roomProfile.token,since_event:roomCursor});
-  if(update.active&&update.gmOnline&&!update.scene&&(update.events.some(e=>e.kind==='reset')||!roomProfile.gm&&el('roomTurnState').hidden)){
+  const missingRevision=!roomProfile.gm&&update.revision>roomRevision&&
+   !update.events.some(event=>event.kind==='delta'&&event.body.revision===update.revision);
+  if(update.active&&update.gmOnline&&!update.scene&&(update.events.some(e=>e.kind==='reset')||
+   !roomProfile.gm&&(el('roomTurnState').hidden||missingRevision))){
    update=await roomRpc('sync',{ticket:roomProfile.token,since_event:roomCursor,snapshot:true});
   }
   const oldRevision=roomRevision,wasPaused=roomState.paused;
   roomState={...roomState,...update};
   delete roomState.scene;delete roomState.events;
-  roomCursor=update.cursor;roomRevision=update.revision;
   const ready=update.gmOnline&&update.active;
   if(roomProfile.gm){
    if(!roomState.profiles){
@@ -2817,6 +2820,7 @@ async function pollRoom(){
   el('roomTurnState').hidden=!roomProfile.gm&&!ready;
   el('roomTurnState').textContent=update.active?(update.title||'Battlemap')+' · '+(update.paused?'Paused':'Live'):'No active scene';
   const changed=applyRoomEvents(update.events,update.reset,update.scene?update.revision:oldRevision);
+  roomCursor=update.cursor;roomRevision=update.revision;
   const initiativeChanged=applyRoomInitiative(update.initiative);
   if(!roomProfile.gm)for(const token of tokens)if(ownsRoomStandee(token)&&token.roomId===roomProfile.characterKey&&roomProfile.character)token.playerDisplayName=roomProfile.character;
   if(changed||initiativeChanged||update.scene||wasPaused!==update.paused)refresh();
@@ -2824,6 +2828,7 @@ async function pollRoom(){
   if(roomProfile&&['GM session expired.','Choose your profile again.'].includes(err.message)){
    roomProfile=null;sessionStorage.removeItem('battlemap.roomProfile');location.reload();return;
   }
+  console.error('Battlemap room sync failed',err);
   if(!roomProfile||!roomProfile.gm&&!el('roomLobby').hidden)el('roomLobbyStatus').textContent=err.message;
  }finally{
   roomPolling=false;
