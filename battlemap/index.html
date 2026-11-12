@@ -541,7 +541,7 @@ function positionMoveActions(){
 function pauseMove(){
  if(!ghost||!valid(ghost)){message('That standee does not fit there. Choose another destination.');draw();return}
  carry.paused=true;
- message('Press P to continue the path, or use × or ✓ below the standee.');
+ message('Tap P to continue, or hold P and click to add waypoints. Use × or ✓ to finish.');
  refresh();
 }
 function resumeMove(){
@@ -554,7 +554,7 @@ function resumeMove(){
 }
 function cancelMove(){
  if(!carry)return;
- route=carry.previousRoute;carry=null;ghost=null;drag=null;
+ route=null;carry=null;ghost=null;drag=null;
  message('Move canceled.');refresh();
 }
 el('moveCancel').onclick=cancelMove;
@@ -562,13 +562,8 @@ el('moveConfirm').onclick=()=>{if(carry)dropCarry()};
 function dropCarry(){
  if(!ghost||!valid(ghost)){message('That standee does not fit there. Choose another destination.');draw();return}
  const piece=carry.piece;
- if(piece.x===ghost.x&&piece.y===ghost.y&&piece.z===ghost.z&&route.points.length===1){
-  route=carry.previousRoute;
- }else{
-  if(piece.x!==ghost.x||piece.y!==ghost.y||piece.z!==ghost.z){remember();Object.assign(piece,ghost)}
-  route.done=true;route.standee=piece;
- }
- carry=null;ghost=null;message('Move confirmed. Escape clears the path.');refresh();
+ if(piece.x!==ghost.x||piece.y!==ghost.y||piece.z!==ghost.z){remember();Object.assign(piece,ghost)}
+ route=null;carry=null;ghost=null;message('Move confirmed.');refresh();
 }
 function coords(e){const r=canvas.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top]}
 function candidate(x,y,p,dx=0,dy=0){
@@ -760,6 +755,7 @@ canvas.onpointerdown=e=>{
  const modifier=e.ctrlKey||e.metaKey;
  if(!middle&&modifier){e.preventDefault();if(!carry)ghost=null;drag={orbit:true,x,y,angle,tilt,pivot:measurePoint(x,y)};return}
  if(middle||panMode){if(!carry)ghost=null;drag={pan:true,x,y,panX,panY,button:e.button};draw();return}
+ if(carry?.paused&&pathHeld){pathUsed=true;resumeMove()}
  if(carry?.paused){
   message('Press P to continue, or use × or ✓ below the standee.');
   return;
@@ -883,7 +879,11 @@ canvas.onpointerup=e=>{
  if(drag.pickup||drag.drop){
   const drop=drag.drop||(drag.moved&&!drag.waypointSet);
   drag=null;
-  if(drop){updateCarry(x,y);pauseMove()}else refresh();
+  if(drop){
+   updateCarry(x,y);
+   if(pathHeld){pathUsed=true;setWaypoint()}
+   else pauseMove();
+  }else refresh();
   return;
  }
  if(drag.area){drag=null;refresh();return}
@@ -1046,6 +1046,14 @@ function setWaypoint(){
  message('Waypoint '+(route.points.length-1)+' set. Move to the next point or click to pause.');
  draw();
 }
+let pathHeld=false,pathUsed=false;
+window.addEventListener('blur',()=>{pathHeld=false;pathUsed=false});
+window.addEventListener('keyup',e=>{
+ if(e.key.toLowerCase()!=='p'||!pathHeld)return;
+ pathHeld=false;
+ if(!pathUsed&&carry)continuePath();
+ pathUsed=false;
+});
 function continuePath(){if(carry?.paused)resumeMove();else setWaypoint()}
 el('waypoint').onclick=continuePath;
 window.addEventListener('keydown',e=>{
@@ -1064,7 +1072,10 @@ window.addEventListener('keydown',e=>{
   }
  }
 
- if(e.key.toLowerCase()==='p'&&!e.repeat&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&carry){e.preventDefault();continuePath()}
+ if(e.key.toLowerCase()==='p'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&carry){
+  e.preventDefault();
+  if(!e.repeat){pathHeld=true;pathUsed=false}
+ }
  if(e.key==='Escape'){if(carry)cancelMove();else exitTool()}
  if(e.key==='Delete')el('remove').click();
  if(e.key.toLowerCase()==='r')el('rotate').click();
