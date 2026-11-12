@@ -249,8 +249,10 @@ function paintStandee(f){
  ctx.beginPath();ctx.ellipse(x,y,w*.55,w*.22,0,0,Math.PI*2);ctx.fillStyle=targeted?'#ad4540':p.color;ctx.fill();
  ctx.strokeStyle=f.preview?(valid(p)?'#c6eb87':'#ff8478'):p===selected?'#fff2ba':'#19211a';ctx.lineWidth=2;ctx.stroke();ctx.lineWidth=1;
  const look=p.looks?.[p.activeLook];
- const front=look?.front||p.src;
- const src=(Math.cos(angle+.64)<0?look?.back:null)||front;
+ const defaults=defaultStandeeLook(p);
+ const front=look?.front||p.src||defaults.front;
+ const back=look?.back||(!p.src&&!look?.front?defaults.back:'');
+ const src=(Math.cos(angle+.64)<0?back:null)||front;
  const art=src&&getArt(src);
  if(art&&art.complete&&art.naturalWidth){
   const h=c[1]-a[1],fit=Math.min(w/art.naturalWidth,h/art.naturalHeight);
@@ -910,12 +912,27 @@ function validLooks(t){
   });
  });
 }
+function defaultStandeeLook(token){
+ const model=token.icon==='⚔'?'adventurer':token.icon==='◆'?'goblin':null;
+ return {name:'Default',
+  front:model&&!token.src?new URL('art/'+model+'-front.svg',location.href).href:'',
+  back:model&&!token.src?new URL('art/'+model+'-back.svg',location.href).href:''};
+}
 function readLook(){
  const name=el('artLookName').value.trim();
  if(!name){el('artError').textContent='Enter a name for this look.';return false}
  try{
   const front=hostedImage(el('artFront').value.trim()),back=hostedImage(el('artBack').value.trim());
   if(front.length>2048||back.length>2048)throw Error();
+  if(artDraft.index===0){
+   const previous=artDraft.looks[0];
+   if((front&&front!==previous.front&&new URL(front).origin!==location.origin)||
+      (back&&back!==previous.back&&new URL(back).origin!==location.origin)){
+    el('artError').textContent='Use artwork hosted on this Battlemap site for the default look.';return false;
+   }
+  }else if(!front&&!back){
+   el('artError').textContent='Link a hosted image for this alternate look.';return false;
+  }
   artDraft.looks[artDraft.index]={name,front,back};
   el('artError').textContent='';return true;
  }catch{el('artError').textContent='Enter an HTTPS image URL or a path on this host.';return false}
@@ -929,12 +946,14 @@ function showLook(){
  select.value=artDraft.index;
  const {name,front,back}=artDraft.looks[artDraft.index];
  el('artLookName').value=name;el('artFront').value=front;el('artBack').value=back;
- el('artRemoveLook').disabled=artDraft.looks.length===1;
+ el('artFront').placeholder=artDraft.index===0?'art/standee-front.png':'https://…';
+ el('artBack').placeholder=artDraft.index===0?'art/standee-back.png':'https://…';
+ el('artRemoveLook').disabled=artDraft.index===0;
  el('artAddLook').disabled=artDraft.looks.length>=40;
  el('artError').textContent='';
 }
 function openStandeeArt(token){
- artDraft={token,index:token.activeLook??0,looks:token.looks?structuredClone(token.looks):[{name:'Default',front:'',back:''}]};
+ artDraft={token,index:token.activeLook??0,looks:token.looks?structuredClone(token.looks):[defaultStandeeLook(token)]};
  el('standeeTargeted').checked=!!token.manualTarget;
  el('standeeMarks').querySelectorAll('[data-condition]').forEach(input=>input.checked=(token.conditions?.includes(input.value)||(input.value==='violet'&&token.conditions?.includes('red')))||false);
  el('standeeLooks').open=false;showLook();el('standeeArtDialog').showModal();
