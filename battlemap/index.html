@@ -1003,13 +1003,50 @@ function renderBeyond20(event){
 document.addEventListener('Beyond20_RenderedRoll',renderBeyond20);
 const recoveryKey='battlemap.sessionRecovery.v1',scenesKey='battlemap.scenes.v1';
 let recoveryTimer=null,areaMode=false,areaOrigin=null,areaPreview=null,areas=[];
-function savedValue(key,fallback){
+let storageDb=null;
+const storageReady=new Promise(resolve=>{
+ let request;
+ try{request=indexedDB.open('BattlemapStudio',1)}catch{resolve(null);return}
+ request.onupgradeneeded=()=>request.result.createObjectStore('saves');
+ request.onsuccess=()=>{storageDb=request.result;resolve(storageDb)};
+ request.onerror=request.onblocked=()=>resolve(null);
+});
+function legacyValue(key,fallback){
  try{return JSON.parse(localStorage.getItem(key))??fallback}catch{return fallback}
 }
-function storeValue(key,value){
+async function savedValue(key,fallback){
+ const db=storageDb||await storageReady;
+ if(db){
+  try{
+   const stored=await new Promise((resolve,reject)=>{
+    const request=db.transaction('saves').objectStore('saves').get(key);
+    request.onsuccess=()=>resolve(request.result);
+    request.onerror=()=>reject(request.error);
+   });
+   if(stored!==undefined)return stored;
+   const legacy=legacyValue(key,undefined);
+   if(legacy!==undefined){await storeValue(key,legacy);return legacy}
+  }catch{}
+ }
+ return legacyValue(key,fallback);
+}
+async function storeValue(key,value){
+ const db=storageDb||await storageReady;
+ if(db){
+  try{
+   await new Promise((resolve,reject)=>{
+    const tx=db.transaction('saves','readwrite');
+    tx.oncomplete=resolve;
+    tx.onabort=tx.onerror=()=>reject(tx.error);
+    tx.objectStore('saves').put(value,key);
+   });
+   return true;
+  }catch{return false}
+ }
  try{localStorage.setItem(key,JSON.stringify(value));return true}catch{return false}
 }
 function queueRecovery(){
+ if(!recoveryReady)return;
  clearTimeout(recoveryTimer);
  recoveryTimer=setTimeout(saveRecovery,180);
 }
@@ -1023,14 +1060,14 @@ function restoreCard(data){
  else node.textContent=String(data.text||'');
  return node;
 }
-function saveRecovery(){
+async function saveRecovery(){
  const state={pieces,tokens,areas,playing,zoom,panX,panY,angle,tilt,initiative:[...initiativeEntries],activeInitiative,chat:[...el('rollsFeed').children].map(cardData)};
- const ok=storeValue(recoveryKey,state);
+ const ok=await storeValue(recoveryKey,state);
  el('sceneStatus').textContent=ok?'Session recovery is up to date.':'Browser storage is full or unavailable. Export the map to keep a backup.';
  return ok;
 }
-function recoverSession(){
- const state=savedValue(recoveryKey,null);
+async function recoverSession(){
+ const state=await savedValue(recoveryKey,null);
  if(!state||!Array.isArray(state.pieces)||!Array.isArray(state.tokens))return;
  pieces=state.pieces;tokens=state.tokens;areas=Array.isArray(state.areas)?state.areas:[];
  playing=state.playing===true;
@@ -1040,12 +1077,17 @@ function recoverSession(){
  if(Array.isArray(state.chat))el('rollsFeed').append(...state.chat.slice(0,100).map(restoreCard));
  message('Previous session restored.');
 }
-window.addEventListener('pagehide',saveRecovery);
-document.addEventListener('visibilitychange',()=>{if(document.hidden)saveRecovery()});
-let scenes=savedValue(scenesKey,[]);
-if(!Array.isArray(scenes))scenes=[];
-function changeScenes(next){
- if(!storeValue(scenesKey,next)){el('sceneStatus').textContent='Could not save scenes. Browser storage may be full.';return}
+let recoveryReady=false;
+window.addEventListener('pagehide',()=>{if(recoveryReady)saveRecovery()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&recoveryReady)saveRecovery()});
+let scenes=[];
+let savingScenes=false;
+async function changeScenes(next){
+ if(savingScenes)return;
+ savingScenes=true;
+ const ok=await storeValue(scenesKey,next);
+ savingScenes=false;
+ if(!ok){el('sceneStatus').textContent='Could not save scenes. Browser storage may be full.';return}
  scenes=next;renderScenes();el('sceneStatus').textContent='Scenes saved in this browser.';
 }
 function renderScenes(){
@@ -1120,9 +1162,19 @@ el('areaShape').onchange=()=>{
  areaOrigin=null;areaPreview=null;draw();
 };
 el('clearAreas').onclick=()=>{if(areas.length){remember();areas=[];refresh()}};
-recoverSession();
-if(typeof ResizeObserver==='function')new ResizeObserver(draw).observe(canvas);
+async function startStudio(){
+ const surfaces=document.querySelectorAll('header, main');
+ surfaces.forEach(surface=>surface.inert=true);
+ try{
+  const savedScenes=await savedValue(scenesKey,[]);
+  if(Array.isArray(savedScenes))scenes=savedScenes;
+  await recoverSession();
+ }finally{surfaces.forEach(surface=>surface.inert=false)}
+ recoveryReady=true;
+ if(typeof ResizeObserver==='function')new ResizeObserver(draw).observe(canvas);
 else window.addEventListener('resize',draw);
-refresh();
+ refresh();
+}
+startStudio();
 })();
 </script></html>
