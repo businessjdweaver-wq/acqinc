@@ -42,7 +42,7 @@ dialog.form-dialog::backdrop{background:#17130e80}
 .form-dialog small{font-size:1rem;color:#dbcbaa}
 .form-dialog .dialog-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:.65rem}
 </style>
-<div id="roomLobby"><div class="room-card"><h1>Songs of Cantica</h1><form id="roomJoin"><label for="roomProfile">Name</label><select id="roomProfile"><option value="">Choose a name</option><option value="gm1000">gm1000</option><option value="gm2000">gm2000</option></select><div id="roomCharacterFields" hidden><label for="roomCharacter">Character</label><select id="roomCharacter"><option value="">Choose a character</option></select><label for="roomDisplayName">Character name</label><input id="roomDisplayName" maxlength="80"></div><label id="roomPasswordField" hidden>GM password <input id="roomPassword" type="password" autocomplete="current-password"></label><button id="roomLoad">Load</button></form><p id="roomLobbyStatus" role="status">Connecting…</p><button id="roomLobbyChat" type="button" hidden>Open chat</button><button id="roomBack" hidden>Choose another profile</button></div></div><header><div><h1>Battlemap Studio <span style="font: 600 .5em system-ui; color: #c9bb9c; white-space: nowrap">v1.115</span></h1><small>40 × 40 squares · 200 × 200 ft · 1″ tabletop square = 5 ft</small></div><div class="bar"><label class="mode-switch">Build <input id="mode" type="checkbox" role="switch" aria-label="Play mode"> Play</label><button id="ruler" aria-pressed="false">Measure</button><label class="ruler-snap"><input id="rulerSnap" type="checkbox" checked> Snap ruler</label><button id="scenes">Scenes</button><button id="areaTool" aria-pressed="false">Area</button><span id="roomTurnState" hidden></span><button id="roomActivate" hidden>Activate scene</button><button id="roomPause" hidden>Unpause</button><button id="roomLeave" hidden>Leave</button><button id="preferences">Preferences</button><button id="bulkMarkerButton" hidden>Edit selected markers</button><button id="initiativeToggle" aria-expanded="false" aria-controls="initiativePanel">Initiative</button><button id="rollsToggle" aria-expanded="false" aria-controls="rollsPanel">Rolls</button><button id="undo">Undo</button><button id="save">Export</button><button id="load">Import</button><input id="file" type="file" accept=".json,application/json" hidden></div></header>
+<div id="roomLobby"><div class="room-card"><h1>Songs of Cantica</h1><form id="roomJoin"><label for="roomProfile">Name</label><select id="roomProfile"><option value="">Choose a name</option><option value="gm1000">gm1000</option><option value="gm2000">gm2000</option></select><div id="roomCharacterFields" hidden><label for="roomCharacter">Character</label><select id="roomCharacter"><option value="">Choose a character</option></select><label for="roomDisplayName">Character name</label><input id="roomDisplayName" maxlength="80"></div><label id="roomPasswordField" hidden>GM password <input id="roomPassword" type="password" autocomplete="current-password"></label><button id="roomLoad">Load</button></form><p id="roomLobbyStatus" role="status">Connecting…</p><button id="roomLobbyChat" type="button" hidden>Open chat</button><button id="roomBack" hidden>Choose another profile</button></div></div><header><div><h1>Battlemap Studio <span style="font: 600 .5em system-ui; color: #c9bb9c; white-space: nowrap">v1.116</span></h1><small>40 × 40 squares · 200 × 200 ft · 1″ tabletop square = 5 ft</small></div><div class="bar"><label class="mode-switch">Build <input id="mode" type="checkbox" role="switch" aria-label="Play mode"> Play</label><button id="ruler" aria-pressed="false">Measure</button><label class="ruler-snap"><input id="rulerSnap" type="checkbox" checked> Snap ruler</label><button id="scenes">Scenes</button><button id="areaTool" aria-pressed="false">Area</button><span id="roomTurnState" hidden></span><button id="roomActivate" hidden>Activate scene</button><button id="roomPause" hidden>Unpause</button><button id="roomLeave" hidden>Leave</button><button id="preferences">Preferences</button><button id="bulkMarkerButton" hidden>Edit selected markers</button><button id="initiativeToggle" aria-expanded="false" aria-controls="initiativePanel">Initiative</button><button id="rollsToggle" aria-expanded="false" aria-controls="rollsPanel">Rolls</button><button id="undo">Undo</button><button id="save">Export</button><button id="load">Import</button><input id="file" type="file" accept=".json,application/json" hidden></div></header>
 <main><aside><div id="playHelp" hidden><h2>Play mode</h2><p>Drag a standee to move it. Shift-click standees, then right-click the selection to edit markers together. Move the standee, then tap '+pathLabel()+' to set a waypoint. Click to pause at a destination, Press P to continue, and use ✓ or × to confirm or cancel.</p><label for="playLayer">Standee destination</label><select id="playLayer"><option value="surface">Visible surface</option><option value="ground">Ground (under bridges)</option></select></div><div id="buildTools"><details><summary>Component templates</summary><label>Component <select id="componentKind"><option value="tree">Tree</option><option value="light">Light</option><option value="boulder">Boulder</option><option value="cave">Stalagmite</option><option value="column">Column</option></select></label><label>Template <select id="componentTemplate"></select></label><button id="placeComponent" type="button">Place</button><button id="deleteComponentTemplate" type="button">Delete template</button></details><details id="visionBuilder"><summary>Vision &amp; lighting</summary>
 <div class="bar"><button id="visionRoom">Room</button><button id="visionOpening">Opening</button><button id="visionLight">Light</button></div>
 <div id="visionInspector" hidden>
@@ -2856,10 +2856,18 @@ canvas.onpointerup=e=>{
   if(tokenTool?.folderMembers){
    const members=folderStandeePositions(p,tokenTool.folderMembers);
    const occupied=[...pieces,...tokens,...members];
-   if(members.every(member=>valid(member,occupied,member))){
+   const linkedIds=members.map(member=>member.characterRoomId).filter(Boolean);
+   if(new Set(linkedIds).size!==linkedIds.length||linkedIds.some(id=>tokens.some(token=>token.roomId===id||token.characterRoomId===id))){
+    message('A standee in this group already appears on this map.');
+   }else if(members.every(member=>valid(member,occupied,member))){
     remember();tokens.push(...members);tokenTool=null;message('Placed '+members.length+' standees.');
    }else message('The whole group needs a clear, supported placement. Choose another point.');
-  }else if(valid(p)){remember();(tokenTool?tokens:pieces).push(p);message('Piece placed. Click to place another, or press Esc.')}
+  }else if(p.characterRoomId&&tokens.some(token=>token.roomId===p.characterRoomId||token.characterRoomId===p.characterRoomId)){
+   message('This standee already appears on this map. Use Place as new for a separate standee.');
+  }else if(valid(p)){
+   remember();(tokenTool?tokens:pieces).push(p);
+   message('Piece placed. Click to place another, or press Esc.');
+  }
   else message('That piece does not fit here.');
  }else if(drag.members&&ghost){
   const positions=terrainGroupPositions(drag,ghost),stationary=pieces.filter(p=>!drag.members.includes(p));
@@ -4803,10 +4811,9 @@ async function changeStandeeLibrary(next){
  if(ok){standeeLibrary=next;renderStandeeLibrary()}
  el('libraryStatus').textContent=ok?'Standee library saved in this browser.':'Could not save the standee library.';
 }
-function libraryPlacement(item){
+function libraryPlacement(item,fresh=false){
  const {size,sizeCategory,x,y,z,roomId,trackingId,initiativeKey,targetId,hpPoolId,controllerNames,...template}=structuredClone(item.token);
- const assigned=(roomState.profiles||[]).some(profile=>profile.characters?.some(character=>character.id===roomId));
- return {...template,characterRoomId:assigned?roomId:item.token.characterRoomId,name:item.name,displayName:item.name,hp:template.maxHp??template.hp,tempHp:0,conditions:[],manualTarget:false};
+ return {...template,characterRoomId:fresh?undefined:roomId||item.token.characterRoomId,name:item.name,displayName:item.name,hp:template.maxHp??template.hp,tempHp:0,conditions:[],manualTarget:false};
 }
 function folderStandeePositions(anchor,members){
  const spacing=Math.max(...members.map(p=>p.size)),columns=Math.ceil(Math.sqrt(members.length));
@@ -4822,13 +4829,15 @@ function renderStandeeLibrary(){
  const entries=standeeLibrary.filter(item=>[item.name,item.folder,baseStandeeRole(item.token)].join(' ').toLowerCase().includes(query));
  catalogFolders(el('libraryList'),el('libraryFolders'),entries,item=>{
   const row=document.createElement('div'),name=document.createElement('strong');
-  row.className='library-row';name.textContent=item.name;row.append(name,
-   catalogButton('Place',()=>{
+  const place=fresh=>{
     exitTool();selected=null;
-    tokenTool=libraryPlacement(item);
+    tokenTool=libraryPlacement(item,fresh);
     el('footprint').value=standeeSizes[standeeSizeIndex(item.token)].id;
     el('standeeLibraryDialog').close();message('Click the map to place '+item.name+'.');refresh();
-   }),
+  };
+  row.className='library-row';name.textContent=item.name;row.append(name,
+   catalogButton('Place',()=>place(false)),
+   catalogButton('Place as new',()=>place(true)),
    catalogButton('Rename / move',()=>editCatalogEntry(item,next=>changeStandeeLibrary(standeeLibrary.map(entry=>entry===item?next:entry)))),
    catalogButton('Delete',()=>{if(confirm('Delete '+item.name+' from the library?'))changeStandeeLibrary(standeeLibrary.filter(entry=>entry!==item))}));
   return row;
@@ -5582,10 +5591,14 @@ function registerSceneStandees(items,sceneName){
  let changed=false;
  for(const token of items||[]){
   const linkedId=token.characterRoomId;
- if(linkedId&&!items.some(other=>other!==token&&other.roomId===linkedId)&&!token.roomId){
-  token.roomId=linkedId;changed=true;
- }
- if(!token.roomId){token.roomId=token.trackingId||crypto.randomUUID();changed=true}
+  // Keep a legacy placement's own ID if it already has an explicit account assignment.
+  const profiles=roomState.profiles||[];
+  const assigned=id=>profiles.some(profile=>profile.characters?.some(character=>character.id===id));
+  const canLink=!token.roomId||assigned(linkedId)&&!assigned(token.roomId);
+  if(linkedId&&linkedId!==token.roomId&&canLink&&!items.some(other=>other!==token&&other.roomId===linkedId)){
+   token.roomId=linkedId;changed=true;
+  }
+  if(!token.roomId){token.roomId=token.trackingId||crypto.randomUUID();changed=true}
   const previous=accountCatalog.get(token.roomId);
   const sceneNames=[...new Set([...(previous?.scenes||[]),sceneName])];
   accountCatalog.set(token.roomId,{id:token.roomId,name:(token.displayName||token.name||'Standee').slice(0,80),role:baseStandeeRole(token),scenes:sceneNames});
