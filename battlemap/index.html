@@ -42,7 +42,7 @@ dialog.form-dialog::backdrop{background:#17130e80}
 .form-dialog small{font-size:1rem;color:#dbcbaa}
 .form-dialog .dialog-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:.65rem}
 </style>
-<div id="roomLobby"><div class="room-card"><h1>Songs of Cantica</h1><form id="roomJoin"><label for="roomProfile">Name</label><select id="roomProfile"><option value="">Choose a name</option><option value="gm1000">gm1000</option><option value="gm2000">gm2000</option></select><div id="roomCharacterFields" hidden><label for="roomCharacter">Character</label><select id="roomCharacter"><option value="">Choose a character</option></select><label for="roomDisplayName">Character name</label><input id="roomDisplayName" maxlength="80"></div><label id="roomPasswordField" hidden>GM password <input id="roomPassword" type="password" autocomplete="current-password"></label><button id="roomLoad">Load</button></form><p id="roomLobbyStatus" role="status">Connecting…</p><button id="roomLobbyChat" type="button" hidden>Open chat</button><button id="roomBack" hidden>Choose another profile</button></div></div><header><div><h1>Battlemap Studio <span style="font: 600 .5em system-ui; color: #c9bb9c; white-space: nowrap">v1.106</span></h1><small>40 × 40 squares · 200 × 200 ft · 1″ tabletop square = 5 ft</small></div><div class="bar"><label class="mode-switch">Build <input id="mode" type="checkbox" role="switch" aria-label="Play mode"> Play</label><button id="ruler" aria-pressed="false">Measure</button><label class="ruler-snap"><input id="rulerSnap" type="checkbox" checked> Snap ruler</label><button id="scenes">Scenes</button><button id="areaTool" aria-pressed="false">Area</button><span id="roomTurnState" hidden></span><button id="roomActivate" hidden>Activate scene</button><button id="roomPause" hidden>Unpause</button><button id="roomLeave" hidden>Leave</button><button id="preferences">Preferences</button><button id="bulkMarkerButton" hidden>Edit selected markers</button><button id="initiativeToggle" aria-expanded="false" aria-controls="initiativePanel">Initiative</button><button id="rollsToggle" aria-expanded="false" aria-controls="rollsPanel">Rolls</button><button id="undo">Undo</button><button id="save">Export</button><button id="load">Import</button><input id="file" type="file" accept=".json,application/json" hidden></div></header>
+<div id="roomLobby"><div class="room-card"><h1>Songs of Cantica</h1><form id="roomJoin"><label for="roomProfile">Name</label><select id="roomProfile"><option value="">Choose a name</option><option value="gm1000">gm1000</option><option value="gm2000">gm2000</option></select><div id="roomCharacterFields" hidden><label for="roomCharacter">Character</label><select id="roomCharacter"><option value="">Choose a character</option></select><label for="roomDisplayName">Character name</label><input id="roomDisplayName" maxlength="80"></div><label id="roomPasswordField" hidden>GM password <input id="roomPassword" type="password" autocomplete="current-password"></label><button id="roomLoad">Load</button></form><p id="roomLobbyStatus" role="status">Connecting…</p><button id="roomLobbyChat" type="button" hidden>Open chat</button><button id="roomBack" hidden>Choose another profile</button></div></div><header><div><h1>Battlemap Studio <span style="font: 600 .5em system-ui; color: #c9bb9c; white-space: nowrap">v1.108</span></h1><small>40 × 40 squares · 200 × 200 ft · 1″ tabletop square = 5 ft</small></div><div class="bar"><label class="mode-switch">Build <input id="mode" type="checkbox" role="switch" aria-label="Play mode"> Play</label><button id="ruler" aria-pressed="false">Measure</button><label class="ruler-snap"><input id="rulerSnap" type="checkbox" checked> Snap ruler</label><button id="scenes">Scenes</button><button id="areaTool" aria-pressed="false">Area</button><span id="roomTurnState" hidden></span><button id="roomActivate" hidden>Activate scene</button><button id="roomPause" hidden>Unpause</button><button id="roomLeave" hidden>Leave</button><button id="preferences">Preferences</button><button id="bulkMarkerButton" hidden>Edit selected markers</button><button id="initiativeToggle" aria-expanded="false" aria-controls="initiativePanel">Initiative</button><button id="rollsToggle" aria-expanded="false" aria-controls="rollsPanel">Rolls</button><button id="undo">Undo</button><button id="save">Export</button><button id="load">Import</button><input id="file" type="file" accept=".json,application/json" hidden></div></header>
 <main><aside><div id="playHelp" hidden><h2>Play mode</h2><p>Drag a standee to move it. Shift-click standees, then right-click the selection to edit markers together. Move the standee, then tap '+pathLabel()+' to set a waypoint. Click to pause at a destination, Press P to continue, and use ✓ or × to confirm or cancel.</p><label for="playLayer">Standee destination</label><select id="playLayer"><option value="surface">Visible surface</option><option value="ground">Ground (under bridges)</option></select></div><div id="buildTools"><details><summary>Component templates</summary><label>Component <select id="componentKind"><option value="tree">Tree</option><option value="light">Light</option><option value="boulder">Boulder</option><option value="cave">Stalagmite</option><option value="column">Column</option></select></label><label>Template <select id="componentTemplate"></select></label><button id="placeComponent" type="button">Place</button><button id="deleteComponentTemplate" type="button">Delete template</button></details><details id="visionBuilder"><summary>Vision &amp; lighting</summary>
 <div class="bar"><button id="visionRoom">Room</button><button id="visionOpening">Opening</button><button id="visionLight">Light</button></div>
 <div id="visionInspector" hidden>
@@ -1983,6 +1983,22 @@ function movementSide(token){
 function movementTerrainBlock(p){
  return ['terrace','stone','wall','volume','pillar','bridge','crate'].includes(p.type);
 }
+function openDoorCrossings(start,end){
+ const crossings=[];
+ for(const door of visionObjects()){
+  if(door.shape!=='opening'||door.kind!=='Door'||!door.open)continue;
+  const normal=door.angle===0?1:0,along=1-normal;
+  const delta=end[normal]-start[normal];
+  if(!delta)continue;
+  const t=(door.origin[normal]+.5-start[normal])/delta;
+  if(t<0||t>1)continue;
+  const across=start[along]+t*(end[along]-start[along]);
+  const z=start[2]+t*(end[2]-start[2]);
+  if(Math.abs(across-door.origin[along]-.5)<(door.doorWidth??1)/2&&Math.abs(z-door.origin[2])<.5)
+   crossings.push({t,normal,along,center:door.origin[along]+.5});
+ }
+ return crossings;
+}
 function movementSegment(start,end,mover,members=[]){
  const distance=5*Math.hypot(...end.map((v,i)=>v-start[i]));
  if(!mover||!distance)return {cost:distance,hazards:[],blocked:false};
@@ -1998,6 +2014,7 @@ function movementSegment(start,end,mover,members=[]){
  }
  const half=mover.size/2,intervals=[];
  if(!mover.flying){
+  const crossings=openDoorCrossings(start,end);
   for(const p of pieces){
    if(!movementTerrainBlock(p))continue;
    const [w,d,h]=dimensions(p),top=p.z+h;
@@ -2008,8 +2025,17 @@ function movementSegment(start,end,mover,members=[]){
     const interval=movementInterval(start,end,[...footprint,[p.z-1,top+1e-8]]);
     if(interval)intervals.push(interval);
    }else if(h>1){
-    if(movementInterval(start,end,[...footprint,[p.z-1,top]]))
-     return {cost:distance,hazards:[],blocked:true,blocker:p};
+    const hit=movementInterval(start,end,[...footprint,[p.z-1,top]]);
+    if(!hit)continue;
+    // Let the base graze a door jamb when its center clears the wall.
+    const solid=[[p.x,p.x+w],[p.y,p.y+d],[p.z-1,top]];
+    const grazesJamb=p.type==='wall'&&crossings.some(({t,normal,along,center})=>{
+     const plane=start[normal]+t*(end[normal]-start[normal]);
+     const [near,far]=solid[normal],[lo,hi]=solid[along];
+     return t>=hit[0]-1e-8&&t<=hit[1]+1e-8&&plane>=near-1e-8&&plane<=far+1e-8&&
+      (center<=lo||center>=hi)&&!movementInterval(start,end,solid);
+    });
+    if(!grazesJamb)return {cost:distance,hazards:[],blocked:true,blocker:p};
    }else{
     const interval=movementInterval(start,end,[...footprint,[p.z-1,top+1e-8]]);
     if(interval)intervals.push(interval);
@@ -3688,7 +3714,7 @@ el('file').onchange=async e=>{
    }
   }
   if(!Array.isArray(incomingAreas)||incomingAreas.some(a=>!a||!['line','circle','square','cone','sphere','cube','cone3d','difficult','appearance','room','opening','light'].includes(a.shape)||(a.shape==='difficult'&&a.width!==undefined&&(!Number.isInteger(a.width)||a.width<1||a.width>40))||!Number.isInteger(a.size)||a.size<1||a.size>40||!Array.isArray(a.origin)||a.origin.length!==3||!a.origin.every(Number.isFinite)||!Number.isFinite(a.angle)||(a.pitch!==undefined&&(!Number.isFinite(a.pitch)||Math.abs(a.pitch)>90))))throw Error();
-  exitTool();remember();currentSceneId=null;areas=incomingAreas;pieces=incoming;tokens=importedTokens;selected=null;group.clear();tool=null;tokenTool=null;ghost=null;roomDraftAttached=false;restorePanelView(data.view);refresh();message('Map imported.');
+  exitTool();remember();currentSceneId=null;areas=incomingAreas;pieces=incoming;tokens=importedTokens;selected=null;group.clear();tool=null;tokenTool=null;ghost=null;roomDraftAttached=false;restoreActiveRoom=false;restorePanelView(data.view);refresh();message('Map imported.');
  }catch{message('Could not import this map. Choose a Battlemap Studio JSON export.')}
 };
 function showRolls(open){
@@ -4560,7 +4586,7 @@ function loadSavedScene(scene,resetInitiative=false){
  ({pieces,tokens,areas}=structuredClone(scene.map));
  restorePanelView(scene.map.view);
  group.clear();selected=null;
- roomDraftTitle=scene.name;roomDraftAttached=false;syncAccountControllers();
+ roomDraftTitle=scene.name;roomDraftAttached=false;restoreActiveRoom=false;syncAccountControllers();
  el('sceneDialog').close();message('Loaded '+scene.name+'.');refresh();
 }
 function renderScenes(){
@@ -5379,6 +5405,7 @@ el('standeeHudForm').onsubmit=async e=>{
 };
 const roomApi='https://burtvenqfzextswpjziw.supabase.co/rest/v1/rpc/battlemap_room_';
 const roomKey="sb_publishable_eKBLY77ZQR4GKCKAuuMu_g_NCYupdt1";
+let restoreActiveRoom=false;
 let roomProfile=null,roomRevision=-1,roomState={},roomMoving=false,roomPolling=false,roomDraftTitle='Battlemap',roomPulse=0,roomDraftAttached=false;
 async function roomRpc(name,args){
  const response=await fetch(roomApi+name,{method:'POST',headers:{apikey:roomKey,'Content-Type':'application/json'},body:JSON.stringify(args)});
@@ -5621,6 +5648,12 @@ function applyRoomInitiative(value){
  if(previous!==activeInitiative)pingStarted=performance.now();
  return true;
 }
+function mergeRoomToken(local,prior,remote){
+ if(local&&prior)for(const key of ['hp','tempHp','ac','saveDc','targetRoomId','torch','carriedDrop','carriedFixture','torchColor','torchBright','torchDim','looks','activeLook'])if(canonicalSceneValue(local[key])===canonicalSceneValue(prior[key])){if(remote[key]===undefined)delete local[key];else local[key]=structuredClone(remote[key]);}
+     if(local&&prior&&['x','y','z'].every(key=>local[key]===prior[key])){
+      Object.assign(local,{x:remote.x,y:remote.y,z:remote.z});
+     }
+}
 function applyRoomEvents(events,reset,fromRevision){
  let redraw=false;
  if(reset)el('rollsFeed').replaceChildren();
@@ -5640,8 +5673,7 @@ function applyRoomEvents(events,reset,fromRevision){
      const prior=roomBaseline[change.bucket]?.find(t=>t.roomId===change.id);
      if(change.bucket==='tokens'&&change.item){
       const local=tokens.find(t=>t.roomId===change.id);
-      if(local&&prior)for(const key of ['hp','tempHp','ac','saveDc','targetRoomId','torch','carriedDrop','carriedFixture','torchColor','torchBright','torchDim','looks','activeLook'])if(canonicalSceneValue(local[key])===canonicalSceneValue(prior[key])){if(remote[key]===undefined)delete local[key];else local[key]=structuredClone(remote[key]);}
-     if(local&&prior&&['x','y','z'].every(key=>local[key]===prior[key]))Object.assign(local,{x:change.item.x,y:change.item.y,z:change.item.z});
+      mergeRoomToken(local,prior,change.item);
      }
      applySceneChange(roomBaseline,change);
     }else applySceneChange({pieces,tokens,areas},change);
@@ -5681,7 +5713,7 @@ async function pollRoom(){
   let update=await roomRpc('sync',{ticket:roomProfile.token,since_event:roomCursor});
   const missingRevision=update.revision>roomRevision&&(!roomProfile.gm||roomDraftAttached);
   if(update.active&&!update.scene&&(update.events.some(e=>e.kind==='reset')||
-   missingRevision||!roomProfile.gm&&el('roomTurnState').hidden)){
+   missingRevision||restoreActiveRoom||!roomProfile.gm&&el('roomTurnState').hidden)){
    update=await roomRpc('sync',{ticket:roomProfile.token,since_event:roomCursor,snapshot:true});
   }
   const oldRevision=roomRevision,wasPaused=roomState.paused;
@@ -5694,6 +5726,14 @@ async function pollRoom(){
     roomState.profiles=roster.profiles;
    }
    el('roomPause').disabled=!update.active;el('roomPause').textContent=update.paused?'Unpause':'Pause';
+   if(restoreActiveRoom&&update.scene){
+    ({pieces,tokens,areas}=structuredClone(update.scene));
+    areas??=[];
+    roomDraftTitle=update.title||'Battlemap';
+    roomBaseline=structuredClone(update.scene);
+    roomDraftAttached=true;
+   }
+   if(update.scene||!ready)restoreActiveRoom=false;
    if(update.scene&&roomDraftAttached){
     const remoteAreaIds=new Set((update.scene.areas||[]).map(a=>a.roomId));
     const removedLights=new Set((roomBaseline?.areas||[]).filter(a=>a.shape==='light'&&!remoteAreaIds.has(a.roomId)).map(a=>a.roomId));
@@ -5713,10 +5753,7 @@ async function pollRoom(){
     const localTokens=new Map(tokens.map(token=>[token.roomId,token]));
     for(const remote of update.scene.tokens||[]){
      const local=localTokens.get(remote.roomId),prior=priorTokens.get(remote.roomId);
-     if(local&&prior)for(const key of ['hp','tempHp','ac','saveDc','targetRoomId','torch','carriedDrop','carriedFixture','torchColor','torchBright','torchDim','looks','activeLook'])if(canonicalSceneValue(local[key])===canonicalSceneValue(prior[key])){if(remote[key]===undefined)delete local[key];else local[key]=structuredClone(remote[key]);}
-     if(local&&prior&&['x','y','z'].every(key=>local[key]===prior[key])){
-      Object.assign(local,{x:remote.x,y:remote.y,z:remote.z});
-     }
+     mergeRoomToken(local,prior,remote);
     }
     roomBaseline=structuredClone(update.scene);
    }
@@ -5813,6 +5850,7 @@ function enterRoom(profile){
  el('roomActivate').hidden=el('roomPause').hidden=el('userAccounts').hidden=!profile.gm;
  el('roomTurnState').hidden=!profile.gm;
  if(profile.gm){
+  restoreActiveRoom=true;
   workspaceLoad=loadWorkspace(profile.token);
   el('roomLobby').hidden=true;playing=false;refresh();
  }else{
