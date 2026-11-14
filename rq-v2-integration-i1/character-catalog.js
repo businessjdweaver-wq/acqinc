@@ -12,7 +12,7 @@ const characters=[
 ,{name:'Pip · Swarmkeeper',icon:'🐀',background:'Outlander',max:98,powers:[['Scurry Up',4,5,'Move a selected tile upward one row.','move-up'],['Sideways Swarm',3,6,'Shift an unlocked row one space.','shift-row'],['Granary Uprising',1,5,'Release friendly rats to scramble the board and attack enemies.','friendly-rats']]}
 ,{name:'Vex · Saboteur',icon:'🧨',background:'Criminal',max:94,powers:[['False Flag',0,5,'Create an enemy-owned attack tile.','spawn-enemy-attack'],['Uncanny Dodge',2,0,'Passive: evade damage based on enemy-owned attack tiles.','uncanny-dodge'],['Feed the Chaos',3,6,'Deal damage based on enemy special tiles.','enemy-special-burst']]}
 ,{name:'Alda · Warden',icon:'🛡️',background:'Soldier',max:112,powers:[['Shield Wall',6,6,'Create defense tiles.','spawn-defense'],power('Reinforced Guard',4,6,'Amplify and later fortify allied defense tiles.','amplify',cell,3),['Shield Bash',1,6,'Strike and stun the front enemy using fortifications.','shield-bash']]}
-,{name:'Iris · Chronomancer',icon:'⌛',background:'Sage',max:90,powers:[['Delayed Danger',3,6,'Conceal friendly traps that grow more dangerous with age.','spawn-trap'],['Lengthen the Hour',2,5,'Extend a friendly concealed trap duration.','lengthen-trap'],power('Stop Time',6,6,'Lock a countdown tile.','lock')]}
+,{name:'Iris · Chronomancer',icon:'⌛',background:'Sage',max:90,powers:[['Rewrite the Moment',3,6,'Reverse a recent move’s damage, healing and energy changes.','iris-rewrite'],['Lengthen the Hour',2,5,'Extend an enemy countdown and gain purple energy when it expires.','iris-lengthen'],power('Stop Time',6,6,'Lock a countdown tile.','lock')]}
 ,{name:'Elowen · Illusionist',icon:'🎭',background:'Charlatan',max:92,powers:[power('Ivory Mirage',6,6,'Turn eligible ordinary tiles Ivory.','transform',cell,1),['Turncoat',3,6,'Change ownership of a special tile.','flip-owner'],['Prismatic Veil',2,6,'Create a phantom target that absorbs and retaliates.','phantom-target']]}
 
 
@@ -54,7 +54,12 @@ const characters=[
  ['Hellfire Covenant',0,10,'Deal damage to all enemies; accept additional fortified Patron Debt for stronger area damage.','malvek-hellfire',{base:[8,12,16,20],bonus:[4,5,6,8]}]
  ]
 }
-];const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock'];characters.forEach((c,i)=>{c.rosterTitle=i===13?'Shroomkeeper':cardTitles[i];c.cardTitle=cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
+,{name:'Corvin · Whispers Bard',icon:'🎭',background:'Entertainer',max:95,powers:[
+ ['Seeds of Dread',3,6,'Conceal traps that deal more damage when matched by the enemy.','spawn-trap'],
+ ['Vanish from Sight',2,6,'Stay in formation and evade half of incoming enemy attacks for several turns.','corvin-vanish'],
+ ['Echo of Terror',1,7,'Stun the frontline and plant a countdown that repeats the stun.','corvin-echo']
+ ]}
+];const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock','Whispers Bard'];characters.forEach((c,i)=>{c.rosterTitle=i===13?'Shroomkeeper':cardTitles[i];c.cardTitle=cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
 const characterLevelProgress=(archetype,level)=>{const base=Number(archetype)>=6?100:1;const cap=base+99;return Math.max(0,Math.min(99,Math.floor(Number(level)||base)-base));};
 // Rank sets the baseline; card mastery and character progression are independent.
 const characterDamageMultiplier=(archetype,level)=>1+characterLevelProgress(archetype,level)*(Number(archetype)>=6?0.005:0.002);
