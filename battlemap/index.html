@@ -4775,6 +4775,42 @@ function showRolls(open){
 }
 el('rollsToggle').onclick=()=>{if(panelIsDetached('rolls'))detachedPanels.get('rolls').win.focus();else showRolls(el('rollsPanel').hidden)};
 el('rollsClear').onclick=()=>{if(roomProfile?.gm)publishRoom('clear_chat');else if(!roomProfile){el('rollsFeed').replaceChildren();queueRecovery()}};
+// Character health comes from Beyond20; Battlemap never writes to D&D Beyond.
+function beyond20Health(event){
+ const args=Array.isArray(event.detail)?event.detail:[event.detail];
+ const data=args[0];
+ if(!data||!roomProfile)return;
+ const character=data.character&&typeof data.character==='object'?data.character:{};
+ const idSource=character.id??character.characterId??character.url??data.characterId??'';
+ const idMatch=String(idSource).match(/(?:characters\\/)?(\\d+)(?:[/?#]|$)/);
+ const id=idMatch?.[1];
+ if(!id)return;
+ const matching=tokens.filter(t=>t.ddbCharacterId===id);
+ if(!matching.length)return;
+ const read=(...values)=>values.find(v=>v!==null&&v!==undefined&&v!=='');
+ const hp=Number(read(data.currentHP,data.currentHp,data.hp,character.hp,character.currentHP));
+ const temp=Number(read(data.tempHP,data.tempHp,character['temp-hp'],character.tempHp,0));
+ const max=Number(read(data.maxHP,data.maxHp,character['max-hp'],character.maxHp));
+ if(!Number.isInteger(hp)||hp<0||hp>99999||!Number.isInteger(temp)||temp<0||temp>99999)return;
+ const apply=async()=>{
+  for(const token of matching){
+   if(roomProfile.gm){
+    remember();
+    for(const other of tokens.filter(t=>t===token||token.hpPoolId&&t.hpPoolId===token.hpPoolId)){
+     other.hp=hp;other.tempHp=temp;
+     if(Number.isInteger(max)&&max>0&&max<=99999)other.maxHp=max;
+    }
+   }else if(ownsRoomStandee(token)&&token.roomId){
+    await customizeRoomObject(token,'hp',hp);
+    await pollRoom();
+    await customizeRoomObject(token,'tempHp',temp);
+   }
+  }
+  if(roomProfile.gm)refresh();else await pollRoom();
+ };
+ apply().catch(error=>message('Beyond20 health sync: '+error.message));
+}
+document.addEventListener('Beyond20_UpdateHP',beyond20Health);
 document.addEventListener('Beyond20_Loaded',()=>{
  el('rollsStatus').textContent='Beyond20 connected. Waiting for a roll.';
 });
