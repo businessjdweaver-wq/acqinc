@@ -2260,8 +2260,7 @@ function hit(x,y,exclude=null,surfaceOnly=false,accept=null,includeDoors=false){
   if(!(positive&&negative)&&(!topDown||positive||negative))return f;
  }
 }
-function measurePoint(x,y){
- const f=hit(x,y);
+function measurePoint(x,y,f=hit(x,y)){
  if(f?.standee||f?.shadow)return basePoint(f.p);
  if(f?.world){
   for(const indices of [[0,1,2],[0,2,3]]){
@@ -2917,6 +2916,11 @@ document.addEventListener('pointerdown',e=>{
  if(hudToken&&!el('hudConditionsDialog').open&&!el('standeeHud').contains(e.target))closeStandeeHud();
 });
 canvas.onpointerdown=e=>{
+ if(e.button===0&&cameraFocusHeld&&!drag){
+  e.preventDefault();cameraFocusUsed=true;
+  focusMapAt(...coords(e));
+  return;
+ }
  if(e.button!==2)visionMarkers.querySelector('[data-vision-actions]')?.remove();
  if(e.button===0&&!e.ctrlKey&&!e.metaKey&&visionTool){
   if(visionTool==='moveTerrain'){
@@ -3080,7 +3084,55 @@ canvas.onpointerdown=e=>{
  }else drag={x,y,angle,tilt,pivot:measurePoint(x,y)};
  refresh();
 };
-let isoLocked=false;
+let isoLocked=false,cameraFocusHeld=false,cameraFocusUsed=false;
+function focusMapAt(x,y){
+ const face=hit(x,y,null,false,null,true);
+ if(face?.p?.type==='standee'){
+  if(!standeeHidden(face.p))focusMapTarget(basePoint(face.p),face.p);
+  return;
+ }
+ if(face?.p?.origin){focusMapObject(face.p);return}
+ if(face?.world){
+  const pivot=measurePoint(x,y,face);
+  if(face.z!=null&&face.world.every(vertex=>vertex[2]===face.z)){
+   pivot[0]=Math.floor(pivot[0]+1e-8)+.5;
+   pivot[1]=Math.floor(pivot[1]+1e-8)+.5;
+  }
+  focusMapTarget(pivot);
+  return;
+ }
+ const [col,row]=inverse(x,y,0);
+ if(col>=0&&col<N&&row>=0&&row<N)focusMapTarget([Math.floor(col)+.5,Math.floor(row)+.5,0]);
+}
+function focusMapObject(object){
+ const [x,y,z]=object.origin;
+ const height=object.kind==='Door'?doorLeafHeight(object)/2:object.kind==='Window'?1:object.lightElevation??0;
+ focusMapTarget([x+(object.shape==='room'?object.size/2:.5),y+(object.shape==='room'?object.depth/2:.5),z+height]);
+}
+function focusMapTarget(pivot,standee=null){
+ if(!topDown){
+  const blockers=visionBlockers();
+  const aim=standee?[pivot[0],pivot[1],pivot[2]+standee.size*.65]:pivot;
+  const tilts=isoLocked?[.69]:[tilt,.69,1.1];
+  let best={score:Infinity,angle,tilt};
+  for(const pitch of tilts)for(const step of [0,1,-1,2,-2,3,-3,4]){
+   const yaw=angle+step*Math.PI/4;
+   const eye=[aim[0]+N*2*Math.sin(yaw)*Math.cos(pitch),aim[1]+N*2*Math.cos(yaw)*Math.cos(pitch),aim[2]+N*2*Math.sin(pitch)];
+   const score=blockers.reduce((cost,bounds)=>{
+    const interval=movementInterval(aim,eye,bounds);
+    return cost+(interval&&interval[0]>1e-7?1:0);
+   },0)+Math.abs(step)*.03+Math.abs(pitch-tilt)*.25;
+   if(score<best.score)best={score,angle:yaw,tilt:pitch};
+  }
+  ({angle,tilt}=best);C=Math.cos(angle);D=Math.sin(angle);
+ }
+ if(standee){focusStandee(standee,'Camera focus');return}
+ zoom=preferences.focusZoom/100;
+ S=Math.min(W/57,H/46)*zoom;
+ const [x,y]=point(...pivot);
+ panX+=W/2-x;panY+=H/2-y;
+ draw('Camera focus');
+}
 el('isoLock').onclick=()=>{
  isoLocked=!isoLocked;
  el('isoLock').setAttribute('aria-pressed',String(isoLocked));
@@ -4017,7 +4069,10 @@ function drawVisionObjects(blockers,standeeReadouts){
   if(!button){
    button=document.createElement('button');button.type='button';button.visionObject=object;
    button.style.cssText='position:absolute;pointer-events:auto;transform:translate(-50%,-50%);padding:2px 6px;font-size:11px';
-   button.onclick=()=>{openVisionActions(object,button,false)};
+   button.onclick=e=>{
+    if(cameraFocusHeld&&e.detail){cameraFocusUsed=true;focusMapObject(object);return}
+    openVisionActions(object,button,false);
+   };
    button.oncontextmenu=e=>{e.preventDefault();openVisionActions(object,button,true)};
    button.onkeydown=e=>{if(e.shiftKey&&e.key==='F10' ){e.preventDefault();openVisionActions(object,button,true)}};
    visionMarkers.append(button);
@@ -4219,8 +4274,9 @@ function setWaypoint(){
  draw();
 }
 let pathHeld=false,pathUsed=false;
-window.addEventListener('blur',()=>{pathHeld=false;pathUsed=false});
+window.addEventListener('blur',()=>{pathHeld=false;pathUsed=false;cameraFocusHeld=false});
 window.addEventListener('keyup',e=>{
+ if(e.code==='Space')cameraFocusHeld=false;
  if(e.key.toLowerCase()!==pathKey||!pathHeld)return;
  pathHeld=false;
  if(!pathUsed&&carry)continuePath();
@@ -4255,6 +4311,11 @@ window.addEventListener('keydown',e=>{
  if(el('sceneDialog').open||el('standeeLibraryDialog').open||el('formationDialog').open||el('assetCatalogDialog').open||appearancePanel.contains(e.target)||el('importStandeeDialog').open||el('userAccountsDialog').open||el('standeePasteDialog').open||e.target?.matches?.('textarea,input,select')||el('foldedDialog').open||el('standeeCropDialog').open||el('preferencesDialog').open||el('standeeArtDialog').open||el('sceneDialog').open||el('areaEditDialog').open)return;
  const editing=e.target?.matches?.('input, select, textarea, [contenteditable]');
  if(document.querySelector('dialog[open]'))return;
+ if(e.code==='Space'&&!editing&&!e.target?.closest?.('[contenteditable]')&&!e.ctrlKey&&!e.metaKey&&!e.altKey){
+  cameraFocusHeld=true;
+  if(!e.target?.closest?.('button,a,[role=button]'))e.preventDefault();
+  return;
+ }
  if(fixtureClipboard&&roomProfile?.gm!==false&&!editing&&!drag&&(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='v'){
   e.preventDefault();exitTool();visionTool='pasteFixture';message('Click a surface to paste the light. Esc cancels.');return;
  }
