@@ -56,7 +56,7 @@ const characters=[
 }
 ,{name:'Corvin · Whispers Bard',icon:'🎭',background:'Entertainer',max:95,powers:[
  ['Seeds of Dread',3,6,'Conceal traps that deal more damage when matched by the enemy.','spawn-trap'],
- ['Vanish from Sight',2,6,'Stay in formation and evade half of incoming enemy attacks for several turns.','corvin-vanish'],
+ ['Vanish from Sight',2,6,'Stay in formation and evade half of incoming enemy attacks until the blue veil tile is matched or the effect expires.','corvin-vanish'],
  ['Echo of Terror',1,7,'Stun the frontline and plant a yellow countdown that stuns and renews on expiry.','corvin-echo']
  ]}
 ];const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock','Whispers Bard'];characters.forEach((c,i)=>{c.rosterTitle=i===13?'Shroomkeeper':cardTitles[i];c.cardTitle=cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
