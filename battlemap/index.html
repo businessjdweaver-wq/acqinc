@@ -210,12 +210,12 @@ function setSceneGrid(sceneAreas,grid){
  if(!appearance){appearance={shape:'appearance',origin:[0,0,0],angle:0,size:1,appearance:{}};sceneAreas.push(appearance)}
  appearance.grid=grid;
 }
-function dimensions(p){if(p.type==='standee')return [p.size,p.size,1];const [,w,d,h]=types[p.type];const [width,depth,height]=p.type==='volume'?(p.extents??[w,d,h]):[w,d,h];return p.r%2?[depth,width,height]:[width,depth,height]}
+function dimensions(p){if(isFurniture(p)){const v=furnitureValues(p),kind=v.componentKind,w=.25+v.furnWidth*.035,d=kind==='barrel'?w:.25+v.furnDepth*.035,h=.15+v.furnHeight*.025,H=kind==='rug'?.024:kind==='chair'&&v.furnDetail>25?h*1.4:Math.max(h,.15);return p.r%2?[d,w,H]:[w,d,H]}if(p.type==='standee')return [p.size,p.size,1];const [,w,d,h]=types[p.type];const [width,depth,height]=p.type==='volume'?(p.extents??[w,d,h]):[w,d,h];return p.r%2?[depth,width,height]:[width,depth,height]}
 function sceneryPiece(p){return ['scatter','backdrop','ceilingArt'].includes(p.type)}
 function formationLanding(p,terrain,sceneAreas=areas){
  const appearance=sceneAreas.find(a=>a.shape==='appearance')?.appearance;
  const formation=p.terrainShape?.componentKind??terrainThemes[appearance?.terrainTheme]?.formation;
- if(formation&&formation!=='column')return drawBiomeColumn(p,false,null,formation,{...appearance.terrainShape,...p.terrainShape},terrain);
+ if(formation&&formation!=='column')return drawBiomeColumn(p,false,null,formation,{...appearance?.terrainShape,...p.terrainShape},terrain);
 }
 function standeeSupports(platform,mover){
  return platform.type==='standee'&&!platform.conditions?.includes('dead')&&
@@ -313,7 +313,7 @@ function polygon(points,fill,stroke){
 }
 function face(points,fill,p,z,preview){
  const projected=points.map(v=>point(...v));
- faces.push({projected,world:points,fill,p,z,preview,depth:projected.reduce((a,v)=>a+v[2],0)/4});
+ faces.push({projected,world:points,fill,p,z,preview,depth:projected.reduce((a,v)=>a+v[2],0)/projected.length});
 }
 function top(x,y,z,fill,p,preview){face([[x,y,z],[x+1,y,z],[x+1,y+1,z],[x,y+1,z]],fill,p,z,preview)}
 function texture(fill,material,isTop){
@@ -716,9 +716,9 @@ function visionBlockers(){
  if(lightingFrame?.blockers)return lightingFrame.blockers;
  const blockers=[];
  for(const wall of pieces){
-  if(isFurniture(wall)?!(wall.terrainShape.furnVision??wall.terrainShape.componentKind==='cabinet'):!movementTerrainBlock(wall))continue;
+  if(isFurniture(wall)?!(wall.terrainShape.componentKind!=='rug'&&(wall.terrainShape.furnVision??wall.terrainShape.componentKind==='cabinet')):!movementTerrainBlock(wall))continue;
   const [w,d,h]=dimensions(wall);
-  if(h<1&&!wall.stairTread)continue;
+  if(h<1&&!wall.stairTread&&!isFurniture(wall))continue;
   blockers.push([[wall.x,wall.x+w],[wall.y,wall.y+d],[wall.z,wall.z+h]]);
  }
  for(const window of areas){
@@ -1041,7 +1041,7 @@ function convertBiomeColumns(previous,next){
  }
 }
 function drawFurniture(p,preview,fill,kind,settings){
- const v={...terrainShapeDefaults,...settings},w=.25+v.furnWidth*.035,d=.25+v.furnDepth*.035,h=.15+v.furnHeight*.025,c=v.furnColor||'#79563b',a=v.furnAccent||'#a79b75',cx=p.x+.25,cy=p.y+.25,ang=p.r*Math.PI/2;
+ const v={...terrainShapeDefaults,...settings},w=.25+v.furnWidth*.035,d=.25+v.furnDepth*.035,h=.15+v.furnHeight*.025,c=v.furnColor||'#79563b',a=v.furnAccent||'#a79b75',cx=p.x+dimensions(p)[0]/2,cy=p.y+dimensions(p)[1]/2,ang=p.r*Math.PI/2;
  const emit=(pts,color)=>{face(pts.map(([x,y,z])=>[cx+x*Math.cos(ang)-y*Math.sin(ang),cy+x*Math.sin(ang)+y*Math.cos(ang),p.z+z]),preview?fill:color,p,null,preview);Object.assign(faces.at(-1),{special:true,biomeShape:true})};
  const box=(x,y,z,W,D,H,color)=>{const lo=[[x,y,z],[x+W,y,z],[x+W,y+D,z],[x,y+D,z]],hi=lo.map(q=>[q[0],q[1],q[2]+H]);if(!topDown)for(let i=0;i<4;i++)emit([lo[i],lo[(i+1)%4],hi[(i+1)%4],hi[i]],shadeTreeColor(color,.72+i*.07));emit(hi,color)};
  const slab=(z,H,color)=>box(-w/2,-d/2,z,w,d,H,color),legs=(height)=>{for(const x of [-w/2,w/2-.09])for(const y of [-d/2,d/2-.09])box(x,y,0,.09,.09,height,c)};
@@ -1060,7 +1060,7 @@ function drawBiomeColumn(p,preview,fill,formation,settings,landingTerrain){
  const rand=()=>{state=(Math.imul(state,1664525)+1013904223)>>>0;return state/4294967296};
  const n=formation==='tree'?6:9,phase=rand()*Math.PI*2;
  const widthScale=settings?.formationScale??1;
- const ceiling=formation==='cave'&&p.terrainShape?.componentKind!=='cave'?caveCeiling(p,landingTerrain):Infinity;
+ const ceiling=formation==='cave'&&(settings?.caveHanging||p.terrainShape?.componentKind!=='cave')?caveCeiling(p,landingTerrain):Infinity;
  const ring=(height,radius,rough)=>Array.from({length:n},(_,i)=>{
   const a=phase+i*2*Math.PI/n,r=radius*(formation==='tree'?1:widthScale)*(1+(rand()-.5)*rough);
   return [cx+Math.cos(a)*r,cy+Math.sin(a)*r,height];
@@ -1798,7 +1798,7 @@ let formationDraft=null;
 function cleanFormationSettings(values){
  const clean=Object.fromEntries(Object.keys(terrainShapeDefaults).filter(id=>!id.startsWith('sceneTree')&&Number.isFinite(values[id])&&values[id]>=0&&values[id]<=100).map(id=>[id,values[id]]));
  if(Number.isFinite(values.formationScale)&&values.formationScale>0&&values.formationScale<10000)clean.formationScale=values.formationScale;
- for(const key of ['treeFoliage','treeLog','lichen','furnMove','furnVision'])if(typeof values[key]==='boolean')clean[key]=values[key];
+ for(const key of ['treeFoliage','treeLog','lichen','furnMove','furnVision','caveHanging'])if(typeof values[key]==='boolean')clean[key]=values[key];
  if(['tree','boulder','cave','column',...furnitureKinds].includes(values.componentKind))clean.componentKind=values.componentKind;
  for(const key of ['columnBaseShape','columnTopShape'])if(['round','square','octagonal'].includes(values[key]))clean[key]=values[key];
  for(const key of ['treeBarkColor','treeLeafColor','columnColor','furnColor','furnAccent'])if(/^#[\\da-f]{6}$/i.test(values[key]||''))clean[key]=values[key];
@@ -1833,6 +1833,7 @@ function renderFormationSliders(formation){
  if(furnitureKinds.includes(formation)){
   for(const [key,title,defaultValue] of [['furnColor','Material color','#79563b'],['furnAccent','Accent color','#a79b75'],['furnMove','Blocks movement',formation!=='rug'],['furnVision','Blocks vision',formation==='cabinet']]){const label=document.createElement('label'),input=document.createElement('input');input.type=typeof defaultValue==='boolean'?'checkbox':'color';if(input.type==='checkbox')input.checked=formationDraft.values[key]??defaultValue;else input.value=formationDraft.values[key]??defaultValue;input.oninput=()=>{formationDraft.values[key]=input.type==='checkbox'?input.checked:input.value;draw()};label.append(title,input);panel.append(label)}
  }
+ if(formation==='cave'){const label=document.createElement('label'),input=document.createElement('input');input.type='checkbox';input.checked=formationDraft.values.caveHanging??false;input.oninput=()=>{formationDraft.values.caveHanging=input.checked;draw()};label.append('Hang from overhead surface',input);panel.append(label)}
  if(formation==='column'){
   for(const [key,title] of [['columnBaseShape','Base shape'],['columnTopShape','Top shape'],['columnColor','Column color']]){
    const label=document.createElement('label'),input=document.createElement(key==='columnColor'?'input':'select');
@@ -2890,7 +2891,7 @@ function movementSide(token){
  return token.movementSide==='party'||token.movementSide==='monsters'?token.movementSide:standeeRole(token)==='enemy'?'monsters':'party';
 }
 function movementTerrainBlock(p){
- if(isFurniture(p))return p.terrainShape.furnMove??p.terrainShape.componentKind!=='rug';
+ if(isFurniture(p))return p.terrainShape.componentKind!=='rug'&&(p.terrainShape.furnMove??true);
  return ['terrace','stone','wall','volume','pillar','bridge','crate'].includes(p.type);
 }
 function movementSegment(start,end,mover,members=[]){
