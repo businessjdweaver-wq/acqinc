@@ -8592,13 +8592,33 @@ for(const [id,step] of [['hudShrink',-1],['hudGrow',1]])el(id).onclick=async()=>
  if(roomProfile?.gm!==false||!ownsRoomStandee(token)||roomState.paused||hudResizing)return;
  const size=standeeSizes[standeeSizeIndex(token)+step];
  if(!size)return;
- const position=size.footprint===token.size?token:resizedStandeePosition(token,{...token,size:size.footprint},[...pieces,...tokens]);
- if(!position){
-  el('standeeHudStatus').textContent='That size does not fit here.';return;
- }
+ const profile=roomProfile,sceneId=roomState.sceneId,viewedScene=requestedRoomScene;
+ const resize=async current=>{
+  const position=size.footprint===current.size?current:
+   resizedStandeePosition(current,{...current,size:size.footprint},[...pieces,...tokens]);
+  if(!position)throw Error('That size does not fit here.');
+  await customizeRoomObject(current,'standee_size',{category:size.id,x:position.x,y:position.y});
+ };
  hudResizing=true;updateHudSize(token);
- try{await customizeRoomObject(token,'standee_size',{category:size.id,x:position.x,y:position.y});await pollRoom()}
- catch(error){if(hudToken?.roomId===token.roomId)el('standeeHudStatus').textContent=error.message}
+ el('standeeHudStatus').textContent='';
+ try{
+  try{await resize(token)}
+  catch(error){
+   if(error.kind!=='conflict')throw error;
+   const pendingPoll=roomPollTask;
+   if(pendingPoll)await pendingPoll;
+   const synced=await pollRoom();
+   const current=tokens.find(candidate=>candidate.roomId===token.roomId);
+   if(!synced||roomProfile!==profile||roomState.sceneId!==sceneId||
+    requestedRoomScene!==viewedScene||roomState.paused||!ownsRoomStandee(current))throw error;
+   if(standeeSizes[standeeSizeIndex(current)].id!==size.id)await resize(current);
+  }
+  await pollRoom();
+ }
+ catch(error){
+  if(roomProfile===profile&&roomState.sceneId===sceneId&&hudToken?.roomId===token.roomId)
+   el('standeeHudStatus').textContent=error.message;
+ }
  finally{hudResizing=false;if(hudToken)updateHudSize(hudToken)}
 };
 el('hudLooks').onclick=()=>{const token=hudToken;if(token&&(roomProfile?.gm!==false||ownsRoomStandee(token))){closeStandeeHud();openStandeeArt(token)}};
