@@ -1,6 +1,6 @@
--- Stair routes use the standee center when its center rests on a tread.
--- Preserve creature collisions and walls containing the center; use the scene's real grid.
--- Horizontal eighth-square precision matches the browser's stair-edge inset.
+-- Match browser stair and low-step landings in both directions.
+-- The standee's square is a control area; keep its supported center clear of terrain.
+-- Creature collision, ownership, pause, revision and actual map bounds remain enforced.
 
 CREATE OR REPLACE FUNCTION public.battlemap_room_move(ticket uuid, token_id text, px numeric, py numeric, pz numeric, expected_revision bigint)
  RETURNS jsonb
@@ -8,7 +8,7 @@ CREATE OR REPLACE FUNCTION public.battlemap_room_move(ticket uuid, token_id text
  SECURITY DEFINER
  SET search_path TO ''
 AS $function$
-declare st battlemap_room.state%rowtype; player battlemap_room.players%rowtype; obj jsonb; idx integer; sz integer; on_stair boolean; scene_grid jsonb; map_width numeric:=40; map_depth numeric:=40;
+declare st battlemap_room.state%rowtype; player battlemap_room.players%rowtype; obj jsonb; idx integer; sz integer; on_stair boolean; on_landing boolean; scene_grid jsonb; map_width numeric:=40; map_depth numeric:=40;
 begin
  select * into st from battlemap_room.state where id for update;
  if battlemap_room.viewer(ticket) is distinct from 'player' then return jsonb_build_object('error','This scene is unavailable.');end if;
@@ -30,6 +30,20 @@ begin
     and py+sz/2.0>=(t->>'y')::numeric
     and py+sz/2.0<(t->>'y')::numeric+case when coalesce((t->>'r')::int,0)%2=1 then coalesce((t->'extents'->>0)::numeric,2) else coalesce((t->'extents'->>1)::numeric,2) end
   );
+ on_landing:=on_stair or (coalesce(obj->>'flying','false')<>'true' and pz<>(obj->>'z')::numeric and abs(pz-(obj->>'z')::numeric)<=1 and (pz=0 or exists(
+   select 1 from jsonb_array_elements(st.scene->'pieces') t
+   join (values ('terrace',3,2,1),('stone',2,2,2),('pillar',1,1,3),('bridge',3,1,1),('crate',1,1,1),('fountain',1,1,1),('volume',2,2,1)) defaults(kind,w,d,h) on defaults.kind=t->>'type'
+   cross join lateral (select
+    case when defaults.kind='volume' then coalesce((t->'extents'->>0)::numeric,defaults.w) else defaults.w end w,
+    case when defaults.kind='volume' then coalesce((t->'extents'->>1)::numeric,defaults.d) else defaults.d end d,
+    case when defaults.kind='volume' then coalesce((t->'extents'->>2)::numeric,defaults.h) else defaults.h end h
+   ) v
+   where t->>'form' is null and pz=(t->>'z')::numeric+v.h
+    and px+sz/2.0>=(t->>'x')::numeric
+    and px+sz/2.0<(t->>'x')::numeric+case when coalesce((t->>'r')::int,0)%2=1 then v.d else v.w end
+    and py+sz/2.0>=(t->>'y')::numeric
+    and py+sz/2.0<(t->>'y')::numeric+case when coalesce((t->>'r')::int,0)%2=1 then v.w else v.d end
+  )));
  select a->'grid' into scene_grid from jsonb_array_elements(coalesce(st.scene->'areas','[]'::jsonb)) a where a->>'shape'='appearance' limit 1;
  if jsonb_typeof(scene_grid->'width')='number' and jsonb_typeof(scene_grid->'depth')='number' then
   if (scene_grid->>'width')::numeric between 10 and 100 and (scene_grid->>'depth')::numeric between 10 and 100
@@ -56,11 +70,11 @@ begin
    ) v
   ) q where px<q.x+q.w and px+sz>q.x and py<q.y+q.d and py+sz>q.y and pz<q.z+q.h and pz+1>q.z
    and not (q.terrain and q.h<=1 and q.z+q.h<=pz+1 and (sz>=3 or coalesce(obj->>'flying'='true',false)))
-   and not (on_stair and q.terrain and (px+sz/2.0<q.x or px+sz/2.0>=q.x+q.w or py+sz/2.0<q.y or py+sz/2.0>=q.y+q.d))
+   and not (on_landing and q.terrain and (px+sz/2.0<q.x or px+sz/2.0>=q.x+q.w or py+sz/2.0<q.y or py+sz/2.0>=q.y+q.d))
    and not (q.stairs and (px+sz/2.0<q.x or px+sz/2.0>=q.x+q.w or py+sz/2.0<q.y or py+sz/2.0>=q.y+q.d))
    and not (q.narrow and (case when q.w<q.d then px+sz/2.0<q.x or px+sz/2.0>=q.x+q.w else py+sz/2.0<q.y or py+sz/2.0>=q.y+q.d end))
  ) then return jsonb_build_object('error','That destination is occupied.'); end if;
- if pz>0 and coalesce(obj->>'flying','false')<>'true' and not on_stair and exists(
+ if pz>0 and coalesce(obj->>'flying','false')<>'true' and not on_landing and exists(
   select 1 from generate_series(px+.5,px+sz-.5,1) gx cross join generate_series(py+.5,py+sz-.5,1) gy
   where not exists(
    select 1 from jsonb_array_elements(st.scene->'tokens') t
@@ -94,7 +108,7 @@ CREATE OR REPLACE FUNCTION public.battlemap_scene_move(ticket uuid, requested_sc
  SECURITY DEFINER
  SET search_path TO ''
 AS $function$
-declare st battlemap_room.encounters%rowtype; player battlemap_room.players%rowtype; obj jsonb; idx integer; sz integer; on_stair boolean; scene_grid jsonb; map_width numeric:=40; map_depth numeric:=40;
+declare st battlemap_room.encounters%rowtype; player battlemap_room.players%rowtype; obj jsonb; idx integer; sz integer; on_stair boolean; on_landing boolean; scene_grid jsonb; map_width numeric:=40; map_depth numeric:=40;
 begin
  perform 1 from battlemap_room.scene_lifecycle where singleton for share;
  if requested_scene is null or battlemap_room.scene_viewer(ticket, requested_scene) is null then
@@ -125,6 +139,20 @@ begin
     and py+sz/2.0>=(t->>'y')::numeric
     and py+sz/2.0<(t->>'y')::numeric+case when coalesce((t->>'r')::int,0)%2=1 then coalesce((t->'extents'->>0)::numeric,2) else coalesce((t->'extents'->>1)::numeric,2) end
   );
+ on_landing:=on_stair or (coalesce(obj->>'flying','false')<>'true' and pz<>(obj->>'z')::numeric and abs(pz-(obj->>'z')::numeric)<=1 and (pz=0 or exists(
+   select 1 from jsonb_array_elements(st.scene->'pieces') t
+   join (values ('terrace',3,2,1),('stone',2,2,2),('pillar',1,1,3),('bridge',3,1,1),('crate',1,1,1),('fountain',1,1,1),('volume',2,2,1)) defaults(kind,w,d,h) on defaults.kind=t->>'type'
+   cross join lateral (select
+    case when defaults.kind='volume' then coalesce((t->'extents'->>0)::numeric,defaults.w) else defaults.w end w,
+    case when defaults.kind='volume' then coalesce((t->'extents'->>1)::numeric,defaults.d) else defaults.d end d,
+    case when defaults.kind='volume' then coalesce((t->'extents'->>2)::numeric,defaults.h) else defaults.h end h
+   ) v
+   where t->>'form' is null and pz=(t->>'z')::numeric+v.h
+    and px+sz/2.0>=(t->>'x')::numeric
+    and px+sz/2.0<(t->>'x')::numeric+case when coalesce((t->>'r')::int,0)%2=1 then v.d else v.w end
+    and py+sz/2.0>=(t->>'y')::numeric
+    and py+sz/2.0<(t->>'y')::numeric+case when coalesce((t->>'r')::int,0)%2=1 then v.w else v.d end
+  )));
  select a->'grid' into scene_grid from jsonb_array_elements(coalesce(st.scene->'areas','[]'::jsonb)) a where a->>'shape'='appearance' limit 1;
  if jsonb_typeof(scene_grid->'width')='number' and jsonb_typeof(scene_grid->'depth')='number' then
   if (scene_grid->>'width')::numeric between 10 and 100 and (scene_grid->>'depth')::numeric between 10 and 100
@@ -151,11 +179,11 @@ begin
    ) v
   ) q where px<q.x+q.w and px+sz>q.x and py<q.y+q.d and py+sz>q.y and pz<q.z+q.h and pz+1>q.z
    and not (q.terrain and q.h<=1 and q.z+q.h<=pz+1 and (sz>=3 or coalesce(obj->>'flying'='true',false)))
-   and not (on_stair and q.terrain and (px+sz/2.0<q.x or px+sz/2.0>=q.x+q.w or py+sz/2.0<q.y or py+sz/2.0>=q.y+q.d))
+   and not (on_landing and q.terrain and (px+sz/2.0<q.x or px+sz/2.0>=q.x+q.w or py+sz/2.0<q.y or py+sz/2.0>=q.y+q.d))
    and not (q.stairs and (px+sz/2.0<q.x or px+sz/2.0>=q.x+q.w or py+sz/2.0<q.y or py+sz/2.0>=q.y+q.d))
    and not (q.narrow and (case when q.w<q.d then px+sz/2.0<q.x or px+sz/2.0>=q.x+q.w else py+sz/2.0<q.y or py+sz/2.0>=q.y+q.d end))
  ) then return jsonb_build_object('error','That destination is occupied.'); end if;
- if pz>0 and coalesce(obj->>'flying','false')<>'true' and not on_stair and exists(
+ if pz>0 and coalesce(obj->>'flying','false')<>'true' and not on_landing and exists(
   select 1 from generate_series(px+.5,px+sz-.5,1) gx cross join generate_series(py+.5,py+sz-.5,1) gy
   where not exists(
    select 1 from jsonb_array_elements(st.scene->'tokens') t
