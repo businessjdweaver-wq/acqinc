@@ -59,7 +59,15 @@ const characters=[
  ['Vanish from Sight',2,6,'Stay in formation and evade half of incoming enemy attacks until the blue veil tile is matched or the effect expires.','corvin-vanish'],
  ['Echo of Terror',1,7,'Stun the frontline and plant a yellow countdown that stuns and renews on expiry.','corvin-echo']
  ]}
-];const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock','Whispers Bard'];characters.forEach((c,i)=>{c.rosterTitle=i===13?'Shroomkeeper':cardTitles[i];c.cardTitle=cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
+];
+if(typeof location!=='undefined'&&(location.pathname.endsWith('/two-star-sandbox.html')||new URLSearchParams(location.search).get('sandbox')==='1')){
+ characters.push({name:'Merrix Duran · Wild Magic Sorcerer',rosterTitle:'Wild Magic Sorcerer',cardTitle:'Wild Magic Sorcerer',icon:'💎',background:'Sage',starTier:2,max:98,powers:[
+ ['Wild Magic Surge',2,7,'Roll one of six visible magical outcomes; Bend Probability can influence the next roll.','merrix-surge'],
+ ['Overchannel',0,7,'Deal reliable damage to the frontline enemy, then roll for a secondary magical effect.','merrix-overchannel'],
+ ['Bend Probability',3,5,'Reroll the next Wild Magic result, or roll multiple results and choose at higher mastery.','merrix-bend']
+ ]});
+}
+const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock','Whispers Bard'];characters.forEach((c,i)=>{c.rosterTitle=c.rosterTitle||(i===13?'Shroomkeeper':cardTitles[i]);c.cardTitle=c.cardTitle||cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
 const characterLevelProgress=(archetype,level)=>{const base=Number(archetype)>=6?100:1;const cap=base+99;return Math.max(0,Math.min(99,Math.floor(Number(level)||base)-base));};
 // Rank sets the baseline; card mastery and character progression are independent.
 const characterDamageMultiplier=(archetype,level)=>1+characterLevelProgress(archetype,level)*(Number(archetype)>=6?0.005:0.002);
