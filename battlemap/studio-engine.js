@@ -3684,7 +3684,7 @@ function drawSceneGround(config,flat=false,floorImage=null){
  if(config.ground==='image'){
   const image=config.groundImage&&getArt(config.groundImage);
   if(!image?.naturalWidth)return false;
-  polygon(quad,'#e2d4b5',null);
+  if(!floorImage)polygon(quad,'#e2d4b5',null);
   if(floorImage){
    // A calibrated VTT grid must never crop the stationary floor image.
    // Use the image's own fixed-world polygon as its clipping region.
@@ -4283,6 +4283,7 @@ function clipFloorGridCell(poly,axis,limit,keepGreater){
  }
  return out;
 }
+function calibrationForGround(){return activeGridCalibration()}
 function drawVisibleGround(){
  // Keep the physical battlefield fixed when calibrating the VTT grid.
  const width=gridLimit(0),depth=gridLimit(1);
@@ -4290,6 +4291,16 @@ function drawVisibleGround(){
  const offsetX=Number(physicalGrid.floorOriginX)||0,offsetY=Number(physicalGrid.floorOriginY)||0;
  const maxX=offsetX+width,maxY=offsetY+depth;
  const rawCorners=[rawInverse(-2,-2,0),rawInverse(W+2,-2,0),rawInverse(W+2,H+2,0),rawInverse(-2,H+2,0)];
+ // A calibrated imported map defines the visible grid footprint.
+ // Do not render a separate battlefield-sized grid beyond its edges.
+ const floorSettings=areas.find(a=>a.shape==='appearance')?.appearance?.floorImage;
+ const hasImage=!!(calibrationForGround()&&floorSettings&&areas.find(a=>a.shape==='appearance')?.appearance?.ground==='image');
+ const imagePolygon=hasImage?(()=>{
+  const a=(Number(floorSettings.rotation)||0)*Math.PI/180,c=Math.cos(a),si=Math.sin(a);
+  const x=Number(floorSettings.x)||0,y=Number(floorSettings.y)||0;
+  const w=Number(floorSettings.width)||0,d=Number(floorSettings.depth)||0;
+  return [[-.5,-.5],[.5,-.5],[.5,.5],[-.5,.5]].map(([u,v])=>[(x+u*w*c-v*d*si)/5,(y+u*w*si+v*d*c)/5]);
+ })():null;
  const fixedFloor=()=>face([[offsetX,offsetY,0],[maxX,offsetY,0],[maxX,maxY,0],[offsetX,maxY,0]].map(([x,y,z])=>[...worldToGrid(x,y),z]),'#e2d4b5',null,0,false);
  if(floorSceneEditing){fixedFloor();return}
  const calibration=activeGridCalibration();
@@ -4317,6 +4328,21 @@ function drawVisibleGround(){
   poly=clip(poly,0,maxX,false);if(poly.length<3)continue;
   poly=clip(poly,1,offsetY,true);if(poly.length<3)continue;
   poly=clip(poly,1,maxY,false);if(poly.length<3)continue;
+  if(imagePolygon){
+   const orientation=Math.sign(imagePolygon.reduce((sum,p,i)=>{const q=imagePolygon[(i+1)%imagePolygon.length];return sum+p[0]*q[1]-q[0]*p[1]},0))||1;
+   for(let i=0;i<imagePolygon.length&&poly.length>=3;i++){
+    const a=imagePolygon[i],b=imagePolygon[(i+1)%imagePolygon.length];
+    const side=p=>orientation*((b[0]-a[0])*(p[1]-a[1])-(b[1]-a[1])*(p[0]-a[0]));
+    const result=[];
+    for(let j=0;j<poly.length;j++){
+     const p=poly[j],q=poly[(j+1)%poly.length],sp=side(p),sq=side(q),insideP=sp>=-1e-8,insideQ=sq>=-1e-8;
+     if(insideP)result.push(p);
+     if(insideP!==insideQ){const t=sp/(sp-sq);result.push([p[0]+t*(q[0]-p[0]),p[1]+t*(q[1]-p[1])])}
+    }
+    poly=result;
+   }
+   if(poly.length<3)continue;
+  }
   face(poly.map(([wx,wy])=>[...worldToGrid(wx,wy),0]),'#e2d4b5',null,0,false);
  }
 }
