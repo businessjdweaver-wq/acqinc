@@ -3204,10 +3204,10 @@ function handleWallPointerMove(event){
 function finishWallDrag(event,cancel=false){
  if(!wallDrag||event.pointerId!==wallDrag.pointer)return;
  event.stopImmediatePropagation();
- const {wall,draft,trace}=wallDrag,moved=!!wallPreview;
+ const {wall,draft,trace,traceMove,original}=wallDrag,moved=!!wallPreview;
  wallDrag=null;wallPreview=null;
  if(cancel&&trace)wallTool.nodes.pop();
- if(cancel&&Number.isInteger(wallDrag?.traceMove)&&wallTool?.nodes[wallDrag.traceMove])wallTool.nodes[wallDrag.traceMove]=wallDrag.original;
+ if(cancel&&Number.isInteger(traceMove)&&wallTool?.nodes[traceMove])wallTool.nodes[traceMove]=original;
  if(!cancel&&moved)updateSceneWallPaths(sceneWallPaths().map(w=>w===wall?draft:w));
  else draw();
 }
