@@ -2629,10 +2629,14 @@ const wallDistance=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
 const wallLerp=(a,b,t)=>a.map((value,i)=>value+(b[i]-value)*t);
 function flattenWallPath(wall){
  const points=[wall.nodes[0].p];
+ // World-space tessellation: preserve tight bends on thin walls while
+ // avoiding dozens of nearly coplanar prisms on broad, smooth arcs.
+ const curveTolerance=Math.max(.045,Math.min(.12,wall.thickness*.18));
  function cubic(a,b,c,d,depth){
-  // The control polygon also catches collinear curves that double back.
-  if(depth>=8||wallDistance(a,b)+wallDistance(b,c)+wallDistance(c,d)-wallDistance(a,d)<.0005&&
-     Math.max(wallDistance(b,wallLerp(a,d,1/3)),wallDistance(c,wallLerp(a,d,2/3)))<.04){
+  // Bound both deviation and excess control-polygon length. The latter
+  // catches collinear control handles that double back on themselves.
+  if(depth>=8||(wallDistance(a,b)+wallDistance(b,c)+wallDistance(c,d)-wallDistance(a,d)<curveTolerance*.12&&
+     Math.max(wallDistance(b,wallLerp(a,d,1/3)),wallDistance(c,wallLerp(a,d,2/3)))<curveTolerance)){
    if(wallDistance(points.at(-1),d)>1e-5)points.push(d);
    return;
   }
