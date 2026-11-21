@@ -1038,28 +1038,18 @@ async function startRoomScene(operation,scene,{requireShared=false}={}){
   if(roomPollTask)await roomPollTask;
   let initial_scene=null;
   if(operation==='open'||operation==='activate'){
-   const state=await roomRpc('sync',{ticket:roomProfile.token,requested_scene:scene.id,since_event:-1});
-   // Opening an inactive scene must create/join its shared encounter,
-   // not load an isolated saved-catalog copy. This does not activate it.
-   if(operation==='open'&&!state.active){
-    const previous={pieces,tokens,areas};
-    try{
-     ({pieces,tokens,areas}=structuredClone(scene.map));
-     initial_scene=roomSnapshot();
-    }finally{({pieces,tokens,areas}=previous)}
-   }
-   if(!state.active){
-    const previous={pieces,tokens,areas};
-    try{
-     ({pieces,tokens,areas}=structuredClone(scene.map));
-     initial_scene=roomSnapshot();
-    }finally{({pieces,tokens,areas}=previous)}
-   }
+   // scene_sync can return a saved-catalog preview with active=true even
+   // when no encounter row exists. Always provide the saved snapshot and
+   // invoke scene_manage: it creates a missing encounter and preserves an
+   // existing encounter (including live player edits) without replacing it.
+   const previous={pieces,tokens,areas};
+   try{
+    ({pieces,tokens,areas}=structuredClone(scene.map));
+    initial_scene=roomSnapshot();
+   }finally{({pieces,tokens,areas}=previous)}
   }
-  if(operation!=='open'||initial_scene){
-   if(initial_scene)await inheritStandeeOwners(initial_scene.tokens);
-   await roomRpc('manage',{ticket:roomProfile.token,requested_scene:scene.id,operation,initial_scene});
-  }
+  if(initial_scene)await inheritStandeeOwners(initial_scene.tokens);
+  await roomRpc('manage',{ticket:roomProfile.token,requested_scene:scene.id,operation,initial_scene});
   if(operation==='open'||operation==='activate'){
    // Finish any poll for the previous scene before attaching the new one.
    if(roomPollTask)await roomPollTask;
