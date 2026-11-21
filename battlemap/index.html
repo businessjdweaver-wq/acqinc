@@ -4547,6 +4547,9 @@ el('sceneAppearanceForm').onsubmit=e=>{
  stopFloorSceneEditing();
  const appearance={...appearanceDraft,ground,backdrop,terrainTheme:el('sceneTerrainTheme').value,seed:Number(el('groundSeed').value)||0};
  appearance.gridDisplay={visible:el('sceneGridVisible').checked,color:el('sceneGridColor').value,opacity:Number(el('sceneGridOpacity').value),printedFeet:Number(el('floorPrintedFeet').value)};
+ // A printed 10-foot square corresponds to a 2-by-2 subdivision of 5-foot movement cells.
+ // The movement grid remains 5 feet; the selected scale is scene metadata and
+ // is used when calibrating a printed map rather than resizing tokens.
  appearance.terrainShape=readSceneTerrainControls();
  appearance.skyColors=Array.from({length:Number(el('skyStopCount').value)},(_,i)=>el('skyColor'+(i+1)).value);
  appearance.overlay=el('skyOverlay').value;
@@ -4561,7 +4564,8 @@ el('sceneAppearanceForm').onsubmit=e=>{
  if(appliedFloorGrid)setSceneGrid(areas,appliedFloorGrid);
  if(appliedCalibration!==undefined){const record=areas.find(a=>a.shape==='appearance');if(appliedCalibration)record.gridCalibration={...appliedCalibration};else delete record.gridCalibration}
  movementRenderCache=null;
- el('sceneAppearanceDialog').close();refresh('Scene appearance applied');
+ invalidatePaintCache();
+ el('sceneAppearanceDialog').close();appearanceDraft=null;refresh('Scene appearance applied');
 };
 function drawVisibleGround(){
  const corners=[inverse(-2,-2,0),inverse(W+2,-2,0),inverse(W+2,H+2,0),inverse(-2,H+2,0)];
@@ -4575,10 +4579,11 @@ function drawVisibleGround(){
  }else for(let x=left;x<right;x++)for(let y=back;y<front;y++)top(x,y,0,'#e2d4b5',null,false);
 }
 function savedGridDisplay(){return areas.find(a=>a.shape==='appearance')?.appearance?.gridDisplay||{}}
-function gridDisplayValue(){return appearanceDraft?.gridDisplay||savedGridDisplay()}
+function gridDisplayValue(){return appearancePanel?.open&&appearanceDraft?.gridDisplay?appearanceDraft.gridDisplay:savedGridDisplay()}
 function gridVisible(){return gridDisplayValue().visible!==false}
 function gridColor(){return gridDisplayValue().color||'#70faff'}
 function gridOpacity(){return Math.max(0,Math.min(1,(gridDisplayValue().opacity??65)/100))}
+function gridStrokeColor(){return gridColor()+Math.round(gridOpacity()*255).toString(16).padStart(2,'0')}
 function drawLowAngleGrid(painted){
  polygon([[0,0],[gridLimit(0),0],[gridLimit(0),gridLimit(1)],[0,gridLimit(1)]].map(([x,y])=>point(x,y,0)),painted?'#0000':'#e2d4b5',gridVisible()?gridColor()+Math.round(gridOpacity()*255).toString(16).padStart(2,'0'):null);
  ctx.beginPath();
@@ -5763,7 +5768,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(paintFocusCutaway(f))continue;
   if(!f.p){
    ctx.globalAlpha=1;
-   if(!lowGrid)polygon(f.projected,paintedGround?'#0000':f.fill,'#5e4d3a47');
+   if(!lowGrid)polygon(f.projected,paintedGround?'#0000':f.fill,gridVisible()&&gridOpacity()>0?gridStrokeColor():null);
    if(!fog&&interiorVision&&f.world){
     const [x,y]=f.world[0],target=[x+.5,y+.5,0];
     if(interiorVision.rooms.some(a=>a.origin[2]===0&&target[0]>=a.origin[0]&&target[0]<a.origin[0]+a.size&&target[1]>=a.origin[1]&&target[1]<a.origin[1]+a.depth)&&!interiorVision.visible(target)){
@@ -5799,7 +5804,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(f.doorFace||f.fixtureFace){polygon(f.projected,f.fill,f.spellBubble?f.p.tint+'88':'#452c1c');if(f.doorFace&&!f.windowPane){if(!simplified&&f.doorDetailReverse!==undefined&&f.p.details)paintDoorDetails(f);shadeTerrain(f);}continue;}
   if(f.preview&&f.standee&&useStandeeLayer)continue;
   if(f.shadow||f.standee){paintBattlefieldStandee(f,showLighting,lightBlockers);continue}
-  const outline=(f.p&&(f.p===selected||group.has(f.p)))?'#9a511e':!f.p?'#5e4d3a47':f.z===null?'#4837255c':'#5847359c';
+  const outline=(f.p&&(f.p===selected||group.has(f.p)))?'#9a511e':!f.p?(gridVisible()&&gridOpacity()>0?gridStrokeColor():null):f.z===null?'#4837255c':'#5847359c';
   if(f.sceneryArt){
    if(lightOrbit||!showTerrainTextures){polygon(f.projected,f.fill||'#746853',null);shadeTerrain(f);continue}
    const art=getArt(f.sceneryArt);if(art.naturalWidth)mapImage(art,f.projected);
