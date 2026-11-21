@@ -4331,9 +4331,20 @@ function drawVisibleGround(){
  const hasImage=!!(calibrationForGround()&&floorSettings&&areas.find(a=>a.shape==='appearance')?.appearance?.ground==='image');
  const imagePolygon=hasImage?(()=>{
   const a=(Number(floorSettings.rotation)||0)*Math.PI/180,c=Math.cos(a),si=Math.sin(a);
-  const x=Number(floorSettings.x)||0,y=Number(floorSettings.y)||0;
-  const w=Number(floorSettings.width)||0,d=Number(floorSettings.depth)||0;
-  return [[-.5,-.5],[.5,-.5],[.5,.5],[-.5,.5]].map(([u,v])=>[(x+u*w*c-v*d*si)/5,(y+u*w*si+v*d*c)/5]);
+  const x=(Number(floorSettings.x)||0)/5,y=(Number(floorSettings.y)||0)/5;
+  const w=(Number(floorSettings.width)||0)/5,d=(Number(floorSettings.depth)||0)/5;
+  // The image's crop is in normalized source-image coordinates. Its visible
+  // footprint, not the old rectangular battlefield, bounds the VTT grid.
+  const crop=validFloorCrop(floorSettings.crop)?floorSettings.crop:null;
+  const points=crop?crop.flatMap(segment=>segment):[];
+  const loU=points.length?Math.max(0,Math.min(...points.map(p=>p[0]))):0;
+  const hiU=points.length?Math.min(1,Math.max(...points.map(p=>p[0]))):1;
+  const loV=points.length?Math.max(0,Math.min(...points.map(p=>p[1]))):0;
+  const hiV=points.length?Math.min(1,Math.max(...points.map(p=>p[1]))):1;
+  return [[loU,loV],[hiU,loV],[hiU,hiV],[loU,hiV]].map(([u,v])=>{
+   const px=(u-.5)*w,py=(v-.5)*d;
+   return [x+px*c-py*si,y+px*si+py*c];
+  });
  })():null;
  const fixedFloor=()=>face([[offsetX,offsetY,0],[maxX,offsetY,0],[maxX,maxY,0],[offsetX,maxY,0]].map(([x,y,z])=>[...worldToGrid(x,y),z]),'#e2d4b5',null,0,false);
  if(floorSceneEditing){fixedFloor();return}
@@ -4344,7 +4355,7 @@ function drawVisibleGround(){
   for(let x=loX;x<hiX;x++)for(let y=loY;y<hiY;y++)top(x,y,0,'#e2d4b5',null,false);
   return;
  }
- const corners=rawCorners.map(([x,y])=>worldToGrid(x,y));
+ const corners=(imagePolygon||rawCorners).map(([x,y])=>worldToGrid(x,y));
  const left=Math.floor(Math.min(...corners.map(p=>p[0])))-1,right=Math.ceil(Math.max(...corners.map(p=>p[0])))+1;
  const back=Math.floor(Math.min(...corners.map(p=>p[1])))-1,front=Math.ceil(Math.max(...corners.map(p=>p[1])))+1;
  const clip=(poly,axis,limit,greater)=>{
@@ -4358,10 +4369,14 @@ function drawVisibleGround(){
  };
  for(let x=left;x<right;x++)for(let y=back;y<front;y++){
   let poly=[[x,y],[x+1,y],[x+1,y+1],[x,y+1]].map(([gx,gy])=>gridToWorld(gx,gy));
-  poly=clip(poly,0,offsetX,true);if(poly.length<3)continue;
-  poly=clip(poly,0,maxX,false);if(poly.length<3)continue;
-  poly=clip(poly,1,offsetY,true);if(poly.length<3)continue;
-  poly=clip(poly,1,maxY,false);if(poly.length<3)continue;
+  // The saved nine-point calibration and imported map define this footprint.
+  // Retain legacy battlefield clipping only for scenes without a map image.
+  if(!imagePolygon){
+   poly=clip(poly,0,offsetX,true);if(poly.length<3)continue;
+   poly=clip(poly,0,maxX,false);if(poly.length<3)continue;
+   poly=clip(poly,1,offsetY,true);if(poly.length<3)continue;
+   poly=clip(poly,1,maxY,false);if(poly.length<3)continue;
+  }
   if(imagePolygon){
    const orientation=Math.sign(imagePolygon.reduce((sum,p,i)=>{const q=imagePolygon[(i+1)%imagePolygon.length];return sum+p[0]*q[1]-q[0]*p[1]},0))||1;
    for(let i=0;i<imagePolygon.length&&poly.length>=3;i++){
