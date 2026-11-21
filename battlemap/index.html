@@ -485,6 +485,7 @@ function sceneGrid(sceneAreas=areas){
  return validSceneGrid(grid)?grid:defaultGrid;
 }
 function gridLimit(axis){const grid=floorSceneEditing&&floorSceneGridDraft?floorSceneGridDraft:sceneGrid();return axis===0?grid.width:grid.depth}
+function gridProjectionCenter(axis){const grid=sceneGrid();const original=grid.projectionBase;return original&&Number.isFinite(original[axis])?original[axis]/2:gridLimit(axis)/2}
 function setSceneGrid(sceneAreas,grid){
  let appearance=sceneAreas.find(a=>a.shape==='appearance');
  if(!appearance){appearance={shape:'appearance',origin:[0,0,0],angle:0,size:1,appearance:{}};sceneAreas.push(appearance)}
@@ -628,7 +629,7 @@ function worldToGrid(x,y){
  return [(dx*c.yy-dy*c.yx)/det,(dy*c.xx-dx*c.xy)/det];
 }
 function rawPoint(x,y,z){
- x-=gridLimit(0)/2;y-=gridLimit(1)/2;
+ x-=gridProjectionCenter(0);y-=gridProjectionCenter(1);
  if(topDown)return [W/2+panX+S*x,H*.55+panY+S*y,z];
  const forward=x*D+y*C;
  return [W/2+panX+S*(x*C-y*D),H*.55+panY+S*(forward*Math.sin(tilt)-z*Math.cos(tilt)),forward*Math.cos(tilt)+z*Math.sin(tilt)];
@@ -4558,11 +4559,31 @@ el('sceneAppearanceForm').onsubmit=e=>{
  appearance.tone=Number(el('skyTone').value);
  if(el('customOutsideColor').checked)appearance.outsideColor=el('outsideColor').value;else delete appearance.outsideColor;
  const existing=areas.find(a=>a.shape==='appearance');
+ const previousPrintedFeet=existing?.appearance?.gridDisplay?.printedFeet===10?10:5;
+ const requestedPrintedFeet=appearance.gridDisplay.printedFeet;
+ // Convert the logical VTT resolution while retaining the printed image's
+ // world-space footprint and the camera's original projection center.
+ // Each new logical square still represents 5 feet for movement and measuring.
+ if(previousPrintedFeet!==requestedPrintedFeet){
+  const factor=requestedPrintedFeet/previousPrintedFeet;
+  const oldGrid=sceneGrid(),base=oldGrid.projectionBase||{width:oldGrid.width,depth:oldGrid.depth};
+  const nextWidth=Math.round(oldGrid.width*factor),nextDepth=Math.round(oldGrid.depth*factor);
+  if(nextWidth>100||nextDepth>100||nextWidth<10||nextDepth<10){
+   el('sceneAppearanceStatus').textContent='Cannot subdivide: resulting grid must be between 10 and 100 cells per axis. Resize the battlefield first.';return;
+  }
+  const oldCalibration=existing?.gridCalibration;
+  const calibrated=oldCalibration?{...oldCalibration}: {ox:0,oy:0,xx:1,xy:0,yx:0,yy:1};
+  for(const key of ['xx','xy','yx','yy'])calibrated[key]/=factor;
+  setSceneGrid(areas,{...oldGrid,width:nextWidth,depth:nextDepth,projectionBase:base});
+  const gridRecord=areas.find(a=>a.shape==='appearance');gridRecord.gridCalibration=calibrated;
+  // Existing objects are deliberately not migrated; the new grid applies
+  // immediately to standee placement and all measurement destinations.
+ }
  convertBiomeColumns(existing?.appearance,appearance);
  if(existing)existing.appearance=appearance;
  else areas.push({shape:'appearance',size:1,angle:0,origin:[0,0,0],appearance});
- if(appliedFloorGrid)setSceneGrid(areas,appliedFloorGrid);
- if(appliedCalibration!==undefined){const record=areas.find(a=>a.shape==='appearance');if(appliedCalibration)record.gridCalibration={...appliedCalibration};else delete record.gridCalibration}
+ if(appliedFloorGrid&&previousPrintedFeet===requestedPrintedFeet)setSceneGrid(areas,appliedFloorGrid);
+ if(appliedCalibration!==undefined&&previousPrintedFeet===requestedPrintedFeet){const record=areas.find(a=>a.shape==='appearance');if(appliedCalibration)record.gridCalibration={...appliedCalibration};else delete record.gridCalibration}
  movementRenderCache=null;
  movementRenderCache=null;
  el('sceneAppearanceDialog').close();appearanceDraft=null;refresh('Scene appearance applied');
