@@ -4158,7 +4158,7 @@ el('sceneAppearanceForm').onsubmit=e=>{
   const oldGrid=sceneGrid(),base=oldGrid.projectionBase||{width:oldGrid.width,depth:oldGrid.depth};
   const nextWidth=Math.round(oldGrid.width*factor),nextDepth=Math.round(oldGrid.depth*factor);
   if(nextWidth>100||nextDepth>100||nextWidth<10||nextDepth<10){
-   el('sceneAppearanceStatus').textContent='Cannot subdivide: resulting grid must be between 10 and 100 cells per axis. Resize the battlefield first.';return;
+   el('appearanceStatus').textContent='Cannot subdivide: resulting grid must be between 10 and 100 cells per axis. Resize the battlefield first.';return;
   }
   const oldCalibration=existing?.gridCalibration;
   const calibrated=oldCalibration?{...oldCalibration}: {ox:0,oy:0,xx:1,xy:0,yx:0,yy:1};
