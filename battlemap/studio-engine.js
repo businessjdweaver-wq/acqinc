@@ -5421,7 +5421,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  if(performanceDraw){performanceDraw.paintBreakdown={};performanceDraw.collectPaintBreakdown=true}
  let reachedFaces=false;
  const fog=mapFogEnabled();
- const lowGrid=gridVisible()&&!fog&&!topDown&&tilt<=.16;
+ const lowGrid=gridVisible()&&!activeGridCalibration()&&!fog&&!topDown&&tilt<=.16; // Calibrated scenes draw their grid on the fixed floor; never draw a detached low-angle grid.
  const sceneStyle=areas.find(a=>a.shape==='appearance');
  const theme=Object.hasOwn(terrainThemes,appearance?.terrainTheme)?terrainThemes[appearance.terrainTheme]:null;
  if(cached?.painted){
