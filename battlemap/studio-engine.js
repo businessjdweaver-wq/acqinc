@@ -4742,6 +4742,36 @@ function terrainFogPatches(face){
  }
  return patches;
 }
+// Refine only mixed-visibility floor patches. The base fog tiles and their
+// remembered history remain unchanged; children inherit exploration history.
+function refinedFogBoundaryPatches(patch){
+ if(!topDown||patch.world.length!==4)return [patch];
+ const result=[],maxDepth=2;
+ const visit=(part,depth,parentSeen)=>{
+  const center=fogFaceCenter(part.world);
+  const points=[center,...part.world.map(vertex=>vertex.map((v,i)=>v*.92+center[i]*.08))];
+  const samples=points.map(p=>fogPointVisible(surfaceLightPoint(p,part.surfaceLightOffset)));
+  const mixed=samples.some(Boolean)&&samples.some(v=>!v);
+  if(!mixed||depth>=maxDepth){
+   // At the final resolution use the center, not an any-corner test that
+   // paints the entire square visible across the circular sight boundary.
+   part.visible=depth?samples[0]:samples.some(Boolean);
+   if(parentSeen&&!fogMemoryState?.seen.has(part.memoryKey))
+    fogMemoryState?.seen.add(part.memoryKey);
+   result.push(part);return;
+  }
+  const [a,b,c,d]=part.world;
+  const midpoint=(p,q)=>p.map((v,i)=>(v+q[i])/2);
+  const ab=midpoint(a,b),bc=midpoint(b,c),cd=midpoint(c,d),da=midpoint(d,a);
+  const quads=[[a,ab,center,da],[ab,b,bc,center],[center,bc,c,cd],[da,center,cd,d]];
+  for(const world of quads)visit({
+   world,surfaceLightOffset:part.surfaceLightOffset,wholeFace:false,
+   memoryKey:'face:'+JSON.stringify(world)
+  },depth+1,parentSeen);
+ };
+ visit(patch,0,!!fogMemoryState?.seen.has(patch.memoryKey));
+ return result;
+}
 function terrainFogPatchVisible(patch){
  if(patch.visible===undefined){
   const center=fogFaceCenter(patch.world);
@@ -5492,7 +5522,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   const forceTerrainVisible=()=>forceVisible??=(f.doorFace&&f.p?.kind==='Door'&&fogOpeningVisible(f.p))||
    (f.volumeTop&&playerCameraCutaway?.stairs.has(f.p))||false;
   const visible=[];
-  for(const patch of terrainFogPatches(f)){
+  for(const basePatch of terrainFogPatches(f))for(const patch of (f.p||!topDown?[basePatch]:refinedFogBoundaryPatches(basePatch))){
    const rememberTerrain=fogMemoryState&&!f.fixtureFace&&!f.preview;
    const paintKey=rememberTerrain?patch.memoryKey+'|'+(patch.surfaceLightOffset?.join(',')??''):null;
    const saved=paintKey&&fogMemoryState.shading.get(paintKey);
