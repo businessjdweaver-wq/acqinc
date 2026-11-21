@@ -3492,6 +3492,10 @@ function initializeWallPaths(){
    '<label>Image opacity <input id="wallPlanOpacity" type="range" min="0" max="100" value="100"></label></div></div>'+pane('walls')+'<div class="wall-path-actions">'+
    '<button id="wallTrace" type="button">Trace wall</button><button id="wallFinish" type="button">Finish wall</button>'+
    '<button id="wallEdit" type="button">Edit points</button></div>'+
+   '<div class="wall-path-actions" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">'+
+   '<button id="wallCopyStyle" type="button">Copy wall style</button>'+
+   '<button id="wallPaintSelected" type="button">Paint selected walls</button>'+
+   '<button id="wallPaintAll" type="button">Paint all walls</button></div>'+
    '<label>Walls <select id="wallPathList" multiple size="4"></select></label>'+
    '<p>Shift-click walls on the map to select several. Alt bypasses snapping.</p><div id="wallTraceShortcutGuide" style="padding:8px 10px;margin:8px 0;border:1px solid #70e8ff66;border-radius:6px;background:#142c35;color:#e8f8fa;font-size:12px;line-height:1.65"><strong>Wall tracing · Key + click reference</strong><div>Click — add point / drag for curve</div><div>Alt + click — place without snapping</div><div>Command + drag point — move unfinished point</div><div>Control + click point — delete unfinished point</div><div>Control + Alt + click — finish current path and begin a separate wall</div><div>Esc / Delete — undo last point (repeat to backtrack)</div><div>Enter — finish current wall</div><div>Finish wall / Done — save or exit deliberately</div></div>'+
    '<form id="wallProperties"><div class="wall-path-fields">'+wallNodeFields(wallPropertyFields,'wp-')+'</div>'+
@@ -3567,6 +3571,24 @@ function initializeWallPaths(){
   wallOpeningIndex=-1;setWallTool('edit');
  };
  el('wallOpeningList').onchange=()=>{wallOpeningIndex=el('wallOpeningList').selectedIndex;updateWallList();draw()};
+ let copiedWallStyle=null;
+ const wallStyleKeys=['height','thickness','z','color','texture','opacity','light','sight','blocks'];
+ el('wallCopyStyle').onclick=()=>{
+  const source=sceneWallPaths().find(w=>wallSelection.has(w.id));
+  if(!source){wallStatus('Select a wall to copy its style.');return}
+  copiedWallStyle=Object.fromEntries(wallStyleKeys.map(key=>[key,structuredClone(source[key])]));
+  wallStatus('Copied wall style. Select target walls, or choose Paint all walls.');
+ };
+ function paintWallStyle(all){
+  if(!copiedWallStyle){wallStatus('Copy a wall style first.');return}
+  const targets=sceneWallPaths().filter(w=>all||wallSelection.has(w.id));
+  if(!targets.length){wallStatus('Select one or more target walls first.');return}
+  if(all&&!confirm('Apply copied wall style to all '+targets.length+' walls? Wall shapes, doors and windows will remain unchanged.'))return;
+  const next=sceneWallPaths().map(w=>(all||wallSelection.has(w.id))?{...w,...copiedWallStyle}:w);
+  if(updateSceneWallPaths(next))wallStatus('Applied copied style to '+targets.length+' wall'+(targets.length===1?'':'s')+'. Openings and wall paths preserved.');
+ }
+ el('wallPaintSelected').onclick=()=>paintWallStyle(false);
+ el('wallPaintAll').onclick=()=>paintWallStyle(true);
  el('wallProperties').onsubmit=event=>{
   event.preventDefault();
   const selected=sceneWallPaths().find(w=>wallSelection.has(w.id));
