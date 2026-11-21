@@ -206,8 +206,13 @@ function rawPoint(x,y,z){
  const forward=x*D+y*C;
  return [W/2+panX+S*(x*C-y*D),H*.55+panY+S*(forward*Math.sin(tilt)-z*Math.cos(tilt)),forward*Math.cos(tilt)+z*Math.sin(tilt)];
 }
+function calibratedVerticalScale(){
+ const c=activeGridCalibration();
+ return c?Math.hypot(c.xx,c.xy):1;
+}
 function point(x,y,z){
  [x,y]=gridToWorld(x,y);
+ z*=calibratedVerticalScale();
  x-=gridProjectionCenter(0);y-=gridProjectionCenter(1);
  if(topDown)return [W/2+panX+S*x,H*.55+panY+S*y,z];
  const forward=x*D+y*C;
@@ -218,7 +223,7 @@ function rawInverse(x,y,z){
  const a=(x-W/2-panX)/S,b=((y-H*.55-panY)/S+z*Math.cos(tilt))/Math.sin(tilt);
  return [a*C+b*D+gridProjectionCenter(0),-a*D+b*C+gridProjectionCenter(1)];
 }
-function inverse(x,y,z){return worldToGrid(...rawInverse(x,y,z))}
+function inverse(x,y,z){return worldToGrid(...rawInverse(x,y,z*calibratedVerticalScale()))}
 function measurePaint(kind,work){
  const profile=performanceDraw?.collectPaintBreakdown&&performanceDraw.paintBreakdown;
  if(!profile)return work();
