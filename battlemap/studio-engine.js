@@ -3020,6 +3020,27 @@ function wallSnappedPoint(p,event,ignore=null){
  const wall=nearestWall(p,ignore);
  return wall?.distance<.23?sampleWall(wall.path,wall.at*wall.path.length):p.map(n=>Math.round(n*4)/4);
 }
+function wallTraceUndo(){
+ if(!wallTool||wallTool.mode!=='trace')return;
+ if(wallDrag?.trace){wallDrag=null;wallPreview=null}
+ if(wallTool.nodes.length){wallTool.nodes.pop();wallStatus('Last point removed. '+wallTool.nodes.length+' points remain.');draw('Undo last wall point')}
+ else wallStatus('No points to undo. Trace mode remains active.');
+}
+function wallTraceNearestNode(p){
+ const nodes=wallTool?.nodes||[];let index=-1,distance=Math.max(.15,13/S);
+ nodes.forEach((node,i)=>{const d=wallDistance(node.p,p);if(d<distance){distance=d;index=i}});
+ return index;
+}
+function wallTraceStartSeparate(){
+ if(wallTool?.mode!=='trace')return false;
+ if(wallTool.nodes.length>=2){
+  finishWallPath(false);
+  if(wallTool?.mode!=='trace')setWallTool('trace');
+ }else wallTool.nodes=[];
+ wallStatus('New independent wall segment. Click to place its first point.');
+ draw('Start independent wall segment');
+ return true;
+}
 function finishWallPath(closed){
  const nodes=wallTool.nodes;
  if(nodes.length<(closed?3:2)){wallStatus('Add more points to finish this wall.');return}
@@ -3110,7 +3131,24 @@ function handleWallPointerDown(event){
  if(mode==='room'){selectWallRoom(p);return}
  if(mode==='Door'||mode==='Window'){addWallOpening(nearestWall(p),mode);return}
  if(mode==='trace'){
+  // Ctrl+Alt starts a separate wall without connecting to the prior path.
+  if(event.ctrlKey&&event.altKey){wallTraceStartSeparate();return}
   const nodes=wallTool.nodes;
+  // Ctrl+click removes a specific unfinished node; Command+drag moves one.
+  if(event.ctrlKey&&!event.metaKey){
+   const index=wallTraceNearestNode(p);
+   if(index>=0){nodes.splice(index,1);wallStatus('Removed point '+(index+1)+'.');draw('Delete wall trace point')}
+   else wallStatus('Ctrl-click a visible trace point to delete it.');
+   return;
+  }
+  if(event.metaKey){
+   const index=wallTraceNearestNode(p);
+   if(index>=0){
+    wallDrag={pointer:event.pointerId,origin:p,traceMove:index,original:structuredClone(nodes[index])};
+    canvas.setPointerCapture(event.pointerId);draw();return;
+   }
+   wallStatus('Command-drag an existing trace point to reposition it.');return;
+  }
   if(nodes.length>=3&&wallDistance(p,nodes[0].p)<Math.max(.12,9/S)){finishWallPath(true);return}
   const snapped=wallSnappedPoint(p,event);
   if(nodes.length&&wallDistance(nodes.at(-1).p,snapped)<1e-4)return;
@@ -3145,7 +3183,10 @@ function handleWallPointerMove(event){
  if(event.pointerId!==wallDrag.pointer)return;
  event.stopImmediatePropagation();
  const p=wallMapPoint(event);
- if(wallDrag.trace){
+ if(Number.isInteger(wallDrag.traceMove)){
+  const node=wallTool.nodes[wallDrag.traceMove],original=wallDrag.original;
+  if(node){const snapped=wallSnappedPoint(p,event);node.p=snapped;for(const key of ['in','out'])if(original[key])node[key]=original[key].map((v,i)=>v+snapped[i]-original.p[i]);}
+ }else if(wallDrag.trace){
   const node=wallTool.nodes.at(-1);
   if(wallDistance(p,wallDrag.origin)<.08)return;
   const delta=p.map((n,i)=>n-wallDrag.origin[i]);
@@ -3166,6 +3207,7 @@ function finishWallDrag(event,cancel=false){
  const {wall,draft,trace}=wallDrag,moved=!!wallPreview;
  wallDrag=null;wallPreview=null;
  if(cancel&&trace)wallTool.nodes.pop();
+ if(cancel&&Number.isInteger(wallDrag?.traceMove)&&wallTool?.nodes[wallDrag.traceMove])wallTool.nodes[wallDrag.traceMove]=wallDrag.original;
  if(!cancel&&moved)updateSceneWallPaths(sceneWallPaths().map(w=>w===wall?draft:w));
  else draw();
 }
@@ -3446,7 +3488,7 @@ function initializeWallPaths(){
    '<button id="wallTrace" type="button">Trace wall</button><button id="wallFinish" type="button">Finish wall</button>'+
    '<button id="wallEdit" type="button">Edit points</button></div>'+
    '<label>Walls <select id="wallPathList" multiple size="4"></select></label>'+
-   '<p>Shift-click walls on the map to select several. Alt bypasses snapping.</p>'+
+   '<p>Shift-click walls on the map to select several. Alt bypasses snapping.</p><div id="wallTraceShortcutGuide" style="padding:8px 10px;margin:8px 0;border:1px solid #70e8ff66;border-radius:6px;background:#142c35;color:#e8f8fa;font-size:12px;line-height:1.65"><strong>Wall tracing · Key + click reference</strong><div>Click — add point / drag for curve</div><div>Alt + click — place without snapping</div><div>Command + drag point — move unfinished point</div><div>Control + click point — delete unfinished point</div><div>Control + Alt + click — finish current path and begin a separate wall</div><div>Esc / Delete — undo last point (repeat to backtrack)</div><div>Enter — finish current wall</div><div>Finish wall / Done — save or exit deliberately</div></div>'+
    '<form id="wallProperties"><div class="wall-path-fields">'+wallNodeFields(wallPropertyFields,'wp-')+'</div>'+
    '<button type="submit">Apply changed settings to selected walls</button> <button id="wallDelete" type="button">Delete selected</button></form></div>'+pane('openings')+
    '<div class="wall-path-actions"><button id="wallDoor" type="button">Paint door</button><button id="wallWindow" type="button">Paint window</button> <button id="wallOpeningPaste" type="button" disabled>Paste opening</button></div>'+
@@ -3602,7 +3644,8 @@ function initializeWallPaths(){
  window.addEventListener('keydown',event=>{
   if(!wallTool||!wallCanEdit()||event.target.closest('input,select,textarea,dialog,button'))return;
   if(event.key==='Enter'&&wallTool.mode==='trace'){event.preventDefault();event.stopImmediatePropagation();finishWallPath(false)}
-  if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();closeWallTool()}
+  if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();if(wallTool.mode==='trace')wallTraceUndo();else closeWallTool()}
+  if(wallTool.mode==='trace'&&(event.key==='Backspace'||event.key==='Delete')&&!event.ctrlKey&&!event.metaKey){event.preventDefault();event.stopImmediatePropagation();wallTraceUndo()}
  },true);
 }
 
