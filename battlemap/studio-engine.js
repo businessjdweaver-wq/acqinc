@@ -2223,7 +2223,7 @@ function floorScenePoint(event){
  return [(event.clientX-rect.left)*W/rect.width,(event.clientY-rect.top)*H/rect.height];
 }
 function drawFloorSceneOverlay(){
- window.BattlemapGridCalibration.renderOverlay({el,readFloorImageSettings,rawPoint,gridDisplayValue,gridColor,gridOpacity,activeGridCalibration,floorSceneMarks,floorScenePendingCalibration,floorGridCalibrationDraft,W,H,devicePixelRatio,floorSceneEditing});
+ window.BattlemapGridCalibration.renderOverlay({el,readFloorImageSettings,rawPoint,gridDisplayValue,gridColor,gridOpacity,activeGridCalibration,floorSceneMarks,floorScenePendingCalibration,floorGridCalibrationDraft,W,H,devicePixelRatio,floorSceneEditing,floorSceneMode});
 }
 for(const [short,long] of [['floorSceneAcross','floorGridAcross'],['floorSceneDown','floorGridDown']]){
  el(short).value=el(long).value;
@@ -2346,7 +2346,10 @@ floorSceneCanvas.onpointerdown=e=>{
   else el('floorAlignStatus').textContent=`${floorSceneMarks.length}/9 points selected. ${floorAlignmentSteps[floorSceneMarks.length]}`;
   drawFloorSceneOverlay();return;
  }
- floorScenePointer={id:e.pointerId,start:pos,initial:readFloorImageSettings(),px,py};floorSceneCanvas.setPointerCapture(e.pointerId);
+ const handles=JSON.parse(floorSceneCanvas.dataset.floorHandles||'[]');
+ const hit=handles.findIndex(([hx,hy])=>Math.hypot(hx-px,hy-py)<=14);
+ floorScenePointer={id:e.pointerId,start:pos,initial:readFloorImageSettings(),px,py,handle:hit};
+ floorSceneCanvas.setPointerCapture(e.pointerId);
 };
 floorSceneCanvas.onpointermove=e=>{
  const drag=floorScenePointer;if(!drag||drag.id!==e.pointerId)return;
@@ -2354,7 +2357,23 @@ floorSceneCanvas.onpointermove=e=>{
  if(drag.cameraPan){panX=drag.startPanX+px-drag.px;panY=drag.startPanY+py-drag.py;draw('Floor image camera pan');return}
  const pos=rawInverse(px,py,0),next={...drag.initial};
  if(!pos.every(Number.isFinite))return;
- if(floorSceneMode==='move'){next.x+=(pos[0]-drag.start[0])*5;next.y+=(pos[1]-drag.start[1])*5}
+ if(drag.handle>=0){
+  // Resize using a grabbed corner/edge; keep its opposite edge/corner
+  // fixed in world space, including when the image is rotated.
+  const uvs=[[-.5,-.5],[0,-.5],[.5,-.5],[.5,0],[.5,.5],[0,.5],[-.5,.5],[-.5,0]];
+  const [u,v]=uvs[drag.handle],angle=drag.initial.rotation*Math.PI/180,c=Math.cos(angle),sn=Math.sin(angle);
+  const wx=pos[0]*5-drag.initial.x,wy=pos[1]*5-drag.initial.y;
+  const localX=wx*c+wy*sn,localY=-wx*sn+wy*c;
+  const fixedU=u===0?0:-u,fixedV=v===0?0:-v;
+  const oldAnchorX=fixedU*drag.initial.width,oldAnchorY=fixedV*drag.initial.depth;
+  const newWidth=u===0?drag.initial.width:Math.max(1,Math.min(5000,(localX-oldAnchorX)/(u-fixedU)));
+  const newDepth=v===0?drag.initial.depth:Math.max(1,Math.min(5000,(localY-oldAnchorY)/(v-fixedV)));
+  next.width=newWidth;next.depth=newDepth;
+  const shiftLocalX=(fixedU*drag.initial.width-fixedU*newWidth);
+  const shiftLocalY=(fixedV*drag.initial.depth-fixedV*newDepth);
+  next.x+=shiftLocalX*c-shiftLocalY*sn;next.y+=shiftLocalX*sn+shiftLocalY*c;
+ }
+ else if(floorSceneMode==='move'){next.x+=(pos[0]-drag.start[0])*5;next.y+=(pos[1]-drag.start[1])*5}
  else if(floorSceneMode==='scale'){const factor=Math.max(.05,1+(px-drag.px)/180-(py-drag.py)/220);next.width=Math.max(1,Math.min(5000,next.width*factor));next.depth=Math.max(1,Math.min(5000,next.depth*factor))}
  else {const raw=drag.initial.rotation+(px-drag.px)/4;next.rotation=e.altKey?raw:Math.round(raw/90)*90;next.rotation=((next.rotation+540)%360)-180}
  for(const key of ['x','y','width','depth','rotation']){el(floorFields[key]).value=Number(next[key].toFixed(3));const slider=el(floorFields[key]+'Slider');if(slider)slider.value=el(floorFields[key]).value}
