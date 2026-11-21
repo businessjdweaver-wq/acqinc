@@ -5496,10 +5496,14 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    const rememberTerrain=fogMemoryState&&!f.fixtureFace&&!f.preview;
    const paintKey=rememberTerrain?patch.memoryKey+'|'+(patch.surfaceLightOffset?.join(',')??''):null;
    const saved=paintKey&&fogMemoryState.shading.get(paintKey);
-   const sameLighting=saved&&saved.signature===lightingFrame?.terrainLightSignature;
-   const state=sameLighting?2:fogRemember(patch.memoryKey,forceTerrainVisible()||terrainFogPatchVisible(patch));
+   // Visibility must be recomputed for the current observer position.
+   // A saved lighting patch is only a historical appearance, never proof
+   // that the patch is still visible. Reusing it unconditionally leaves
+   // old torch/fog squares behind as a player moves or extinguishes light.
+   const currentlyVisible=forceTerrainVisible()||terrainFogPatchVisible(patch);
+   const state=fogRemember(patch.memoryKey,currentlyVisible);
    if(!state||state===2&&!rememberTerrain)continue;
-   const memory=rememberTerrain?{paintKey,cachedShade:state===2?saved?.patches??[]:null}:null;
+   const memory=rememberTerrain?{paintKey,cachedShade:state===2&&saved?.signature===lightingFrame?.terrainLightSignature?saved.patches: null}:null;
    if(patch.wholeFace){visible.push(memory?{...f,...memory}:f);continue}
    const world=patch.world;
    const projected=world.map(vertex=>point(...vertex));
