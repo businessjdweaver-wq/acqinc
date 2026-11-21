@@ -4745,7 +4745,10 @@ function terrainFogPatches(face){
 // Refine only mixed-visibility floor patches. The base fog tiles and their
 // remembered history remain unchanged; children inherit exploration history.
 function refinedFogBoundaryPatches(patch){
- if(!topDown||patch.world.length!==4)return [patch];
+ // Apply in both camera projections: the visibility boundary is in world
+ // coordinates, so isometric view must not fall back to whole-square fog.
+ // Only ground faces are passed here; terrain walls retain their own tests.
+ if(patch.world.length!==4)return [patch];
  const result=[],maxDepth=2;
  const visit=(part,depth,parentSeen)=>{
   const center=fogFaceCenter(part.world);
@@ -5524,7 +5527,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   const forceTerrainVisible=()=>forceVisible??=(f.doorFace&&f.p?.kind==='Door'&&fogOpeningVisible(f.p))||
    (f.volumeTop&&playerCameraCutaway?.stairs.has(f.p))||false;
   const visible=[];
-  for(const basePatch of terrainFogPatches(f))for(const patch of (f.p||!topDown?[basePatch]:refinedFogBoundaryPatches(basePatch))){
+  for(const basePatch of terrainFogPatches(f))for(const patch of (f.p?[basePatch]:refinedFogBoundaryPatches(basePatch))){
    const rememberTerrain=fogMemoryState&&!f.fixtureFace&&!f.preview;
    const paintKey=rememberTerrain?patch.memoryKey+'|'+(patch.surfaceLightOffset?.join(',')??''):null;
    const saved=paintKey&&fogMemoryState.shading.get(paintKey);
