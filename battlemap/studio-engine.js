@@ -4176,25 +4176,36 @@ function clipFloorGridCell(poly,axis,limit,keepGreater){
  return out;
 }
 function drawVisibleGround(){
+ // Keep the physical battlefield fixed when calibrating the VTT grid.
  const width=gridLimit(0),depth=gridLimit(1);
- // Screen bounds are expressed in calibrated grid coordinates, but the
- // physical floor boundary is not.
- const screenCorners=[inverse(-2,-2,0),inverse(W+2,-2,0),inverse(W+2,H+2,0),inverse(-2,H+2,0)];
- const physicalCorners=[[0,0],[width,0],[width,depth],[0,depth]].map(([x,y])=>worldToGrid(x,y));
- const all=[...screenCorners,...physicalCorners];
- const minX=Math.floor(Math.min(...all.map(p=>p[0])))-1;
- const maxX=Math.ceil(Math.max(...all.map(p=>p[0])))+1;
- const minY=Math.floor(Math.min(...all.map(p=>p[1])))-1;
- const maxY=Math.ceil(Math.max(...all.map(p=>p[1])))+1;
- // Each grid tile is clipped against the original physical floor, rather
- // than moving the physical floor to the new grid origin.
- for(let x=minX;x<maxX;x++)for(let y=minY;y<maxY;y++){
+ const rawCorners=[rawInverse(-2,-2,0),rawInverse(W+2,-2,0),rawInverse(W+2,H+2,0),rawInverse(-2,H+2,0)];
+ const fixedFloor=()=>face([[0,0,0],[width,0,0],[width,depth,0],[0,depth,0]].map(([x,y,z])=>[...worldToGrid(x,y),z]),'#e2d4b5',null,0,false);
+ if(floorSceneEditing){fixedFloor();return}
+ const calibration=activeGridCalibration();
+ if(!calibration){
+  const loX=Math.max(0,Math.floor(Math.min(...rawCorners.map(p=>p[0])))),hiX=Math.min(width,Math.ceil(Math.max(...rawCorners.map(p=>p[0]))));
+  const loY=Math.max(0,Math.floor(Math.min(...rawCorners.map(p=>p[1])))),hiY=Math.min(depth,Math.ceil(Math.max(...rawCorners.map(p=>p[1]))));
+  for(let x=loX;x<hiX;x++)for(let y=loY;y<hiY;y++)top(x,y,0,'#e2d4b5',null,false);
+  return;
+ }
+ const corners=rawCorners.map(([x,y])=>worldToGrid(x,y));
+ const left=Math.floor(Math.min(...corners.map(p=>p[0])))-1,right=Math.ceil(Math.max(...corners.map(p=>p[0])))+1;
+ const back=Math.floor(Math.min(...corners.map(p=>p[1])))-1,front=Math.ceil(Math.max(...corners.map(p=>p[1])))+1;
+ const clip=(poly,axis,limit,greater)=>{
+  const inside=p=>greater?p[axis]>=limit-1e-8:p[axis]<=limit+1e-8,result=[];
+  for(let i=0;i<poly.length;i++){
+   const a=poly[i],b=poly[(i+1)%poly.length],ai=inside(a),bi=inside(b);
+   if(ai)result.push(a);
+   if(ai!==bi){const t=(limit-a[axis])/(b[axis]-a[axis]);result.push([a[0]+t*(b[0]-a[0]),a[1]+t*(b[1]-a[1])])}
+  }
+  return result;
+ };
+ for(let x=left;x<right;x++)for(let y=back;y<front;y++){
   let poly=[[x,y],[x+1,y],[x+1,y+1],[x,y+1]].map(([gx,gy])=>gridToWorld(gx,gy));
-  poly=clipFloorGridCell(poly,0,0,true);
-  poly=clipFloorGridCell(poly,0,width,false);
-  poly=clipFloorGridCell(poly,1,0,true);
-  poly=clipFloorGridCell(poly,1,depth,false);
-  if(poly.length<3)continue;
+  poly=clip(poly,0,0,true);if(poly.length<3)continue;
+  poly=clip(poly,0,width,false);if(poly.length<3)continue;
+  poly=clip(poly,1,0,true);if(poly.length<3)continue;
+  poly=clip(poly,1,depth,false);if(poly.length<3)continue;
   face(poly.map(([wx,wy])=>[...worldToGrid(wx,wy),0]),'#e2d4b5',null,0,false);
  }
 }
