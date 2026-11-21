@@ -5165,14 +5165,16 @@ function buildPlayerCameraCutaway(){
   stairs.add(stair);stairCells.set(stair,cells);
   for(const [first,,opposite] of cells)aim((first[0]+opposite[0])/2,(first[1]+opposite[1])/2,z+.035,z);
  }
- const pathSolids=new Set();
- // Wall-trace extrusion creates synthetic face owners, not entries in pieces.
- // Test their actual prisms against the same standee-to-camera rays used by
- // regular terrain cutaways. This is camera transparency, not vision bypass.
+ const cutawayWallIds=new Set();
+ // Wall-trace extrusion is made of many prisms, each with its own face owner.
+ // A ray may intersect just one prism of a curved wall. Fade every prism of
+ // that same traced wall, rather than leaving adjacent curved sections opaque.
+ // Camera cutaway affects painting only; vision and collision remain intact.
  if(!topDown){
   for(const solid of pathWallSolids()){
    if(solid.opening||!solid.wall?.opacity)continue;
-   if(rays.some(({start,end})=>wallPrismInterval(solid,start,end)))pathSolids.add(solid);
+   if(rays.some(({start,end})=>wallPrismInterval(solid,start,end)))
+    cutawayWallIds.add(solid.wall.id);
   }
  }
  const terrain=new Map();
@@ -5180,7 +5182,7 @@ function buildPlayerCameraCutaway(){
   const mode=playerCameraTerrainMode(piece,rays);
   if(mode)terrain.set(piece,mode);
  }
- return {terrain,stairs,stairCells,token,pathSolids};
+ return {terrain,stairs,stairCells,token,cutawayWallIds};
 }
 function setFocusCutaway(token){
  focusCutaway=null;
@@ -5644,7 +5646,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   ctx.globalAlpha=f.preview?.72:1;
   if(f.pathWall){
    ctx.save();
-   const cameraFade=playerCameraCutaway?.pathSolids?.has(f.pathSolid);
+   const cameraFade=playerCameraCutaway?.cutawayWallIds?.has(f.wallId);
    ctx.globalAlpha=f.pathWall.opacity*(cameraFade?.16:1);
    polygon(f.projected,f.fill,null);
    if(showTerrainTextures&&f.pathWall.texture!=='plain'&&(f.projected.length===4||f.capPattern))paintTerrainPatterns(f.pathWall.texture,f);
