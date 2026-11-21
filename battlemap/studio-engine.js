@@ -2855,8 +2855,30 @@ function renderPathOpening({poly,z,top,wall,opening}){
   return;
  }
  if(opening.kind==='Window'){
+  // Glazing and exterior trim sit near the outside (+normal) face. The
+  // masonry opening continues back to the interior face as a deep reveal.
+  const half=wall.thickness/2,outer=half+.008;
+  const sillDepth=Math.max(.01,wall.thickness);
+  const sillColor=wall.color??'#827c70';
+  const frameColor=opening.frameColor??'#594531';
+  const emitReveal=(points,color)=>{
+   face(points,color,owner,null,false);
+   mark(false);
+  };
+  // Continuous sill across the wall thickness; it is not a flat pane
+  // floating in the center of a thick opening.
+  emitReveal([world(0,-half,.015),world(width,-half,.015),
+   world(width,half,.015),world(0,half,.015)],sillColor);
+  // Side jambs and header expose the depth of the window opening.
+  const trim=Math.min(.07,width/6,height/6);
+  for(const u of [0,width]){
+   emitReveal([world(u,-half,0),world(u,half,0),
+    world(u,half,height),world(u,-half,height)],sillColor);
+  }
+  emitReveal([world(0,-half,height),world(width,-half,height),
+   world(width,half,height),world(0,half,height)],sillColor);
   addWindowFaces({...opening,origin:[0,0,0],doorWidth:width,sillHeight:0,windowHeight:height},
-   {world:(u,v,h)=>world(u,v+(opening.shaded?wall.thickness/2+.04:0),h),owner,mark});
+   {world:(u,v,h)=>world(u,v+outer,h),owner,mark});
   if(!opening.shaded&&(opening.windowCover??'shutter')==='shutter'){
    const profile=windowProfile(opening,width,height);
    const color=opening.coverColor??'#8b6546',wing=width*.5;
@@ -2870,7 +2892,11 @@ function renderPathOpening({poly,z,top,wall,opening}){
   }
   return;
  }
- const [front,edge,cap,thickness]=doorMaterials[opening.material]??doorMaterials.Wood;
+ const [front,edge,cap,materialThickness]=doorMaterials[opening.material]??doorMaterials.Wood;
+ // A normal wall keeps a conventional door leaf. A massive wall gets a
+ // proportionately heavier leaf, without filling the entire passage.
+ const thickness=Math.min(wall.thickness*.6,Math.max(materialThickness,wall.thickness*.16));
+ const halfWall=wall.thickness/2;
  const reverse=opening.hinge==='far',hinge=reverse?width:0,sign=reverse?-1:1;
  const swing=opening.swingReversed?-1:1;
  const base=[[0,-1],[1,-1],[1,1],[0,1]].map(([u,v])=>opening.open?
@@ -2881,10 +2907,20 @@ function renderPathOpening({poly,z,top,wall,opening}){
   emit([base[i],base[j],upper[j],upper[i]],i%2?edge:front,i%2?undefined:i===2);
  }
  emit(upper,cap);
- const trim=Math.min(.075,width/8,height/8),depth=wall.thickness/2+.02;
+ const trim=Math.min(.075,width/8,height/8),depth=halfWall+.02;
  for(const [left,right,bottom,head] of [[0,trim,0,height],[width-trim,width,0,height],[trim,width-trim,height-trim,height]]){
   for(const side of [-1,1])emit([world(left,depth*side,bottom),world(right,depth*side,bottom),
    world(right,depth*side,head),world(left,depth*side,head)],'#594531');
+ }
+ // Doorway returns: the exposed inner faces of a thick opening should
+ // connect the two wall surfaces, rather than leaving a thin floating leaf.
+ if(wall.thickness>.16){
+  const jamb=wall.color??'#827c70';
+  for(const u of [0,width])
+   emit([world(u,-halfWall,0),world(u,halfWall,0),
+    world(u,halfWall,height),world(u,-halfWall,height)],jamb);
+  emit([world(0,-halfWall,height),world(width,-halfWall,height),
+   world(width,halfWall,height),world(0,halfWall,height)],jamb);
  }
 }
 function validSceneWallPaths(walls){
