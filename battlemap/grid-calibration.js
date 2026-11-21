@@ -50,12 +50,21 @@ function renderOverlay(env){
  const overlay=el('floorSceneOverlay'),rect=overlay.getBoundingClientRect(),ratio=Math.min(devicePixelRatio||1,2);
  if(!rect.width||!rect.height)return;
  overlay.width=Math.round(rect.width*ratio);overlay.height=Math.round(rect.height*ratio);
- const g=overlay.getContext('2d');g.setTransform(ratio,0,0,ratio,0,0);
+ const g=overlay.getContext('2d');g.setTransform(ratio*rect.width/W,0,0,ratio*rect.height/H,0,0);
  const {x,y,width,depth,rotation}=readFloorImageSettings();
  if(![x,y,width,depth,rotation].every(Number.isFinite))return;
  const a=rotation*Math.PI/180,c=Math.cos(a),si=Math.sin(a);
  const corners=[[-.5,-.5],[.5,-.5],[.5,.5],[-.5,.5]].map(([u,v])=>rawPoint((x+u*width*c-v*depth*si)/5,(y+u*width*si+v*depth*c)/5,0));
  g.setLineDash([7,5]);g.lineWidth=2;g.strokeStyle='#ffd677';g.beginPath();corners.forEach(([px,py],i)=>i?g.lineTo(px,py):g.moveTo(px,py));g.closePath();g.stroke();g.setLineDash([]);
+ // Eight direct-manipulation handles. The outline and handles use the
+ // exact image transform; calibration never changes that transform.
+ if(env.floorSceneMode!=='align'){
+  const mid=(a,b)=>[(a[0]+b[0])/2,(a[1]+b[1])/2];
+  const handles=[corners[0],mid(corners[0],corners[1]),corners[1],mid(corners[1],corners[2]),corners[2],mid(corners[2],corners[3]),corners[3],mid(corners[3],corners[0])];
+  g.fillStyle='#fff9dd';g.strokeStyle='#123d4a';g.lineWidth=1.5;
+  handles.forEach(([hx,hy])=>{g.beginPath();g.rect(hx-6,hy-6,12,12);g.fill();g.stroke()});
+  overlay.dataset.floorHandles=JSON.stringify(handles);
+ }else delete overlay.dataset.floorHandles;
  if(el('floorSceneGrid').getAttribute('aria-pressed')==='true'&&gridDisplayValue().visible!==false){
   g.lineWidth=1;g.strokeStyle=gridColor();g.globalAlpha=gridOpacity();g.beginPath();
   const calibration=floorScenePendingCalibration||floorGridCalibrationDraft||activeGridCalibration();
@@ -96,5 +105,5 @@ function refineCalibration(env){
  el('floorAlignStatus').textContent=`${n}/9 clicked · ${count} used${ignored?` (${ignored} ambiguous additional point${ignored===1?'':'s'} ignored)`:''} · ${across} horizontal and ${down} vertical square intervals · square cell ${scale.toFixed(3)} world units · rotation ${rotation.toFixed(2)}° · RMS ${rms.toFixed(2)} cells · max ${max.toFixed(2)} cells. ${quality}${next}`;
  movementRenderCacheSetter();draw('Square VTT calibration preview');
 }
-global.BattlemapGridCalibration=Object.freeze({solve:solveSquareGridCalibration,renderOverlay,refineCalibration,version:'1.404'});
+global.BattlemapGridCalibration=Object.freeze({solve:solveSquareGridCalibration,renderOverlay,refineCalibration,version:'1.408'});
 })(window);
