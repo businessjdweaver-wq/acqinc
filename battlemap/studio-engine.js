@@ -4243,15 +4243,20 @@ function gridColor(){return gridDisplayValue().color||'#70faff'}
 function gridOpacity(){return Math.max(0,Math.min(1,(gridDisplayValue().opacity??65)/100))}
 function gridStrokeColor(){return gridColor()+Math.round(gridOpacity()*255).toString(16).padStart(2,'0')}
 function drawLowAngleGrid(painted){
- polygon([[0,0],[gridLimit(0),0],[gridLimit(0),gridLimit(1)],[0,gridLimit(1)]].map(([x,y])=>rawPoint(x,y,0)),painted?'#0000':'#e2d4b5',null);
- ctx.beginPath();
- for(let i=4;i<Math.max(gridLimit(0),gridLimit(1));i+=4){
-  for(const [start,end] of [...(i<gridLimit(0)?[[[i,0],[i,gridLimit(1)]]]:[]),...(i<gridLimit(1)?[[[0,i],[gridLimit(0),i]]]:[])]){
-   const [x,y]=point(...start,0),[u,v]=point(...end,0);
-   ctx.moveTo(x,y);ctx.lineTo(u,v);
-  }
- }
- ctx.strokeStyle=gridColor();ctx.globalAlpha=gridOpacity();ctx.stroke();ctx.globalAlpha=1;
+ const g=floorSceneEditing&&floorSceneGridDraft?floorSceneGridDraft:sceneGrid();
+ const ox=Number(g.floorOriginX)||0,oy=Number(g.floorOriginY)||0;
+ const x2=ox+g.width,y2=oy+g.depth;
+ polygon([[ox,oy],[x2,oy],[x2,y2],[ox,y2]].map(([x,y])=>rawPoint(x,y,0)),painted?'#0000':'#e2d4b5',null);
+ if(!gridVisible())return;
+ const bounds=[[ox,oy],[x2,oy],[x2,y2],[ox,y2]].map(([x,y])=>worldToGrid(x,y));
+ const minX=Math.floor(Math.min(...bounds.map(p=>p[0]))),maxX=Math.ceil(Math.max(...bounds.map(p=>p[0])));
+ const minY=Math.floor(Math.min(...bounds.map(p=>p[1]))),maxY=Math.ceil(Math.max(...bounds.map(p=>p[1])));
+ ctx.save();ctx.beginPath();
+ [[ox,oy],[x2,oy],[x2,y2],[ox,y2]].map(([x,y])=>rawPoint(x,y,0)).forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
+ ctx.closePath();ctx.clip();ctx.beginPath();
+ for(let i=minX;i<=maxX;i+=4){const [x,y]=point(i,minY,0),[u,v]=point(i,maxY,0);ctx.moveTo(x,y);ctx.lineTo(u,v)}
+ for(let i=minY;i<=maxY;i+=4){const [x,y]=point(minX,i,0),[u,v]=point(maxX,i,0);ctx.moveTo(x,y);ctx.lineTo(u,v)}
+ ctx.strokeStyle=gridColor();ctx.globalAlpha=gridOpacity();ctx.stroke();ctx.restore();
 }
 // Large faces can overlap at depths far from their centers.
 function faceWinding(b){
