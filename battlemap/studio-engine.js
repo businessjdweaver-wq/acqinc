@@ -40,6 +40,12 @@ let playing=false, measuring=false, route=null, carry=null;
 let gmIgnoreLighting=true;
 let gmVisionArmed=false,gmVisionStandee=null,playCombatStandee=null,playCombatStats=null;
 let brush=null, tokenTool=null, panMode=false, showThroughTerrain=false, panX=0, panY=0;
+let playerShowAllies=false;
+function playerAllyCameraVisible(token){
+ return playerShowAllies&&playing&&roomProfile?.gm===false&&token?.type==='standee'&&
+  standeeRole(token)==='pc'&&!token.incognito&&!standeeHidden(token);
+}
+
 let topDown=false;
 try{topDown=localStorage.getItem('battlemap.topDown')==='true'}catch{}
 const viewCameras=[null,null];
@@ -4576,14 +4582,14 @@ function orderOccludingFaces(list){
     if(seen[j]===i+1)continue;
     seen[j]=i+1;
     const candidate=list[j];
-    if(i===j||a.p===candidate.p||candidate.p?.type==='volume'&&j<i||showThroughTerrain&&candidate.standee)continue;
+    if(i===j||a.p===candidate.p||candidate.p?.type==='volume'&&j<i||(showThroughTerrain||playerAllyCameraVisible(candidate.p))&&candidate.standee)continue;
     const other=bounds[j];
     if(box[1]>other[0]&&other[1]>box[0]&&box[3]>other[2]&&other[3]>box[2])nearby.push(j);
    }
   });
   for(const j of a.doorFace?standees:nearby.sort((a,b)=>a-b)){
    const b=list[j],other=bounds[j];
-   if(i===j||a.p===b.p||b.p?.type==='volume'&&j<i||showThroughTerrain&&b.standee)continue;
+   if(i===j||a.p===b.p||b.p?.type==='volume'&&j<i||(showThroughTerrain||playerAllyCameraVisible(b.p))&&b.standee)continue;
    if(a.doorFace&&(box[1]<=other[0]||other[1]<=box[0]||box[3]<=other[2]||other[3]<=box[2]))continue;
    if(windings[j]===2)windings[j]=faceWinding(b.projected);
    const overlap=faceOverlap(a.projected,b.projected,windings[j]);
@@ -5070,6 +5076,7 @@ function draw(action,reusePan=false){
  if(W&&H&&loadedHomeScene!==homeScene){loadedHomeScene=homeScene;applyHomeView(chosenHomeView())}
  if(action!=='Standee movement'){
   updateCameraCompass();
+  el('playerShowAllies').hidden=!(playing&&roomProfile?.gm===false);
   el('sceneCameraSettings').hidden=roomProfile?.gm===false;
   updateGmLightingControls();
  }
@@ -5501,7 +5508,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   moving[0]?.type==='standee'&&!moving[0].flying&&!moving[0].carriedFixture&&!carry.light&&!carry.arcaneEye&&
   !gmVisionObserver()&&!resizing&&!repeatPreview.length;
  const cutaway=cacheable?movementCutawayKey(playerCameraCutaway,pieces):null;
- const cacheKey=cacheable?[W,H,gridLimit(0),gridLimit(1),ratio,zoom,angle,tilt,panX,panY,topDown,simplified,lightOrbit,paintTerrainTextures,paintVolumeGrids,quality,showThroughTerrain,moving[0],roomProfile?.name,lightingFrame?.signature,playerFogEnabled(),preferences.fogMemory,fogCache?.signature,focusCutaway,cutaway]:null;
+ const cacheKey=cacheable?[W,H,gridLimit(0),gridLimit(1),ratio,zoom,angle,tilt,panX,panY,topDown,simplified,lightOrbit,paintTerrainTextures,paintVolumeGrids,quality,showThroughTerrain,playerShowAllies,moving[0],roomProfile?.name,lightingFrame?.signature,playerFogEnabled(),preferences.fogMemory,fogCache?.signature,focusCutaway,cutaway]:null;
  if(!cacheKey||!movementRenderCache?.key.every((value,i)=>value===cacheKey[i]))movementRenderCache=null;
  const cached=movementRenderCache;
  const useStandeeLayer=action==='Standee movement'&&cacheable&&!cameraPreview&&!areaPreview&&!editingArea&&
@@ -8454,6 +8461,25 @@ for(const button of el('viewCube').querySelectorAll('[data-view]'))button.onclic
  if(name==='Top')topDown=true;
  else{topDown=false;angle={N:0,NE:Math.PI/4,E:Math.PI/2,SE:Math.PI*3/4,S:Math.PI,SW:Math.PI*5/4,W:Math.PI*1.5,NW:-Math.PI/4}[name];tilt=.69}
  setFocusCutaway(null);centerCubeStandee();rememberCubeAngle();draw('Camera preset');
+};
+// Compass arrows orbit the camera without resetting zoom, tilt or pan.
+for(const [id,delta] of [['cubeRotateLeft',-Math.PI/4],['cubeRotateRight',Math.PI/4]]){
+ el(id).onclick=()=>{
+  if(drag||carry)return;
+  angle=(angle+delta+Math.PI*2)%(Math.PI*2);
+  topDown=false;
+  setFocusCutaway(null);
+  rememberCubeAngle();
+  draw('Compass rotation');
+ };
+}
+el('playerShowAllies').onclick=()=>{
+ if(roomProfile?.gm!==false||!playing)return;
+ playerShowAllies=!playerShowAllies;
+ el('playerShowAllies').setAttribute('aria-pressed',String(playerShowAllies));
+ el('playerShowAllies').textContent=playerShowAllies?'Hide Allies':'Show Allies';
+ movementRenderCache=null;
+ draw('Player ally camera visibility');
 };
 el('cubeIn').onclick=()=>scale(1.2,W/2,H/2);
 el('cubeOut').onclick=()=>scale(1/1.2,W/2,H/2);
