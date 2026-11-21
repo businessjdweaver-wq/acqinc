@@ -2858,9 +2858,7 @@ function renderPathOpening({poly,z,top,wall,opening}){
   // Glazing and exterior trim sit near the outside (+normal) face. The
   // masonry opening continues back to the interior face as a deep reveal.
   const half=wall.thickness/2,outer=half+.008;
-  const sillDepth=Math.max(.01,wall.thickness);
   const sillColor=wall.color??'#827c70';
-  const frameColor=opening.frameColor??'#594531';
   const emitReveal=(points,color)=>{
    face(points,color,owner,null,false);
    mark(false);
@@ -2870,13 +2868,13 @@ function renderPathOpening({poly,z,top,wall,opening}){
   emitReveal([world(0,-half,.015),world(width,-half,.015),
    world(width,half,.015),world(0,half,.015)],sillColor);
   // Side jambs and header expose the depth of the window opening.
-  const trim=Math.min(.07,width/6,height/6);
   for(const u of [0,width]){
    emitReveal([world(u,-half,0),world(u,half,0),
     world(u,half,height),world(u,-half,height)],sillColor);
   }
-  emitReveal([world(0,-half,height),world(width,-half,height),
-   world(width,half,height),world(0,half,height)],sillColor);
+  if(!opening.windowTop||opening.windowTop==='flat')
+   emitReveal([world(0,-half,height),world(width,-half,height),
+    world(width,half,height),world(0,half,height)],sillColor);
   addWindowFaces({...opening,origin:[0,0,0],doorWidth:width,sillHeight:0,windowHeight:height},
    {world:(u,v,h)=>world(u,v+outer,h),owner,mark});
   if(!opening.shaded&&(opening.windowCover??'shutter')==='shutter'){
@@ -2895,7 +2893,7 @@ function renderPathOpening({poly,z,top,wall,opening}){
  const [front,edge,cap,materialThickness]=doorMaterials[opening.material]??doorMaterials.Wood;
  // A normal wall keeps a conventional door leaf. A massive wall gets a
  // proportionately heavier leaf, without filling the entire passage.
- const thickness=Math.min(wall.thickness*.6,Math.max(materialThickness,wall.thickness*.16));
+ const thickness=Math.max(materialThickness,Math.min(wall.thickness*.6,wall.thickness*.16));
  const halfWall=wall.thickness/2;
  const reverse=opening.hinge==='far',hinge=reverse?width:0,sign=reverse?-1:1;
  const swing=opening.swingReversed?-1:1;
