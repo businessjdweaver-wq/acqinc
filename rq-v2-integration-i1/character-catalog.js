@@ -62,9 +62,9 @@ const characters=[
 ];
 if(typeof location!=='undefined'&&(location.pathname.endsWith('/two-star-sandbox.html')||new URLSearchParams(location.search).get('sandbox')==='1')){
  characters.push({name:'Merrix Duran · Wild Magic Sorcerer',rosterTitle:'Wild Magic Sorcerer',cardTitle:'Wild Magic Sorcerer',icon:'💎',background:'Sage',starTier:2,max:98,powers:[
- ['Wild Magic Surge',2,7,'Roll one of six visible magical outcomes; Bend Probability can influence the next roll.','merrix-surge'],
- ['Overchannel',0,7,'Deal reliable damage to the frontline enemy, then roll for a secondary magical effect.','merrix-overchannel'],
- ['Bend Probability',3,5,'Reroll the next Wild Magic result, or roll multiple results and choose at higher mastery.','merrix-bend']
+ ['Protective Wild Magic',2,7,'Random defensive, healing or restorative effect. Level 4 rolls twice and chooses.','merrix-surge'],
+ ['Destructive Wild Magic',0,7,'Random damage or destructive tile effect. Level 4 rolls twice and chooses.','merrix-overchannel'],
+ ['Reality Distortion',3,5,'Random transformation or board movement. Level 4 rolls twice and chooses.','merrix-bend']
  ]});
 }
 const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock','Whispers Bard'];characters.forEach((c,i)=>{c.rosterTitle=c.rosterTitle||(i===13?'Shroomkeeper':cardTitles[i]);c.cardTitle=c.cardTitle||cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
