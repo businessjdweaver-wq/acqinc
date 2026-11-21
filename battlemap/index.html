@@ -12116,7 +12116,10 @@ function scheduleSceneAutosave(delay=1200){
 }
 async function flushSceneAutosave(){
  clearTimeout(sceneAutosaveTimer);sceneAutosaveTimer=null;
- if(sceneAutosaveBusy){sceneAutosaveAgain=true;return false}
+ if(sceneAutosaveBusy){
+  for(let attempt=0;attempt<40&&sceneAutosaveBusy;attempt++)await new Promise(resolve=>setTimeout(resolve,100));
+  if(sceneAutosaveBusy)return false;
+ }
  if(!roomProfile?.gm||!currentSceneId)return true;
  const id=currentSceneId,scene=scenes.find(item=>item.id===id);
  if(!scene)return true;
@@ -12136,14 +12139,17 @@ async function flushSceneAutosave(){
   if(sceneAutosaveAgain){sceneAutosaveAgain=false;scheduleSceneAutosave(250)}
  }
 }
-function loadSavedScene(scene,resetInitiative=false){
+async function loadSavedScene(scene,resetInitiative=false){
  // Never substitute the catalog snapshot for an active encounter's server state.
  if(roomProfile?.gm&&roomState.active&&scene.id===roomState.sceneId){
+  if(currentSceneId!==scene.id&&!(await flushSceneAutosave())){message('Scene switch cancelled: changes could not be saved.');return}
   if(el('sceneDialog').open)el('sceneDialog').close();
   restoreActiveRoom=true;viewRoomScene(scene.id);void pollRoom();return;
  }
- scheduleSceneAutosave(0);
- if(!resetInitiative&&roomProfile?.gm&&roomState.active&&scene.id===roomState.sceneId){if(el('sceneDialog').open)el('sceneDialog').close();if(!roomDraftAttached){restoreActiveRoom=true;pollRoom();message('Rejoining active scene.')}else message('Already viewing the active scene.');return}
+ if(currentSceneId!==scene.id){
+  const saved=await flushSceneAutosave();
+  if(!saved){message('Scene switch cancelled: changes could not be saved.');return}
+ }
  exitTool();remember(resetInitiative);
  currentSceneId=scene.id;
  if(resetInitiative){initiativeEntries.clear();activeInitiative=null;roomRound=1}
@@ -12449,7 +12455,7 @@ el('sceneForm').onsubmit=async e=>{
   currentSceneId=scene.id;roomDraftTitle=scene.name;el('sceneSource').onchange();renderScenes();queueRecovery();scheduleSceneAutosave();
   storeValue(accountCatalogKey,[...accountCatalog.values()]);
  }
- else loadSavedScene(scene,true);
+ else await loadSavedScene(scene,true);
 };
 async function changeStandeeLibrary(next){
  if(savingLibrary)return;
@@ -16641,7 +16647,7 @@ async function startRoomScene(operation,scene,{requireShared=false}={}){
   if(operation==='open'||operation==='activate'){
    const state=await roomRpc('sync',{ticket:roomProfile.token,requested_scene:scene.id,since_event:-1});
    if(operation==='open'&&!state.active){
-    loadSavedScene(scene);
+    await loadSavedScene(scene);
     return;
    }
    if(!state.active){
