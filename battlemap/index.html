@@ -6508,6 +6508,7 @@ function renderRoomPresence(){
  if(!panel.hidden)panel.textContent='Online · '+[ (roomProfile.name||'GM')+' (DM)',...(roomState.onlinePlayers||[]) ].join(' · ');
 }
 function refresh(action){
+ scheduleSceneAutosave();
  const wallMenu=el('wallPathMenu');
  if(wallMenu){
   wallMenu.hidden=playing||roomProfile?.gm===false;
@@ -12104,7 +12105,44 @@ async function changeScenes(next){
  }catch(error){status.textContent='Could not save scenes. '+error.message;return false}
  finally{savingScenes=false;button.disabled=false}
 }
+// Persist the working catalog scene independently of publication and activation.
+// A live encounter remains authoritative on the session server; this is a backup,
+// never a replacement for live state or a reason to detach the GM.
+let sceneAutosaveTimer=null,sceneAutosaveBusy=false,sceneAutosaveAgain=false;
+function scheduleSceneAutosave(delay=1200){
+ if(!recoveryReady||!roomProfile?.gm||!currentSceneId)return;
+ clearTimeout(sceneAutosaveTimer);
+ sceneAutosaveTimer=setTimeout(()=>{void flushSceneAutosave()},delay);
+}
+async function flushSceneAutosave(){
+ clearTimeout(sceneAutosaveTimer);sceneAutosaveTimer=null;
+ if(sceneAutosaveBusy){sceneAutosaveAgain=true;return false}
+ if(!roomProfile?.gm||!currentSceneId)return true;
+ const id=currentSceneId,scene=scenes.find(item=>item.id===id);
+ if(!scene)return true;
+ // Do not persist an out-of-date detached copy of the active encounter.
+ if(roomState.active&&roomState.sceneId===id&&!roomDraftAttached)return false;
+ sceneAutosaveBusy=true;
+ try{
+  const map=structuredClone({pieces,tokens,areas,view:savePanelView()});
+  const old=JSON.stringify(scene.map),next=JSON.stringify(map);
+  if(old===next)return true;
+  const updated=scenes.map(item=>item.id===id?{...item,map}:item);
+  const ok=await changeScenes(updated);
+  if(!ok){message('Scene autosave failed. Your changes remain in session recovery.');return false}
+  return true;
+ }finally{
+  sceneAutosaveBusy=false;
+  if(sceneAutosaveAgain){sceneAutosaveAgain=false;scheduleSceneAutosave(250)}
+ }
+}
 function loadSavedScene(scene,resetInitiative=false){
+ // Never substitute the catalog snapshot for an active encounter's server state.
+ if(roomProfile?.gm&&roomState.active&&scene.id===roomState.sceneId){
+  if(el('sceneDialog').open)el('sceneDialog').close();
+  restoreActiveRoom=true;viewRoomScene(scene.id);void pollRoom();return;
+ }
+ scheduleSceneAutosave(0);
  if(!resetInitiative&&roomProfile?.gm&&roomState.active&&scene.id===roomState.sceneId){if(el('sceneDialog').open)el('sceneDialog').close();if(!roomDraftAttached){restoreActiveRoom=true;pollRoom();message('Rejoining active scene.')}else message('Already viewing the active scene.');return}
  exitTool();remember(resetInitiative);
  currentSceneId=scene.id;
@@ -12265,6 +12303,7 @@ function renderScenes(){
    }
   });
   save.disabled=currentSceneId!==scene.id;
+  save.hidden=true; // All scene changes save automatically.
   if(!save.disabled)name.title='Current scene';
   row.className='scene-row';name.textContent=scene.name;
   const heading=document.createElement('div'),actions=document.createElement('div');
@@ -12285,7 +12324,7 @@ function renderScenes(){
    if(active)actions.append(catalogButton('Deactivate',()=>startRoomScene('deactivate',scene)));
    if(viewing)actions.append(catalogButton(roomState.paused?'Unpause':'Pause',()=>startRoomScene(roomState.paused?'resume':'pause',scene)));
   }
-  if(!active)actions.append(save);
+  // Manual Save is obsolete; edits are autosaved regardless of publication.
   if(!active&&!scene.published)actions.append(
    catalogButton('Rename / move',()=>editCatalogEntry(scene,next=>changeScenes(scenes.map(item=>item===scene?next:item)))),
    catalogButton('Delete',()=>{if(confirm('Delete scene '+scene.name+'?'))changeScenes(scenes.filter(item=>item!==scene))}));
@@ -12391,7 +12430,7 @@ el('sceneSource').onchange=()=>{
  const current=el('sceneSource').value==='current';
  el('newSceneThemeLabel').hidden=current;
  el('saveSceneButton').textContent=current
-  ?(currentSceneId?'Save current scene':'Save draft as scene')
+  ?(currentSceneId?'Save current scene':'Create scene from current map')
   :'Create and load scene';
 };
 el('sceneForm').onsubmit=async e=>{
@@ -12407,7 +12446,7 @@ el('sceneForm').onsubmit=async e=>{
  const scene={id:existing?.id||crypto.randomUUID(),name,folder,map};
  if(!await changeScenes([...scenes.filter(item=>item!==existing),scene]))return;
  if(source==='current'){
-  currentSceneId=scene.id;roomDraftTitle=scene.name;el('sceneSource').onchange();renderScenes();queueRecovery();
+  currentSceneId=scene.id;roomDraftTitle=scene.name;el('sceneSource').onchange();renderScenes();queueRecovery();scheduleSceneAutosave();
   storeValue(accountCatalogKey,[...accountCatalog.values()]);
  }
  else loadSavedScene(scene,true);
@@ -16337,7 +16376,7 @@ async function syncRoomOnce(){
 
   }
   el('roomTurnState').hidden=!roomProfile.gm&&!ready;
-  el('roomTurnState').textContent=roomProfile.gm&&update.active&&!roomDraftAttached?'Local draft · Scenes → Save draft as scene':update.active?(update.title||'Battlemap')+' · '+(update.testing?'Test · ':'')+(update.paused?'Paused':'Live'):'No active scene';
+  el('roomTurnState').textContent=currentSceneId&&scenes.find(scene=>scene.id===currentSceneId)?.name?scenes.find(scene=>scene.id===currentSceneId).name+(roomState.sceneId===currentSceneId&&roomDraftAttached?' · Live encounter':' · Editing inactive scene'):update.active?(update.title||'Battlemap')+' · Live encounter':'No scene selected';
   
   if(roomProfile.gm&&el('sceneDialog').open&&sceneChanged)renderScenes();
   const now=Date.now(),pings=[];
@@ -16352,7 +16391,7 @@ async function syncRoomOnce(){
   if(!roomProfile.gm)for(const token of tokens)if(ownsRoomStandee(token)&&token.roomId===roomProfile.characterKey&&roomProfile.character)token.playerDisplayName=roomProfile.character;
   updateJoinSharedEncounter();
   if(changed||initiativeChanged||update.scene||wasPaused!==update.paused)refresh();
-  roomFailureCount=0;roomRetryAt=0;roomConnection(roomProfile.gm&&!roomDraftAttached?'Connected · local draft':roomPatchPending&&roomPatchFailures?'Synchronizing':'Connected',!!(roomPatchPending&&roomPatchFailures));
+  roomFailureCount=0;roomRetryAt=0;roomConnection(roomPatchPending&&roomPatchFailures?'Synchronizing':'Connected',!!(roomPatchPending&&roomPatchFailures));
   return true;
  }catch(err){
   if(roomProfile&&['GM session expired.','Choose your profile again.'].includes(err.message)){
@@ -16587,6 +16626,10 @@ function viewRoomScene(sceneId){
 }
 async function startRoomScene(operation,scene,{requireShared=false}={}){
  if(!roomProfile?.gm||startingRoomScene)return;
+ if(operation==='open'&&currentSceneId!==scene?.id){
+  const saved=await flushSceneAutosave();
+  if(!saved){message('Could not save the current scene; scene switch cancelled.');return}
+ }
  if(!scene){el('sceneDialog').showModal();return}
  startingRoomScene=true;
  try{
@@ -16598,7 +16641,6 @@ async function startRoomScene(operation,scene,{requireShared=false}={}){
   if(operation==='open'||operation==='activate'){
    const state=await roomRpc('sync',{ticket:roomProfile.token,requested_scene:scene.id,since_event:-1});
    if(operation==='open'&&!state.active){
-    if(requireShared)throw Error('This scene does not have a shared encounter yet.');
     loadSavedScene(scene);
     return;
    }
@@ -16631,7 +16673,8 @@ async function startRoomScene(operation,scene,{requireShared=false}={}){
 }
 el('roomActivate').onclick=()=>startRoomScene('activate',scenes.find(scene=>scene.id===currentSceneId));
 function updateJoinSharedEncounter(){
- el('joinSharedEncounter').hidden=!(roomProfile?.gm&&currentSceneId&&!roomDraftAttached);
+ // A saved scene and its active encounter are no longer separate GM destinations.
+ el('joinSharedEncounter').hidden=true;
 }
 el('joinSharedEncounter').onclick=()=>{
  if(!roomProfile?.gm||roomDraftAttached)return;
