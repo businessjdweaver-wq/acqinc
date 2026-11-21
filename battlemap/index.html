@@ -2740,8 +2740,17 @@ floorSceneCanvas.onpointerdown=e=>{
    }
    // Calibration maps each logical 5-foot cell into the fixed image/world
    // coordinates. The image is rendered through rawPoint and never moves.
-   const sx=h/across,sy=v/down;
-   const xx=sx*cs,xy=sx*sn,yx=-sy*sn,yy=sy*cs;
+   // A VTT square must have the same world-space size on both axes.
+   // Fit one uniform scale to both measured spans; never shear or stretch
+   // the grid to accommodate imperfect clicks or unequal printed spacing.
+   const measuredX=h/across,measuredY=v/down;
+   const cellSize=(h*across+v*down)/(across*across+down*down);
+   if(!Number.isFinite(cellSize)||cellSize<=.02){
+    el('floorAlignStatus').textContent='Unable to determine a positive square grid size. Retry the three intersections.';drawFloorSceneOverlay();return;
+   }
+   const sx=cellSize,sy=cellSize;
+   const xx=cellSize*cs,xy=cellSize*sn,yx=-cellSize*sn,yy=cellSize*cs;
+   const spacingMismatch=Math.abs(measuredX-measuredY)/cellSize;
    // Determine the selected intersection's index from its position INSIDE
    // the placed image. Do not treat an interior point as grid (0,0).
    const imageTopLeft=[
@@ -2760,7 +2769,7 @@ floorSceneCanvas.onpointerdown=e=>{
     xx,xy,yx,yy
    };
    movementRenderCache=null;
-   el('floorAlignStatus').textContent=`Grid calibrated from interior intersection (printed column ${localColumn}, row ${localRow}); image remains stationary. Spacing ${sx.toFixed(3)} × ${sy.toFixed(3)}. Show VTT grid to verify before Apply.`;
+   el('floorAlignStatus').textContent=`Grid calibrated from interior intersection (printed column ${localColumn}, row ${localRow}); image remains stationary. Square spacing ${cellSize.toFixed(3)} on both axes.${spacingMismatch>.08?' Printed spans disagree by '+Math.round(spacingMismatch*100)+'%; check square counts and selected intersections.':''} Show VTT grid to verify before Apply.`;
    draw('VTT grid calibration preview');
   }else el('floorAlignStatus').textContent=floorAlignmentSteps[floorSceneMarks.length];
   drawFloorSceneOverlay();return;
