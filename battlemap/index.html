@@ -12125,6 +12125,10 @@ async function flushSceneAutosave(){
  if(!scene)return true;
  // Do not persist an out-of-date detached copy of the active encounter.
  if(roomState.active&&roomState.sceneId===id&&!roomDraftAttached)return false;
+ // Never persist an unsynchronized active encounter as its authoritative catalog copy.
+ if(roomState.active&&roomState.sceneId===id&&(roomPatchBusy||roomPatchPending||!roomBaseline||sceneDelta(roomBaseline,roomSnapshot()).length)){
+  scheduleSceneAutosave(1500);return false;
+ }
  sceneAutosaveBusy=true;
  try{
   const map=structuredClone({pieces,tokens,areas,view:savePanelView()});
@@ -12139,7 +12143,7 @@ async function flushSceneAutosave(){
   if(sceneAutosaveAgain){sceneAutosaveAgain=false;scheduleSceneAutosave(250)}
  }
 }
-async function loadSavedScene(scene,resetInitiative=false){
+async async function loadSavedScene(scene,resetInitiative=false){
  // Never substitute the catalog snapshot for an active encounter's server state.
  if(roomProfile?.gm&&roomState.active&&scene.id===roomState.sceneId){
   if(currentSceneId!==scene.id&&!(await flushSceneAutosave())){message('Scene switch cancelled: changes could not be saved.');return}
@@ -15934,6 +15938,8 @@ async function flushRoomPatch(){
   if(roomBaseline===baseline&&roomRevision===revision)
    for(const change of changes)applySceneChange(baseline,change);
   roomPatchFailures=0;roomPatchPending=false;retry=true;
+  // Persist the acknowledged live state into the scene catalog as well.
+  scheduleSceneAutosave(800);
   if(gmAmbientPending&&changes.some(c=>c.bucket==="areas"&&canonicalSceneValue(c.item?.appearance?.ambient)===canonicalSceneValue(gmAmbientPending))){gmAmbientPending=null;message("Scene lighting synchronized.");}
  }catch(error){
   message(error.message);retry=!!error.transient;
@@ -16360,6 +16366,8 @@ async function syncRoomOnce(){
      else mergeRoomToken(local,prior,remote);
     }
     roomBaseline=structuredClone(update.scene);
+    // Server snapshots (including player moves) update the catalog backup.
+    scheduleSceneAutosave(1200);
    }
   }else{
    el('roomLobby').hidden=ready;
@@ -16633,6 +16641,7 @@ function viewRoomScene(sceneId){
 async function startRoomScene(operation,scene,{requireShared=false}={}){
  if(!roomProfile?.gm||startingRoomScene)return;
  if(operation==='open'&&currentSceneId!==scene?.id){
+  if(roomPatchBusy||roomPatchPending){await flushRoomPatch();if(roomPatchBusy||roomPatchPending){message('Live edits are still synchronizing. Scene switch cancelled.');return}}
   const saved=await flushSceneAutosave();
   if(!saved){message('Could not save the current scene; scene switch cancelled.');return}
  }
