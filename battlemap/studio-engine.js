@@ -5503,7 +5503,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    const currentlyVisible=forceTerrainVisible()||terrainFogPatchVisible(patch);
    const state=fogRemember(patch.memoryKey,currentlyVisible);
    if(!state||state===2&&!rememberTerrain)continue;
-   const memory=rememberTerrain?{paintKey,cachedShade:state===2&&saved?.signature===lightingFrame?.terrainLightSignature?saved.patches: null}:null;
+   const memory=rememberTerrain?{paintKey,rememberedFog:state===2}:null;
    if(patch.wholeFace){visible.push(memory?{...f,...memory}:f);continue}
    const world=patch.world;
    const projected=world.map(vertex=>point(...vertex));
@@ -5597,6 +5597,10 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  };
  function shadeTerrain(face){
   if(face.preview||!face.world?.length||insideOverlap(face.projected))return;
+  // Remembered terrain is not currently visible: do not replay cached
+  // light polygons or recalculate torchlight onto unseen tiles. Use a
+  // consistent desaturated memory tint regardless of former light position.
+  if(face.rememberedFog){polygon(face.projected,'#222936b0',null);return;}
   if(face.cachedShade){
    for(const [points,tint] of face.cachedShade)if(tint)polygon(points.map(vertex=>point(...vertex)),tint,null);
    return;
