@@ -5599,13 +5599,21 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   }
   const saved=face.paintKey?[]:null;
   if(sceneDark)measurePaint('terrainLighting',()=>forEachTerrainLightPatch(face,(points,projection)=>{
-   // A busy foreground or lower floor cannot spend the budget for later light rings.
+   // In player top-down view, refine light boundaries across floor tiles,
+   // even when Sharp quality is off. A shared budget avoids per-cell
+   // exhaustion causing large square discontinuities.
+   const playerFloorLight=topDown&&roomProfile?.gm===false&&!face.p&&quality>0;
+   const smoothLight=quality===2||playerFloorLight;
+   const depth=playerFloorLight?Math.max(3,lightEdgeDepth):lightEdgeDepth;
    const patchBudget=sharpLight?{remaining:21,shadowProbes:5}:lightEdgeBudget;
    const screen=projection??(overlap?points.map(vertex=>point(...vertex)):null);
    if(!insideOverlap(screen))paintRoundLightPatch(points,screen,lightRanges,saved?(target,projected,world)=>{
-    const tint=roomLighting(target,lightBlockers,quality===2);
+    const tint=roomLighting(target,lightBlockers,smoothLight);
     if(tint){saved.push([world,tint]);polygon(projected,tint,null)}
-   }:tintLightPatch,lightEdgeDepth,patchBudget,false,face.surfaceLightOffset,shadowSample);
+   }:(target,projected)=>{
+    const tint=roomLighting(target,lightBlockers,smoothLight);
+    if(tint)polygon(projected,tint,null);
+   },depth,patchBudget,false,face.surfaceLightOffset,shadowSample);
   }));
   if(saved&&!cameraPreview&&(fogMemoryState.shading.has(face.paintKey)||fogMemoryState.shading.size<16000))
    fogMemoryState.shading.set(face.paintKey,{signature:lightingFrame.terrainLightSignature,patches:saved});
