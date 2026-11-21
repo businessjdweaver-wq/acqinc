@@ -8455,22 +8455,49 @@ el('saveSceneCamera').onclick=()=>{
  el('sceneCameraStatus').textContent='Starting view captured. Save this scene to keep it.';
  queueRecovery();scheduleRoomPatch();
 };
+// Every compass preset is a complete, predictable camera framing operation.
+// Resolve player ownership rather than relying on the GM's selected standee.
+function compassFocusStandee(){
+ if(roomProfile?.gm===false){
+  const owned=tokens.filter(token=>ownsRoomStandee(token)&&!standeeHidden(token));
+  return owned.find(token=>token.roomId&&roomProfile?.characters?.some(character=>character.id===token.roomId))||owned[0]||null;
+ }
+ return selected?.type==='standee'&&!standeeHidden(selected)?selected:null;
+}
+function frameCompassView(action){
+ C=Math.cos(angle);D=Math.sin(angle);
+ const preferred=Number(preferences.focusZoom)/100;
+ zoom=Number.isFinite(preferred)?Math.max(.45,Math.min(12,preferred)):1;
+ S=Math.min(W/(gridLimit(0)+17),H/(gridLimit(1)+6))*zoom;
+ panX=0;panY=0;
+ const target=compassFocusStandee();
+ if(target){
+  const [x,y]=point(...basePoint(target));
+  panX+=W/2-x;
+  panY+=H/2-(y-standeeArtHeight(target)/2);
+  setFocusCutaway(target);
+ }else{
+  // Preserve the old center-of-battlefield fallback when no token is assigned.
+  panY=-H*.05;
+  setFocusCutaway(null);
+ }
+ rememberCubeAngle();
+ draw(action);
+}
 for(const button of el('viewCube').querySelectorAll('[data-view]'))button.onclick=()=>{
  if(drag||carry)return;
  const name=button.dataset.view;
  if(name==='Top')topDown=true;
  else{topDown=false;angle={N:0,NE:Math.PI/4,E:Math.PI/2,SE:Math.PI*3/4,S:Math.PI,SW:Math.PI*5/4,W:Math.PI*1.5,NW:-Math.PI/4}[name];tilt=.69}
- setFocusCutaway(null);centerCubeStandee();rememberCubeAngle();draw('Camera preset');
+ frameCompassView('Camera preset');
 };
-// Compass arrows orbit the camera without resetting zoom, tilt or pan.
+// Rotation arrows use the same safe recenter and preferred zoom behavior.
 for(const [id,delta] of [['cubeRotateLeft',-Math.PI/4],['cubeRotateRight',Math.PI/4]]){
  el(id).onclick=()=>{
   if(drag||carry)return;
   angle=(angle+delta+Math.PI*2)%(Math.PI*2);
   topDown=false;
-  setFocusCutaway(null);
-  rememberCubeAngle();
-  draw('Compass rotation');
+  frameCompassView('Compass rotation');
  };
 }
 el('playerShowAllies').onclick=()=>{
