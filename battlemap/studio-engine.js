@@ -2210,7 +2210,7 @@ function prepareFloorImage(image,value){
 }
 function paintFloorImage(image,clip,z){
  if(!image)return;
- if(!image.projections.has(z))image.projections.set(z,image.corners.map(([x,y])=>rawPoint(x,y,z)));
+ if(!image.projections.has(z))image.projections.set(z,image.corners.map(([x,y])=>rawPoint(x,y,z*calibratedVerticalScale())));
  ctx.save();
  ctx.beginPath();
  clip.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
