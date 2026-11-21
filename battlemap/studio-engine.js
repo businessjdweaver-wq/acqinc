@@ -671,6 +671,40 @@ function standeeShadow(p,preview){
  });
  if(visibleProjection(projected))faces.push({p,shadow:true,shadowLevel:level,projected,z:null,preview,depth:Math.max(...projected.map(v=>v[2]))+.03});
 }
+// Hold E to inspect elevated walking surfaces in either camera projection.
+// This is a local, read-only overlay; it never changes scene geometry.
+let elevationKeyHeld=false;
+function drawFloorElevationLabels(){
+ if(!elevationKeyHeld)return;
+ const best=new Map();
+ for(const surface of faces){
+  if(!surface.p||surface.preview||surface.standee||surface.shadow||
+     !Number.isFinite(surface.z)||surface.z<=.001||!surface.world?.length||
+     surface.world.some(v=>Math.abs(v[2]-surface.z)>.001))continue;
+  if(surface.p.type==='standee'||sceneryPiece(surface.p))continue;
+  const projected=surface.projected;
+  if(!projected?.length||!visibleProjection(projected,25))continue;
+  const cx=surface.world.reduce((sum,v)=>sum+v[0],0)/surface.world.length;
+  const cy=surface.world.reduce((sum,v)=>sum+v[1],0)/surface.world.length;
+  if(roomProfile?.gm===false&&playerFogEnabled()&&!fogPointVisible([cx,cy,surface.z],false))continue;
+  const area=Math.abs(projected.reduce((sum,p,i)=>{const q=projected[(i+1)%projected.length];return sum+p[0]*q[1]-q[0]*p[1]},0));
+  const prior=best.get(surface.p);
+  if(!prior||area>prior.area)best.set(surface.p,{surface,area});
+ }
+ ctx.save();ctx.font='600 12px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';
+ for(const {surface} of best.values()){
+  const [x,y]=surface.projected.reduce((sum,p)=>[sum[0]+p[0]/surface.projected.length,sum[1]+p[1]/surface.projected.length],[0,0]);
+  if(x<0||x>W||y<0||y>H)continue;
+  const height=Math.round(surface.z*50)/10;
+  const label='+'+height+' ft',width=ctx.measureText(label).width+12;
+  // Same compact format as the flying standee shadow readout, with
+  // an opaque contrasting plate so it remains legible over floor art.
+  ctx.fillStyle='#17232b';ctx.fillRect(x-width/2,y-9,width,18);
+  ctx.strokeStyle='#fff3d9';ctx.lineWidth=1;ctx.strokeRect(x-width/2+.5,y-8.5,width-1,17);
+  ctx.fillStyle='#fff3d9';ctx.fillText(label,x,y);
+ }
+ ctx.restore();
+}
 function paintStandeeShadow(face){
  polygon(face.projected,'#33281f54','#33281f45');
  if(standeeObscured(face.p))return;
@@ -5711,6 +5745,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  positionMoveActions();
  updateStandeeTally();
  drawStandeeMarks(useStandeeLayer?faces.filter(face=>!face.preview):faces);
+ drawFloorElevationLabels();
  if(useStandeeLayer){
   movingStandeeLayer={carry,tokens,pieces,areas,view:standeeLayerViewKey(),lighting:lightingFrame,showLighting,blockers,stationary:faces.filter(face=>!face.preview)};
   paintMovingStandeeLayer(movingStandeeLayer);
@@ -9849,9 +9884,14 @@ function stepStandeeWithArrow(key){
  ghost=next;route.end=basePoint(next);
  message('Arrow keys to move. Enter to confirm, Esc to cancel.');draw();return true;
 }
+window.addEventListener('keyup',e=>{if(e.key.toLowerCase()==='e'&&elevationKeyHeld){elevationKeyHeld=false;draw('Elevation labels hidden')}});
+window.addEventListener('blur',()=>{if(elevationKeyHeld){elevationKeyHeld=false;draw('Elevation labels hidden')}});
 window.addEventListener('keydown',e=>{
  if(el('sceneDialog').open||el('standeeLibraryDialog').open||el('formationDialog').open||el('assetCatalogDialog').open||appearancePanel.contains(e.target)||el('importStandeeDialog').open||el('userAccountsDialog').open||el('standeePasteDialog').open||e.target?.matches?.('textarea,input,select')||el('foldedDialog').open||el('standeeCropDialog').open||el('preferencesDialog').open||el('standeeArtDialog').open||el('sceneDialog').open||el('areaEditDialog').open)return;
  const editing=e.target?.matches?.('input, select, textarea, [contenteditable]');
+ if(e.key.toLowerCase()==='e'&&!editing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.target?.closest?.('[contenteditable]')&&!document.querySelector('dialog[open]')){
+  e.preventDefault();if(!elevationKeyHeld){elevationKeyHeld=true;draw('Elevation labels shown')}return;
+ }
  if(playing&&roomProfile?.gm!==false&&!editing&&!e.target?.closest?.('[contenteditable], dialog')&&
     e.key.toLowerCase()==='l'&&!e.repeat&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!drag&&!carry){
   e.preventDefault();
