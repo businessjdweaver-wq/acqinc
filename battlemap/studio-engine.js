@@ -2811,6 +2811,10 @@ function renderPathWall(solid){
  push(cap,cap[0][2],rim?[true,ends[1],true,ends[0]]:null);
  Object.assign(faces.at(-1),{capPattern:solid.capPattern,surfaceLightOffset:[0,0,surfaceClearance]});
  if(!topDown)poly.forEach((_,i)=>{
+  // The short end faces at an ordinary join are buried inside the next
+  // prism. Rendering them creates opaque/striped seams under cutaway fade.
+  // Keep exposed path ends, intentional hard corners, and opening edges.
+  if(i===1&&ends&&!ends[1]||i===3&&ends&&!ends[0])return;
   const j=(i+1)%poly.length;
   const base=Math.abs(z-wall.z)<1e-6;
   const lines=ends&& (i===0?[base,ends[1],rim,ends[0]]:i===2?[base,ends[0],rim,ends[1]]:null);
