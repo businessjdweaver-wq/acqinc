@@ -4756,8 +4756,10 @@ function refinedFogBoundaryPatches(patch){
    // At the final resolution use the center, not an any-corner test that
    // paints the entire square visible across the circular sight boundary.
    part.visible=depth?samples[0]:samples.some(Boolean);
-   if(parentSeen&&!fogMemoryState?.seen.has(part.memoryKey))
-    fogMemoryState?.seen.add(part.memoryKey);
+   if(parentSeen&&fogMemoryState&&!fogMemoryState.seen.has(part.memoryKey)){
+    fogMemoryState.seen.add(part.memoryKey);
+    fogMemoryState.dirty=true;
+   }
    result.push(part);return;
   }
   const [a,b,c,d]=part.world;
