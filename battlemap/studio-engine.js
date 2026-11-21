@@ -2794,7 +2794,7 @@ function renderPathWall(solid){
  const owner={type:'volume',x:poly[0][0],y:poly[0][1],z,extents:[1,1,top-z],r:0};
  const push=(points,height,edges)=>{
   face(points,surface.color,owner,height,false);
-  Object.assign(faces.at(-1),{pathWall:surface,wallId:wall.id,pathEdges:edges});
+  Object.assign(faces.at(-1),{pathWall:surface,pathSolid:solid,wallId:wall.id,pathEdges:edges});
  };
  // The polygon may run in either direction, including at curved-wall joins.
  const winding=poly.reduce((sum,[x,y],i)=>{
@@ -5165,12 +5165,22 @@ function buildPlayerCameraCutaway(){
   stairs.add(stair);stairCells.set(stair,cells);
   for(const [first,,opposite] of cells)aim((first[0]+opposite[0])/2,(first[1]+opposite[1])/2,z+.035,z);
  }
+ const pathSolids=new Set();
+ // Wall-trace extrusion creates synthetic face owners, not entries in pieces.
+ // Test their actual prisms against the same standee-to-camera rays used by
+ // regular terrain cutaways. This is camera transparency, not vision bypass.
+ if(!topDown){
+  for(const solid of pathWallSolids()){
+   if(solid.opening||!solid.wall?.opacity)continue;
+   if(rays.some(({start,end})=>wallPrismInterval(solid,start,end)))pathSolids.add(solid);
+  }
+ }
  const terrain=new Map();
  for(const piece of pieces){
   const mode=playerCameraTerrainMode(piece,rays);
   if(mode)terrain.set(piece,mode);
  }
- return {terrain,stairs,stairCells,token};
+ return {terrain,stairs,stairCells,token,pathSolids};
 }
 function setFocusCutaway(token){
  focusCutaway=null;
@@ -5634,7 +5644,8 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   ctx.globalAlpha=f.preview?.72:1;
   if(f.pathWall){
    ctx.save();
-   ctx.globalAlpha=f.pathWall.opacity;
+   const cameraFade=playerCameraCutaway?.pathSolids?.has(f.pathSolid);
+   ctx.globalAlpha=f.pathWall.opacity*(cameraFade?.16:1);
    polygon(f.projected,f.fill,null);
    if(showTerrainTextures&&f.pathWall.texture!=='plain'&&(f.projected.length===4||f.capPattern))paintTerrainPatterns(f.pathWall.texture,f);
    shadeTerrain(f);
