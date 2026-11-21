@@ -4158,16 +4158,45 @@ el('sceneAppearanceForm').onsubmit=e=>{
  movementRenderCache=null;
  el('sceneAppearanceDialog').close();appearanceDraft=null;refresh('Scene appearance applied');
 };
+// The battlefield's physical extent is in uncalibrated world coordinates.
+// Calibration changes only the VTT grid inside this fixed rectangle.
+function clipFloorGridCell(poly,axis,limit,keepGreater){
+ const out=[];
+ for(let i=0;i<poly.length;i++){
+  const a=poly[i],b=poly[(i+1)%poly.length];
+  const da=(keepGreater?a[axis]-limit:limit-a[axis]);
+  const db=(keepGreater?b[axis]-limit:limit-b[axis]);
+  const insideA=da>=-1e-9,insideB=db>=-1e-9;
+  if(insideA)out.push(a);
+  if(insideA!==insideB){
+   const t=da/(da-db);
+   out.push([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]);
+  }
+ }
+ return out;
+}
 function drawVisibleGround(){
- const corners=[inverse(-2,-2,0),inverse(W+2,-2,0),inverse(W+2,H+2,0),inverse(-2,H+2,0)];
- const bounds=axis=>[
-  Math.max(0,Math.floor(Math.min(...corners.map(p=>p[axis])))),
-  Math.min(gridLimit(axis),Math.ceil(Math.max(...corners.map(p=>p[axis]))))
- ];
- const [left,right]=bounds(0),[back,front]=bounds(1);
- if(floorSceneEditing&&el('floorSceneGrid').getAttribute('aria-pressed')!=='true'){
-  face([[left,back,0],[right,back,0],[right,front,0],[left,front,0]],'#e2d4b5',null,0,false);
- }else for(let x=left;x<right;x++)for(let y=back;y<front;y++)top(x,y,0,'#e2d4b5',null,false);
+ const width=gridLimit(0),depth=gridLimit(1);
+ // Screen bounds are expressed in calibrated grid coordinates, but the
+ // physical floor boundary is not.
+ const screenCorners=[inverse(-2,-2,0),inverse(W+2,-2,0),inverse(W+2,H+2,0),inverse(-2,H+2,0)];
+ const physicalCorners=[[0,0],[width,0],[width,depth],[0,depth]].map(([x,y])=>worldToGrid(x,y));
+ const all=[...screenCorners,...physicalCorners];
+ const minX=Math.floor(Math.min(...all.map(p=>p[0])))-1;
+ const maxX=Math.ceil(Math.max(...all.map(p=>p[0])))+1;
+ const minY=Math.floor(Math.min(...all.map(p=>p[1])))-1;
+ const maxY=Math.ceil(Math.max(...all.map(p=>p[1])))+1;
+ // Each grid tile is clipped against the original physical floor, rather
+ // than moving the physical floor to the new grid origin.
+ for(let x=minX;x<maxX;x++)for(let y=minY;y<maxY;y++){
+  let poly=[[x,y],[x+1,y],[x+1,y+1],[x,y+1]].map(([gx,gy])=>gridToWorld(gx,gy));
+  poly=clipFloorGridCell(poly,0,0,true);
+  poly=clipFloorGridCell(poly,0,width,false);
+  poly=clipFloorGridCell(poly,1,0,true);
+  poly=clipFloorGridCell(poly,1,depth,false);
+  if(poly.length<3)continue;
+  face(poly.map(([wx,wy])=>[...worldToGrid(wx,wy),0]),'#e2d4b5',null,0,false);
+ }
 }
 function savedGridDisplay(){return areas.find(a=>a.shape==='appearance')?.appearance?.gridDisplay||{}}
 function gridDisplayValue(){return appearancePanel?.open&&appearanceDraft?.gridDisplay?appearanceDraft.gridDisplay:savedGridDisplay()}
@@ -4176,7 +4205,7 @@ function gridColor(){return gridDisplayValue().color||'#70faff'}
 function gridOpacity(){return Math.max(0,Math.min(1,(gridDisplayValue().opacity??65)/100))}
 function gridStrokeColor(){return gridColor()+Math.round(gridOpacity()*255).toString(16).padStart(2,'0')}
 function drawLowAngleGrid(painted){
- polygon([[0,0],[gridLimit(0),0],[gridLimit(0),gridLimit(1)],[0,gridLimit(1)]].map(([x,y])=>point(x,y,0)),painted?'#0000':'#e2d4b5',gridVisible()?gridColor()+Math.round(gridOpacity()*255).toString(16).padStart(2,'0'):null);
+ polygon([[0,0],[gridLimit(0),0],[gridLimit(0),gridLimit(1)],[0,gridLimit(1)]].map(([x,y])=>rawPoint(x,y,0)),painted?'#0000':'#e2d4b5',null);
  ctx.beginPath();
  for(let i=4;i<Math.max(gridLimit(0),gridLimit(1));i+=4){
   for(const [start,end] of [...(i<gridLimit(0)?[[[i,0],[i,gridLimit(1)]]]:[]),...(i<gridLimit(1)?[[[0,i],[gridLimit(0),i]]]:[])]){
