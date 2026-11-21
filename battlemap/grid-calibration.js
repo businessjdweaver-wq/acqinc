@@ -1,4 +1,4 @@
-/* Battlemap Studio square-grid calibration, v1.403. */
+/* Battlemap Studio square-grid calibration, v1.404. */
 (function(global){
 'use strict';
 function solveSquareGridCalibration(marks,across,down,column,row,multiplier){
@@ -37,7 +37,7 @@ function solveSquareGridCalibration(marks,across,down,column,row,multiplier){
  const scale=Math.hypot(xx,xy);
  if(!Number.isFinite(scale)||scale<.02)return {error:'Calculated cell size is invalid.'};
  const baseX=mx-xx*mu-yx*mv,baseY=my-xy*mu-yy*mv;
- const indexColumn=column*multiplier,indexRow=row*multiplier;
+ const indexColumn=0,indexRow=0; // The first selected intersection defines the local grid anchor.
  const calibration={ox:baseX-xx*indexColumn-yx*indexRow,oy:baseY-xy*indexColumn-yy*indexRow,xx,xy,yx,yy};
  const errors=observations.map(t=>Math.hypot(baseX+xx*t.u+yx*t.v-t.p[0],baseY+xy*t.u+yy*t.v-t.p[1])/scale);
  const rms=Math.sqrt(errors.reduce((sum,e)=>sum+e*e,0)/count),max=Math.max(...errors);
@@ -84,9 +84,9 @@ function renderOverlay(env){
 function refineCalibration(env){
  const {el,floorSceneMarks,draw,movementRenderCacheSetter}=env;
  const marks=floorSceneMarks,n=marks.length;
- const [across,down,column,row]=['floorGridAcross','floorGridDown','floorGridColumn','floorGridRow'].map(id=>el(id).valueAsNumber);
+ const [across,down]=['floorGridAcross','floorGridDown'].map(id=>el(id).valueAsNumber);
  const multiplier=Number(el('floorPrintedFeet').value)/5;
- const result=global.BattlemapGridCalibration?.solve(marks,across,down,column,row,multiplier);
+ const result=global.BattlemapGridCalibration?.solve(marks,across,down,0,0,multiplier);
  if(!result||result.error){el('floorAlignStatus').textContent=result?.error||'Calibration module did not load. Reload the page and try again.';return;}
  env.setPendingCalibration(result.calibration);
  const {count,ignored,scale,rotation,rms,max}=result;
@@ -96,5 +96,5 @@ function refineCalibration(env){
  el('floorAlignStatus').textContent=`${n}/9 clicked · ${count} used${ignored?` (${ignored} ambiguous additional point${ignored===1?'':'s'} ignored)`:''} · ${across} horizontal and ${down} vertical square intervals · square cell ${scale.toFixed(3)} world units · rotation ${rotation.toFixed(2)}° · RMS ${rms.toFixed(2)} cells · max ${max.toFixed(2)} cells. ${quality}${next}`;
  movementRenderCacheSetter();draw('Square VTT calibration preview');
 }
-global.BattlemapGridCalibration=Object.freeze({solve:solveSquareGridCalibration,renderOverlay,refineCalibration,version:'1.403'});
+global.BattlemapGridCalibration=Object.freeze({solve:solveSquareGridCalibration,renderOverlay,refineCalibration,version:'1.404'});
 })(window);
