@@ -1039,9 +1039,14 @@ async function startRoomScene(operation,scene,{requireShared=false}={}){
   let initial_scene=null;
   if(operation==='open'||operation==='activate'){
    const state=await roomRpc('sync',{ticket:roomProfile.token,requested_scene:scene.id,since_event:-1});
+   // Opening an inactive scene must create/join its shared encounter,
+   // not load an isolated saved-catalog copy. This does not activate it.
    if(operation==='open'&&!state.active){
-    await loadSavedScene(scene);
-    return;
+    const previous={pieces,tokens,areas};
+    try{
+     ({pieces,tokens,areas}=structuredClone(scene.map));
+     initial_scene=roomSnapshot();
+    }finally{({pieces,tokens,areas}=previous)}
    }
    if(!state.active){
     const previous={pieces,tokens,areas};
@@ -1051,7 +1056,7 @@ async function startRoomScene(operation,scene,{requireShared=false}={}){
     }finally{({pieces,tokens,areas}=previous)}
    }
   }
-  if(operation!=='open'){
+  if(operation!=='open'||initial_scene){
    if(initial_scene)await inheritStandeeOwners(initial_scene.tokens);
    await roomRpc('manage',{ticket:roomProfile.token,requested_scene:scene.id,operation,initial_scene});
   }
