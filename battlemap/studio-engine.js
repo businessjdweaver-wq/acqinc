@@ -2303,16 +2303,21 @@ function updateFloorSceneGrid(){
 }
 for(const id of ['floorSceneWidth','floorSceneDepth'])el(id).onchange=updateFloorSceneGrid;
 el('floorSceneFit').onclick=()=>{
- const {x,y,width,depth,rotation}=readFloorImageSettings(),a=rotation*Math.PI/180,c=Math.cos(a),si=Math.sin(a);
+ // Fit the physical floor to the image, including negative world coordinates.
+ // Do not move, resize, rotate, or re-anchor the imported image.
+ const before=readFloorImageSettings();
+ const {x,y,width,depth,rotation}=before,a=rotation*Math.PI/180,c=Math.cos(a),si=Math.sin(a);
  const corners=[[-.5,-.5],[.5,-.5],[.5,.5],[-.5,.5]].map(([u,v])=>[x+u*width*c-v*depth*si,y+u*width*si+v*depth*c]);
- const maxX=Math.max(...corners.map(p=>p[0])),maxY=Math.max(...corners.map(p=>p[1]));
- const minX=Math.min(...corners.map(p=>p[0])),minY=Math.min(...corners.map(p=>p[1]));
- const neededX=Math.ceil((maxX+5)/5),neededY=Math.ceil((maxY+5)/5);
- if(minX<0||minY<0){el('appearanceStatus').textContent='Move the image right/down so its edges are at or above battlefield coordinate zero, then expand.';return}
+ const maxX=Math.max(...corners.map(p=>p[0]))/5,maxY=Math.max(...corners.map(p=>p[1]))/5;
+ const minX=Math.min(...corners.map(p=>p[0]))/5,minY=Math.min(...corners.map(p=>p[1]))/5;
+ const originX=Math.floor(minX),originY=Math.floor(minY);
+ const neededX=Math.ceil(maxX)-originX,neededY=Math.ceil(maxY)-originY;
  if(neededX>100||neededY>100){el('appearanceStatus').textContent='Image exceeds the 100 × 100-square battlefield limit. Reduce its size first.';return}
- el('floorSceneWidth').value=Math.max(sceneGrid().width,neededX,10);
- el('floorSceneDepth').value=Math.max(sceneGrid().depth,neededY,10);
- updateFloorSceneGrid();
+ floorSceneGridDraft={...floorSceneGridDraft,floorOriginX:originX,floorOriginY:originY,width:Math.max(10,neededX),depth:Math.max(10,neededY)};
+ el('floorSceneWidth').value=floorSceneGridDraft.width;
+ el('floorSceneDepth').value=floorSceneGridDraft.depth;
+ el('appearanceStatus').textContent='Battlefield fitted to image without moving it. Click Apply to save.';
+ updateFloorSceneDraft();
 };
 const floorSceneCanvas=el('floorSceneOverlay');
 floorSceneCanvas.addEventListener('wheel',e=>{
@@ -4197,13 +4202,16 @@ function clipFloorGridCell(poly,axis,limit,keepGreater){
 function drawVisibleGround(){
  // Keep the physical battlefield fixed when calibrating the VTT grid.
  const width=gridLimit(0),depth=gridLimit(1);
+ const physicalGrid=floorSceneEditing&&floorSceneGridDraft?floorSceneGridDraft:sceneGrid();
+ const offsetX=Number(physicalGrid.floorOriginX)||0,offsetY=Number(physicalGrid.floorOriginY)||0;
+ const maxX=offsetX+width,maxY=offsetY+depth;
  const rawCorners=[rawInverse(-2,-2,0),rawInverse(W+2,-2,0),rawInverse(W+2,H+2,0),rawInverse(-2,H+2,0)];
- const fixedFloor=()=>face([[0,0,0],[width,0,0],[width,depth,0],[0,depth,0]].map(([x,y,z])=>[...worldToGrid(x,y),z]),'#e2d4b5',null,0,false);
+ const fixedFloor=()=>face([[offsetX,offsetY,0],[maxX,offsetY,0],[maxX,maxY,0],[offsetX,maxY,0]].map(([x,y,z])=>[...worldToGrid(x,y),z]),'#e2d4b5',null,0,false);
  if(floorSceneEditing){fixedFloor();return}
  const calibration=activeGridCalibration();
  if(!calibration){
-  const loX=Math.max(0,Math.floor(Math.min(...rawCorners.map(p=>p[0])))),hiX=Math.min(width,Math.ceil(Math.max(...rawCorners.map(p=>p[0]))));
-  const loY=Math.max(0,Math.floor(Math.min(...rawCorners.map(p=>p[1])))),hiY=Math.min(depth,Math.ceil(Math.max(...rawCorners.map(p=>p[1]))));
+  const loX=Math.max(offsetX,Math.floor(Math.min(...rawCorners.map(p=>p[0])))),hiX=Math.min(maxX,Math.ceil(Math.max(...rawCorners.map(p=>p[0]))));
+  const loY=Math.max(offsetY,Math.floor(Math.min(...rawCorners.map(p=>p[1])))),hiY=Math.min(maxY,Math.ceil(Math.max(...rawCorners.map(p=>p[1]))));
   for(let x=loX;x<hiX;x++)for(let y=loY;y<hiY;y++)top(x,y,0,'#e2d4b5',null,false);
   return;
  }
@@ -4221,10 +4229,10 @@ function drawVisibleGround(){
  };
  for(let x=left;x<right;x++)for(let y=back;y<front;y++){
   let poly=[[x,y],[x+1,y],[x+1,y+1],[x,y+1]].map(([gx,gy])=>gridToWorld(gx,gy));
-  poly=clip(poly,0,0,true);if(poly.length<3)continue;
-  poly=clip(poly,0,width,false);if(poly.length<3)continue;
-  poly=clip(poly,1,0,true);if(poly.length<3)continue;
-  poly=clip(poly,1,depth,false);if(poly.length<3)continue;
+  poly=clip(poly,0,offsetX,true);if(poly.length<3)continue;
+  poly=clip(poly,0,maxX,false);if(poly.length<3)continue;
+  poly=clip(poly,1,offsetY,true);if(poly.length<3)continue;
+  poly=clip(poly,1,maxY,false);if(poly.length<3)continue;
   face(poly.map(([wx,wy])=>[...worldToGrid(wx,wy),0]),'#e2d4b5',null,0,false);
  }
 }
