@@ -690,7 +690,13 @@ function standeeSizeIndex(p){
  return i>=0?i:Math.max(2,Math.min(4,(p.size||1)+1));
 }
 function standeeScale(p){return standeeSizes[standeeSizeIndex(p)].scale}
-function standeeArtHeight(p){return p.conditions?.includes('dead')?0:S*p.size*(p.size>1?1.4:1.25)*standeeScale(p)}
+function standeeGridPixelSize(){
+ // The calibration changes the physical size of a 5-foot VTT cell.
+ // Sprite artwork must follow that same scale, not the uncalibrated S.
+ const c=activeGridCalibration();
+ return S*(c?Math.hypot(c.xx,c.xy):1);
+}
+function standeeArtHeight(p){return p.conditions?.includes('dead')?0:standeeGridPixelSize()*p.size*(p.size>1?1.4:1.25)*standeeScale(p)}
 const defaultFacingHeading=Math.PI/2+.64;
 function facingForHeading(heading){return (Math.round((defaultFacingHeading-heading)*180/Math.PI)%360+360)%360}
 function faceHeading(token,heading){token.facing=facingForHeading(heading)}
@@ -1117,7 +1123,7 @@ function drawStandee(p,preview){
  if(standeeHidden(p))return;
  if(!topDown)standeeShadow(p,preview);
  const [x,y,z]=point(p.x+p.size/2,p.y+p.size/2,p.z);
- const baseWidth=S*p.size*(p.size>1?.95:.78)*standeeScale(p),height=standeeArtHeight(p);
+ const baseWidth=standeeGridPixelSize()*p.size*(p.size>1?.95:.78)*standeeScale(p),height=standeeArtHeight(p);
  const dead=p.conditions?.includes('dead');
  const facing=trackingFacing(p);
  if(topDown){
