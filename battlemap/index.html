@@ -2777,6 +2777,51 @@ floorSceneCanvas.addEventListener('wheel',e=>{
  panX+=px-after[0];panY+=py-after[1];
  draw('Floor alignment zoom');
 },{passive:false});
+// Three mandatory intersections, then opposite corner, center, and four edge
+// midpoints. All coordinates are relative to the first INTERIOR intersection.
+function refineFloorSceneCalibration(){
+ const marks=floorSceneMarks,n=marks.length;
+ const [across,down,column,row]=['floorGridAcross','floorGridDown','floorGridColumn','floorGridRow'].map(id=>el(id).valueAsNumber);
+ const multiplier=Number(el('floorPrintedFeet').value)/5;
+ if(![across,down,column,row,multiplier].every(Number.isFinite)||across<=0||down<=0||multiplier<=0){
+  el('floorAlignStatus').textContent='Check the printed-square counts before selecting intersections.';return;
+ }
+ const u=across*multiplier,v=down*multiplier;
+ const targets=[[0,0],[u,0],[0,v],[u,v],[u/2,v/2],[u/2,0],[0,v/2],[u,v/2],[u/2,v]];
+ const observations=marks.map((p,i)=>({p,u:targets[i][0],v:targets[i][1]}));
+ // Fit one global affine grid using least squares. This permits different
+ // horizontal/vertical spacing without warping the image or gameplay grid.
+ const mean=(key)=>observations.reduce((sum,p)=>sum+p[key],0)/n;
+ const mu=mean('u'),mv=mean('v'),mx=marks.reduce((a,p)=>a+p[0],0)/n,my=marks.reduce((a,p)=>a+p[1],0)/n;
+ let uu=0,vv=0,uv=0,ux=0,vx=0,uy=0,vy=0;
+ for(const t of observations){
+  const a=t.u-mu,b=t.v-mv,dx=t.p[0]-mx,dy=t.p[1]-my;
+  uu+=a*a;vv+=b*b;uv+=a*b;ux+=a*dx;vx+=b*dx;uy+=a*dy;vy+=b*dy;
+ }
+ const det=uu*vv-uv*uv;
+ if(det<=1e-8){el('floorAlignStatus').textContent='Points do not span a usable grid. Retry points.';return}
+ const xx=(ux*vv-vx*uv)/det,yx=(vx*uu-ux*uv)/det;
+ const xy=(uy*vv-vy*uv)/det,yy=(vy*uu-uy*uv)/det;
+ const baseX=mx-xx*mu-yx*mv,baseY=my-xy*mu-yy*mv;
+ const sizeX=Math.hypot(xx,xy),sizeY=Math.hypot(yx,yy);
+ if(![xx,xy,yx,yy].every(Number.isFinite)||sizeX<.02||sizeY<.02||xx*yy-xy*yx<=.0001){
+  el('floorAlignStatus').textContent='Grid orientation or spacing is invalid. Retry points.';return;
+ }
+ const current=readFloorImageSettings(),theta=current.rotation*Math.PI/180,cs=Math.cos(theta),sn=Math.sin(theta);
+ const imageTopLeft=[(current.x-(current.width*cs-current.depth*sn)/2)/5,(current.y-(current.width*sn+current.depth*cs)/2)/5];
+ const relativeX=baseX-imageTopLeft[0],relativeY=baseY-imageTopLeft[1];
+ const localColumn=Math.round((relativeX*cs+relativeY*sn)/sizeX);
+ const localRow=Math.round((-relativeX*sn+relativeY*cs)/sizeY);
+ const indexColumn=localColumn+column*multiplier,indexRow=localRow+row*multiplier;
+ floorScenePendingCalibration={ox:baseX-xx*indexColumn-yx*indexRow,oy:baseY-xy*indexColumn-yy*indexRow,xx,xy,yx,yy};
+ const errors=observations.map(t=>Math.hypot(baseX+xx*t.u+yx*t.v-t.p[0],baseY+xy*t.u+yy*t.v-t.p[1])/Math.min(sizeX,sizeY));
+ const rms=Math.sqrt(errors.reduce((a,b)=>a+b*b,0)/n),max=Math.max(...errors);
+ el('floorSceneAccept').hidden=false;el('floorSceneRetry').hidden=false;
+ el('floorSceneGrid').setAttribute('aria-pressed','true');
+ const next=['opposite bottom-right corner','center intersection','top-edge midpoint','left-edge midpoint','right-edge midpoint','bottom-edge midpoint'][n-3];
+ el('floorAlignStatus').textContent=`${n}/9 points · horizontal ${sizeX.toFixed(3)}, vertical ${sizeY.toFixed(3)} world units per 5 ft · RMS error ${rms.toFixed(2)} cells · max ${max.toFixed(2)} cells. ${next?'Optional next: '+next+'.':'All nine points collected.'} Accept calibration or Retry points.`;
+ movementRenderCache=null;draw('Refined VTT calibration preview');
+}
 floorSceneCanvas.onpointerdown=e=>{
  if(!floorSceneEditing)return;
  if(e.button!==0&&e.button!==1)return;
@@ -2785,54 +2830,10 @@ floorSceneCanvas.onpointerdown=e=>{
  if(e.button===1||e.shiftKey){floorScenePointer={id:e.pointerId,cameraPan:true,px,py,startPanX:panX,startPanY:panY};floorSceneCanvas.setPointerCapture(e.pointerId);return;}
  if(!pos.every(Number.isFinite))return;
  if(floorSceneMode==='align'){
+  if(floorSceneMarks.length>=9){el('floorAlignStatus').textContent='Nine points collected. Accept calibration or Retry points.';return}
   floorSceneMarks.push(pos);
-  if(floorSceneMarks.length===3){
-   const [o,r,d]=floorSceneMarks;floorSceneMarks=[];
-   const [across,down,column,row]=['floorGridAcross','floorGridDown','floorGridColumn','floorGridRow'].map(id=>el(id).valueAsNumber);
-   const current=readFloorImageSettings(),theta=current.rotation*Math.PI/180,cs=Math.cos(theta),sn=Math.sin(theta);
-   const dx=[r[0]-o[0],r[1]-o[1]],dy=[d[0]-o[0],d[1]-o[1]];
-   const h=dx[0]*cs+dx[1]*sn,v=-dy[0]*sn+dy[1]*cs;
-   const crossH=Math.abs(-dx[0]*sn+dx[1]*cs),crossV=Math.abs(dy[0]*cs+dy[1]*sn);
-   if(![across,down,column,row].every(Number.isInteger)||across<1||down<1||column<0||row<0||h<=.02||v<=.02||crossH>h*.25||crossV>v*.25){
-    el('floorAlignStatus').textContent='Select the origin, image-right and image-down printed intersections; confirm square counts and rotation.';drawFloorSceneOverlay();return;
-   }
-   // Calibration maps each logical 5-foot cell into the fixed image/world
-   // coordinates. The image is rendered through rawPoint and never moves.
-   // A VTT square must have the same world-space size on both axes.
-   // Fit one uniform scale to both measured spans; never shear or stretch
-   // the grid to accommodate imperfect clicks or unequal printed spacing.
-   const measuredX=h/across,measuredY=v/down;
-   const printedMultiplier=Number(el('floorPrintedFeet').value)/5;
-   const cellSize=(h*across+v*down)/(across*across+down*down)/printedMultiplier;
-   if(!Number.isFinite(cellSize)||cellSize<=.02){
-    el('floorAlignStatus').textContent='Unable to determine a positive square grid size. Retry the three intersections.';drawFloorSceneOverlay();return;
-   }
-   const sx=cellSize,sy=cellSize;
-   const xx=cellSize*cs,xy=cellSize*sn,yx=-cellSize*sn,yy=cellSize*cs;
-   const spacingMismatch=Math.abs(measuredX-measuredY)/(cellSize*printedMultiplier);
-   // Determine the selected intersection's index from its position INSIDE
-   // the placed image. Do not treat an interior point as grid (0,0).
-   const imageTopLeft=[
-    (current.x-(current.width*cs-current.depth*sn)/2)/5,
-    (current.y-(current.width*sn+current.depth*cs)/2)/5
-   ];
-   const relativeX=o[0]-imageTopLeft[0],relativeY=o[1]-imageTopLeft[1];
-   const localColumn=Math.round((relativeX*cs+relativeY*sn)/sx);
-   const localRow=Math.round((-relativeX*sn+relativeY*cs)/sy);
-   // Explicit target column/row, if supplied, offsets the image's own grid,
-   // not the selected interior anchor.
-   const indexColumn=localColumn+column*printedMultiplier,indexRow=localRow+row*printedMultiplier;
-   floorScenePendingCalibration={
-    ox:o[0]-xx*indexColumn-yx*indexRow,
-    oy:o[1]-xy*indexColumn-yy*indexRow,
-    xx,xy,yx,yy
-   };
-   movementRenderCache=null;
-   el('floorSceneAccept').hidden=false;el('floorSceneRetry').hidden=false;
-   el('floorSceneGrid').setAttribute('aria-pressed','true');
-   el('floorAlignStatus').textContent=`Preview calibration from interior intersection (printed column ${localColumn}, row ${localRow}); image remains stationary. 5-foot square spacing ${cellSize.toFixed(3)} on both axes (${printedMultiplier} × ${printedMultiplier} per printed square).${spacingMismatch>.08?' Printed spans disagree by '+Math.round(spacingMismatch*100)+'%; check square counts and selected intersections.':''} Review the overlay, then Accept calibration or Retry points.`;
-   draw('VTT grid calibration preview');
-  }else el('floorAlignStatus').textContent=floorAlignmentSteps[floorSceneMarks.length];
+  if(floorSceneMarks.length>=3)refineFloorSceneCalibration();
+  else el('floorAlignStatus').textContent=floorAlignmentSteps[floorSceneMarks.length];
   drawFloorSceneOverlay();return;
  }
  floorScenePointer={id:e.pointerId,start:pos,initial:readFloorImageSettings(),px,py};floorSceneCanvas.setPointerCapture(e.pointerId);
