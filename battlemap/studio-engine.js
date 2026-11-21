@@ -2371,8 +2371,16 @@ floorSceneCanvas.onpointermove=e=>{
   const localX=wx*c+wy*sn,localY=-wx*sn+wy*c;
   const fixedU=u===0?0:-u,fixedV=v===0?0:-v;
   const oldAnchorX=fixedU*drag.initial.width,oldAnchorY=fixedV*drag.initial.depth;
-  const newWidth=u===0?drag.initial.width:Math.max(1,Math.min(5000,(localX-oldAnchorX)/(u-fixedU)));
-  const newDepth=v===0?drag.initial.depth:Math.max(1,Math.min(5000,(localY-oldAnchorY)/(v-fixedV)));
+  let newWidth=u===0?drag.initial.width:Math.max(1,Math.min(5000,(localX-oldAnchorX)/(u-fixedU)));
+  let newDepth=v===0?drag.initial.depth:Math.max(1,Math.min(5000,(localY-oldAnchorY)/(v-fixedV)));
+  if(u!==0&&v!==0){
+   // Corner handles preserve the original aspect ratio. Use the
+   // pointer displacement projected onto the original diagonal.
+   const dx=localX-oldAnchorX,dy=localY-oldAnchorY;
+   const diagX=(u-fixedU)*drag.initial.width,diagY=(v-fixedV)*drag.initial.depth;
+   const factor=Math.max(.001,Math.min(5000/Math.max(drag.initial.width,drag.initial.depth),(dx*diagX+dy*diagY)/(diagX*diagX+diagY*diagY)));
+   newWidth=drag.initial.width*factor;newDepth=drag.initial.depth*factor;
+  }
   next.width=newWidth;next.depth=newDepth;
   const shiftLocalX=(fixedU*drag.initial.width-fixedU*newWidth);
   const shiftLocalY=(fixedV*drag.initial.depth-fixedV*newDepth);
