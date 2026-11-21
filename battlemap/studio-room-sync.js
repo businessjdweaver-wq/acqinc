@@ -220,7 +220,7 @@ el('accountLinksForm').onsubmit=async e=>{
 };
 function playerRoomView(state){
  const ready=state.active;
- el('roomLobby').hidden=ready;
+ el('roomLobby').hidden=ready||!!state.canBrowseScenes;
  el('roomJoin').hidden=true;el('roomBack').hidden=false;
  el('roomLobbyStatus').textContent=state.gmOnline?'Waiting for the GM to activate a scene.':'Waiting for the GM to activate the first scene.';
  el('roomTurnState').hidden=!ready;
@@ -754,7 +754,7 @@ async function syncRoomOnce(){
     scheduleSceneAutosave(1200);
    }
   }else{
-   el('roomLobby').hidden=ready;
+   el('roomLobby').hidden=ready||!!update.canBrowseScenes;
    el('roomLobbyChat').hidden=!update.gmOnline;
    el('roomLobbyStatus').textContent=update.gmOnline?'Waiting for the GM to activate a scene.':'Waiting for the GM to activate the first scene.';
    if(update.scene){
@@ -1096,7 +1096,7 @@ async function openTesterScenePicker(){
    dialog.close();
    await pollRoom();
   }));
-  if(!options.length)list.textContent='No shared scenes are open yet. Ask the DM to open a scene.';
+  if(!options.length)list.textContent='No saved scenes are available yet.';
   if(!dialog.open)dialog.showModal();
  }catch(error){message(error.message)}
 }
