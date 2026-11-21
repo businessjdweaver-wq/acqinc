@@ -35,7 +35,7 @@ let tokens=[
  {type:'standee',name:'Adventurer',icon:'⚔',color:'#e0b36a',x:22,y:19,z:4,size:1},
  {type:'standee',name:'Goblin',icon:'◆',color:'#a4bf72',x:22,y:19,z:0,size:1}
 ];
-const history=[], artCache=new Map(), textures=new Map();
+const history=[], redoHistory=[], artCache=new Map(), textures=new Map();
 let playing=false, measuring=false, route=null, carry=null;
 let gmIgnoreLighting=true;
 let gmVisionArmed=false,gmVisionStandee=null,playCombatStandee=null,playCombatStats=null;
@@ -6262,7 +6262,7 @@ function candidate(x,y,p,dx=0,dy=0,snap=null,alt=false){
  return {...p,x:Math.floor(a)-dx,y:Math.floor(b)-dy,z};
 }
 function remember(withInitiative=false){
- scheduleRoomPatch();history.push(JSON.stringify({pieces,tokens,areas,...(withInitiative?{initiative:[...initiativeEntries],activeInitiative}:{})}));if(history.length>60)history.shift()}
+ scheduleRoomPatch();redoHistory.length=0;history.push(JSON.stringify({pieces,tokens,areas,...(withInitiative?{initiative:[...initiativeEntries],activeInitiative}:{})}));if(history.length>60)history.shift()}
 function canEditDifficultTerrain(){return roomProfile?.gm===false?!roomState.paused:!playing}
 function canEditArea(area){
  return Object.hasOwn(areaSizes,area.shape)&&
@@ -6340,6 +6340,7 @@ function refresh(action){
  el('terrainAngle').disabled=el('rotate').disabled||terrainLocked;
  el('selectedFaceToward').hidden=selected?.type!=='standee';
  el('undo').disabled=!history.length;
+ el('redo').disabled=!redoHistory.length;
  el('terrainLock').checked=terrainLocked;
  el('terrainLock').closest('label').hidden=playing||roomProfile?.gm===false;
  for(const b of el('palette').children){b.disabled=terrainLocked;b.classList.toggle('active',b.dataset.type===tool)}
@@ -8060,6 +8061,7 @@ function changeCombatStats(token,values){
   Object.assign(member,next);
  }
  if(changes.length){
+  redoHistory.length=0;
   history.push(JSON.stringify({combatStats:changes}));
   if(history.length>60)history.shift();
   scheduleRoomPatch();
@@ -8070,23 +8072,60 @@ el('undo').onclick=()=>{
  const snapshot=JSON.parse(history.at(-1));
  if(snapshot.combatStats){
   history.pop();
+  const redoChanges=[];
   let restored=0;
   for(const change of snapshot.combatStats){
    const token=tokens.find(item=>item.trackingId===change.id);
    if(!token)continue;
    for(const field of change.fields){
     if(token[field.key]!==field.after)continue;
+    redoChanges.push({id:change.id,key:field.key,before:field.before,after:field.after});
     if(Object.hasOwn(field,'before'))token[field.key]=field.before;else delete token[field.key];
     restored++;
    }
   }
+  if(redoChanges.length)redoHistory.push({kind:'combat',changes:redoChanges});
   message(restored?'Combat stats restored.':'The affected combat stats have changed since that edit.');
   refresh();return;
  }
  if(terrainLocked&&JSON.stringify(snapshot.pieces)!==JSON.stringify(pieces)){
   message('Unlock terrain to undo this map edit.');return;
  }
- history.pop();scheduleRoomPatch();carry=null;route=null;drag=null;
+ history.pop();
+ redoHistory.push({kind:'scene',before:JSON.stringify(snapshot),after:JSON.stringify({pieces,tokens,areas,...(snapshot.initiative?{initiative:[...initiativeEntries],activeInitiative}:{})})});
+ if(redoHistory.length>60)redoHistory.shift();
+ scheduleRoomPatch();carry=null;route=null;drag=null;
+ const previousTokens=tokens;({pieces,tokens,areas}=snapshot);undoCombatPersistence(previousTokens);
+ if(snapshot.initiative){
+  initiativeEntries.clear();for(const [key,value] of snapshot.initiative)initiativeEntries.set(key,value);
+  activeInitiative=snapshot.activeInitiative;publishInitiative();
+ }
+ selected=null;group.clear();ghost=null;refresh();
+};
+el('redo').onclick=()=>{
+ if(!redoHistory.length||roomProfile?.gm===false)return;
+ const entry=redoHistory.at(-1);
+ if(entry.kind==='combat'){
+  const restored=[];
+  for(const change of entry.changes){
+   const token=tokens.find(item=>item.trackingId===change.id);
+   if(!token||token[change.key]!==change.before)continue;
+   restored.push(change);
+   if(change.after===undefined)delete token[change.key];else token[change.key]=change.after;
+  }
+  redoHistory.pop();
+  if(restored.length){
+   history.push(JSON.stringify({combatStats:[...new Map(restored.map(c=>[c.id,c.id])).keys()].map(id=>({id,fields:restored.filter(c=>c.id===id).map(({key,before,after})=>({key,before,after}))}))}));
+   scheduleRoomPatch();
+  }
+  message(restored.length?'Combat stats reapplied.':'Cannot redo: combat stats changed since undo.');
+  refresh();return;
+ }
+ const snapshot=JSON.parse(entry.after);
+ if(terrainLocked&&JSON.stringify(snapshot.pieces)!==JSON.stringify(pieces)){message('Unlock terrain to redo this map edit.');return}
+ redoHistory.pop();history.push(entry.before);
+ if(history.length>60)history.shift();
+ scheduleRoomPatch();carry=null;route=null;drag=null;
  const previousTokens=tokens;({pieces,tokens,areas}=snapshot);undoCombatPersistence(previousTokens);
  if(snapshot.initiative){
   initiativeEntries.clear();for(const [key,value] of snapshot.initiative)initiativeEntries.set(key,value);
