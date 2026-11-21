@@ -6508,6 +6508,7 @@ function renderRoomPresence(){
  if(!panel.hidden)panel.textContent='Online · '+[ (roomProfile.name||'GM')+' (DM)',...(roomState.onlinePlayers||[]) ].join(' · ');
 }
 function refresh(action){
+ if(!currentSceneId&&roomProfile?.gm&&recoveryReady&&!roomState.active&&(pieces.length||tokens.length||areas.length))void ensureNamedWorkingScene();
  scheduleSceneAutosave();
  const wallMenu=el('wallPathMenu');
  if(wallMenu){
@@ -12108,7 +12109,22 @@ async function changeScenes(next){
 // Persist the working catalog scene independently of publication and activation.
 // A live encounter remains authoritative on the session server; this is a backup,
 // never a replacement for live state or a reason to detach the GM.
-let sceneAutosaveTimer=null,sceneAutosaveBusy=false,sceneAutosaveAgain=false;
+let sceneAutosaveTimer=null,sceneAutosaveBusy=false,sceneAutosaveAgain=false,creatingWorkingScene=false;
+async function ensureNamedWorkingScene(){
+ if(creatingWorkingScene||currentSceneId||!roomProfile?.gm||roomState.active)return;
+ creatingWorkingScene=true;
+ try{
+  await workspaceLoad;
+  if(currentSceneId||roomState.active)return;
+  const date=new Date(),label='New scene '+date.toLocaleDateString()+' '+date.toLocaleTimeString();
+  const scene={id:crypto.randomUUID(),name:label,folder:'',published:false,map:structuredClone({pieces,tokens,areas,view:savePanelView()})};
+  if(await changeScenes([...scenes,scene])){
+   currentSceneId=scene.id;roomDraftTitle=scene.name;queueRecovery();
+   message('Created and autosaved '+label+'. Rename it from Scenes when ready.');
+  }
+ }finally{creatingWorkingScene=false}
+}
+
 function scheduleSceneAutosave(delay=1200){
  if(!recoveryReady||!roomProfile?.gm||!currentSceneId)return;
  clearTimeout(sceneAutosaveTimer);
