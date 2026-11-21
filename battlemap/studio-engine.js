@@ -684,7 +684,7 @@ function drawFloorElevationLabels(){
   // Only walking surfaces are elevations. Wall, pillar and prop tops
   // are structural geometry, not floors (even when viewed top-down).
   if(!['terrace','stone','bridge'].includes(surface.p.type)&&
-     !(surface.p.type==='volume'&&surface.p.walkable===true))continue;
+     surface.p.type!=='volume')continue;
   const projected=surface.projected;
   if(!projected?.length||!visibleProjection(projected,25))continue;
   const cx=surface.world.reduce((sum,v)=>sum+v[0],0)/surface.world.length;
