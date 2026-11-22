@@ -5559,7 +5559,16 @@ function refinedFogBoundaryPatches(patch){
 function terrainFogPatchVisible(patch){
  if(patch.visible===undefined){
   const center=fogFaceCenter(patch.world);
-  const visible=point=>fogPointVisible(surfaceLightPoint(point,patch.surfaceLightOffset));
+  // Sample the air just above horizontal raised surfaces. Sampling the
+  // exact top plane can intersect the platform's own occluder and falsely
+  // classify an otherwise visible top as hidden.
+  const zs=patch.world.map(p=>p[2]??0);
+  const horizontal=zs.length>=3&&Math.max(...zs)-Math.min(...zs)<.001;
+  const raised=horizontal&&patch.world.some(p=>p[2]>.05);
+  const visible=point=>{
+   const sample=surfaceLightPoint(point,patch.surfaceLightOffset);
+   return fogPointVisible(raised?[sample[0],sample[1],sample[2]+.035]:sample);
+  };
   patch.visible=visible(center)||patch.world.some(vertex=>
    visible(vertex.map((value,i)=>value*.8+center[i]*.2)));
  }
