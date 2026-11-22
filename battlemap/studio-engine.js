@@ -5932,8 +5932,39 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  recordGeometryStage('faceGeometryMs');
  // Read-only geometry audit. Count existing faces; never alter rendering.
  const geometryAudit=performanceDraw?{generated:faces.length,afterProjection:0,afterFog:0,projectionRejected:0,fogRejected:0,byType:{},stairGroups:{},fogInputByType:{},finalByType:{},sharedSurfaceAudit:{exactDuplicateFaces:0,sharedFacePairs:0,byType:{},candidateFaces:0},projectionAudit:{offscreenVertices:0,fullyOffscreenFaces:0},wallAudit:{wallCount:0,byWall:[],faceKinds:{},sharedPlaneCandidates:0},fogAudit:{inputFacesByType:{},retainedFacesByType:{},rejectedFacesByType:{}}}:null;
+ // Diagnostic-only world-space sector index. No visibility or rendering behavior changes.
+ const sectorAudit=geometryAudit?{size:8,sectorCount:0,activeSectorCount:0,activeInputFaces:0,inactiveInputFaces:0,activeOutputFaces:0,inactiveOutputFaces:0,largeFaceCount:0,sectorReferences:0,observerCount:0,topSectors:[],note:'Potential work only: proximity is not proof of visibility; distant sightlines, lights and camera must be considered before culling.'}:null;
+ const sectorMap=sectorAudit?new Map():null;
+ const sectorKey=(x,y)=>Math.floor(x/8)+','+Math.floor(y/8);
+ const sectorKeysForFace=f=>{
+  if(!f.world?.length)return [];
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  for(const v of f.world){minX=Math.min(minX,v[0]);maxX=Math.max(maxX,v[0]);minY=Math.min(minY,v[1]);maxY=Math.max(maxY,v[1])}
+  const x0=Math.floor(minX/8),x1=Math.floor(maxX/8),y0=Math.floor(minY/8),y1=Math.floor(maxY/8);
+  if((x1-x0+1)*(y1-y0+1)>64){sectorAudit.largeFaceCount++;return [sectorKey((minX+maxX)/2,(minY+maxY)/2)]}
+  const keys=[];for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)keys.push(x+','+y);
+  return keys;
+ };
+ const activeSectorKeys=sectorAudit?new Set():null;
+ if(sectorAudit){
+  const prepared=prepareFogObservers();
+  sectorAudit.observerCount=prepared.observers.length;
+  for(const observer of prepared.observers){
+   const [x,y]=observer.distance,cx=Math.floor(x/8),cy=Math.floor(y/8);
+   for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)activeSectorKeys.add((cx+dx)+','+(cy+dy));
+  }
+ }
+ const indexSectorFace=(f,output=false)=>{
+  const keys=sectorKeysForFace(f);
+  const active=keys.some(key=>activeSectorKeys.has(key));
+  if(output){sectorAudit[active?'activeOutputFaces':'inactiveOutputFaces']++;return}
+  sectorAudit[active?'activeInputFaces':'inactiveInputFaces']++;
+  sectorAudit.sectorReferences+=keys.length;
+  for(const key of keys){const entry=sectorMap.get(key)||{faces:0,wallFaces:0};entry.faces++;if(f.pathWall)entry.wallFaces++;sectorMap.set(key,entry)}
+ };
  const geometryFaceType=f=>{
   if(f.pathWall)return 'path wall';
+  if(f.p?.stairGroup||f.p?.curvedStair)return 'staircase';
   if(f.p?.type==='volume'&&f.p?.form)return 'shaped volume';
   if(f.standee)return 'standee';
   if(f.shadow)return 'shadow';
@@ -6020,6 +6051,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   geometryAudit.afterProjection=faces.length;
   geometryAudit.projectionRejected=geometryAudit.generated-faces.length;
   for(const f of faces){const type=geometryFaceType(f);geometryAudit.fogInputByType[type]=(geometryAudit.fogInputByType[type]||0)+1}
+  for(const f of faces)indexSectorFace(f);
  }
  movementSurfaces=mapFogEnabled()?faces.filter(f=>(f.p?.stairTread||f.volumeTop||f.landing)&&Number.isFinite(f.z)&&!f.preview)
   .sort((a,b)=>a.depth-b.depth):[];
@@ -6090,6 +6122,13 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  }
  }
  if(geometryAudit){
+  if(sectorAudit){
+   for(const f of faces)indexSectorFace(f,true);
+   sectorAudit.sectorCount=sectorMap.size;
+   sectorAudit.activeSectorCount=[...sectorMap.keys()].filter(key=>activeSectorKeys.has(key)).length;
+   sectorAudit.topSectors=[...sectorMap].sort((a,b)=>b[1].faces-a[1].faces).slice(0,12).map(([key,counts])=>({key,...counts,active:activeSectorKeys.has(key)}));
+   geometryAudit.sectorAudit=sectorAudit;
+  }
   geometryAudit.afterFog=faces.length;
   geometryAudit.fogRejected=geometryAudit.afterProjection-faces.length;
   for(const f of faces){const type=geometryFaceType(f);geometryAudit.finalByType[type]=(geometryAudit.finalByType[type]||0)+1}
