@@ -4922,7 +4922,7 @@ function playerFogEnabled(){
  return roomProfile?.gm===false&&(preferences.fogMemory===0||areas.some(a=>a.shape==='appearance'&&a.appearance?.fogOfWar===true));
 }
 function sightlineClear(eye,target,blockers){
- return !blockers.some(bounds=>{
+ return !rayBlockerCandidates(blockers,eye,target).some(bounds=>{
   if(bounds.wallPrism){
    const solid=bounds.wallPrism,span=!wallPassage(solid).sight&&wallPrismInterval(solid,eye,target);
    return span&&span[0]<.995;
