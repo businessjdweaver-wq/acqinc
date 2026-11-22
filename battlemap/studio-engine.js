@@ -88,7 +88,8 @@ function stairSupportsStandee(p,terrain){
  if(p.type!=='standee'||p.flying)return false;
  const [w,d]=dimensions(p),cx=p.x+w/2,cy=p.y+d/2;
  return terrain.some(q=>{
-  if(!q.stairTread||q.form)return false;
+  if(!q.stairTread||q.form&&!q.curvedStair)return false;
+  if(q.curvedStair)return Math.abs(q.z+dimensions(q)[2]-p.z)<1e-7&&pointInPolygon([cx,cy],terrainFootprint(q));
   const [a,b,c]=dimensions(q);
   return q.z+c===p.z&&cx>=q.x&&cx<q.x+a&&cy>=q.y&&cy<q.y+b;
  });
@@ -97,6 +98,7 @@ function flatCenterSupportsStandee(p,terrain){
  if(p.z===0)return true;
  const [w,d]=dimensions(p),cx=p.x+w/2,cy=p.y+d/2;
  return terrain.some(q=>{
+  if(q.curvedStair)return Math.abs(q.z+dimensions(q)[2]-p.z)<1e-7&&pointInPolygon([cx,cy],terrainFootprint(q));
   if(q.form||!['volume','terrace','stone','bridge','crate','pillar','fountain'].includes(q.type))return false;
   const [a,b,c]=dimensions(q);
   return q.z+c===p.z&&cx>=q.x&&cx<q.x+a&&cy>=q.y&&cy<q.y+b;
@@ -8183,6 +8185,37 @@ function stairSections(p,edge,rise,run){
   return {...p,type:'volume',stairTread:true,x:origin[0],y:origin[1],extents:p.r%2?[extents[1],extents[0],extents[2]]:extents,roomId:undefined};
  });
 }
+// Build curved staircases as small convex polygon treads. This reuses
+// the existing shaped-volume renderer and terrain collision machinery.
+function curvedStairSections(p,edge,rise,run,shape){
+ const [w,d,h]=dimensions(p),steps=Math.ceil(h/rise)-1;
+ const radius=Math.min(w,d)/2;
+ if(steps<1||steps*run>=radius)return null;
+ const full=shape==='circle',segments=full?32:16;
+ const center=full?[p.x+w/2,p.y+d/2]:
+  edge===0?[p.x,p.y+d/2]:edge===1?[p.x+w,p.y+d/2]:
+  edge===2?[p.x+w/2,p.y]:[p.x+w/2,p.y+d];
+ const start=full?0:edge===0?-Math.PI/2:edge===1?Math.PI/2:edge===2?0:Math.PI;
+ const span=full?Math.PI*2:Math.PI;
+ const result=[];
+ for(let i=0;i<=steps;i++){
+  const outer=radius-i*run,inner=i===steps?0:radius-(i+1)*run;
+  const height=Math.min(h,h-steps*rise+i*rise);
+  for(let j=0;j<segments;j++){
+   const a=start+span*j/segments,b=start+span*(j+1)/segments;
+   const coords=[[outer*Math.cos(a),outer*Math.sin(a)],[outer*Math.cos(b),outer*Math.sin(b)],
+    [inner*Math.cos(b),inner*Math.sin(b)],[inner*Math.cos(a),inner*Math.sin(a)]];
+   const verticesWorld=coords.map(([x,y])=>[center[0]+x,center[1]+y]);
+   const xs=verticesWorld.map(v=>v[0]),ys=verticesWorld.map(v=>v[1]);
+   const x=Math.min(...xs),y=Math.min(...ys),width=Math.max(...xs)-x,depth=Math.max(...ys)-y;
+   if(width<1e-7||depth<1e-7)continue;
+   const vertices=verticesWorld.map(([u,v])=>[(u-x)/width,(v-y)/depth]);
+   result.push({...p,type:'volume',form:'polygon',vertices,r:0,terrainYaw:0,
+    stairTread:true,curvedStair:true,x,y,z:p.z,extents:[width,depth,height],roomId:undefined});
+  }
+ }
+ return result;
+}
 function updateStairSliders(){
  for(const [id,label] of [['stairRise','stairRiseValue'],['stairRun','stairRunValue']])el(label).textContent=(Number(el(id).value)*1.25)+' ft';
 }
@@ -8192,7 +8225,8 @@ function cutStairEdge(p,edge){
  if(!['terrace','stone','wall','pillar','bridge','crate','volume'].includes(p.type)||p.form||edge>3)return;
  if(drag.changed)return;
  const rise=Number(el('stairRise').value)/4,run=Number(el('stairRun').value)/4;
- const sections=stairSections(p,edge,rise,run);
+ const shape=el('stairShape').value;
+ const sections=shape==='straight'?stairSections(p,edge,rise,run):curvedStairSections(p,edge,rise,run,shape);
  if(!sections){message('Use a smaller rise or run, or a deeper block, to leave a top landing.');return}
  const terrain=pieces.flatMap(piece=>piece===p?sections:[piece]);
  if(tokens.some(t=>!supported(t,terrain))||areas.some(a=>a.shape==='difficult'&&!validDifficultTerrain(a,terrain))){
