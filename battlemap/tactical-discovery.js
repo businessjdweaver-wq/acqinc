@@ -5,6 +5,7 @@ const tacticalDiscoveryPrefix='battlemap.tacticalDiscovery.v1:';
 let tacticalDiscoveryCache={key:null,value:null};
 let tacticalLastRecorded=null;
 let tacticalStorageError='';
+let tacticalPreviousCenters=new Map();
 function tacticalFogRevision(){return Number(areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision)||0;}
 function tacticalDiscoveryKey(){
  // A distinct key for each scene and account. Server-synchronized party-wide
@@ -57,7 +58,22 @@ function tacticalRecordExplored(points,blockers=visionBlockers()){
   const value={v:tacticalDiscoveryVersion,topology,cells:[...known]};
   tacticalDiscoveryCache={key,value};tacticalLastRecorded={key,value};
   try{localStorage.setItem(key,JSON.stringify(value));tacticalStorageError=''}
-  catch(error){tacticalStorageError=error?.name||'storage unavailable';console.warn('Tactical discovery could not be saved locally',error)}
+  catch(error){
+   tacticalStorageError=error?.name||'storage unavailable';
+   // Reclaim only obsolete tactical-map records, never unrelated app data.
+   if(error?.name==='QuotaExceededError'){
+    try{
+     const obsolete=[];
+     for(let i=0;i<localStorage.length;i++){
+      const item=localStorage.key(i);
+      if(item?.startsWith(tacticalDiscoveryPrefix)&&item!==key)obsolete.push(item);
+     }
+     for(const item of obsolete)localStorage.removeItem(item);
+     if(obsolete.length){localStorage.setItem(key,JSON.stringify(value));tacticalStorageError=''}
+    }catch(retryError){tacticalStorageError=retryError?.name||'storage unavailable'}
+   }
+   if(tacticalStorageError)console.warn('Tactical discovery remains in memory only:',tacticalStorageError);
+  }
  }
  return added;
 }
@@ -74,6 +90,27 @@ function tacticalScheduleScan(){
  if(roomProfile?.gm!==false||!roomState?.active||!roomState.sceneId){tacticalScanStatus='No active player scene';return;}
  const observers=visionObservers(tokens).filter(t=>ownsRoomStandee(t)&&!t.incognito&&!t.conditions?.includes('dead')&&(!t.conditions?.includes('blinded')||t.blindsight>0));
  const centers=[...observers.map(basePoint),...spellEyes()];
+ // Sample only short, continuous standee movements. Large jumps (including
+ // teleportation and scene changes) must never reveal the intervening route.
+ const epoch=[roomState.sceneId,tacticalFogRevision(),tacticalTopologyVersion()].join('|');
+ const scanCenters=[];
+ const nextCenters=new Map();
+ observers.forEach((observer,i)=>{
+  const current=centers[i],id=String(observer.roomId);
+  const previous=tacticalPreviousCenters.get(id);
+  nextCenters.set(id,{epoch,point:current});
+  if(previous?.epoch===epoch){
+   const a=previous.point,dist=Math.hypot(current[0]-a[0],current[1]-a[1]);
+   if(dist>0&&dist<=2.25&&Math.abs(current[2]-a[2])<.5){
+    const steps=Math.ceil(dist*2);
+    for(let j=1;j<steps;j++)scanCenters.push([
+     a[0]+(current[0]-a[0])*j/steps,
+     a[1]+(current[1]-a[1])*j/steps,
+     a[2]+(current[2]-a[2])*j/steps]);
+   }
+  }
+ });
+ tacticalPreviousCenters=nextCenters;
  const signature=[roomState.sceneId,tacticalFogRevision(),tacticalTopologyVersion(),...centers.map(p=>p.join(',')),...observers.map(t=>[t.roomId,t.vision,t.darkvision,t.torch,t.torchBright,t.torchDim].join(':'))].join('|');
  if(signature===tacticalScanSignature&&tacticalReadDiscovery().topology===tacticalTopologyVersion())return;
  tacticalScanStatus=centers.length?'Scanning '+centers.length+' vision source(s)':'No controlled vision sources';
@@ -82,7 +119,7 @@ function tacticalScheduleScan(){
  tacticalScanTimer=setTimeout(()=>{
   if(roomProfile?.gm!==false||!roomState?.active){tacticalScanStatus='Scan aborted: inactive scene';return}
   const samples=[];
-  for(const [x,y,z] of centers.slice(0,12)){
+  for(const [x,y,z] of [...centers.slice(0,12),...scanCenters.slice(0,24)]){
    // Always sample the observer's actual position as well as adjacent cell centers.
    samples.push([x,y,z]);
    for(const [dx,dy] of [[0,0],[1,0],[-1,0],[0,1],[0,-1],[2,0],[-2,0],[0,2],[0,-2],[1,1],[-1,1],[1,-1],[-1,-1]])
