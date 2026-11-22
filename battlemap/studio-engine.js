@@ -259,6 +259,23 @@ function polygonImpl(points,fill,stroke){
 let earlyRoomCull=null;
 let earlyRoomCullCount=0;
 let earlySectorCullCount=0;
+let earlyForegroundWallCullCount=0;
+// Camera-side geometry is not part of the tactical backdrop. Compare
+// projection depth in world space, before constructing any wall faces.
+function earlyForegroundWallInvisible(poly){
+ const scope=earlyRoomCull;
+ if(!scope?.observers?.length||topDown||!poly?.length)return false;
+ // Never trim a wall intersecting the observer's depth plane.
+ const observerDepths=scope.observers.map(o=>point(o.distance[0],o.distance[1],0)[2]);
+ const wallDepths=poly.map(p=>point(p[0],p[1],0)[2]);
+ const nearestObserver=Math.max(...observerDepths);
+ // Camera-facing side has greater projected depth. Preserve one grid
+ // square of clearance so walls close to the standee do not pop abruptly.
+ if(Math.min(...wallDepths)<=nearestObserver+Math.abs(S)*0.01)return false;
+ earlyForegroundWallCullCount++;
+ return true;
+}
+
 function earlySectorInvisible(points){
  const scope=earlyRoomCull;
  if(!scope?.observers?.length||!points?.length)return false;
@@ -3110,6 +3127,7 @@ function renderPathWall(solid){
  const {poly,z,top,wall,opening}=solid;
  if(opening){renderPathOpening(solid);return}
  if(earlyRoomDisconnected(poly)){earlyRoomCullCount++;return}
+ if(earlyForegroundWallInvisible(poly))return;
  if(Math.abs(z)<=.15&&earlySectorInvisible(poly))return;
  const surface=wall;
  if(!surface.opacity)return;
@@ -6563,6 +6581,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  // No culling in GM/editor/preview modes.
  earlyRoomCullCount=0;
  earlySectorCullCount=0;
+ earlyForegroundWallCullCount=0;
  earlyRoomCull=playerFogEnabled()&&!floorSceneEditing&&!gmVisionObserver()
   ?nearbyObserverRooms(wallVisibilityTopology(),fogPreparedObservers||(fogPreparedObservers=prepareFogObservers()))
   :null;
@@ -6607,7 +6626,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  addDoorFaces();
  addFixtureFaces(blockers);
  recordGeometryStage('faceGeometryMs');
- if(performanceDraw){performanceDraw.earlyRoomCulledFaces=earlyRoomCullCount;performanceDraw.earlySectorCulledFaces=earlySectorCullCount;}
+ if(performanceDraw){performanceDraw.earlyRoomCulledFaces=earlyRoomCullCount;performanceDraw.earlySectorCulledFaces=earlySectorCullCount;performanceDraw.earlyForegroundWallCulledSegments=earlyForegroundWallCullCount;}
  // Read-only geometry audit. Count existing faces; never alter rendering.
  const geometryAudit=performanceDraw?{generated:faces.length,afterProjection:0,afterFog:0,projectionRejected:0,fogRejected:0,byType:{},stairGroups:{},fogInputByType:{},finalByType:{},sharedSurfaceAudit:{exactDuplicateFaces:0,sharedFacePairs:0,byType:{},candidateFaces:0},projectionAudit:{offscreenVertices:0,fullyOffscreenFaces:0},wallAudit:{wallCount:0,byWall:[],faceKinds:{},sharedPlaneCandidates:0},fogAudit:{inputFacesByType:{},retainedFacesByType:{},rejectedFacesByType:{}}}:null;
  // Diagnostic-only world-space sector index. No visibility or rendering behavior changes.
