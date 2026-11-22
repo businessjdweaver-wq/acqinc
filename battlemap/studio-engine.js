@@ -273,7 +273,8 @@ function earlySectorInvisible(points){
  if(scope.observers.some(o=>minDistSq(o.distance)<=(o.range+1)*(o.range+1)))return false;
  if(scope.lights.some(l=>minDistSq(l.center)<=(l.radius+1)*(l.radius+1)))return false;
  // Ambient or unclassified light must never be spatially culled.
- if(!scope.dark)return false;
+ if(!scope.dark||!points.every(p=>roomIsDark([p[0],p[1],0]))||
+    !roomIsDark([(minX+maxX)/2,(minY+maxY)/2,0]))return false;
  earlySectorCullCount++;
  return true;
 }
