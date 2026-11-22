@@ -7940,6 +7940,11 @@ async function commitCarry(){
    await pollRoom();
    const pollMs=performance.now()-pollStart;
    route=null;carry=null;ghost=null;
+   // v1.544: yield after the authoritative room update before the expensive
+   // sharp lighting/fog repaint. Keep the last confirmed visibility bitmap
+   // until that repaint; never render provisional newly discovered terrain.
+   // This is an interaction-first scheduling step, not a worker-based renderer.
+   await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
    refresh();
    if(performanceDraw)performanceDraw.movementCommit={serverMs:Math.round(serverMs),pollMs:Math.round(pollMs),totalMs:Math.round(performance.now()-moveStart)};
   }catch(err){message(err.message);await pollRoom()}
