@@ -7249,7 +7249,9 @@ function validCarryDestination(){
  });
 }
 function carrySegment(start,end){
- if(carry?.piece?.type==='standee'||carry?.arcaneEye||carry?.gmMovementOverride)return {cost:5*Math.hypot(...end.map((v,i)=>v-start[i])),hazards:[],blocked:false};
+ // Standee moves must be checked against path-wall solids, just like other movement.
+ // Only explicit GM override and arcane-eye movement bypass collision checks.
+ if(carry?.arcaneEye||carry?.gmMovementOverride)return {cost:5*Math.hypot(...end.map((v,i)=>v-start[i])),hazards:[],blocked:false};
  if(!carry)return movementSegment(start,end);
  const leader=basePoint(carry.piece),members=carriedMembers();
  return members.map(member=>{
