@@ -2898,6 +2898,36 @@ function wallRayTransmission(start,end,blockers){
  for(const amount of traversed.values())transmission*=amount;
  return transmission;
 }
+// Merge only consecutive, full-height, straight wall prisms for drawing.
+// Original prisms remain untouched for movement, raycasting, and openings.
+function renderOptimizedPathWalls(solids){
+ let pending=null;
+ const flush=()=>{if(pending){renderPathWall(pending);pending=null}};
+ const near=(a,b)=>Math.abs(a-b)<1e-6;
+ const samePoint=(a,b)=>a&&b&&near(a[0],b[0])&&near(a[1],b[1]);
+ const mergeable=(a,b)=>{
+  if(!a||!b||a.opening||b.opening||a.wall!==b.wall||
+   !a.wall?.opacity||!near(a.z,b.z)||!near(a.top,b.top)||
+   a.poly?.length!==4||b.poly?.length!==4||
+   a.ends?.[1]||b.ends?.[0]||
+   !a.capPattern||!b.capPattern)return false;
+  const p=a.poly,q=b.poly;
+  if(!samePoint(p[1],q[0])||!samePoint(p[2],q[3]))return false;
+  const ab=[p[1][0]-p[0][0],p[1][1]-p[0][1]];
+  const bc=[q[1][0]-q[0][0],q[1][1]-q[0][1]];
+  const cross=ab[0]*bc[1]-ab[1]*bc[0];
+  const dot=ab[0]*bc[0]+ab[1]*bc[1];
+  return Math.abs(cross)<1e-7*Math.max(1,Math.hypot(...ab)*Math.hypot(...bc))&&dot>0&&
+   near(a.capPattern.distance+Math.hypot(...ab),b.capPattern.distance);
+ };
+ for(const solid of solids){
+  if(mergeable(pending,solid)){
+   const poly=[pending.poly[0],solid.poly[1],solid.poly[2],pending.poly[3]];
+   pending={...pending,poly,ends:[pending.ends?.[0]??false,solid.ends?.[1]??false]};
+  }else{flush();pending=solid}
+ }
+ flush();
+}
 function renderPathWall(solid){
  const {poly,z,top,wall,opening}=solid;
  if(opening){renderPathOpening(solid);return}
@@ -5895,7 +5925,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  else if(ghost&&visiblePiece(ghost))drawPiece(ghost,true);
  for(const copy of repeatPreview)if(visiblePiece(copy))drawPiece(copy,true);
  for(const window of areas)if(window.kind==='Window'&&!window.secret)for(const section of windowWallSections(window))drawPiece(section);
- for(const solid of pathWallSolids())if(solid.wall.id!==wallPreview?.id)renderPathWall(solid);
+ renderOptimizedPathWalls(pathWallSolids().filter(solid=>solid.wall.id!==wallPreview?.id));
  if(wallPreview)for(const solid of compileWallPath(wallPreview).solids)renderPathWall(solid);
  addDoorFaces();
  addFixtureFaces(blockers);
