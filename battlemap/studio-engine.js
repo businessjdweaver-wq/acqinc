@@ -3150,8 +3150,8 @@ function setWallTool(mode,pasteOpening=false){
  el('wallPathPanel').hidden=false;
  showWallTab(({trace:'walls',edit:'walls',Door:'openings',Window:'openings',inspect:'openings',room:'rooms',scale:'plan'})[mode]??el('wallPathPanel').dataset.active??'walls');
  wallStatus({
-  trace:'Click corners or drag to set a curve. Click the first point to close, or press Enter to finish.',
-  edit:'Drag an anchor or a round handle. Shift-click an anchor to toggle corner / smooth.',
+  trace:'Click to add a corner, drag to shape a curve. Shift-click stops the outgoing curve; C halts the last tangent. Enter finishes.',
+  edit:'Select a finalized wall, then drag square anchors or round Bézier handles. Shift-click toggles corner/smooth. Control+Alt-click deletes a node.',
   Door:'Click a straight portion of a wall to place a door.',
   Window:'Click a straight portion of a wall to place a window.',
   scale:'Click two points on the image whose distance you know.',
@@ -3353,7 +3353,8 @@ function handleWallPointerDown(event){
   const snapped=wallSnappedPoint(p,event);
   if(nodes.length&&wallDistance(nodes.at(-1).p,snapped)<1e-4)return;
   if(nodes.length>=48){wallStatus('Press Enter to finish this wall.');return}
-  nodes.push({p:snapped});wallDrag={pointer:event.pointerId,origin:p,trace:true};
+  if(event.shiftKey&&nodes.length)delete nodes.at(-1).out;
+   nodes.push({p:snapped});wallDrag={pointer:event.pointerId,origin:p,trace:true,corner:event.shiftKey};
  }else{
   const handle=findWallHandle(p);
   if(!handle){
@@ -3390,7 +3391,9 @@ function handleWallPointerMove(event){
   const node=wallTool.nodes.at(-1);
   if(wallDistance(p,wallDrag.origin)<.08)return;
   const delta=p.map((n,i)=>n-wallDrag.origin[i]);
-  node.in=node.p.map((n,i)=>n-delta[i]);node.out=node.p.map((n,i)=>n+delta[i]);
+  node.in=node.p.map((n,i)=>n-delta[i]);
+   if(wallDrag.corner)delete node.out;
+   else node.out=node.p.map((n,i)=>n+delta[i]);
  }else{
   const {draft,index,key,wall}=wallDrag,node=draft.nodes[index],original=wall.nodes[index];
   if(key==='p'){
@@ -3692,7 +3695,7 @@ function initializeWallPaths(){
    '<button id="wallPaintSelected" type="button">Paint selected walls</button>'+
    '<button id="wallPaintAll" type="button">Paint all walls</button></div>'+
    '<label>Walls <select id="wallPathList" multiple size="4"></select></label>'+
-   '<p>Shift-click walls to select several. In Edit points: Control-click deletes a finalized segment; Control+Alt-click deletes a node. Rectangle partition: click opposite corners. Alt bypasses snapping.</p><div id="wallTraceShortcutGuide" style="padding:8px 10px;margin:8px 0;border:1px solid #70e8ff66;border-radius:6px;background:#142c35;color:#e8f8fa;font-size:12px;line-height:1.65"><strong>Wall tracing · Key + click reference</strong><div>Click — add point / drag for curve</div><div>Alt + click — place without snapping</div><div>Command + drag point — move unfinished point</div><div>Control + click point — delete unfinished point</div><div>Control + Alt + click — finish current path and begin a separate wall</div><div>Esc / Delete — undo last point (repeat to backtrack)</div><div>Enter — finish current wall</div><div>Finish wall / Done — save or exit deliberately</div></div>'+
+   '<p>Shift-click walls to select several. In Edit points: Control-click deletes a finalized segment; Control+Alt-click deletes a node. Rectangle partition: click opposite corners. Alt bypasses snapping.</p><div id="wallTraceShortcutGuide" style="padding:8px 10px;margin:8px 0;border:1px solid #70e8ff66;border-radius:6px;background:#142c35;color:#e8f8fa;font-size:12px;line-height:1.65"><strong>Wall tracing · Key + click reference</strong><div>Click — add point / drag for curve</div><div>Alt + click — place without snapping</div><div>Command + drag point — move unfinished point</div><div>Control + click point — delete unfinished point</div><div>Shift + click / drag — stop outgoing curve at a sharp corner</div><div>C — halt curve at last point</div><div>Edit points — drag round handles after finalizing; Control + Alt + click deletes a node</div><div>Control + Alt + click — finish current path and begin a separate wall</div><div>Esc / Delete — undo last point (repeat to backtrack)</div><div>Enter — finish current wall</div><div>Finish wall / Done — save or exit deliberately</div></div>'+
    '<form id="wallProperties"><div class="wall-path-fields">'+wallNodeFields(wallPropertyFields,'wp-')+'</div>'+
    '<button type="submit">Apply changed settings to selected walls</button> <button id="wallDelete" type="button">Delete selected</button></form></div>'+pane('openings')+
    '<div class="wall-path-actions"><button id="wallDoor" type="button">Paint door</button><button id="wallWindow" type="button">Paint window</button> <button id="wallOpeningPaste" type="button" disabled>Paste opening</button></div>'+
@@ -3865,6 +3868,12 @@ function initializeWallPaths(){
  canvas.addEventListener('contextmenu',event=>wallOpeningContext(event),true);
  window.addEventListener('keydown',event=>{
   if(!wallTool||!wallCanEdit()||event.target.closest('input,select,textarea,dialog,button'))return;
+  if(wallTool.mode==='trace'&&event.key.toLowerCase()==='c'&&!event.ctrlKey&&!event.metaKey){
+   event.preventDefault();event.stopImmediatePropagation();
+   const node=wallTool.nodes.at(-1);
+   if(node){delete node.out;wallStatus('Curve halted at last point; next segment starts sharply.');draw('Wall curve corner')}
+   return;
+  }
   if(event.key==='Enter'&&wallTool.mode==='trace'){event.preventDefault();event.stopImmediatePropagation();finishWallPath(false)}
   if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();if(wallTool.mode==='trace')wallTraceUndo();else closeWallTool()}
   if(wallTool.mode==='trace'&&(event.key==='Backspace'||event.key==='Delete')&&!event.ctrlKey&&!event.metaKey){event.preventDefault();event.stopImmediatePropagation();wallTraceUndo()}
