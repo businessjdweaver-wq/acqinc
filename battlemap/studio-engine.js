@@ -4943,7 +4943,10 @@ function fogPointVisible(target,respectFogMode=true){
   const eye=basePoint(token);eye[2]+=.65;
   return sightlineClear(eye,target,blockers)&&(darkvisionReaches(token,target)||ambientAt(target,blockers)||lightAt(target,blockers));
  });
- if(fogCache&&fogCache.points.size<24000)fogCache.points.set(key,visible);
+ // Boundary refinement samples many shared world points. The former 24k cap
+ // saturated early in complex scenes and forced repeated expensive ray tests.
+ // Bound the cache per visibility signature (reset on observer/lighting changes).
+ if(fogCache&&fogCache.points.size<180000)fogCache.points.set(key,visible);
  return visible;
 }
 function fogFaceCenter(points){
