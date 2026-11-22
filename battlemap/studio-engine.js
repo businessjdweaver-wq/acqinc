@@ -2968,16 +2968,15 @@ function renderPathOpening({poly,z,top,wall,opening}){
  // proportionately heavier leaf, without filling the entire passage.
  const thickness=Math.max(materialThickness,Math.min(wall.thickness*.6,wall.thickness*.16));
  const halfWall=wall.thickness/2;
- const reverse=opening.hinge==='far',hinge=reverse?width:0,sign=reverse?-1:1;
- const swing=opening.swingReversed?-1:1;
- const base=[[0,-1],[1,-1],[1,1],[0,1]].map(([u,v])=>opening.open?
-  world(hinge+v*thickness/2,swing*u*width,0):world(hinge+sign*u*width,v*thickness/2,0));
- const upper=base.map(([x,y])=>[x,y,top]);
- for(let i=0;i<4;i++){
-  const j=(i+1)%4;
-  emit([base[i],base[j],upper[j],upper[i]],i%2?edge:front,i%2?undefined:i===2);
+ const reverse=opening.hinge==='far',swing=opening.swingReversed?-1:1;
+ for(const [start,leafWidth,fromRight] of opening.doorStyle==='double'?[[0,width/2,false],[width/2,width/2,true]]:[[0,width,reverse]]){
+  const hinge=fromRight?start+leafWidth:start,sign=fromRight?-1:1;
+  const base=[[0,-1],[1,-1],[1,1],[0,1]].map(([u,v])=>opening.open?
+   world(hinge+v*thickness/2,swing*u*leafWidth,0):world(hinge+sign*u*leafWidth,v*thickness/2,0));
+  const upper=base.map(([x,y])=>[x,y,top]);
+  for(let i=0;i<4;i++){const j=(i+1)%4;emit([base[i],base[j],upper[j],upper[i]],i%2?edge:front,i%2?undefined:i===2)}
+  emit(upper,cap);
  }
- emit(upper,cap);
  const trim=Math.min(.075,width/8,height/8),depth=halfWall+.02;
  for(const [left,right,bottom,head] of [[0,trim,0,height],[width-trim,width,0,height],[trim,width-trim,height-trim,height]]){
   for(const side of [-1,1])emit([world(left,depth*side,bottom),world(right,depth*side,bottom),
@@ -3050,14 +3049,14 @@ const wallWindowDefaults={windowTop:'flat',windowStyle:'split',frameColor:'#5945
  glassAccent:'#d4994f',glassSecondary:'#618b77',glassHighlight:'#934b41',windowCover:'shutter',coverColor:'#8b6546'};
 function wallDoorAppearance(){
  const labels={paneling:'Paneling',handle:'Handle',knocker:'Knocker',kickplate:'Kickplate',upperWindow:'Upper window'};
- return {material:{label:'Material',options:Object.keys(doorMaterials)},hinge:{label:'Hinge side',options:['near','far']},
+ return {doorStyle:{label:'Door style',options:['single','double']},material:{label:'Material',options:Object.keys(doorMaterials)},hinge:{label:'Hinge side',options:['near','far']},
   swingReversed:{label:'Reverse swing direction',type:'checkbox'},
   ...Object.fromEntries(Object.entries(doorDetailOptions).map(([key,options])=>[key,{label:labels[key],options}]))};
 }
 function wallNodeFields(spec,prefix){
  return Object.entries(spec).map(([key,field])=>{
   const input=field.options?'<select id="'+prefix+key+'">'+field.options.map(v=>'<option value="'+v+'">'+
-    ({plain:'Solid',brick:'Brick',roughRock:'Rough stone',planks:'Wood planks',flat:'Flat',semicircle:'Semicircular',pointed:'Pointed arch',single:'Single pane',split:'Two panes',grid:'Four panes',stained:'Geometric stained glass',shutter:'Wooden shutters',shade:'Roll-down shade',near:'Near end',far:'Far end'}[v]||v)+'</option>').join('')+'</select>':
+    ({plain:'Solid',brick:'Brick',roughRock:'Rough stone',planks:'Wood planks',flat:'Flat',semicircle:'Semicircular',pointed:'Pointed arch',single:'Single pane',split:'Two panes',grid:'Four panes',stained:'Geometric stained glass',shutter:'Wooden shutters',shade:'Roll-down shade',near:'Near end',far:'Far end',single:'Single leaf',double:'Double leaf · opposite hinges'}[v]||v)+'</option>').join('')+'</select>':
    '<input id="'+prefix+key+'" type="'+(field.type||'number')+'" '+(field.min===undefined?'':'required min="'+field.min+'" max="'+field.max+'" step="'+field.step+'"')+'>';
   return '<label>'+field.label+' '+input+'</label>';
  }).join('');
@@ -3808,8 +3807,8 @@ function initializeWallPaths(){
   if(!opening)return;
   const values={...opening,...readWallFields(apertureFields,'wa-',opening)};
   if(opening.kind==='Door'){
-   const {material,hinge,swingReversed,...details}=readWallFields(wallDoorAppearance(),'wd-');
-   Object.assign(values,{sill:0,material,hinge,swingReversed,details});
+   const {doorStyle,material,hinge,swingReversed,...details}=readWallFields(wallDoorAppearance(),'wd-');
+   Object.assign(values,{sill:0,doorStyle,material,hinge,swingReversed,details});
   }else Object.assign(values,readWallFields(wallWindowAppearance,'ww-'));
   const next={...target,openings:target.openings.flatMap(o=>o===opening?(remove?[]:[values]):[o])};
   if(!remove&&compileWallPath(next).invalid.includes(values)){
@@ -9803,6 +9802,9 @@ function editDoorDetails(door){
   select.value=door.details?.[key]??doorDetailOptions[key][0];
   row.append(label,select);form.append(row);controls[key]=select;
  }
+ const styleRow=document.createElement('label'),doorStyle=document.createElement('select');
+ for(const [value,label] of [['single','Single door'],['double','Double door — opposite hinges, center latch']])doorStyle.add(new Option(label,value));
+ doorStyle.value=door.doorStyle??'single';styleRow.append('Door style',doorStyle);form.append(styleRow);
  const sizeRow=document.createElement('label'),doorSize=document.createElement('select');
  for(const size of standeeSizes)doorSize.add(new Option(size.name+' · '+size.footprint+'×'+size.footprint,size.id));
  doorSize.value=door.doorSize??'medium';
@@ -9812,7 +9814,7 @@ function editDoorDetails(door){
  form.onsubmit=e=>{
   e.preventDefault();
   if(areas.includes(door)&&roomProfile?.gm!==false){
-   remember();door.doorSize=doorSize.value;door.details=Object.fromEntries(Object.entries(controls).map(([key,select])=>[key,select.value]));refresh();
+   remember();door.doorStyle=doorStyle.value;door.doorSize=doorSize.value;door.details=Object.fromEntries(Object.entries(controls).map(([key,select])=>[key,select.value]));refresh();
   }
   dialog.close();
  };
@@ -9857,27 +9859,27 @@ function addDoorFaces(){
   const [x,y,z]=door.origin,vertical=door.angle!==0,reverse=door.hinge==='far';
   const [front,edge,top,thickness]=Object.hasOwn(doorMaterials,door.material)?doorMaterials[door.material]:doorMaterials.Wood;
   const width=door.doorWidth??1,offset=(1-width)/2;
-  const hinge=vertical?[x+.5,y+offset+(reverse?width:0)]:[x+offset+(reverse?width:0),y+.5];
-  const direction=reverse?-1:1;
-  const swing=door.swingReversed?-1:1;
-  const [dx,dy]=door.open?(vertical?[swing,0]:[0,swing]):vertical?[0,direction]:[direction,0];
-  const bottom=[[0,-1],[1,-1],[1,1],[0,1]].map(([u,v])=>[
-   hinge[0]+u*width*dx-v*dy*thickness/2,hinge[1]+u*width*dy+v*dx*thickness/2,z
-  ]);
   const leafHeight=doorLeafHeight(door),frameHeight=leafHeight+doorHeaderThickness;
-  const upper=bottom.map(([px,py])=>[px,py,z+leafHeight]);
   const emit=(points,color)=>{
    face(points,color,door,null,false);
    const surface=faces.at(-1);
    surface.doorFace=true;
    if(!door.open)setDoorFaceLighting(surface,[x+.5,y+.5],vertical?[1,0]:[0,1],.515);
   };
-  if(!topDown)for(let i=0;i<4;i++){
-   const j=(i+1)%4;
-   emit([bottom[i],bottom[j],upper[j],upper[i]],i%2?edge:front);
-   if(i%2===0)faces.at(-1).doorDetailReverse=i===2;
+  for(const [start,leafWidth,fromRight] of door.doorStyle==='double'?[[0,width/2,false],[width/2,width/2,true]]:[[0,width,reverse]]){
+   const hinge=vertical?[x+.5,y+offset+start+(fromRight?leafWidth:0)]:[x+offset+start+(fromRight?leafWidth:0),y+.5];
+   const direction=fromRight?-1:1,swing=door.swingReversed?-1:1;
+   const [dx,dy]=door.open?(vertical?[swing,0]:[0,swing]):vertical?[0,direction]:[direction,0];
+   const bottom=[[0,-1],[1,-1],[1,1],[0,1]].map(([u,v])=>[
+    hinge[0]+u*leafWidth*dx-v*dy*thickness/2,hinge[1]+u*leafWidth*dy+v*dx*thickness/2,z
+   ]);
+   const upper=bottom.map(([px,py])=>[px,py,z+leafHeight]);
+   if(!topDown)for(let i=0;i<4;i++){
+    const j=(i+1)%4;emit([bottom[i],bottom[j],upper[j],upper[i]],i%2?edge:front);
+    if(i%2===0)faces.at(-1).doorDetailReverse=i===2;
+   }
+   emit(upper,top);
   }
-  emit(upper,top);
   const frame=(u,v,w)=>vertical?[x+.5+v,y+offset+u,z+w]:[x+offset+u,y+.5+v,z+w];
   for(const [left,right,base,height] of [[-.075,0,0,frameHeight],[width,width+.075,0,frameHeight],[-.075,width+.075,leafHeight,frameHeight]]){
    const corners=[[left,-.095],[right,-.095],[right,.095],[left,.095]];
