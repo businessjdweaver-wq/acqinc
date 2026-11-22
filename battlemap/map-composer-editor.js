@@ -98,8 +98,7 @@ function mount(options={}){
   function draw(){
    const r=rect();g.clearRect(0,0,preview.width,preview.height);g.drawImage(img,r.x,r.y,r.w,r.h);
    g.save();g.fillStyle='rgba(0,0,0,.5)';g.fillRect(r.x,r.y,r.w,r.h);
-   g.save();global.BattlemapMapCrop.path(g,crop,r.w,r.h);g.translate(r.x,r.y); // path is already built in local coordinates
-   g.restore();g.restore();
+   g.restore();
    g.save();g.translate(r.x,r.y);global.BattlemapMapCrop.path(g,crop,r.w,r.h);g.clip();g.drawImage(img,0,0,r.w,r.h);g.restore();
    g.save();g.translate(r.x,r.y);global.BattlemapMapCrop.path(g,crop,r.w,r.h);g.strokeStyle='#ffe6a1';g.lineWidth=2;g.stroke();g.restore();
    if(mode==='bezier'){
