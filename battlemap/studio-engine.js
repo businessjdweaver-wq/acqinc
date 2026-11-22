@@ -5001,18 +5001,36 @@ function rememberFogTravel(points,token){
  const stride=Math.max(1,Math.ceil(samples.length/120));
  const retained=samples.filter((_,i)=>i%stride===0);
  const xs=points.map(p=>p[0]),ys=points.map(p=>p[1]);
- pendingFogTravel={samples:retained,token,bounds:[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)]};
+ // Partition path samples so each fog patch only tests nearby travel points.
+ // Grid cells are smaller than the 24-unit visibility envelope; checking
+ // three cells in each direction includes every sample within that radius.
+ const cellSize=8,cells=new Map();
+ for(const position of retained){
+  const cx=Math.floor(position[0]/cellSize),cy=Math.floor(position[1]/cellSize),key=cx+','+cy;
+  if(!cells.has(key))cells.set(key,[]);
+  cells.get(key).push(position);
+ }
+ pendingFogTravel={samples:retained,token,cells,cellSize,bounds:[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)]};
 }
 function fogSeenDuringTravel(patch,blockers){
  if(!pendingFogTravel||!fogMemoryState)return false;
- const {samples,token,bounds}=pendingFogTravel;
+ const {samples,token,bounds,cells,cellSize}=pendingFogTravel;
  if(token.conditions?.includes('dead')||token.conditions?.includes('blinded')&&!token.blindsight)return false;
  const target=surfaceLightPoint(fogFaceCenter(patch.world),patch.surfaceLightOffset);
  // Reject terrain outside the traveled path envelope before any ray tests.
  if(bounds&&(target[0]<bounds[0]-24||target[0]>bounds[2]+24||
              target[1]<bounds[1]-24||target[1]>bounds[3]+24))return false;
- return samples.some(position=>{
-  if(Math.hypot(position[0]-target[0],position[1]-target[1])>24)return false;
+ const nearby=[];
+ if(cells){
+  const cx=Math.floor(target[0]/cellSize),cy=Math.floor(target[1]/cellSize);
+  for(let x=cx-3;x<=cx+3;x++)for(let y=cy-3;y<=cy+3;y++){
+   const bucket=cells.get(x+','+y);
+   if(bucket)nearby.push(...bucket);
+  }
+ }
+ return (cells?nearby:samples).some(position=>{
+  const dx=position[0]-target[0],dy=position[1]-target[1];
+  if(dx*dx+dy*dy>576)return false;
   const eye=[position[0],position[1],position[2]+.65];
   const observer={...token,x:position[0]-token.size/2,y:position[1]-token.size/2,z:position[2]};
   return sightlineClear(eye,target,blockers)&&(darkvisionReaches(observer,target)||ambientAt(target,blockers)||lightAt(target,blockers));
