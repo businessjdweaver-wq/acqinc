@@ -5133,7 +5133,9 @@ let fogMemoryDrawAudit={visible:0,remembered:0,unseen:0,storedMatches:0};
 function fogRemember(key,visible){
  const audit=fogMemoryDrawAudit;
  if(audit){if(visible)audit.visible++;else if(fogMemoryState?.seen.has(key))audit.storedMatches++;else audit.unseen++;}
- if(gmVisionObserver()||preferences.fogMemory===0)return visible?1:0;
+ // Tactical discovery now owns historical exploration. The 3D battlefield
+ // must never paint a remembered patch outside current sight.
+ if(roomProfile?.gm===false||gmVisionObserver()||preferences.fogMemory===0)return visible?1:0;
  if(visible){
   if(fogMemoryState&&!fogMemoryState.seen.has(key)){fogMemoryState.seen.add(key);fogMemoryState.dirty=true}
   return 1;
@@ -6726,7 +6728,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    const currentlyVisible=forceTerrainVisible()||terrainFogPatchVisible(patch);
    if(fogDetail)fogDetail.visibilityMs+=performance.now()-visibilityStart;
    const travelStart=performance.now();
-   if(rememberTerrain&&!currentlyVisible&&!fogMemoryState.seen.has(patch.memoryKey)&&fogSeenDuringTravel(patch,blockers)){
+   if(rememberTerrain&&roomProfile?.gm!==false&&!currentlyVisible&&!fogMemoryState.seen.has(patch.memoryKey)&&fogSeenDuringTravel(patch,blockers)){
      fogMemoryState.seen.add(patch.memoryKey);fogMemoryState.dirty=true;
     }
    if(fogDetail)fogDetail.travelMemoryMs+=performance.now()-travelStart;
