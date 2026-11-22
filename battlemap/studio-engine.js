@@ -4808,6 +4808,29 @@ function paintRoundLightPatch(points,projection,ranges,paint,depth,budget,refine
 }
 let lightingFrame=null,performanceDraw=null,lightingCache=null;
 let fogCache=null,fogMemoryState=null;
+let pendingFogTravel=null;
+function rememberFogTravel(points,token){
+ if(!playerFogEnabled()||preferences.fogMemory===0||!ownsRoomStandee(token)||points.length<2)return;
+ const samples=[];
+ for(let i=1;i<points.length;i++){
+  const a=points[i-1],b=points[i],n=Math.max(1,Math.ceil(Math.hypot(...a.map((v,k)=>b[k]-v))/.5));
+  for(let j=0;j<n;j++)samples.push(a.map((v,k)=>v+(b[k]-v)*j/n));
+ }
+ const stride=Math.max(1,Math.ceil(samples.length/120));
+ pendingFogTravel={samples:samples.filter((_,i)=>i%stride===0),token};
+}
+function fogSeenDuringTravel(patch,blockers){
+ if(!pendingFogTravel||!fogMemoryState)return false;
+ const {samples,token}=pendingFogTravel;
+ if(token.conditions?.includes('dead')||token.conditions?.includes('blinded')&&!token.blindsight)return false;
+ const target=surfaceLightPoint(fogFaceCenter(patch.world),patch.surfaceLightOffset);
+ return samples.some(position=>{
+  if(Math.hypot(position[0]-target[0],position[1]-target[1])>24)return false;
+  const eye=[position[0],position[1],position[2]+.65];
+  const observer={...token,x:position[0]-token.size/2,y:position[1]-token.size/2,z:position[2]};
+  return sightlineClear(eye,target,blockers)&&(darkvisionReaches(observer,target)||ambientAt(target,blockers)||lightAt(target,blockers));
+ });
+}
 // Local cache remains available offline; Supabase is authoritative across sessions.
 function saveFogMemory(){
  const state=fogMemoryState;
@@ -5730,7 +5753,10 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    // that the patch is still visible. Reusing it unconditionally leaves
    // old torch/fog squares behind as a player moves or extinguishes light.
    const currentlyVisible=forceTerrainVisible()||terrainFogPatchVisible(patch);
-   const state=fogRemember(patch.memoryKey,currentlyVisible);
+   if(rememberTerrain&&!currentlyVisible&&!fogMemoryState.seen.has(patch.memoryKey)&&fogSeenDuringTravel(patch,blockers)){
+     fogMemoryState.seen.add(patch.memoryKey);fogMemoryState.dirty=true;
+    }
+    const state=fogRemember(patch.memoryKey,currentlyVisible);
    if(!state||state===2&&!rememberTerrain)continue;
    const memory=rememberTerrain?{paintKey,rememberedFog:state===2}:null;
    if(patch.wholeFace){visible.push(memory?{...f,...memory}:f);continue}
@@ -5741,6 +5767,10 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   return visible;
  });
  recordGeometryStage('fogGeometryMs');
+ if(pendingFogTravel){
+  pendingFogTravel=null;
+  if(fogMemoryState?.dirty){saveFogMemory();void syncFogMemory(fogMemoryState)}
+ }
  }else{
   if(visiblePiece(ghost))drawPiece(ghost,true);
   faces=cached.faces.concat(faces.filter(f=>visibleProjection(f.projected,f.standee?55:2)));
@@ -6522,6 +6552,7 @@ async function commitCarry(){
   try{
    if(carry.light)await customizeRoomObject(carry.light,'move_light',[ghost.x,ghost.y,ghost.z]);
    else await moveRoomStandee(piece,ghost);
+   if(!carry.light&&piece.type==='standee'&&route)rememberFogTravel(routeWithDetours([...route.points,basePoint(ghost)]),piece);
    route=null;carry=null;ghost=null;await pollRoom();refresh();
   }catch(err){message(err.message);await pollRoom()}
   finally{roomMoving=false}
