@@ -7291,6 +7291,21 @@ function openTerrainContext(piece,x,y){
  const menu=el('terrainContext');
  menu.replaceChildren();
  const close=()=>{menu.hidden=true};
+ if(piece.stairTread&&piece.stairGroup&&!playing&&!terrainLocked){
+  const members=pieces.filter(p=>p.stairTread&&p.stairGroup===piece.stairGroup);
+  menu.append(catalogButton('Delete entire staircase ('+members.length+' segments)…',()=>{
+   close();
+   if(!pieces.includes(piece)||playing||terrainLocked)return;
+   if(!confirm('Delete the entire staircase and all '+members.length+' segments? This can be undone.'))return;
+   remember();
+   const removing=new Set(members);
+   pieces=pieces.filter(p=>!removing.has(p));
+   for(const member of members)group.delete(member);
+   if(selected&&removing.has(selected))selected=null;
+   if(visionSelection&&removing.has(visionSelection))visionSelection=null;
+   refresh();message('Entire staircase deleted ('+members.length+' segments).');
+  }));
+ }
  if(piece.curvedStair&&piece.stairGroup&&!playing&&!terrainLocked)
   menu.append(catalogButton('Transform staircase footprint / height…',()=>{close();editCurvedStairFootprint(piece)}));
  if(piece.type==='column')menu.append(catalogButton('Edit component',()=>{close();openFormationEditor(piece)}));
@@ -8448,7 +8463,7 @@ function cutStairEdge(p,edge){
  const shape=el('stairShape').value;
  const sections=shape==='straight'?stairSections(p,edge,rise,run):curvedStairSections(p,edge,rise,run,shape);
  if(!sections){message('Use a smaller rise or run, or a deeper block, to leave a top landing.');return}
- if(shape!=='straight'){
+ {
   const stairGroup=crypto.randomUUID();
   for(const section of sections)section.stairGroup=stairGroup;
  }
