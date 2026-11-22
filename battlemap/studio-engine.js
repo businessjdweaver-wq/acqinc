@@ -4935,7 +4935,39 @@ function sightlineClear(eye,target,blockers){
 let fogIlluminationCache=null;
 // Spatial fog workload counters, reset with each lighting frame. These identify
 // the regions actually sampled during movement without changing visibility.
-let fogRegionStats={regions:new Set(),samples:0,cacheHits:0};
+let fogRegionStats={regions:new Set(),samples:0,cacheHits:0,regionsReused:new Set(),regionsRecalculated:new Set(),stationaryHits:0,stationaryMisses:0};
+let fogStationaryRegions={environment:null,observers:new Map()};
+function fogObserverSignature(token){
+ return JSON.stringify([basePoint(token),token.darkvision,token.blindsight,token.incognito,token.conditions]);
+}
+function fogStationarySight(token,target,key,blockers,illuminated){
+ const id=token.roomId||token.id;
+ if(id==null)return null;
+ const signature=fogObserverSignature(token),region=fogRegionKey(target);
+ let entry=fogStationaryRegions.observers.get(id);
+ if(!entry||entry.signature!==signature){
+  entry={signature,regions:new Map(),lastFrame:-1};
+  fogStationaryRegions.observers.set(id,entry);
+ }
+ // Moving observers never reuse visibility across redraws. Their cached
+ // regions are discarded when their position or senses change.
+ let points=entry.regions.get(region);
+ if(points?.has(key)){
+  fogRegionStats.stationaryHits++;
+  fogRegionStats.regionsReused.add(region);
+  return points.get(key);
+ }
+ fogRegionStats.stationaryMisses++;
+ fogRegionStats.regionsRecalculated.add(region);
+ const eye=basePoint(token);eye[2]+=.65;
+ const visible=(darkvisionReaches(token,target)||illuminated())&&sightlineClear(eye,target,blockers);
+ if(!points){
+  if(entry.regions.size>=128)return visible;
+  points=new Map();entry.regions.set(region,points);
+ }
+ if(points.size<6000)points.set(key,visible);
+ return visible;
+}
 function fogRegionKey(target){
  return Math.floor(target[0]/8)+','+Math.floor(target[1]/8)+','+Math.floor(target[2]/8);
 }
@@ -4961,9 +4993,10 @@ function fogPointVisible(target,respectFogMode=true){
  const visible=(!preview&&eyeSees(target,blockers))||(preview?[preview]:visionObservers(tokens)).some(token=>{
   if((!preview&&(!ownsRoomStandee(token)||token.incognito))||(token.conditions?.includes('dead')||token.conditions?.includes('blinded')&&!token.blindsight))return false;
   // Preserve exact line-of-sight checks for every currently relevant sample.
+  const cached=fogStationarySight(token,target,key,blockers,illuminated);
+  if(cached!==null)return cached;
   const eye=basePoint(token);eye[2]+=.65;
-  return (darkvisionReaches(token,target)||illuminated())&&
-   sightlineClear(eye,target,blockers);
+  return (darkvisionReaches(token,target)||illuminated())&&sightlineClear(eye,target,blockers);
  });
  // Boundary refinement samples many shared world points. The former 24k cap
  // saturated early in complex scenes and forced repeated expensive ray tests.
@@ -5137,7 +5170,10 @@ function startLightingFrame(){
  const fogSignature=JSON.stringify([signature,roomProfile?.name,areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision]);
  if(fogIlluminationCache?.signature!==terrainLightSignature)
   fogIlluminationCache={signature:terrainLightSignature,values:new Map()};
- fogRegionStats={regions:new Set(),samples:0,cacheHits:0};
+ fogRegionStats={regions:new Set(),samples:0,cacheHits:0,regionsReused:new Set(),regionsRecalculated:new Set(),stationaryHits:0,stationaryMisses:0};
+ const fogEnvironment=JSON.stringify([terrainLightSignature,roomProfile?.name,currentSceneId,gmIgnoreLighting,playing,fogRevision]);
+ if(fogStationaryRegions.environment!==fogEnvironment)
+  fogStationaryRegions={environment:fogEnvironment,observers:new Map()};
  if(fogCache?.signature!==fogSignature)fogCache={signature:fogSignature,points:new Map(),terrainPatches:new Map(),terrainPatchCount:0};
  if(lightingCache?.signature!==signature||lightingCache.lightResults.size+lightingCache.surfaceLighting.size>24000){
   lightingCache={signature,lightResults:new Map(),surfaceLighting:new Map()};
@@ -5945,6 +5981,10 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   fogDetail.sampledRegions=fogRegionStats.regions.size;
   fogDetail.sampledPoints=fogRegionStats.samples;
   fogDetail.pointCacheHits=fogRegionStats.cacheHits;
+  fogDetail.regionsReused=fogRegionStats.regionsReused.size;
+  fogDetail.regionsRecalculated=fogRegionStats.regionsRecalculated.size;
+  fogDetail.stationaryVisibilityHits=fogRegionStats.stationaryHits;
+  fogDetail.stationaryVisibilityMisses=fogRegionStats.stationaryMisses;
   performanceDraw.fogDetail=fogDetail;
  }
  }
