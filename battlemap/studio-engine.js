@@ -1739,10 +1739,31 @@ function startVolumeResize(x,y){
 }
 function volumeResizeAt(resize,x,y,altKey){
  const {piece,axis,direction,dx,dy}=resize;
- const free=altKey&&wallVolume(piece);
+ const free=!!altKey;
  const step=free?.25:axis===2?.5:1;
- const delta=step*Math.round(((x-drag.x)*dx+(y-drag.y)*dy)/(dx*dx+dy*dy)/step);
- return resizedVolume(piece,axis,direction,delta,free);
+ const rawDelta=((x-drag.x)*dx+(y-drag.y)*dy)/(dx*dx+dy*dy);
+ let next=resizedVolume(piece,axis,direction,step*Math.round(rawDelta/step),free);
+ // Alt-resize can snap the moving face flush to an existing raised block.
+ // Do not create overlap: the shared edge must equal the neighbor's edge.
+ if(free&&axis<2){
+  const key=axis===0?'x':'y',other=axis===0?'y':'x';
+  const movingEdge=direction<0?next[key]:next[key]+dimensions(next)[axis];
+  const candidateEdges=[];
+  for(const neighbor of pieces){
+   if(neighbor===piece||neighbor.type!=='volume')continue;
+   const dims=dimensions(neighbor),ours=dimensions(next);
+   if(next.z+ours[2]<=neighbor.z+1e-6||neighbor.z+dims[2]<=next.z+1e-6)continue;
+   if(next[other]+ours[1-axis]<=neighbor[other]+1e-6||neighbor[other]+dims[1-axis]<=next[other]+1e-6)continue;
+   candidateEdges.push(neighbor[key],neighbor[key]+dims[axis]);
+  }
+  const nearest=candidateEdges.sort((a,b)=>Math.abs(a-movingEdge)-Math.abs(b-movingEdge))[0];
+  if(nearest!==undefined&&Math.abs(nearest-movingEdge)<=.5){
+   const delta=direction<0?piece[key]-nearest:nearest-(piece[key]+dimensions(piece)[axis]);
+   const snapped=resizedVolume(piece,axis,direction,delta,true);
+   if(Math.abs((direction<0?snapped[key]:snapped[key]+dimensions(snapped)[axis])-nearest)<1e-5)next=snapped;
+  }
+ }
+ return next;
 }
 function moveVolumeCorner({piece:p,corner,edge,anchor},pointer){
  const [w,d]=dimensions(p),corners=(p.corners||unitCorners).map(pair=>[...pair]);
