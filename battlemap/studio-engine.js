@@ -6690,7 +6690,19 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  let preFogSectorFaces=0,preFogSectorExceptions=0;
  const roomTopology=wallVisibilityTopology();
  const roomCandidates=roomTopology?wallVisibilityCandidates(roomTopology,fogPrepared):null;
- const roomCounts={facesChecked:0,reachable:0,disconnected:0,mixed:0,unknown:0,culledFaces:0};
+ const roomCounts={facesChecked:0,reachable:0,disconnected:0,mixed:0,unknown:0,culledFaces:0,regionCacheHits:0,regionCacheMisses:0,portalGuarded:0,elevationGuarded:0};
+ // Cache topology lookups across the thousands of wall and floor vertices.
+ // Portals and elevated geometry remain in the authoritative 3D path.
+ const regionLookupCache=new Map();
+ const cachedRegionAt=p=>{
+  const key=Math.round(p[0]*1000)+','+Math.round(p[1]*1000);
+  if(regionLookupCache.has(key)){roomCounts.regionCacheHits++;return regionLookupCache.get(key)}
+  roomCounts.regionCacheMisses++;
+  const id=roomCandidates.regionAt(p);
+  regionLookupCache.set(key,id);return id;
+ };
+ const portalCenters=roomTopology?.portals?.map(p=>p.center).filter(p=>Array.isArray(p)&&p.length>=2)||[];
+ const nearPortal=f=>portalCenters.some(p=>f.world.some(v=>Math.hypot(v[0]-p[0],v[1]-p[1])<2));
  const fogStartDetail=performance.now();
  faces=faces.flatMap(f=>{
  if(fogDetail)fogDetail.faces++;
@@ -6714,13 +6726,21 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   // Keep cross-boundary faces and dynamic/portal geometry in the 3D renderer.
   if(roomCandidates&&f.world?.length){
    roomCounts.facesChecked++;
-   const ids=new Set(f.world.map(p=>roomCandidates.regionAt(p)));
+   const ids=new Set(f.world.map(cachedRegionAt));
+   // Do not classify a face solely by its corners when its interior
+   // crosses a wall-region boundary.
+   const center=[f.world.reduce((v,p)=>v+p[0],0)/f.world.length,f.world.reduce((v,p)=>v+p[1],0)/f.world.length];
+   ids.add(cachedRegionAt(center));
    if(ids.has(null))roomCounts.unknown++;
    else if(ids.size!==1)roomCounts.mixed++;
    else if(roomCandidates.reachable.has(ids.values().next().value))roomCounts.reachable++;
    else {
     roomCounts.disconnected++;
-    if(!fogPrepared.preview&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture){
+    const elevated=f.world.some(p=>Math.abs((p[2]??0)-(fogPrepared.observers[0]?.distance[2]??0))>1.5);
+    const portal=nearPortal(f);
+    if(elevated)roomCounts.elevationGuarded++;
+    if(portal)roomCounts.portalGuarded++;
+    if(!fogPrepared.preview&&!elevated&&!portal&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture){
      roomCounts.culledFaces++;
      return [];
     }
