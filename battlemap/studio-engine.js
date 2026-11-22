@@ -5058,8 +5058,12 @@ function fogPointVisible(target,respectFogMode=true){
   fogRegionStats.observerTests++;
   const dx=observer.distance[0]-target[0],dy=observer.distance[1]-target[1],dz=observer.distance[2]-target[2];
   const inDarkvision=observer.range>0&&dx*dx+dy*dy+dz*dz<=observer.range*observer.range;
-  if(!inDarkvision&&!illuminated()){fogRegionStats.rangeRejects++;return false}
-  if(planarVisionAudit&&Math.hypot(dx,dy)>observer.range+6)planarVisionAudit.distantIlluminated++;
+  if(!inDarkvision&&!illuminated()){
+   fogRegionStats.rangeRejects++;
+   if(planarVisionAudit){if(Math.hypot(dx,dy)>observer.range+6)planarVisionAudit.farRangeRejects++;else planarVisionAudit.nearRangeRejects++;}
+   return false;
+  }
+  if(planarVisionAudit&&Math.hypot(dx,dy)>observer.range+6){planarVisionAudit.distantIlluminated++;planarVisionAudit.farLitTests++;}
   fogRegionStats.rayTests++;
   const result=cachedFogSightline(observer.eye,target,blockers);
   if(planarVisionAudit){
@@ -5068,8 +5072,10 @@ function fogPointVisible(target,respectFogMode=true){
    // Sample across the full traversal rather than the first 96 blocked rays.
    // Reserve half the budget for visible rays and split the remainder
    // between nearby and distant blocked rays.
-   const eligible=result?audit.visibleCompared<64:
-    near?audit.nearCompared<64:audit.farCompared<64;
+   // Decimate incoming rays to spread validation beyond the earliest sampled patch.
+   audit.eligibleSamples++;
+   const eligible=audit.eligibleSamples%17===0&&(result?audit.visibleCompared<64:
+    near?audit.nearCompared<64:audit.farCompared<64);
    if(eligible){
     const planar=planarVisionBlocked(observer.eye,target,blockers);
     audit.compared++;
@@ -5262,6 +5268,9 @@ function startLightingFrame(){
  if(fogIlluminationCache?.signature!==terrainLightSignature)
   fogIlluminationCache={signature:terrainLightSignature,values:new Map()};
  fogRegionStats={regions:new Set(),samples:0,cacheHits:0,observerTests:0,rangeRejects:0,rayTests:0};
+ // Audit is per draw, never cumulative across the rail. Keep the previous frame's
+ // values immutable in its performance snapshot.
+ planarVisionAudit={compared:0,planarBlocked:0,threeDBlocked:0,agreements:0,falseBlocked:0,missedBlockers:0,limit:192,visibleCompared:0,blockedCompared:0,nearCompared:0,farCompared:0,localFogSamples:0,distantFogSamples:0,distantIlluminated:0,localRadiusFeet:0,nearRangeRejects:0,farRangeRejects:0,farLitTests:0,eligibleSamples:0,note:'Per-frame diagnostic; no hard local fog cutoff. Distant light and elevated sightlines remain enabled.'};
  fogPreparedObservers=null;
  if(fogCache?.signature!==fogSignature)fogCache={signature:fogSignature,points:new Map(),terrainPatches:new Map(),terrainPatchCount:0};
  if(lightingCache?.signature!==signature||lightingCache.lightResults.size+lightingCache.surfaceLighting.size>24000){
