@@ -2854,6 +2854,71 @@ function compileWallPath(wall){
 function sceneWallPaths(sceneAreas=areas){
  return sceneAreas.find(a=>a.shape==='appearance')?.wallPaths??noWallPaths;
 }
+// v1.474: Diagnostic room topology from authored wall paths, not rendered faces.
+// This never culls geometry. Wall edits and opening changes invalidate the cache.
+let wallTopologyCache=null;
+function wallVisibilityTopology(){
+ const walls=sceneWallPaths();
+ const signature=JSON.stringify(walls.map(w=>[w.id,w.nodes,w.closed,w.z,w.height,w.thickness,w.sight,w.openings]));
+ if(wallTopologyCache?.signature===signature)return wallTopologyCache.result;
+ const segments=[],portals=[];
+ for(const wall of walls){
+  const path=compileWallPath(wall);
+  if(wall.sight===false)continue;
+  for(let i=1;i<path.samples.length;i++){
+   const a=path.samples[i-1],b=path.samples[i];
+   if(wallDistance(a.p,b.p)>1e-7)segments.push([a.p,b.p,wall]);
+  }
+  for(const fit of path.openings){
+   portals.push({wallId:wall.id,kind:fit.opening.kind,open:!!fit.opening.open,
+    shaded:!!fit.opening.shaded,at:fit.opening.at,width:fit.opening.width,
+    sill:fit.opening.sill,height:fit.opening.height,center:sampleWall(path,(fit.start+fit.end)/2)});
+  }
+ }
+ if(!segments.length)return (wallTopologyCache={signature,result:{regions:1,portals,segments:0,note:'No opaque wall boundaries'}}).result;
+ let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+ for(const [a,b] of segments)for(const p of [a,b]){minX=Math.min(minX,p[0]);minY=Math.min(minY,p[1]);maxX=Math.max(maxX,p[0]);maxY=Math.max(maxY,p[1])}
+ const step=1,minx=Math.floor(minX)-2,miny=Math.floor(minY)-2;
+ const nx=Math.ceil(maxX-minx)+4,ny=Math.ceil(maxY-miny)+4;
+ if(nx*ny>24000)return (wallTopologyCache={signature,result:{regions:0,portals,segments:segments.length,skipped:'Grid exceeds diagnostic limit'}}).result;
+ const crosses=(a,b,c,d)=>{
+  const orient=(p,q,r)=>(q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);
+  const x=orient(a,b,c),y=orient(a,b,d),u=orient(c,d,a),v=orient(c,d,b);
+  return x*y<=0&&u*v<=0&&Math.max(a[0],b[0])>=Math.min(c[0],d[0])-1e-7&&Math.max(c[0],d[0])>=Math.min(a[0],b[0])-1e-7&&Math.max(a[1],b[1])>=Math.min(c[1],d[1])-1e-7&&Math.max(c[1],d[1])>=Math.min(a[1],b[1])-1e-7;
+ };
+ const edgeBlocked=(x,y,dx,dy)=>{
+  const a=[minx+x+.5,miny+y+.5],b=[a[0]+dx,a[1]+dy];
+  return segments.some(([c,d])=>crosses(a,b,c,d));
+ };
+ const labels=new Int32Array(nx*ny).fill(-1),sizes=[];let regions=0;
+ for(let y=0;y<ny;y++)for(let x=0;x<nx;x++){
+  const index=y*nx+x;if(labels[index]!==-1)continue;
+  const queue=[index];labels[index]=regions;let count=0;
+  for(let head=0;head<queue.length;head++){
+   const n=queue[head],cx=n%nx,cy=Math.floor(n/nx);count++;
+   for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+    const xx=cx+dx,yy=cy+dy;if(xx<0||yy<0||xx>=nx||yy>=ny)continue;
+    const next=yy*nx+xx;if(labels[next]!==-1||edgeBlocked(cx,cy,dx,dy))continue;
+    labels[next]=regions;queue.push(next);
+   }
+  }
+  sizes.push(count);regions++;
+ }
+ const regionAt=p=>{
+  const x=Math.floor(p[0]-minx),y=Math.floor(p[1]-miny);
+  return x>=0&&y>=0&&x<nx&&y<ny?labels[y*nx+x]:null;
+ };
+ for(const portal of portals){
+  const wall=walls.find(w=>w.id===portal.wallId),path=compileWallPath(wall);
+  const s=portal.at*path.length,aa=sampleWall(path,Math.max(0,s-.05)),bb=sampleWall(path,Math.min(path.length,s+.05));
+  const dx=bb[0]-aa[0],dy=bb[1]-aa[1],length=Math.hypot(dx,dy)||1;
+  const normal=[-dy/length,dx/length];
+  portal.regions=[regionAt([portal.center[0]+normal[0]*.75,portal.center[1]+normal[1]*.75]),
+   regionAt([portal.center[0]-normal[0]*.75,portal.center[1]-normal[1]*.75])];
+ }
+ const result={regions,regionSizes:sizes,portals,segments:segments.length,grid:{width:nx,height:ny,step},note:'Diagnostic 2D topology only; elevations, open edges and portal sightlines require 3D validation'};
+ wallTopologyCache={signature,result};return result;
+}
 const wallSolidLists=new WeakMap();
 function pathWallSolids(sceneAreas=areas){
  const paths=sceneWallPaths(sceneAreas);
@@ -6299,6 +6364,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   fogDetail.rangeRejects=fogRegionStats.rangeRejects;
   fogDetail.rayTests=fogRegionStats.rayTests;
   fogDetail.sectorPruning={...fogSectorStats,eligibleSectors:fogSectorCache.size,enabled:true,mode:'strict-dark-no-lights-no-memory'};
+  if(geometryAudit)fogDetail.wallTopology=wallVisibilityTopology();
   performanceDraw.fogDetail=fogDetail;
  if(performanceDraw)performanceDraw.planarVisionAudit=planarVisionAudit;
  }
