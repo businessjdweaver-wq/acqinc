@@ -46,7 +46,7 @@ function tacticalFogRevision(){return Number(areas.find(a=>a.shape==='appearance
 function tacticalDiscoveryKey(){
  // A distinct key for each scene and account. Server-synchronized party-wide
  // discovery requires a separate authorized endpoint in a later version.
- const scene=roomState?.sceneId||currentSceneId||requestedRoomScene;
+ const scene=requestedRoomScene||roomState?.sceneId||currentSceneId;
  const account=roomProfile?.name;
  return scene&&account?tacticalDiscoveryPrefix+encodeURIComponent(String(scene))+':'+encodeURIComponent(String(account))+':fog'+tacticalFogRevision():null;
 }
@@ -138,12 +138,12 @@ function tacticalExplorationAt(point,blockers=visionBlockers()){
    the drawing loop. All samples are individually ray-checked. */
 let tacticalScanTimer=null,tacticalScanSignature='',tacticalScanStatus='Waiting for player scene';
 function tacticalScheduleScan(){
- if(roomProfile?.gm!==false||!roomState?.active||!roomState.sceneId){tacticalScanStatus='No active player scene';return;}
+ if(roomProfile?.gm!==false||!(requestedRoomScene||roomState?.sceneId)){tacticalScanStatus='No player scene selected';return;}
  const observers=visionObservers(tokens).filter(t=>ownsRoomStandee(t)&&!t.incognito&&!t.conditions?.includes('dead')&&(!t.conditions?.includes('blinded')||t.blindsight>0));
  const centers=[...observers.map(basePoint),...spellEyes()];
  // Sample only short, continuous standee movements. Large jumps (including
  // teleportation and scene changes) must never reveal the intervening route.
- const epoch=[roomState.sceneId,tacticalFogRevision(),tacticalTopologyVersion()].join('|');
+ const epoch=[requestedRoomScene||roomState.sceneId,tacticalFogRevision(),tacticalTopologyVersion()].join('|');
  const scanCenters=[];
  const nextCenters=new Map();
  observers.forEach((observer,i)=>{
@@ -165,13 +165,13 @@ function tacticalScheduleScan(){
  });
  tacticalPreviousCenters=nextCenters;
  // Keep teleport markers until the corresponding standee position changes.
- const signature=[roomState.sceneId,tacticalFogRevision(),tacticalTopologyVersion(),...centers.map(p=>p.join(',')),...observers.map(t=>[t.roomId,t.vision,t.darkvision,t.torch,t.torchBright,t.torchDim].join(':'))].join('|');
+ const signature=[requestedRoomScene||roomState.sceneId,tacticalFogRevision(),tacticalTopologyVersion(),...centers.map(p=>p.join(',')),...observers.map(t=>[t.roomId,t.vision,t.darkvision,t.torch,t.torchBright,t.torchDim].join(':'))].join('|');
  if(signature===tacticalScanSignature&&tacticalReadDiscovery().topology===tacticalTopologyVersion())return;
  tacticalScanStatus=centers.length?'Scanning '+centers.length+' vision source(s)':'No controlled vision sources';
  tacticalScanSignature=signature;
  clearTimeout(tacticalScanTimer);
  tacticalScanTimer=setTimeout(()=>{
-  if(roomProfile?.gm!==false||!roomState?.active){tacticalScanStatus='Scan aborted: inactive scene';return}
+  if(roomProfile?.gm!==false||!(requestedRoomScene||roomState?.sceneId)){tacticalScanStatus='Scan aborted: no selected scene';return}
   const samples=[];
   // Search the entire potentially visible footprint, not merely neighboring
   // squares. Authoritative line-of-sight and lighting checks still gate every
