@@ -830,7 +830,7 @@ function standeeVisibleToObserver(token,blockers=visionBlockers()){
   const eye=basePoint(observer);
   eye[2]+=.65;
   return sightlineClear(eye,target,blockers)&&
-   (darkvisionReaches(observer,target)||ambientAt(target,getBlockers())||lightAt(target,getBlockers()));
+   (darkvisionReaches(observer,target)||ambientAt(target,blockers)||lightAt(target,blockers));
  })||!preview&&eyeSees(target,blockers));
 }
 function standeeHidden(p){
@@ -5052,7 +5052,7 @@ function fogPointVisible(target,respectFogMode=true){
   if(illumination!==undefined)return illumination;
   const cache=fogIlluminationCache?.values;
   if(cache?.has(key))return illumination=cache.get(key);
-  illumination=!!(ambientAt(target,blockers)||lightAt(target,blockers));
+  illumination=!!(ambientAt(target,getBlockers())||lightAt(target,getBlockers()));
   if(cache&&cache.size<180000)cache.set(key,illumination);
   return illumination;
  };
