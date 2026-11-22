@@ -8187,6 +8187,14 @@ function stairSections(p,edge,rise,run){
 }
 // Build curved staircases as small convex polygon treads. This reuses
 // the existing shaped-volume renderer and terrain collision machinery.
+function pointInPolygon(point,outline){
+ let inside=false;
+ for(let i=0,j=outline.length-1;i<outline.length;j=i++){
+  const [xi,yi]=outline[i],[xj,yj]=outline[j];
+  if((yi>point[1])!==(yj>point[1])&&point[0]<(xj-xi)*(point[1]-yi)/(yj-yi)+xi)inside=!inside;
+ }
+ return inside;
+}
 function curvedStairSections(p,edge,rise,run,shape){
  const [w,d,h]=dimensions(p),steps=Math.ceil(h/rise)-1;
  const radius=Math.min(w,d)/2;
