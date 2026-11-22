@@ -5535,18 +5535,18 @@ function refinedFogBoundaryPatches(patch){
   // Stop sampling as soon as both visibility states are established.
   // At the refinement limit only the center determines the painted tile.
   const centerVisible=fogPointVisible(surfaceLightPoint(points[0],part.surfaceLightOffset));
-  let mixed=false;
+  let mixed=false,anyVisible=centerVisible;
   if(depth<maxDepth){
    for(let i=1;i<points.length;i++){
-    if(fogPointVisible(surfaceLightPoint(points[i],part.surfaceLightOffset))!==centerVisible){
-     mixed=true;break;
-    }
+    const seen=fogPointVisible(surfaceLightPoint(points[i],part.surfaceLightOffset));
+    anyVisible=anyVisible||seen;
+    if(seen!==centerVisible){mixed=true;break;}
    }
   }
   if(!mixed||depth>=maxDepth){
    // At the final resolution use the center, not an any-corner test that
    // paints the entire square visible across the circular sight boundary.
-   part.visible=centerVisible;
+   part.visible=depth?centerVisible:anyVisible;
    if(parentSeen&&fogMemoryState&&!fogMemoryState.seen.has(part.memoryKey)){
     fogMemoryState.seen.add(part.memoryKey);
     fogMemoryState.dirty=true;
