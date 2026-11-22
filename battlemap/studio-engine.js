@@ -5113,6 +5113,9 @@ let fogIlluminationCache=null;
 let fogDistantDarkCache=null;
 let fogDistantDarkHits=0;
 let fogDistantDarkEligible=false;
+let fogDistantDarkInvalidations=0;
+let fogDistantDarkSignatureChanges=0;
+let fogFastPatchSkips=0;
 // Spatial fog workload counters, reset with each lighting frame. These identify
 // the regions actually sampled during movement without changing visibility.
 let fogRegionStats={regions:new Set(),samples:0,cacheHits:0,observerTests:0,rangeRejects:0,rayTests:0};
@@ -5292,7 +5295,32 @@ function terrainFogPatches(face){
 }
 // Refine only mixed-visibility floor patches. The base fog tiles and their
 // remembered history remain unchanged; children inherit exploration history.
+function fogPatchDefinitelyDark(patch){
+ // Conservative full-patch test, including its interior. No hard vision
+ // cutoff: this shortcut is used only for explicitly dark rooms without
+ // openings and when no emitter can illuminate the patch.
+ if(!fogDistantDarkEligible||!patch.world?.length||areas.some(a=>a.shape==='opening'))return false;
+ const observers=(fogPreparedObservers||(fogPreparedObservers=prepareFogObservers())).observers;
+ if(!observers.length)return false;
+ const pts=patch.world.map(p=>surfaceLightPoint(p,patch.surfaceLightOffset));
+ const lo=[0,1,2].map(i=>Math.min(...pts.map(p=>p[i])));
+ const hi=[0,1,2].map(i=>Math.max(...pts.map(p=>p[i])));
+ const minDistSq=p=>p.reduce((sum,v,i)=>{
+  const delta=Math.max(lo[i]-v,0,v-hi[i]);return sum+delta*delta;
+ },0);
+ if(observers.some(o=>minDistSq(o.distance)<=o.range*o.range))return false;
+ for(const light of activeLights()){
+  const radius=Number(light.radius)/5;
+  if(!(radius>=0))return false;
+  if(minDistSq(lightRangeCenter(light))<=radius*radius)return false;
+ }
+ return pts.every(p=>roomIsDark(p))&&roomIsDark(lo)&&roomIsDark(hi);
+}
 function refinedFogBoundaryPatches(patch){
+ if(fogPatchDefinitelyDark(patch)){
+  fogFastPatchSkips++;
+  return [{...patch,visible:false}];
+ }
  // Apply in both camera projections: the visibility boundary is in world
  // coordinates, so isometric view must not fall back to whole-square fog.
  // Only ground faces are passed here; terrain walls retain their own tests.
@@ -5396,8 +5424,11 @@ function startLightingFrame(){
  if(fogSectorRayCache?.signature!==raySignature)fogSectorRayCache={signature:raySignature,sectors:new Map(),count:0,hits:0,misses:0};
  if(fogIlluminationCache?.signature!==terrainLightSignature)
   fogIlluminationCache={signature:terrainLightSignature,values:new Map()};
- if(fogDistantDarkCache?.signature!==terrainLightSignature)
+ if(fogDistantDarkCache?.signature!==terrainLightSignature){
+  if(fogDistantDarkCache){fogDistantDarkInvalidations++;fogDistantDarkSignatureChanges++;}
   fogDistantDarkCache={signature:terrainLightSignature,values:new Map()};
+ }
+ fogFastPatchSkips=0;
  fogDistantDarkHits=0;
  fogDistantDarkEligible=!gmVisionObserver()&&!spellEyes().length&&!activeVisionFamiliar();
  fogRegionStats={regions:new Set(),samples:0,cacheHits:0,observerTests:0,rangeRejects:0,rayTests:0};
@@ -6459,7 +6490,8 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   fogDetail.rayTests=fogRegionStats.rayTests;
   fogDetail.sectorPruning={...fogSectorStats,eligibleSectors:fogSectorCache.size,enabled:true,mode:'strict-dark-no-lights-no-memory'};
   if(geometryAudit){
-   fogDetail.distantDarkCache={hits:fogDistantDarkHits,entries:fogDistantDarkCache?.values.size??0,enabled:fogDistantDarkEligible};
+   fogDetail.distantDarkCache={hits:fogDistantDarkHits,entries:fogDistantDarkCache?.values.size??0,enabled:fogDistantDarkEligible,signatureChanges:fogDistantDarkSignatureChanges,invalidations:fogDistantDarkInvalidations};
+   fogDetail.fastDarkPatchSkips=fogFastPatchSkips;
    fogDetail.wallTopology=roomTopology;
    fogDetail.roomVisibilityAudit=roomCandidates?{
     observerRegions:roomCandidates.observerRegions,
