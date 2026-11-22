@@ -4999,13 +4999,18 @@ function rememberFogTravel(points,token){
   for(let j=0;j<n;j++)samples.push(a.map((v,k)=>v+(b[k]-v)*j/n));
  }
  const stride=Math.max(1,Math.ceil(samples.length/120));
- pendingFogTravel={samples:samples.filter((_,i)=>i%stride===0),token};
+ const retained=samples.filter((_,i)=>i%stride===0);
+ const xs=points.map(p=>p[0]),ys=points.map(p=>p[1]);
+ pendingFogTravel={samples:retained,token,bounds:[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)]};
 }
 function fogSeenDuringTravel(patch,blockers){
  if(!pendingFogTravel||!fogMemoryState)return false;
- const {samples,token}=pendingFogTravel;
+ const {samples,token,bounds}=pendingFogTravel;
  if(token.conditions?.includes('dead')||token.conditions?.includes('blinded')&&!token.blindsight)return false;
  const target=surfaceLightPoint(fogFaceCenter(patch.world),patch.surfaceLightOffset);
+ // Reject terrain outside the traveled path envelope before any ray tests.
+ if(bounds&&(target[0]<bounds[0]-24||target[0]>bounds[2]+24||
+             target[1]<bounds[1]-24||target[1]>bounds[3]+24))return false;
  return samples.some(position=>{
   if(Math.hypot(position[0]-target[0],position[1]-target[1])>24)return false;
   const eye=[position[0],position[1],position[2]+.65];
@@ -5892,9 +5897,9 @@ function draw(action,reusePan=false){
  scheduleScenePreparation();
  cancelPanSettle();
  cancelMovementPaint();
- scheduleSessionViewSave();
  const homeScene=JSON.stringify([currentSceneId,roomProfile?.name]);
  if(W&&H&&loadedHomeScene!==homeScene){loadedHomeScene=homeScene;applyHomeView(chosenSessionView()||chosenHomeView())}
+ scheduleSessionViewSave()
  if(action!=='Standee movement'){
   updateCameraCompass();
   el('playerShowAllies').hidden=!(playing&&roomProfile?.gm===false);
