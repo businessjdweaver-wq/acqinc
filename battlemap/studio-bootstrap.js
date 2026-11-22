@@ -4,6 +4,7 @@
 (function () {
   "use strict";
   const parts = [
+    "./map-composer.js",
     "./studio-engine.js",
     "./studio-interactions.js",
     "./studio-room-sync.js"
