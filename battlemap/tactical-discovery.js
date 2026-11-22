@@ -84,7 +84,7 @@ function tacticalKnownAt(point){
  const state=tacticalReadDiscovery();
  return state.topology===tacticalTopologyVersion()&&state.cells.includes(cell);
 }
-function tacticalRecordExplored(points,blockers=visionBlockers()){
+function tacticalRecordExplored(points,blockers=visionBlockers(),visibilityVerified=false){
  const key=tacticalDiscoveryKey();
  // GM preview and unauthenticated clients must not add to player memory.
  if(!key||roomProfile?.gm!==false||!Array.isArray(points))return 0;
@@ -100,7 +100,7 @@ function tacticalRecordExplored(points,blockers=visionBlockers()){
   // the authoritative per-point visibility test below does that.
   // A valid ray is required even through an open portal. We remember only
   // directly observed sampled cells, never every cell in a connected region.
-  if(!playerCanSeePoint(point,blockers))continue;
+  if(!visibilityVerified&&!playerCanSeePoint(point,blockers))continue;
   known.add(cell);added++;
   if(known.size>=12000)break;
  }
@@ -186,9 +186,16 @@ function tacticalScheduleScan(){
   }
   try{
    const blockers=visionBlockers();
-   const candidates=samples.filter(p=>playerCanSeePoint(p,blockers));
-   tacticalScanStatus='Sources '+centers.length+' · samples '+samples.length+' · visible '+candidates.length;
-   const added=tacticalRecordExplored(candidates,blockers);
+   const knownState=tacticalReadDiscovery(),topology=tacticalTopologyVersion();
+   const alreadyKnown=new Set(knownState.topology===topology?knownState.cells:[]);
+   const unique=new Map();
+   for(const point of samples){
+    const cell=tacticalDiscoveryCell(point);
+    if(cell&&!alreadyKnown.has(cell)&&!unique.has(cell))unique.set(cell,point);
+   }
+   const candidates=[...unique.values()].filter(p=>playerCanSeePoint(p,blockers));
+   tacticalScanStatus='Sources '+centers.length+' · samples '+samples.length+' · new candidates '+unique.size+' · visible '+candidates.length;
+   const added=tacticalRecordExplored(candidates,blockers,true);
    tacticalScanStatus+=' · added '+added+' · stored '+tacticalMapCells().length;
    tacticalMapRender();
   }catch(error){tacticalScanStatus='Scan error: '+error.message;console.warn('Tactical discovery scan failed',error)}
