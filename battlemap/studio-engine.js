@@ -258,17 +258,13 @@ function polygonImpl(points,fill,stroke){
 }
 let earlyRoomCull=null;
 let earlyRoomCullCount=0;
+function earlyRoomDisconnected(points){
+ if(!earlyRoomCull||!points?.length)return false;
+ const ids=new Set(points.map(v=>earlyRoomCull.regionAt(v)));
+ return ids.size===1&&!ids.has(null)&&!earlyRoomCull.reachable.has(ids.values().next().value);
+}
 function face(points,fill,p,z,preview){
  points=turnTerrainPoints(points,p);
- // Reject static geometry before projection, lighting and fog patch generation.
- // Match the experimental room-based fog culling eligibility.
- if(earlyRoomCull&&!preview&&p?.type!=='standee'&&points.length){
-  const ids=new Set(points.map(v=>earlyRoomCull.regionAt(v)));
-  if(ids.size===1&&!ids.has(null)&&!earlyRoomCull.reachable.has(ids.values().next().value)){
-   earlyRoomCullCount++;
-   return;
-  }
- }
  const projected=points.map(v=>point(...v));
  faces.push({projected,world:points,fill,p,z,preview,depth:projected.reduce((a,v)=>a+v[2],0)/projected.length});
 }
@@ -2105,6 +2101,15 @@ function drawCutter(){
 }
 function drawPiece(p,preview=false){
  if(hiddenByCutaway(p))return;
+ if(!preview&&p.type!=='standee'){
+  const [w,d]=dimensions(p);
+  // Broad phase only: all footprint corners must share one disconnected region.
+  // Complex terrain shapes continue through the ordinary renderer.
+  if(!p.terrainShape&&!p.surfaceTextures&&earlyRoomDisconnected([[p.x,p.y],[p.x+w,p.y],[p.x+w,p.y+d],[p.x,p.y+d]])){
+   earlyRoomCullCount++;
+   return;
+  }
+ }
  if(p.type==='standee'){drawStandee(p,preview);return}
  const [w,d,h]=dimensions(p),[,,,,cap,side]=types[p.type];
  const {x,y,z}=p;
@@ -3032,6 +3037,7 @@ function renderOptimizedPathWalls(solids){
 function renderPathWall(solid){
  const {poly,z,top,wall,opening}=solid;
  if(opening){renderPathOpening(solid);return}
+ if(earlyRoomDisconnected(poly)){earlyRoomCullCount++;return}
  const surface=wall;
  if(!surface.opacity)return;
  const bottom=poly.map(([x,y])=>[x,y,z]),upper=poly.map(([x,y])=>[x,y,top]);
