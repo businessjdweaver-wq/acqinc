@@ -5006,7 +5006,7 @@ let fogIlluminationCache=null;
 // Spatial fog workload counters, reset with each lighting frame. These identify
 // the regions actually sampled during movement without changing visibility.
 let fogRegionStats={regions:new Set(),samples:0,cacheHits:0,observerTests:0,rangeRejects:0,rayTests:0};
- planarVisionAudit={compared:0,planarBlocked:0,threeDBlocked:0,agreements:0,falseBlocked:0,missedBlockers:0,limit:96,note:'Diagnostic only; planar bounds are not used to reject or reveal fog.'};
+ planarVisionAudit={compared:0,planarBlocked:0,threeDBlocked:0,agreements:0,falseBlocked:0,missedBlockers:0,limit:192,visibleCompared:0,blockedCompared:0,nearCompared:0,farCompared:0,localFogSamples:0,distantFogSamples:0,distantIlluminated:0,localRadiusFeet:0,note:'Stratified diagnostics only; no fog visibility or range rules changed.'};
 let fogPreparedObservers=null;
 function prepareFogObservers(){
  const preview=gmVisionObserver();
@@ -5033,6 +5033,15 @@ function fogPointVisible(target,respectFogMode=true){
  fogRegionStats.regions.add(fogRegionKey(target));
  const blockers=visionBlockers();
  const prepared=fogPreparedObservers||(fogPreparedObservers=prepareFogObservers());
+ // The working area is a measurement, not a visibility cutoff.
+ // 30 feet of movement buffer beyond the longest observer darkvision.
+ if(planarVisionAudit){
+  const closest=prepared.observers.reduce((best,o)=>Math.min(best,Math.hypot(o.distance[0]-target[0],o.distance[1]-target[1])),Infinity);
+  const radius=prepared.observers.reduce((best,o)=>Math.max(best,o.range),0)+6;
+  planarVisionAudit.localRadiusFeet=radius*5;
+  if(closest<=radius)planarVisionAudit.localFogSamples++;
+  else planarVisionAudit.distantFogSamples++;
+ }
  // Static illumination is reusable as observers travel; changes to terrain
  // or light invalidate its separate signature.
  let illumination;
@@ -5050,16 +5059,29 @@ function fogPointVisible(target,respectFogMode=true){
   const dx=observer.distance[0]-target[0],dy=observer.distance[1]-target[1],dz=observer.distance[2]-target[2];
   const inDarkvision=observer.range>0&&dx*dx+dy*dy+dz*dz<=observer.range*observer.range;
   if(!inDarkvision&&!illuminated()){fogRegionStats.rangeRejects++;return false}
+  if(planarVisionAudit&&Math.hypot(dx,dy)>observer.range+6)planarVisionAudit.distantIlluminated++;
   fogRegionStats.rayTests++;
   const result=cachedFogSightline(observer.eye,target,blockers);
-  if(planarVisionAudit&&planarVisionAudit.compared<planarVisionAudit.limit){
-   const planar=planarVisionBlocked(observer.eye,target,blockers);
-   planarVisionAudit.compared++;
-   if(planar)planarVisionAudit.planarBlocked++;
-   if(!result)planarVisionAudit.threeDBlocked++;
-   if(planar===!result)planarVisionAudit.agreements++;
-   else if(planar)planarVisionAudit.falseBlocked++;
-   else planarVisionAudit.missedBlockers++;
+  if(planarVisionAudit){
+   const audit=planarVisionAudit;
+   const distance=Math.hypot(dx,dy),near=distance<=observer.range+6;
+   // Sample across the full traversal rather than the first 96 blocked rays.
+   // Reserve half the budget for visible rays and split the remainder
+   // between nearby and distant blocked rays.
+   const eligible=result?audit.visibleCompared<64:
+    near?audit.nearCompared<64:audit.farCompared<64;
+   if(eligible){
+    const planar=planarVisionBlocked(observer.eye,target,blockers);
+    audit.compared++;
+    if(result)audit.visibleCompared++;
+    else if(near)audit.nearCompared++;
+    else audit.farCompared++;
+    if(planar)audit.planarBlocked++;
+    if(!result)audit.threeDBlocked++;
+    if(planar===!result)audit.agreements++;
+    else if(planar)audit.falseBlocked++;
+    else audit.missedBlockers++;
+   }
   }
   return result;
  });
