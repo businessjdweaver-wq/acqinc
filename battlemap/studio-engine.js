@@ -5942,6 +5942,9 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   const measured=fogDetail.patchGenerationMs+fogDetail.boundaryRefinementMs+fogDetail.visibilityMs+fogDetail.travelMemoryMs+fogDetail.memoryMs+fogDetail.projectionMs;
   fogDetail.otherMs=Math.max(0,performance.now()-fogStartDetail-measured);
   for(const key of ['patchGenerationMs','boundaryRefinementMs','visibilityMs','travelMemoryMs','memoryMs','projectionMs','otherMs'])fogDetail[key]=roundedMs(fogDetail[key]);
+  fogDetail.sampledRegions=fogRegionStats.regions.size;
+  fogDetail.sampledPoints=fogRegionStats.samples;
+  fogDetail.pointCacheHits=fogRegionStats.cacheHits;
   performanceDraw.fogDetail=fogDetail;
  }
  }
