@@ -5166,11 +5166,43 @@ function terrainFogPatches(face){
 }
 // Refine only mixed-visibility floor patches. The base fog tiles and their
 // remembered history remain unchanged; children inherit exploration history.
+// v1.472: A coarse bound can prove that a patch is wholly outside every
+// observer's *darkvision* radius. This is only a refinement hint: lit areas,
+// spell eyes and explored terrain still use the authoritative visibility path.
+function fogPatchOutsideDarkvision(patch){
+ const prepared=fogPreparedObservers||(fogPreparedObservers=prepareFogObservers());
+ if(prepared.preview||!prepared.observers.length)return false;
+ const world=patch.world;
+ if(!world?.length)return false;
+ let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity,minZ=Infinity,maxZ=-Infinity;
+ for(const p of world){
+  minX=Math.min(minX,p[0]);maxX=Math.max(maxX,p[0]);
+  minY=Math.min(minY,p[1]);maxY=Math.max(maxY,p[1]);
+  minZ=Math.min(minZ,p[2]);maxZ=Math.max(maxZ,p[2]);
+ }
+ return prepared.observers.every(o=>{
+  const dx=Math.max(minX-o.distance[0],0,o.distance[0]-maxX);
+  const dy=Math.max(minY-o.distance[1],0,o.distance[1]-maxY);
+  const dz=Math.max(minZ-o.distance[2],0,o.distance[2]-maxZ);
+  return dx*dx+dy*dy+dz*dz>o.range*o.range;
+ });
+}
 function refinedFogBoundaryPatches(patch){
  // Apply in both camera projections: the visibility boundary is in world
  // coordinates, so isometric view must not fall back to whole-square fog.
  // Only ground faces are passed here; terrain walls retain their own tests.
  if(patch.world.length!==4)return [patch];
+ // When all five existing probes agree that a distant patch is invisible,
+ // there is no visibility boundary to subdivide. Do not assume darkness
+ // from distance: every probe still evaluates ambient light and sightlines.
+ if(fogPatchOutsideDarkvision(patch)){
+  const center=fogFaceCenter(patch.world);
+  const probes=[center,...patch.world.map(vertex=>vertex.map((v,i)=>v*.92+center[i]*.08))];
+  if(probes.every(point=>!fogPointVisible(surfaceLightPoint(point,patch.surfaceLightOffset)))){
+   patch.visible=false;
+   return [patch];
+  }
+ }
  const result=[],maxDepth=2;
  const visit=(part,depth,parentSeen)=>{
   const center=fogFaceCenter(part.world);
