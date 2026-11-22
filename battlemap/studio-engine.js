@@ -8366,7 +8366,10 @@ el('repeatApply').onclick=()=>{
 function stairSections(p,edge,rise,run){
  const bounds=dimensions(p),axis=edge<2?0:1,reverse=edge%2===1;
  const steps=Math.ceil(bounds[2]/rise)-1;
- if(steps<1||steps*run>=bounds[axis])return null;
+ if(steps<1||bounds[axis]<=.25)return null;
+ // Fit the requested stair count inside the available depth rather than
+ // rejecting an otherwise usable block. Preserve a small top landing.
+ run=Math.min(run,(bounds[axis]-.25)/steps);
  return Array.from({length:steps+1},(_,i)=>{
   const from=i*run,to=i===steps?bounds[axis]:from+run;
   const origin=[p.x,p.y],extents=[...bounds];
@@ -8388,7 +8391,10 @@ function pointInPolygon(point,outline){
 function curvedStairSections(p,edge,rise,run,shape){
  const [w,d,h]=dimensions(p),steps=Math.ceil(h/rise)-1;
  const radius=Math.min(w,d)/2;
- if(steps<1||steps*run>=radius)return null;
+ if(steps<1||radius<=.25)return null;
+ // Curved stairs have only half the block's short dimension as radial run.
+ // Auto-fit the treads and retain a central landing instead of failing.
+ run=Math.min(run,(radius-.25)/steps);
  // Each angular slice is a separate volume; limit unnecessary tessellation.
  const full=shape==='circle',segments=full?16:8;
  const center=full?[p.x+w/2,p.y+d/2]:
@@ -8468,7 +8474,7 @@ function cutStairEdge(p,edge){
  const rise=Number(el('stairRise').value)/4,run=Number(el('stairRun').value)/4;
  const shape=el('stairShape').value;
  const sections=shape==='straight'?stairSections(p,edge,rise,run):curvedStairSections(p,edge,rise,run,shape);
- if(!sections){message('Use a smaller rise or run, or a deeper block, to leave a top landing.');return}
+ if(!sections){message('This block is too shallow for the requested staircase. Increase its footprint or reduce its height.');return}
  {
   const stairGroup=crypto.randomUUID();
   for(const section of sections)section.stairGroup=stairGroup;
