@@ -6316,9 +6316,9 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   const safe=dark&&far&&!fogPrepared.preview&&!gmVisionObserver()&&!fogMemoryState;
   fogSectorCache.set(key,safe);return safe;
  };
- const roomTopology=geometryAudit?wallVisibilityTopology():null;
+ const roomTopology=wallVisibilityTopology();
  const roomCandidates=roomTopology?wallVisibilityCandidates(roomTopology,fogPrepared):null;
- const roomCounts={facesChecked:0,reachable:0,disconnected:0,mixed:0,unknown:0};
+ const roomCounts={facesChecked:0,reachable:0,disconnected:0,mixed:0,unknown:0,culledFaces:0};
  const fogStartDetail=performance.now();
  faces=faces.flatMap(f=>{
  if(fogDetail)fogDetail.faces++;
@@ -6328,16 +6328,22 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   // The fixture anchor was already checked once, before emitting its mesh.
   if((f.staticFixture&&fogMemoryState)||f.spellMote)return [f];
   if(!f.world)return f.p?.origin&&fogObjectVisible(f.p)?[f]:[];
-  // Classify original face vertices. Never cull here: room connectivity
-  // alone cannot account for height, distant light, travel memory or sight
-  // through partially open portals.
+  // Experimental aggressive culling: reject faces wholly in disconnected
+  // authored-wall regions before fog patch generation and ray sampling.
+  // Keep cross-boundary faces and dynamic/portal geometry in the 3D renderer.
   if(roomCandidates&&f.world?.length){
    roomCounts.facesChecked++;
    const ids=new Set(f.world.map(p=>roomCandidates.regionAt(p)));
    if(ids.has(null))roomCounts.unknown++;
    else if(ids.size!==1)roomCounts.mixed++;
    else if(roomCandidates.reachable.has(ids.values().next().value))roomCounts.reachable++;
-   else roomCounts.disconnected++;
+   else {
+    roomCounts.disconnected++;
+    if(!fogPrepared.preview&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture){
+     roomCounts.culledFaces++;
+     return [];
+    }
+   }
   }
   // Only skip ordinary terrain wholly inside one provably dark sector.
   // Objects with openings, special visibility, or persistent memory retain
@@ -6409,8 +6415,8 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
     observerRegions:roomCandidates.observerRegions,
     reachableRegions:roomCandidates.reachableRegions,
     potentiallyDisconnectedRegions:roomCandidates.potentiallyDisconnectedRegions,
-    ...roomCounts,culledFaces:0,
-    note:'Diagnostic only. Disconnected faces are not safe to cull without height, illumination, portal and fog-memory checks.'
+    ...roomCounts,
+    note:'EXPERIMENTAL aggressive culling of disconnected 2D wall regions. Elevated sightlines, distant lighting and explored fog may be incorrectly hidden.'
    }:{status:'Topology unavailable',culledFaces:0};
   }
   performanceDraw.fogDetail=fogDetail;
