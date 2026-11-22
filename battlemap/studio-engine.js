@@ -5359,12 +5359,16 @@ function fogPointVisible(target,respectFogMode=true){
     lightRangeCenter(light),light.radius,light.bright,light.tint,light.lightElevation,light.spell
    ]));
    const positions=fogMovingLightCache.positions;
-   cache=positions.get(positionKey);
-   if(cache){positions.delete(positionKey);positions.set(positionKey,cache)}
-   else{
-    cache=new Map();
-    positions.set(positionKey,cache);
-    if(positions.size>FOG_LIGHT_POSITION_LIMIT){positions.delete(positions.keys().next().value);fogMovingLightEvictions++}
+   cache=lightingFrame?.movingFogMask;
+   if(!cache){
+    cache=positions.get(positionKey);
+    if(cache){positions.delete(positionKey);positions.set(positionKey,cache)}
+    else{
+     cache=new Map();
+     positions.set(positionKey,cache);
+     if(positions.size>FOG_LIGHT_POSITION_LIMIT){positions.delete(positions.keys().next().value);fogMovingLightEvictions++}
+    }
+    if(lightingFrame)lightingFrame.movingFogMask=cache;
    }
   }
   if(cache?.has(key)){if(moving){fogMovingLightHits++;fogPrewarmReused+=cache.prewarmed?.delete(key)?1:0}return illumination=cache.get(key)}
