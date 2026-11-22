@@ -6,6 +6,41 @@ let tacticalDiscoveryCache={key:null,value:null};
 let tacticalLastRecorded=null;
 let tacticalStorageError='';
 let tacticalPreviousCenters=new Map();
+let tacticalDbPromise=null;
+function tacticalDatabase(){
+ if(!('indexedDB' in window))return Promise.reject(new Error('IndexedDB unavailable'));
+ if(!tacticalDbPromise)tacticalDbPromise=new Promise((resolve,reject)=>{
+  const request=indexedDB.open('battlemap-tactical-discovery',1);
+  request.onupgradeneeded=()=>request.result.createObjectStore('exploration');
+  request.onsuccess=()=>resolve(request.result);
+  request.onerror=()=>reject(request.error);
+ });
+ return tacticalDbPromise;
+}
+async function tacticalDatabaseLoad(key){
+ try{
+  const db=await tacticalDatabase();
+  return await new Promise((resolve,reject)=>{
+   const req=db.transaction('exploration','readonly').objectStore('exploration').get(key);
+   req.onsuccess=()=>resolve(req.result);
+   req.onerror=()=>reject(req.error);
+  });
+ }catch(error){console.warn('Tactical IndexedDB read failed',error);return null}
+}
+async function tacticalDatabaseSave(key,value){
+ try{
+  const db=await tacticalDatabase();
+  await new Promise((resolve,reject)=>{
+   const transaction=db.transaction('exploration','readwrite');
+   transaction.objectStore('exploration').put(value,key);
+   transaction.oncomplete=resolve;
+   transaction.onerror=()=>reject(transaction.error);
+   transaction.onabort=()=>reject(transaction.error);
+  });
+  tacticalStorageError='';
+ }catch(error){tacticalStorageError=error?.name||'IndexedDB unavailable';console.warn('Tactical IndexedDB write failed',error)}
+}
+let tacticalLoadedKeys=new Set();
 function tacticalFogRevision(){return Number(areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision)||0;}
 function tacticalDiscoveryKey(){
  // A distinct key for each scene and account. Server-synchronized party-wide
@@ -22,7 +57,21 @@ function tacticalReadDiscovery(){
  try{value=JSON.parse(localStorage.getItem(key)||'null')}catch{}
  if(!value||value.v!==tacticalDiscoveryVersion||!Array.isArray(value.cells))
   value={v:tacticalDiscoveryVersion,topology:'',cells:[]};
- tacticalDiscoveryCache={key,value};return value;
+ tacticalDiscoveryCache={key,value};
+ if(!tacticalLoadedKeys.has(key)){
+  tacticalLoadedKeys.add(key);
+  void tacticalDatabaseLoad(key).then(saved=>{
+   if(!saved||saved.v!==tacticalDiscoveryVersion||!Array.isArray(saved.cells))return;
+   if(tacticalDiscoveryKey()!==key)return;
+   const current=tacticalDiscoveryCache.key===key?tacticalDiscoveryCache.value:null;
+   const topology=tacticalTopologyVersion();
+   if(saved.topology!==topology)return;
+   const cells=[...new Set([...(current?.topology===topology?current.cells:[]),...saved.cells])];
+   tacticalDiscoveryCache={key,value:{v:tacticalDiscoveryVersion,topology,cells}};
+   tacticalMapRender();
+  });
+ }
+ return value;
 }
 function tacticalDiscoveryCell(point){
  if(!Array.isArray(point)||point.length<3||!point.slice(0,3).every(Number.isFinite))return null;
@@ -57,6 +106,7 @@ function tacticalRecordExplored(points,blockers=visionBlockers()){
  if(added||old.topology!==topology){
   const value={v:tacticalDiscoveryVersion,topology,cells:[...known]};
   tacticalDiscoveryCache={key,value};tacticalLastRecorded={key,value};
+  void tacticalDatabaseSave(key,value);
   try{localStorage.setItem(key,JSON.stringify(value));tacticalStorageError=''}
   catch(error){
    tacticalStorageError=error?.name||'storage unavailable';
