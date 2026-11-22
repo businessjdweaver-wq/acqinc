@@ -2919,7 +2919,30 @@ function wallVisibilityTopology(){
    regionAt([portal.center[0]-normal[0]*.75,portal.center[1]-normal[1]*.75])];
  }
  const result={regions,regionSizes:sizes,portals,segments:segments.length,grid:{width:nx,height:ny,step},note:'Diagnostic 2D topology only; elevations, open edges and portal sightlines require 3D validation'};
+ Object.defineProperty(result,'regionAt',{value:regionAt,enumerable:false});
  wallTopologyCache={signature,result};return result;
+}
+// Diagnostic only: classify potential room connectivity without changing fog.
+function wallVisibilityCandidates(topology,prepared){
+ if(!topology.regionAt)return null;
+ const observerRegions=new Set(prepared.observers.map(o=>topology.regionAt(o.distance)).filter(v=>v!==null));
+ const reachable=new Set(observerRegions),queue=[...observerRegions];
+ const connections=new Map();
+ for(const portal of topology.portals){
+  const [a,b]=portal.regions;
+  // Open doors and unobscured windows are possible visibility portals.
+  // Actual sight through the aperture still requires the 3D renderer.
+  const permeable=portal.kind==='Window'?!portal.shaded:portal.open;
+  if(!permeable||a===null||b===null||a===b)continue;
+  if(!connections.has(a))connections.set(a,new Set());
+  if(!connections.has(b))connections.set(b,new Set());
+  connections.get(a).add(b);connections.get(b).add(a);
+ }
+ for(let i=0;i<queue.length;i++)for(const neighbor of connections.get(queue[i])||[])
+  if(!reachable.has(neighbor)){reachable.add(neighbor);queue.push(neighbor)}
+ return {observerRegions:[...observerRegions],reachableRegions:[...reachable],
+  potentiallyDisconnectedRegions:topology.regions-reachable.size,
+  regionAt:topology.regionAt,reachable};
 }
 const wallSolidLists=new WeakMap();
 function pathWallSolids(sceneAreas=areas){
@@ -6293,6 +6316,9 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   const safe=dark&&far&&!fogPrepared.preview&&!gmVisionObserver()&&!fogMemoryState;
   fogSectorCache.set(key,safe);return safe;
  };
+ const roomTopology=geometryAudit?wallVisibilityTopology():null;
+ const roomCandidates=roomTopology?wallVisibilityCandidates(roomTopology,fogPrepared):null;
+ const roomCounts={facesChecked:0,reachable:0,disconnected:0,mixed:0,unknown:0};
  const fogStartDetail=performance.now();
  faces=faces.flatMap(f=>{
  if(fogDetail)fogDetail.faces++;
@@ -6302,6 +6328,17 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   // The fixture anchor was already checked once, before emitting its mesh.
   if((f.staticFixture&&fogMemoryState)||f.spellMote)return [f];
   if(!f.world)return f.p?.origin&&fogObjectVisible(f.p)?[f]:[];
+  // Classify original face vertices. Never cull here: room connectivity
+  // alone cannot account for height, distant light, travel memory or sight
+  // through partially open portals.
+  if(roomCandidates&&f.world?.length){
+   roomCounts.facesChecked++;
+   const ids=new Set(f.world.map(p=>roomCandidates.regionAt(p)));
+   if(ids.has(null))roomCounts.unknown++;
+   else if(ids.size!==1)roomCounts.mixed++;
+   else if(roomCandidates.reachable.has(ids.values().next().value))roomCounts.reachable++;
+   else roomCounts.disconnected++;
+  }
   // Only skip ordinary terrain wholly inside one provably dark sector.
   // Objects with openings, special visibility, or persistent memory retain
   // the authoritative renderer.
@@ -6366,7 +6403,16 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   fogDetail.rangeRejects=fogRegionStats.rangeRejects;
   fogDetail.rayTests=fogRegionStats.rayTests;
   fogDetail.sectorPruning={...fogSectorStats,eligibleSectors:fogSectorCache.size,enabled:true,mode:'strict-dark-no-lights-no-memory'};
-  if(geometryAudit)fogDetail.wallTopology=wallVisibilityTopology();
+  if(geometryAudit){
+   fogDetail.wallTopology=roomTopology;
+   fogDetail.roomVisibilityAudit=roomCandidates?{
+    observerRegions:roomCandidates.observerRegions,
+    reachableRegions:roomCandidates.reachableRegions,
+    potentiallyDisconnectedRegions:roomCandidates.potentiallyDisconnectedRegions,
+    ...roomCounts,culledFaces:0,
+    note:'Diagnostic only. Disconnected faces are not safe to cull without height, illumination, portal and fog-memory checks.'
+   }:{status:'Topology unavailable',culledFaces:0};
+  }
   performanceDraw.fogDetail=fogDetail;
  if(performanceDraw)performanceDraw.planarVisionAudit=planarVisionAudit;
  }
