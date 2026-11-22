@@ -80,3 +80,58 @@ function tacticalScheduleScan(){
   try{tacticalRecordExplored(samples)}catch(error){console.warn('Tactical discovery scan failed',error)}
  },100);
 }
+
+/* Deliberately sparse tactical map: only sight-verified sampled squares are
+   drawn. Never copy the full scene canvas, geometry, enemy tokens or fog. */
+let tacticalMapWindow=null,tacticalMapRefresh=null;
+function tacticalMapCells(){
+ const state=tacticalReadDiscovery();
+ return state.topology===tacticalTopologyVersion()?state.cells:[];
+}
+function tacticalMapMarkup(){
+ return '<!doctype html><html><head><meta charset="utf-8"><title>Tactical map</title><style>body{margin:0;background:#171c1a;color:#eee;font:14px system-ui}header{padding:10px;display:flex;justify-content:space-between;align-items:center}canvas{display:block;width:100%;height:calc(100vh - 52px);background:#101412}button{cursor:pointer}</style></head><body><header><strong>Tactical map · explored squares only</strong><span id="count"></span></header><canvas id="tacticalCanvas"></canvas></body></html>';
+}
+function tacticalDrawCanvas(canvas,label){
+ if(!canvas)return;
+ const width=Math.max(240,Math.round(canvas.clientWidth||320)),height=Math.max(180,Math.round(canvas.clientHeight||240));
+ if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height}
+ const ctx=canvas.getContext('2d');ctx.clearRect(0,0,width,height);
+ const cells=tacticalMapCells().map(key=>key.split(',').map(Number)).filter(p=>p.length===3&&p.every(Number.isFinite));
+ const owned=tokens.filter(t=>ownsRoomStandee(t)&&!t.incognito).map(t=>basePoint(t)).filter(p=>p.every(Number.isFinite));
+ const floor=owned.length?Math.floor(owned[0][2]):cells.length?cells[0][2]:0;
+ const visible=cells.filter(p=>p[2]===floor);
+ const xs=[...visible.map(p=>p[0]),...owned.map(p=>p[0])],ys=[...visible.map(p=>p[1]),...owned.map(p=>p[1])];
+ const minX=xs.length?Math.min(...xs)-2:0,maxX=xs.length?Math.max(...xs)+3:20;
+ const minY=ys.length?Math.min(...ys)-2:0,maxY=ys.length?Math.max(...ys)+3:20;
+ const scale=Math.max(3,Math.min(35,(width-24)/(maxX-minX),(height-24)/(maxY-minY)));
+ const ox=(width-(maxX-minX)*scale)/2,oy=(height-(maxY-minY)*scale)/2;
+ ctx.fillStyle='#526f68';
+ for(const [x,y] of visible)ctx.fillRect(ox+(x-minX)*scale+.7,oy+(y-minY)*scale+.7,Math.max(1,scale-1.4),Math.max(1,scale-1.4));
+ ctx.fillStyle='#f5d28d';
+ for(const p of owned){if(Math.floor(p[2])!==floor)continue;ctx.beginPath();ctx.arc(ox+(p[0]-minX)*scale,oy+(p[1]-minY)*scale,Math.max(3,scale*.27),0,Math.PI*2);ctx.fill()}
+ if(label)label.textContent=visible.length+' explored squares · level '+floor;
+}
+function tacticalMapRender(){
+ const panel=document.getElementById('tacticalMapPanel');
+ if(panel&&!panel.hidden)tacticalDrawCanvas(document.getElementById('tacticalMapCanvas'),document.getElementById('tacticalMapCount'));
+ if(tacticalMapWindow&&!tacticalMapWindow.closed){
+  try{tacticalDrawCanvas(tacticalMapWindow.document.getElementById('tacticalCanvas'),tacticalMapWindow.document.getElementById('count'))}catch{}
+ }
+}
+function tacticalMapOpenWindow(){
+ const win=window.open('','battlemap-tactical-map','width=640,height=600,resizable=yes');
+ if(!win){message('Allow pop-up windows to detach the tactical map.');return}
+ tacticalMapWindow=win;
+ win.document.open();win.document.write(tacticalMapMarkup());win.document.close();
+ tacticalMapRender();
+}
+function tacticalMapInit(){
+ const button=document.getElementById('tacticalMapToggle'),panel=document.getElementById('tacticalMapPanel');
+ if(!button||!panel)return;panel.style.display='none';
+ button.addEventListener('click',()=>{panel.hidden=!panel.hidden;panel.style.display=panel.hidden?'none':'flex';button.setAttribute('aria-expanded',String(!panel.hidden));if(!panel.hidden){tacticalScheduleScan();tacticalMapRender()}});
+ document.getElementById('tacticalMapClose').addEventListener('click',()=>{panel.hidden=true;panel.style.display='none';button.setAttribute('aria-expanded','false')});
+ document.getElementById('tacticalMapPopout').addEventListener('click',tacticalMapOpenWindow);
+ tacticalMapRefresh=setInterval(()=>{if(!panel.hidden||tacticalMapWindow&&!tacticalMapWindow.closed)tacticalMapRender()},1500);
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',tacticalMapInit,{once:true});
+else tacticalMapInit();
