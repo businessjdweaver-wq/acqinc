@@ -5117,6 +5117,9 @@ let fogDistantDarkInvalidations=0;
 let fogDistantDarkSignatureChanges=0;
 let fogDistantDarkPreviousSignature=null;
 let fogDistantDarkChangeReasons={};
+let fogDistantDarkComponentHashes=null;
+let fogDistantDarkComponentChanges={};
+let fogDistantDarkLastChanged=[];
 let fogFastPatchSkips=0;
 // Spatial fog workload counters, reset with each lighting frame. These identify
 // the regions actually sampled during movement without changing visibility.
@@ -5398,7 +5401,17 @@ function startLightingFrame(){
  // Hash the actual occlusion bounds instead, preserving terrain, doors,
  // lights and room changes without invalidating on camera/standee movement.
  const stableBlockers=blockers.map(b=>[b[0],b[1],b[2],b.wallPrism?.poly,b.wallPrism?.spans,b.terrain?.terrainYaw]);
- const terrainLightSignature=JSON.stringify([currentSceneId,stableBlockers,lights,rooms,sceneWallPaths(),wallRoomDefinitions(),preferences.graphicsQuality]);
+ const fogSignatureParts={
+  scene:currentSceneId,
+  blockers:stableBlockers,
+  lights,
+  rooms,
+  wallPaths:sceneWallPaths(),
+  roomDefinitions:wallRoomDefinitions(),
+  graphicsQuality:preferences.graphicsQuality
+ };
+ const fogComponentHashes=Object.fromEntries(Object.entries(fogSignatureParts).map(([name,value])=>[name,JSON.stringify(value)]));
+ const terrainLightSignature=JSON.stringify(Object.values(fogComponentHashes));
  const signature=JSON.stringify([roomProfile?.gm,gmIgnoreLighting,playing,terrainLightSignature,observers,familiarView,spellEyes(),preview&&[basePoint(preview),preview.darkvision,preview.blindsight,preview.conditions]]);
  const fogRevision=Number(areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision)||0;
  const memoryKey=JSON.stringify([roomProfile?.name,currentSceneId,fogRevision]);
@@ -5434,8 +5447,12 @@ function startLightingFrame(){
   if(fogDistantDarkCache){
    fogDistantDarkInvalidations++;fogDistantDarkSignatureChanges++;
    fogDistantDarkChangeReasons.signatureChanged=(fogDistantDarkChangeReasons.signatureChanged||0)+1;
-  }
+   fogDistantDarkLastChanged=Object.keys(fogComponentHashes).filter(name=>fogDistantDarkComponentHashes?.[name]!==fogComponentHashes[name]);
+   for(const name of fogDistantDarkLastChanged)fogDistantDarkComponentChanges[name]=(fogDistantDarkComponentChanges[name]||0)+1;
+  }else fogDistantDarkLastChanged=['initial'];
   fogDistantDarkCache={signature:terrainLightSignature,values:new Map()};
+ }
+ fogDistantDarkComponentHashes=fogComponentHashes;
  }
  fogFastPatchSkips=0;
  fogDistantDarkHits=0;
@@ -6499,7 +6516,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   fogDetail.rayTests=fogRegionStats.rayTests;
   fogDetail.sectorPruning={...fogSectorStats,eligibleSectors:fogSectorCache.size,enabled:true,mode:'strict-dark-no-lights-no-memory'};
   if(geometryAudit){
-   fogDetail.distantDarkCache={hits:fogDistantDarkHits,entries:fogDistantDarkCache?.values.size??0,enabled:fogDistantDarkEligible,signatureChanges:fogDistantDarkSignatureChanges,invalidations:fogDistantDarkInvalidations,changeReasons:{...fogDistantDarkChangeReasons}};
+   fogDetail.distantDarkCache={hits:fogDistantDarkHits,entries:fogDistantDarkCache?.values.size??0,enabled:fogDistantDarkEligible,signatureChanges:fogDistantDarkSignatureChanges,invalidations:fogDistantDarkInvalidations,changeReasons:{...fogDistantDarkChangeReasons},componentChanges:{...fogDistantDarkComponentChanges},lastChangedComponents:[...fogDistantDarkLastChanged]};
    fogDetail.fastDarkPatchSkips=fogFastPatchSkips;
    fogDetail.wallTopology=roomTopology;
    fogDetail.roomVisibilityAudit=roomCandidates?{
