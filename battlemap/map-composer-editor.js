@@ -112,4 +112,5 @@ function mount(options={}){
  return {open:()=>dialog.showModal(),store};
 }
 global.BattlemapMapComposerEditor=Object.freeze({mount});
+try { mount(); } catch (error) { console.error('Map Composer preview unavailable', error); }
 })(window);
