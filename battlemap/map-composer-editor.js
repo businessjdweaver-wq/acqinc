@@ -43,13 +43,9 @@ function mount(options={}){
     const c=p.crop;ctx.drawImage(img,c.x*img.width,c.y*img.height,c.width*img.width,c.height*img.height,dx,dy,dw,dh);
    }else{
     // Preview only: Bézier clipping uses the same normalized control points stored by the core.
-    const segments=p.crop.segments;ctx.beginPath();
-    const first=segments[0].anchor;ctx.moveTo(dx+first[0]*dw,dy+first[1]*dh);
-    for(let i=0;i<segments.length;i++){
-     const a=segments[i],b=segments[(i+1)%segments.length];
-     ctx.bezierCurveTo(dx+a.out[0]*dw,dy+a.out[1]*dh,dx+b.in[0]*dw,dy+b.in[1]*dh,dx+b.anchor[0]*dw,dy+b.anchor[1]*dh);
-    }
-    ctx.closePath();ctx.clip();ctx.drawImage(img,dx,dy,dw,dh);
+    ctx.translate(dx,dy);
+    global.BattlemapMapCrop.path(ctx,p.crop,dw,dh);
+    ctx.clip();ctx.drawImage(img,0,0,dw,dh);
    }
    ctx.restore();
    if(p.id===current){
