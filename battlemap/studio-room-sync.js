@@ -231,6 +231,7 @@ function playerRoomView(state){
   ({pieces,tokens,areas}=state.scene);areas??=[];
   for(const token of tokens)if(ownsRoomStandee(token)&&token.roomId===roomProfile.characterKey&&roomProfile.character)token.playerDisplayName=roomProfile.character;
   roomRevision=state.revision;
+  tacticalScheduleScan();
   refresh();
  }else if(!ready){roomRevision=-1;carry=null;ghost=null;drag=null;route=null}
  else draw();

@@ -57,3 +57,26 @@ function tacticalExplorationAt(point,blockers=visionBlockers()){
  if(tacticalVisibilityAt(point,blockers)==='visible')return 'visible';
  return tacticalKnownAt(point)?'explored':'unknown';
 }
+
+/* Observe a small neighborhood around owned standees and active remote
+   vision proxies. Called after an authoritative scene snapshot, never from
+   the drawing loop. All samples are individually ray-checked. */
+let tacticalScanTimer=null,tacticalScanSignature='';
+function tacticalScheduleScan(){
+ if(roomProfile?.gm!==false||!roomState?.active||!roomState.sceneId)return;
+ const observers=visionObservers(tokens).filter(t=>ownsRoomStandee(t)&&!t.incognito&&!t.conditions?.includes('dead')&&!t.conditions?.includes('blinded'));
+ const centers=[...observers.map(basePoint),...spellEyes()];
+ const signature=[roomState.sceneId,tacticalTopologyVersion(),...centers.map(p=>p.join(',')),...observers.map(t=>[t.roomId,t.vision,t.darkvision,t.torch,t.torchBright,t.torchDim].join(':'))].join('|');
+ if(signature===tacticalScanSignature)return;
+ tacticalScanSignature=signature;
+ clearTimeout(tacticalScanTimer);
+ tacticalScanTimer=setTimeout(()=>{
+  if(roomProfile?.gm!==false||!roomState?.active)return;
+  const samples=[];
+  for(const [x,y,z] of centers.slice(0,12)){
+   for(const [dx,dy] of [[0,0],[1,0],[-1,0],[0,1],[0,-1],[2,0],[-2,0],[0,2],[0,-2],[1,1],[-1,1],[1,-1],[-1,-1]])
+    samples.push([Math.floor(x)+dx+.5,Math.floor(y)+dy+.5,z]);
+  }
+  try{tacticalRecordExplored(samples)}catch(error){console.warn('Tactical discovery scan failed',error)}
+ },100);
+}
