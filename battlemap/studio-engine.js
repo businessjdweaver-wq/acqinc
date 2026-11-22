@@ -6851,10 +6851,10 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  // texture, lighting, occupants, or fog-memory contents.
  const visibleRaisedSides=new Set(faces.filter(f=>f.p&&f.z===null&&!f.rememberedFog&&
   !f.fixtureFace&&!f.doorFace&&!f.preview).map(f=>f.p));
- const visibleCaps=new Set(faces.filter(f=>f.p&&f.z!==null&&f.z!==undefined&&
-  !f.rememberedFog&&!f.perimeterOnly).map(f=>f.p));
+ // Even a partly visible cap needs the missing rear perimeter.
+ // The outline is only a structural cue; do not reveal the hidden fill.
  for(const cap of raisedCapCandidates){
-  if(!visibleRaisedSides.has(cap.p)||visibleCaps.has(cap.p))continue;
+  if(!visibleRaisedSides.has(cap.p))continue;
   faces.push({...cap,perimeterOnly:true});
  }
  if(fogDetail){
