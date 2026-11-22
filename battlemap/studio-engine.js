@@ -1784,14 +1784,6 @@ function resizedVolume(p,axis,direction,delta,free=false){
  if(direction<0)next[coordinate]+=original-extents[axis];
  return next;
 }
-el('volumeBaseZ').onchange=()=>{
- if(playing||terrainLocked||selected?.type!=='volume')return;
- const feet=Number(el('volumeBaseZ').value);
- if(!Number.isFinite(feet)||feet<0||feet/5+dimensions(selected)[2]>maxHeight){
-  message('Enter a base elevation that keeps the entire block within the scene height.');refresh();return;
- }
- change({z:Math.round(feet*4/5)/4});
-};
 el('volumeShape').onchange=()=>{
  if(playing||terrainLocked||selected?.type!=='volume')return;
  const form=el('volumeShape').value;
@@ -6648,7 +6640,6 @@ function refresh(action){
  el('cutActions').hidden=!cutter;
  el('volumeShape').disabled=!!cutter;
  el('volumeShape').value=selected?.form||'box';
- el('volumeBaseZ').value=selected?.type==='volume'?Number((selected.z*5).toFixed(3)):0;
  el('halfCutter').disabled=el('volumeSubtract').disabled=!!selected?.form||!!cutter;
  for(const button of el('areaChoices').children){
   button.disabled=button.dataset.shape==='difficult'&&!canEditDifficultTerrain();
@@ -7132,6 +7123,17 @@ function openTerrainContext(piece,x,y){
  menu.replaceChildren();
  const close=()=>{menu.hidden=true};
  if(piece.type==='column')menu.append(catalogButton('Edit component',()=>{close();openFormationEditor(piece)}));
+ if(piece.type==='volume'&&!playing&&!terrainLocked)menu.append(catalogButton('Set base elevation… ('+Number((piece.z*5).toFixed(2))+' ft)',()=>{
+  close();
+  const answer=prompt('Set the bottom elevation of this block in feet (0–'+Number(((maxHeight-dimensions(piece)[2])*5).toFixed(2))+').',String(Number((piece.z*5).toFixed(2))));
+  if(answer===null)return;
+  const feet=Number(answer);
+  if(answer.trim()===''||!Number.isFinite(feet)||feet<0||feet/5+dimensions(piece)[2]>maxHeight){
+   message('Enter a valid elevation in feet.');return;
+  }
+  selected=piece;
+  change({z:Math.round(feet*4/5)/4});
+ }));
  menu.append(catalogButton('Rotate to angle…',()=>{close();editTerrainAngle(piece)}));
  menu.append(catalogButton('Move',()=>{
   close();exitTool();selected=piece;visionSelection=piece;visionTool='moveTerrain';
