@@ -8,12 +8,13 @@ function mount(options={}){
  const api=global.BattlemapMapComposer;
  if(!api)throw Error('Map Composer core is not loaded.');
  if(document.getElementById('mapComposerOpen'))return;
- const store=api.createStore();
+ const host=options.host||null;
+ const store=api.createStore(host?.load?.()||[]);
  const urls=new Map();
  let current=null,drag=null;
  const trigger=document.createElement('button');
  trigger.id='mapComposerOpen';trigger.type='button';trigger.textContent='Map Composer (preview)';
- const anchor=document.getElementById('openManagedImages');
+ const anchor=document.getElementById('managedImageDialog')||document.getElementById('sceneAppearance');
  anchor?.insertAdjacentElement('afterend',trigger);
  if(!anchor)return;
  const dialog=document.createElement('dialog');
@@ -23,6 +24,7 @@ function mount(options={}){
  document.body.append(dialog);
  const file=dialog.querySelector('input[type=file]'),canvas=dialog.querySelector('canvas'),ctx=canvas.getContext('2d'),select=dialog.querySelector('select'),fields=dialog.querySelector('.map-composer-fields'),status=dialog.querySelector('[role=status]');
  const images=new Map();
+ const resolveImage=assetId=>images.get(assetId)||host?.resolveImage?.(assetId)||null;
  const worldScale=10;
  const toScreen=(x,y)=>[canvas.width/2+x*worldScale,canvas.height/2+y*worldScale];
  const toWorld=(x,y)=>[(x-canvas.width/2)/worldScale,(y-canvas.height/2)/worldScale];
@@ -35,7 +37,7 @@ function mount(options={}){
   for(let y=canvas.height%50;y<canvas.height;y+=50){ctx.moveTo(0,y);ctx.lineTo(canvas.width,y)}
   ctx.stroke();
   for(const p of store.list().sort((a,b)=>a.order-b.order)){
-   const img=images.get(p.assetId);if(!img)continue;
+   const img=resolveImage(p.assetId);if(!img?.naturalWidth)continue;
    const [cx,cy]=toScreen(p.x,p.y);
    ctx.save();ctx.translate(cx,cy);ctx.rotate(p.rotation*Math.PI/180);ctx.globalAlpha=p.opacity;
    const dx=-p.width*worldScale/2,dy=-p.depth*worldScale/2,dw=p.width*worldScale,dh=p.depth*worldScale;
@@ -103,10 +105,25 @@ function mount(options={}){
  canvas.onpointerup=canvas.onpointercancel=()=>{drag=null};
  dialog.querySelector('[data-action=delete]').onclick=()=>{if(current)try{store.remove(current)}catch(error){status.textContent=error.message}};
  dialog.querySelector('[data-action=close]').onclick=()=>dialog.close();
- trigger.onclick=()=>{refresh();dialog.showModal()};
+ trigger.onclick=()=>{if(host?.load)store.replace(host.load());refresh();dialog.showModal()};
+ if(host?.listImages){
+  const managed=document.createElement('button');managed.type='button';managed.textContent='Add from Image Manager';
+  managed.onclick=()=>{const items=host.listImages();if(!items.length){status.textContent='No managed images available.';return}
+   const names=items.map((item,i)=>(i+1)+'. '+item.name).join('\\n');
+   const index=Number(prompt('Choose an image by number:\\n'+names));
+   if(!Number.isInteger(index)||index<1||index>items.length)return;
+   const item=items[index-1],img=resolveImage(item.url);
+   const p=store.add({assetId:item.url,name:item.name,width:20,depth:20,order:store.list().length});current=p.id;refresh();
+  };
+  file.before(managed);
+ }
+ if(host?.save){const save=document.createElement('button');save.type='button';save.textContent='Apply to scene';
+  save.onclick=()=>{try{host.save(store.list());status.textContent='Applied to scene. Scene synchronization is managed by Battlemap Studio.';dialog.close()}catch(error){status.textContent=error.message}};
+  dialog.querySelector('[data-action=close]').before(save);
+ }
  dialog.addEventListener('close',()=>{for(const url of urls.values())URL.revokeObjectURL(url);urls.clear();images.clear();store.replace([]);current=null});
  return {open:()=>dialog.showModal(),store};
 }
 global.BattlemapMapComposerEditor=Object.freeze({mount});
-try { mount(); } catch (error) { console.error('Map Composer preview unavailable', error); }
+// Mounted by the host after its scene and managed-image systems initialize.
 })(window);
