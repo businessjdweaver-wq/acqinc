@@ -3,12 +3,13 @@
 const tacticalDiscoveryVersion=1;
 const tacticalDiscoveryPrefix='battlemap.tacticalDiscovery.v1:';
 let tacticalDiscoveryCache={key:null,value:null};
+function tacticalFogRevision(){return Number(areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision)||0;}
 function tacticalDiscoveryKey(){
  // A distinct key for each scene and account. Server-synchronized party-wide
  // discovery requires a separate authorized endpoint in a later version.
  const scene=roomState?.sceneId||currentSceneId||requestedRoomScene;
  const account=roomProfile?.name;
- return scene&&account?tacticalDiscoveryPrefix+encodeURIComponent(String(scene))+':'+encodeURIComponent(String(account)):null;
+ return scene&&account?tacticalDiscoveryPrefix+encodeURIComponent(String(scene))+':'+encodeURIComponent(String(account))+':fog'+tacticalFogRevision():null;
 }
 function tacticalReadDiscovery(){
  const key=tacticalDiscoveryKey();
@@ -67,9 +68,9 @@ function tacticalExplorationAt(point,blockers=visionBlockers()){
 let tacticalScanTimer=null,tacticalScanSignature='';
 function tacticalScheduleScan(){
  if(roomProfile?.gm!==false||!roomState?.active||!roomState.sceneId)return;
- const observers=visionObservers(tokens).filter(t=>ownsRoomStandee(t)&&!t.incognito&&!t.conditions?.includes('dead')&&!t.conditions?.includes('blinded'));
+ const observers=visionObservers(tokens).filter(t=>ownsRoomStandee(t)&&!t.incognito&&!t.conditions?.includes('dead')&&(!t.conditions?.includes('blinded')||t.blindsight>0));
  const centers=[...observers.map(basePoint),...spellEyes()];
- const signature=[roomState.sceneId,tacticalTopologyVersion(),...centers.map(p=>p.join(',')),...observers.map(t=>[t.roomId,t.vision,t.darkvision,t.torch,t.torchBright,t.torchDim].join(':'))].join('|');
+ const signature=[roomState.sceneId,tacticalFogRevision(),tacticalTopologyVersion(),...centers.map(p=>p.join(',')),...observers.map(t=>[t.roomId,t.vision,t.darkvision,t.torch,t.torchBright,t.torchDim].join(':'))].join('|');
  if(signature===tacticalScanSignature)return;
  tacticalScanSignature=signature;
  clearTimeout(tacticalScanTimer);
@@ -112,7 +113,7 @@ function tacticalDrawCanvas(canvas,label){
  for(const [x,y] of visible)ctx.fillRect(ox+(x-minX)*scale+.7,oy+(y-minY)*scale+.7,Math.max(1,scale-1.4),Math.max(1,scale-1.4));
  ctx.fillStyle='#f5d28d';
  for(const p of owned){if(Math.floor(p[2])!==floor)continue;ctx.beginPath();ctx.arc(ox+(p[0]-minX)*scale,oy+(p[1]-minY)*scale,Math.max(3,scale*.27),0,Math.PI*2);ctx.fill()}
- if(label)label.textContent=visible.length+' explored squares · level '+floor;
+ if(label)label.textContent=visible.length+' explored squares · level '+floor+(roomProfile?.gm===false&&!owned.length?' · no controlled standee':'');
 }
 function tacticalMapRender(){
  const panel=document.getElementById('tacticalMapPanel');
