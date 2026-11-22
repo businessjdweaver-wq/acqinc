@@ -5871,8 +5871,9 @@ function draw(action,reusePan=false){
  scheduleScenePreparation();
  cancelPanSettle();
  cancelMovementPaint();
+ scheduleSessionViewSave();
  const homeScene=JSON.stringify([currentSceneId,roomProfile?.name]);
- if(W&&H&&loadedHomeScene!==homeScene){loadedHomeScene=homeScene;applyHomeView(chosenHomeView())}
+ if(W&&H&&loadedHomeScene!==homeScene){loadedHomeScene=homeScene;applyHomeView(chosenSessionView()||chosenHomeView())}
  if(action!=='Standee movement'){
   updateCameraCompass();
   el('playerShowAllies').hidden=!(playing&&roomProfile?.gm===false);
@@ -9745,6 +9746,22 @@ function captureHomeView(){
  return {angle,tilt,zoom,topDown,panX:panX/Math.max(W,1),panY:panY/Math.max(H,1)};
 }
 function homeStorageKey(){return 'battlemap.homeView:'+JSON.stringify([roomProfile?.name||'local',currentSceneId])}
+function sessionViewKey(){return 'battlemap.lastView:'+JSON.stringify([roomProfile?.name||'local',currentSceneId])}
+function chosenSessionView(){
+ try{return JSON.parse(localStorage.getItem(sessionViewKey()))}catch{return null}
+}
+let sessionViewSaveTimer=null;
+function scheduleSessionViewSave(){
+ if(!currentSceneId||!W||!H||carry||drag)return;
+ clearTimeout(sessionViewSaveTimer);
+ sessionViewSaveTimer=setTimeout(()=>{
+  try{localStorage.setItem(sessionViewKey(),JSON.stringify(captureHomeView()))}catch{}
+ },300);
+}
+window.addEventListener('pagehide',()=>{
+ clearTimeout(sessionViewSaveTimer);
+ if(currentSceneId&&W&&H)try{localStorage.setItem(sessionViewKey(),JSON.stringify(captureHomeView()))}catch{}
+});
 function chosenHomeView(){
  try{const saved=JSON.parse(localStorage.getItem(homeStorageKey()));if(saved)return saved}catch{}
  return areas.find(area=>area.shape==='appearance')?.appearance?.startingView;
