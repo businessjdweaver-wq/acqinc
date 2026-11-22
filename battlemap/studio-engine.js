@@ -5101,7 +5101,7 @@ el('performanceReset').onclick=()=>{performanceSamples.length=0;renderingReport=
 el('performanceCopy').onclick=async()=>{
  const output=el('performanceStatus');
  try{
-  await navigator.clipboard.writeText(JSON.stringify({build:el('battlemapBuild').textContent.slice(1),samples:performanceSamples,benchmark:renderingReport,textureTest:textureTestReport},null,2));
+  await navigator.clipboard.writeText(JSON.stringify({build:el('battlemapBuild').textContent.slice(1),samples:performanceSamples,benchmark:renderingReport,railTravel:railTravelReport,textureTest:textureTestReport},null,2));
   output.textContent='Copied';
  }catch{output.textContent='Clipboard unavailable'}
 };
@@ -5157,6 +5157,60 @@ el('performanceTest').onclick=async()=>{
   ({angle,tilt,zoom,panX,panY}=camera);
   button.disabled=el('performanceTextureTest').disabled=el('performanceReset').disabled=false;
   draw('Test: restore');updatePerformanceReadout();
+ }
+};
+// Non-destructive rail traversal benchmark: samples the current scene without
+// changing standee positions or publishing movement to the shared room.
+let railTravelReport=null,railTravelRunning=false;
+const railButton=document.createElement('button');
+railButton.type='button';railButton.textContent='Rail traversal test';
+el('performanceTest').insertAdjacentElement('afterend',railButton);
+railButton.onclick=async()=>{
+ const status=el('performanceStatus');
+ if(railTravelRunning||drag||carry||document.hidden||!W||!H){status.textContent='Keep the map visible and finish any movement before the rail test.';return}
+ const token=tokens.find(t=>t.type==='standee'&&!standeeHidden(t)&&!standeeObscured(t)&&
+  (roomProfile?.gm!==false||ownsRoomStandee(t)));
+ if(!token){status.textContent='Place or select an accessible standee before testing.';return}
+ const original={carry,ghost,route,angle,tilt,zoom,panX,panY,topDown};
+ const sceneId=currentSceneId,frames=120,results=[],start=basePoint(token);
+ // A serpentine route covers the scene, including distant geometry, without
+ // applying movement validation or changing authoritative game state.
+ const margin=Math.max(1,token.size/2);
+ const xmax=Math.max(margin,gridLimit(0)-margin),ymax=Math.max(margin,gridLimit(1)-margin);
+ const corners=[[margin,margin],[xmax,margin],[xmax,ymax],[margin,ymax],[margin,margin]];
+ const nodes=[start,...corners.map(([x,y])=>[x,y,start[2]])];
+ const lengths=nodes.slice(1).map((p,i)=>Math.hypot(p[0]-nodes[i][0],p[1]-nodes[i][1]));
+ const total=lengths.reduce((a,b)=>a+b,0);
+ railTravelRunning=true;railButton.disabled=true;
+ try{
+  for(let frame=0;frame<frames;frame++){
+   const timestamp=await new Promise(resolve=>requestAnimationFrame(resolve));
+   if(document.hidden||currentSceneId!==sceneId||drag)throw Error('Rail test interrupted by scene change or user interaction.');
+   let distance=total*frame/(frames-1),segment=0;
+   while(segment<lengths.length-1&&distance>lengths[segment])distance-=lengths[segment++];
+   const t=lengths[segment]?Math.min(1,distance/lengths[segment]):0;
+   const a=nodes[segment],b=nodes[segment+1];
+   const point=a.map((v,i)=>v+(b[i]-v)*t);
+   carry={piece:token,dx:0,dy:0};
+   ghost={...token,x:point[0]-token.size/2,y:point[1]-token.size/2,z:point[2]};
+   route={points:[start],end:point};
+   const action='Test: Rail traversal';
+   draw(action);
+   const sample=performanceSamples.at(-1);
+   if(sample?.action===action)results.push({...sample,frame,position:point,timestamp});
+   if(frame%12===0)status.textContent='Rail traversal: '+Math.round(100*frame/(frames-1))+'%';
+  }
+  const ordered=results.map(s=>s.drawMs).sort((a,b)=>a-b);
+  const pct=p=>ordered[Math.min(ordered.length-1,Math.ceil(ordered.length*p)-1)]??null;
+  railTravelReport={sceneId,role:roomProfile?.gm===false?'player':'gm',frames:results.length,
+   medianDrawMs:pct(.5),p95DrawMs:pct(.95),maxDrawMs:ordered.at(-1)??null,
+   note:'Synthetic non-authoritative standee preview; route may cross walls. No game state changed.',samples:results};
+  status.textContent='Rail traversal complete · median '+railTravelReport.medianDrawMs+
+   ' ms · p95 '+railTravelReport.p95DrawMs+' ms · Copy log to share.';
+ }catch(error){status.textContent=error.message}
+ finally{
+  ({carry,ghost,route,angle,tilt,zoom,panX,panY,topDown}=original);
+  railTravelRunning=false;railButton.disabled=false;draw('Test: restore');updatePerformanceReadout();
  }
 };
 let textureTestEffect=null,textureTestReport=null;
