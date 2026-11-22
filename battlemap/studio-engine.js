@@ -5981,11 +5981,37 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   sectorAudit.cullingEnabled=false;
   sectorAudit.reason='Candidate indexing only; geometry outside candidate sectors is still processed to preserve distant visibility, ambient light and exploration memory.';
  }
+ // Camera-aware conservative diagnostic: never discard a face based on this classification.
+ // Projected polygons crossing the viewport are treated as potentially visible.
+ const cameraSectorKeys=sectorAudit?new Set():null;
+ const faceInCamera=f=>{
+  const p=f.projected;
+  if(!p?.length)return true;
+  const xs=p.map(v=>v[0]),ys=p.map(v=>v[1]);
+  return Math.max(...xs)>=-2&&Math.min(...xs)<=W+2&&Math.max(...ys)>=-2&&Math.min(...ys)<=H+2;
+ };
+ if(sectorAudit){
+  sectorAudit.cameraInputFaces=0;sectorAudit.offCameraInputFaces=0;
+  sectorAudit.cameraOutputFaces=0;sectorAudit.offCameraOutputFaces=0;
+  sectorAudit.memoryEligibleInputFaces=0;sectorAudit.memoryEligibleOffCameraFaces=0;
+  sectorAudit.cameraSectorCount=0;
+  sectorAudit.candidateMissesRetained=0;sectorAudit.cameraMissesRetained=0;
+  sectorAudit.safeCullFaces=0;
+  sectorAudit.safeCullingEnabled=false;
+  sectorAudit.note='Conservative camera-projection and memory eligibility diagnostics; no face is skipped.';
+ }
  const indexSectorFace=(f,output=false)=>{
   const keys=sectorKeysForFace(f);
   const active=keys.some(key=>activeSectorKeys.has(key));
   const candidate=keys.some(key=>candidateSectorKeys.has(key));
+  const camera=faceInCamera(f);
+  const memoryEligible=!!(fogMemoryState&&f.world&&!f.fixtureFace&&!f.preview);
   sectorAudit[(candidate?'candidate':'nonCandidate')+(output?'OutputFaces':'InputFaces')]++;
+  sectorAudit[(camera?'camera':'offCamera')+(output?'OutputFaces':'InputFaces')]++;
+  if(output){if(!candidate)sectorAudit.candidateMissesRetained++;if(!camera)sectorAudit.cameraMissesRetained++}
+  if(!output&&memoryEligible){sectorAudit.memoryEligibleInputFaces++;if(!camera)sectorAudit.memoryEligibleOffCameraFaces++}
+  if(!output&&!camera&&!memoryEligible)sectorAudit.safeCullFaces++;
+  if(camera)for(const key of keys)cameraSectorKeys.add(key);
   if(output){sectorAudit[active?'activeOutputFaces':'inactiveOutputFaces']++;return}
   sectorAudit[active?'activeInputFaces':'inactiveInputFaces']++;
   sectorAudit.sectorReferences+=keys.length;
@@ -6154,6 +6180,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(sectorAudit){
    for(const f of faces)indexSectorFace(f,true);
    sectorAudit.sectorCount=sectorMap.size;
+   sectorAudit.cameraSectorCount=cameraSectorKeys.size;
    sectorAudit.candidateSectorCount=[...sectorMap.keys()].filter(key=>candidateSectorKeys.has(key)).length;
    sectorAudit.activeSectorCount=[...sectorMap.keys()].filter(key=>activeSectorKeys.has(key)).length;
    sectorAudit.topSectors=[...sectorMap].sort((a,b)=>b[1].faces-a[1].faces).slice(0,12).map(([key,counts])=>({key,...counts,active:activeSectorKeys.has(key)}));
