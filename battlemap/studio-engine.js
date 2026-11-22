@@ -2864,7 +2864,9 @@ function wallVisibilityTopology(){
  const segments=[],portals=[];
  for(const wall of walls){
   const path=compileWallPath(wall);
-  if(wall.sight===false)continue;
+  // In wall semantics sight:false means opaque, not invisible to topology.
+  // Transparent walls cannot separate visibility regions.
+  if(wall.sight!==false)continue;
   for(let i=1;i<path.samples.length;i++){
    const a=path.samples[i-1],b=path.samples[i];
    if(wallDistance(a.p,b.p)>1e-7)segments.push([a.p,b.p,wall]);
