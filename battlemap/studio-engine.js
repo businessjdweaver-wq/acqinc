@@ -8312,7 +8312,8 @@ function curvedStairSections(p,edge,rise,run,shape){
  const [w,d,h]=dimensions(p),steps=Math.ceil(h/rise)-1;
  const radius=Math.min(w,d)/2;
  if(steps<1||steps*run>=radius)return null;
- const full=shape==='circle',segments=full?32:16;
+ // Each angular slice is a separate volume; limit unnecessary tessellation.
+ const full=shape==='circle',segments=full?16:8;
  const center=full?[p.x+w/2,p.y+d/2]:
   edge===0?[p.x,p.y+d/2]:edge===1?[p.x+w,p.y+d/2]:
   edge===2?[p.x+w/2,p.y]:[p.x+w/2,p.y+d];
@@ -8387,7 +8388,13 @@ function paintEdge(x,y){
   const distances=[u-p.x,p.x+w-u,v-p.y,p.y+d-v];
   edge=distances.indexOf(Math.min(...distances));
  }
- if(brush==='stairsBrush'){cutStairEdge(p,edge);return}
+ if(brush==='stairsBrush'){
+   // Use the clicked world-space perimeter, rather than a potentially
+   // reversed face index on a rotated or resized volume.
+   const [w,d,h]=dimensions(p),[u,v]=inverse(x,y,p.z+h);
+   const distances=[u-p.x,p.x+w-u,v-p.y,p.y+d-v];
+   cutStairEdge(p,distances.indexOf(Math.min(...distances)));return;
+  }
  const seen=drag.visited.get(p)||new Set();
  if(seen.has(edge))return;
  seen.add(edge);drag.visited.set(p,seen);
