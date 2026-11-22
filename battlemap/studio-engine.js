@@ -271,7 +271,7 @@ function earlyForegroundWallInvisible(poly){
  const nearestObserver=Math.max(...observerDepths);
  // Camera-facing side has greater projected depth. Preserve one grid
  // square of clearance so walls close to the standee do not pop abruptly.
- if(Math.min(...wallDepths)<=nearestObserver+Math.abs(S)*0.01)return false;
+ if(Math.min(...wallDepths)<=nearestObserver+0.25)return false;
  earlyForegroundWallCullCount++;
  return true;
 }
