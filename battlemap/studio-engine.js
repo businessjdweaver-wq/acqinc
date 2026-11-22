@@ -5556,6 +5556,20 @@ function refinedFogBoundaryPatches(patch){
  visit(patch,0,!!fogMemoryState?.seen.has(patch.memoryKey));
  return result;
 }
+// Per-lighting-frame blocker exclusions for raised top visibility.
+// Avoid rebuilding the entire blocker list for every sample of one slab.
+let raisedTopBlockerCache={source:null,byPiece:new WeakMap()};
+function raisedTopOtherBlockers(piece){
+ const source=visionBlockers();
+ if(raisedTopBlockerCache.source!==source)
+  raisedTopBlockerCache={source,byPiece:new WeakMap()};
+ let others=raisedTopBlockerCache.byPiece.get(piece);
+ if(!others){
+  others=source.filter(blocker=>blocker.piece!==piece);
+  raisedTopBlockerCache.byPiece.set(piece,others);
+ }
+ return others;
+}
 function terrainFogPatchVisible(patch){
  if(patch.visible===undefined){
   const center=fogFaceCenter(patch.world);
@@ -5579,7 +5593,7 @@ function terrainFogPatchVisible(patch){
    const observers=(fogPreparedObservers||(fogPreparedObservers=prepareFogObservers())).observers;
    const candidates=observers.filter(o=>o.eye[2]>=above[2]-.01);
    if(!candidates.length)return false;
-   const blockers=visionBlockers().filter(b=>b.piece!==piece);
+   const blockers=raisedTopOtherBlockers(piece);
    const lit=ambientAt(above,visionBlockers())||lightAt(above,visionBlockers());
    return candidates.some(o=>{
     const dx=o.distance[0]-above[0],dy=o.distance[1]-above[1],dz=o.distance[2]-above[2];
