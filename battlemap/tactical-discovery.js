@@ -6,6 +6,7 @@ let tacticalDiscoveryCache={key:null,value:null};
 let tacticalLastRecorded=null;
 let tacticalStorageError='';
 let tacticalPreviousCenters=new Map();
+const tacticalTeleportPending=new Set();
 let tacticalDbPromise=null;
 function tacticalDatabase(){
  if(!('indexedDB' in window))return Promise.reject(new Error('IndexedDB unavailable'));
@@ -151,8 +152,8 @@ function tacticalScheduleScan(){
   nextCenters.set(id,{epoch,point:current});
   if(previous?.epoch===epoch){
    const a=previous.point,dist=Math.hypot(current[0]-a[0],current[1]-a[1]);
-   if(dist>0&&dist<=2.25&&Math.abs(current[2]-a[2])<.5){
-    const steps=Math.ceil(dist*2);
+   if(dist>0&&!tacticalTeleportPending.has(id)&&Math.abs(current[2]-a[2])<.5){
+    const steps=Math.min(240,Math.ceil(dist*2));
     for(let j=1;j<steps;j++)scanCenters.push([
      a[0]+(current[0]-a[0])*j/steps,
      a[1]+(current[1]-a[1])*j/steps,
@@ -161,6 +162,7 @@ function tacticalScheduleScan(){
   }
  });
  tacticalPreviousCenters=nextCenters;
+ tacticalTeleportPending.clear();
  const signature=[roomState.sceneId,tacticalFogRevision(),tacticalTopologyVersion(),...centers.map(p=>p.join(',')),...observers.map(t=>[t.roomId,t.vision,t.darkvision,t.torch,t.torchBright,t.torchDim].join(':'))].join('|');
  if(signature===tacticalScanSignature&&tacticalReadDiscovery().topology===tacticalTopologyVersion())return;
  tacticalScanStatus=centers.length?'Scanning '+centers.length+' vision source(s)':'No controlled vision sources';
