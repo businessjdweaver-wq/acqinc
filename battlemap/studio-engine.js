@@ -5047,6 +5047,18 @@ async function syncFogMemory(state){
  finally{state.saving=false}
 }
 
+let fogMemorySyncTimer=null;
+function scheduleFogMemorySync(state){
+ if(!state||railTravelRunning)return;
+ if(fogMemorySyncTimer!==null)clearTimeout(fogMemorySyncTimer);
+ fogMemorySyncTimer=setTimeout(()=>{
+  fogMemorySyncTimer=null;
+  if(fogMemoryState===state)void syncFogMemory(state);
+ },350);
+}
+window.addEventListener('pagehide',()=>{
+ if(fogMemoryState?.dirty)saveFogMemory();
+});
 function fogRemember(key,visible){
  if(gmVisionObserver()||preferences.fogMemory===0)return visible?1:0;
  if(visible){
@@ -6704,9 +6716,13 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   performanceDraw.geometryAudit=geometryAudit;
  }
  recordGeometryStage('fogGeometryMs');
- if(pendingFogTravel){
-  pendingFogTravel=null;
-  if(fogMemoryState?.dirty){saveFogMemory();void syncFogMemory(fogMemoryState)}
+ if(pendingFogTravel)pendingFogTravel=null;
+ // v1.492: any newly explored patch must be persisted, even when there is
+ // no pending travel trail (ordinary redraws, room polls, and refreshes).
+ // Save locally immediately; defer remote synchronization to coalesce frames.
+ if(fogMemoryState?.dirty){
+  saveFogMemory();
+  scheduleFogMemorySync(fogMemoryState);
  }
  }else{
   if(visiblePiece(ghost))drawPiece(ghost,true);
