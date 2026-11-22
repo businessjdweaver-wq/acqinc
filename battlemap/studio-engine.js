@@ -5576,7 +5576,11 @@ function startLightingFrame(){
  if(lightingCache?.signature!==signature||lightingCache.lightResults.size+lightingCache.surfaceLighting.size>24000){
   lightingCache={signature,lightResults:new Map(),surfaceLighting:new Map()};
  }
- queueFogPrewarm(terrainLightSignature,lights);
+ // v1.487: pause speculative carried-light prewarming; rail diagnostics
+ // showed zero reuse. Retain the cache and its counters for comparison.
+ // Scene-load preparation will target stable wall geometry and fixed lights.
+ if(fogPrewarmTimer!==null){clearTimeout(fogPrewarmTimer);fogPrewarmTimer=null}
+ fogPrewarmJob=null;
  return {...lightingCache,blockers,lights,terrainLightSignature,visibility:new Map()};
 }
 function timeLighting(work){
