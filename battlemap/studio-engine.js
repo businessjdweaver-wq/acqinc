@@ -702,8 +702,30 @@ function drawFloorElevationLabels(){
   const prior=best.get(surface.p);
   if(!prior||area>prior.area)best.set(surface.p,{surface,area});
  }
+ // One label for a connected run of wall blocks, even when the wall is
+ // built from dozens of adjoining volumes. Separate platforms retain labels.
+ const entries=[...best.values()],parent=entries.map((_,i)=>i);
+ const root=i=>{while(parent[i]!==i)i=parent[i]=parent[parent[i]];return i};
+ const wallLike=p=>p.type==='volume'&&!p.stairTread&&dimensions(p)[2]>=1;
+ for(let i=0;i<entries.length;i++){
+  const a=entries[i].surface.p;
+  if(!wallLike(a))continue;
+  const da=dimensions(a);
+  for(let j=i+1;j<entries.length;j++){
+   const b=entries[j].surface.p;
+   if(!wallLike(b)||Math.abs(entries[i].surface.z-entries[j].surface.z)>.01)continue;
+   const db=dimensions(b),touchX=a.x<=b.x+db[0]+.01&&b.x<=a.x+da[0]+.01,
+    touchY=a.y<=b.y+db[1]+.01&&b.y<=a.y+da[1]+.01;
+   if(touchX&&touchY)parent[root(j)]=root(i);
+  }
+ }
+ const representatives=new Map();
+ for(let i=0;i<entries.length;i++){
+  const key=root(i),old=representatives.get(key);
+  if(!old||entries[i].area>old.area)representatives.set(key,entries[i]);
+ }
  ctx.save();ctx.font='600 12px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';
- for(const {surface} of best.values()){
+ for(const {surface} of representatives.values()){
   const [x,y]=surface.projected.reduce((sum,p)=>[sum[0]+p[0]/surface.projected.length,sum[1]+p[1]/surface.projected.length],[0,0]);
   if(x<0||x>W||y<0||y>H)continue;
   const height=Math.round(surface.z*50)/10;
@@ -6206,13 +6228,18 @@ function carriedPosition(member){
  return {...member,x:member.x+ghost.x-leader.x,y:member.y+ghost.y-leader.y,z:member.z+ghost.z-leader.z};
 }
 function validCarryDestination(){
- if(carry?.arcaneEye)return !!ghost&&ghost.x>=0&&ghost.x<gridLimit(0)&&ghost.y>=0&&ghost.y<gridLimit(1)&&ghost.z>=0&&ghost.z<=11;
+ if(carry?.arcaneEye)return !!ghost&&ghost.x>=0&&ghost.x<gridLimit(0)&&ghost.y>=0&&ghost.y<gridLimit(1)&&Number.isFinite(ghost.z)&&ghost.z>=0;
  if(!ghost||!carry)return false;
  const members=carriedMembers(),others=[...pieces,...tokens.filter(t=>!members.includes(t))];
- return members.every(member=>valid(carriedPosition(member),others,null,areas,false,carry.gmMovementOverride));
+ // The GM adjudicates vertical movement. Keep map bounds, but do not
+ // demand support or a particular climb height for a standee destination.
+ return members.every(member=>{
+  const p=carriedPosition(member),[w,d]=dimensions(p);
+  return Number.isFinite(p.z)&&p.z>=0&&p.x>=0&&p.y>=0&&p.x+w<=gridLimit(0)&&p.y+d<=gridLimit(1);
+ });
 }
 function carrySegment(start,end){
- if(carry?.arcaneEye||carry?.gmMovementOverride)return {cost:5*Math.hypot(...end.map((v,i)=>v-start[i])),hazards:[],blocked:false};
+ if(carry?.piece?.type==='standee'||carry?.arcaneEye||carry?.gmMovementOverride)return {cost:5*Math.hypot(...end.map((v,i)=>v-start[i])),hazards:[],blocked:false};
  if(!carry)return movementSegment(start,end);
  const leader=basePoint(carry.piece),members=carriedMembers();
  return members.map(member=>{
