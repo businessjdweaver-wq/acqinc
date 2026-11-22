@@ -5110,6 +5110,13 @@ function planarVisionBlocked(eye,target,blockers){
  return false;
 }
 let fogIlluminationCache=null;
+// Bounded exact-position illumination reuse: a carried light's source position
+// is the cache key, while the camera is deliberately absent.
+let fogMovingLightCache={signature:null,positions:new Map()};
+const FOG_LIGHT_POSITION_LIMIT=24;
+const FOG_LIGHT_POINT_LIMIT=180000;
+let fogMovingLightHits=0;
+let fogMovingLightMisses=0;
 let fogDistantDarkCache=null;
 let fogDistantDarkHits=0;
 let fogDistantDarkEligible=false;
@@ -5179,10 +5186,27 @@ function fogPointVisible(target,respectFogMode=true){
  let illumination;
  const illuminated=()=>{
   if(illumination!==undefined)return illumination;
-  const cache=fogIlluminationCache?.values;
-  if(cache?.has(key))return illumination=cache.get(key);
+  const moving=lightingFrame?.lights?.some(light=>light.carried)??activeLights().some(light=>light.carried);
+  let cache=fogIlluminationCache?.values;
+  if(moving){
+   // Each exact carried-light configuration has its own bounded world-space
+   // sample mask. Revisit a position without retracing identical light rays.
+   const positionKey=JSON.stringify((lightingFrame?.lights??activeLights()).filter(light=>light.carried).map(light=>[
+    lightRangeCenter(light),light.radius,light.bright,light.tint,light.lightElevation,light.spell
+   ]));
+   const positions=fogMovingLightCache.positions;
+   cache=positions.get(positionKey);
+   if(cache){positions.delete(positionKey);positions.set(positionKey,cache)}
+   else{
+    cache=new Map();
+    positions.set(positionKey,cache);
+    if(positions.size>FOG_LIGHT_POSITION_LIMIT)positions.delete(positions.keys().next().value);
+   }
+  }
+  if(cache?.has(key)){if(moving)fogMovingLightHits++;return illumination=cache.get(key)}
+  if(moving)fogMovingLightMisses++;
   illumination=!!(ambientAt(target,getBlockers())||lightAt(target,getBlockers()));
-  if(cache&&cache.size<180000)cache.set(key,illumination);
+  if(cache&&cache.size<FOG_LIGHT_POINT_LIMIT)cache.set(key,illumination);
   return illumination;
  };
  // Preserve Arcane Eye semantics, including its independent sight origin.
@@ -5404,7 +5428,7 @@ function startLightingFrame(){
  const fogSignatureParts={
   scene:currentSceneId,
   blockers:stableBlockers,
-  lights,
+  lights:lights.filter(light=>!light.carried),
   rooms,
   wallPaths:sceneWallPaths(),
   roomDefinitions:wallRoomDefinitions(),
@@ -5412,7 +5436,12 @@ function startLightingFrame(){
  };
  const fogComponentHashes=Object.fromEntries(Object.entries(fogSignatureParts).map(([name,value])=>[name,JSON.stringify(value)]));
  const terrainLightSignature=JSON.stringify(Object.values(fogComponentHashes));
- const signature=JSON.stringify([roomProfile?.gm,gmIgnoreLighting,playing,terrainLightSignature,observers,familiarView,spellEyes(),preview&&[basePoint(preview),preview.darkvision,preview.blindsight,preview.conditions]]);
+ // Moving emitters affect the active fog/lighting result, but not static
+ // occlusion or fixed illumination. Exact source positions select cached masks.
+ const movingLightSignature=JSON.stringify(lights.filter(light=>light.carried).map(light=>[
+  lightRangeCenter(light),light.radius,light.bright,light.tint,light.lightElevation,light.spell
+ ]));
+ const signature=JSON.stringify([roomProfile?.gm,gmIgnoreLighting,playing,terrainLightSignature,movingLightSignature,observers,familiarView,spellEyes(),preview&&[basePoint(preview),preview.darkvision,preview.blindsight,preview.conditions]]);
  const fogRevision=Number(areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision)||0;
  const memoryKey=JSON.stringify([roomProfile?.name,currentSceneId,fogRevision]);
  if(!playerFogEnabled()||preferences.fogMemory===0){saveFogMemory();fogMemoryState=null}
@@ -5443,6 +5472,9 @@ function startLightingFrame(){
  if(fogSectorRayCache?.signature!==raySignature)fogSectorRayCache={signature:raySignature,sectors:new Map(),count:0,hits:0,misses:0};
  if(fogIlluminationCache?.signature!==terrainLightSignature)
   fogIlluminationCache={signature:terrainLightSignature,values:new Map()};
+ if(fogMovingLightCache.signature!==terrainLightSignature)
+  fogMovingLightCache={signature:terrainLightSignature,positions:new Map()};
+ fogMovingLightHits=0;fogMovingLightMisses=0;
  if(fogDistantDarkCache?.signature!==terrainLightSignature){
   if(fogDistantDarkCache){
    fogDistantDarkInvalidations++;fogDistantDarkSignatureChanges++;
@@ -6517,6 +6549,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(geometryAudit){
    fogDetail.distantDarkCache={hits:fogDistantDarkHits,entries:fogDistantDarkCache?.values.size??0,enabled:fogDistantDarkEligible,signatureChanges:fogDistantDarkSignatureChanges,invalidations:fogDistantDarkInvalidations,changeReasons:{...fogDistantDarkChangeReasons},componentChanges:{...fogDistantDarkComponentChanges},lastChangedComponents:[...fogDistantDarkLastChanged]};
    fogDetail.fastDarkPatchSkips=fogFastPatchSkips;
+   fogDetail.movingLightPositionCache={positions:fogMovingLightCache.positions.size,hits:fogMovingLightHits,misses:fogMovingLightMisses,limit:FOG_LIGHT_POSITION_LIMIT};
    fogDetail.wallTopology=roomTopology;
    fogDetail.roomVisibilityAudit=roomCandidates?{
     observerRegions:roomCandidates.observerRegions,
