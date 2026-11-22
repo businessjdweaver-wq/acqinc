@@ -5837,7 +5837,26 @@ function cancelPanSettle(){
  clearTimeout(panSettleTimer);
  panSettleTimer=null;
 }
+// v1.488: Prepare reusable static wall topology after a scene becomes active.
+// A deferred task keeps the first scene paint responsive. The topology cache
+// itself is keyed by authored wall geometry and invalidates on wall edits.
+let scenePreparation={scene:null,scheduled:false,elapsedMs:0,regions:0,segments:0};
+function scheduleScenePreparation(){
+ const scene=currentSceneId;
+ if(!scene||scenePreparation.scene===scene||scenePreparation.scheduled)return;
+ scenePreparation.scheduled=true;
+ setTimeout(()=>{
+  scenePreparation.scheduled=false;
+  if(currentSceneId!==scene)return;
+  const started=performance.now();
+  const topology=wallVisibilityTopology();
+  scenePreparation={scene,scheduled:false,elapsedMs:roundedMs(performance.now()-started),
+   regions:topology?.regions??0,segments:topology?.segments??0};
+  console.info('Battlemap scene geometry prepared',scenePreparation);
+ },0);
+}
 function draw(action,reusePan=false){
+ scheduleScenePreparation();
  cancelPanSettle();
  cancelMovementPaint();
  const homeScene=JSON.stringify([currentSceneId,roomProfile?.name]);
