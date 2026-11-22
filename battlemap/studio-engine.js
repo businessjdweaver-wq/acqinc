@@ -7361,8 +7361,16 @@ function queueMovementPaint(first=false){
  const current=carry;
  const paint=()=>{
   movementPaintFrame=null;
-  if(current&&carry===current&&!moveConfirmPending)
-   draw(carriedMembers().length>1?'Group movement':'Standee movement');
+  if(!current||carry!==current||moveConfirmPending)return;
+  // v1.491: reuse the last painted scene for immediate drag feedback.
+  // A full fog/lighting redraw remains necessary after confirmation.
+  if(current.piece?.type==='standee'&&!current.light&&!current.arcaneEye&&
+     !movingStandeeLayer&&paintedCamera&&faces.length&&lightingFrame){
+   movingStandeeLayer={carry:current,tokens,pieces,areas,view:standeeLayerViewKey(),
+    lighting:lightingFrame,showLighting:false,blockers:[],
+    stationary:faces.filter(face=>!face.preview)};
+  }
+  draw(carriedMembers().length>1?'Group movement':'Standee movement');
  };
  // Let the lightweight first arrow reach the screen before rendering the scene.
  movementPaintFrame=requestAnimationFrame(first?()=>{
