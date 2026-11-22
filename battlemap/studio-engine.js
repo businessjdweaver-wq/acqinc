@@ -1784,6 +1784,14 @@ function resizedVolume(p,axis,direction,delta,free=false){
  if(direction<0)next[coordinate]+=original-extents[axis];
  return next;
 }
+el('volumeBaseZ').onchange=()=>{
+ if(playing||terrainLocked||selected?.type!=='volume')return;
+ const feet=Number(el('volumeBaseZ').value);
+ if(!Number.isFinite(feet)||feet<0||feet/5+dimensions(selected)[2]>maxHeight){
+  message('Enter a base elevation that keeps the entire block within the scene height.');refresh();return;
+ }
+ change({z:Math.round(feet*4/5)/4});
+};
 el('volumeShape').onchange=()=>{
  if(playing||terrainLocked||selected?.type!=='volume')return;
  const form=el('volumeShape').value;
@@ -6578,7 +6586,7 @@ function candidate(x,y,p,dx=0,dy=0,snap=null,alt=false){
    return {...p,x:snapToPlatform(u,platform.x),y:snapToPlatform(v,platform.y),z};
   }
  }
- const z=p.type==='ceilingArt'?p.z:p.flying?p.z:ground?0:(f?.z??(f?.p?f.p.z+dimensions(f.p)[2]:p.type==='standee'?0:p.z));
+ const z=p.type==='volume'&&alt?p.z:p.type==='ceilingArt'?p.z:p.flying?p.z:ground?0:(f?.z??(f?.p?f.p.z+dimensions(f.p)[2]:p.type==='standee'?0:p.z));
  const [a,b]=inverse(x,y,p.flying?(carry?.grabPlane??drag?.grabPlane??z):z);
  if(p.type==='standee'&&!ground&&!p.flying&&f?.p?.stairTread){
   const tread=f.p,[w,d]=dimensions(tread);
@@ -6640,6 +6648,7 @@ function refresh(action){
  el('cutActions').hidden=!cutter;
  el('volumeShape').disabled=!!cutter;
  el('volumeShape').value=selected?.form||'box';
+ el('volumeBaseZ').value=selected?.type==='volume'?Number((selected.z*5).toFixed(3)):0;
  el('halfCutter').disabled=el('volumeSubtract').disabled=!!selected?.form||!!cutter;
  for(const button of el('areaChoices').children){
   button.disabled=button.dataset.shape==='difficult'&&!canEditDifficultTerrain();
