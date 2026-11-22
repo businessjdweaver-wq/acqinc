@@ -2775,6 +2775,7 @@ async function placeStandeeSpell(e){
  if(spell==='find_familiar'&&!playerCanSeePoint([px+.5,py+.5,z])){message('Choose a point you can see.');return}
  clearSpellPlacement();
  const travelers=spell==='dimension_door'?[token,...(allyId?tokens.filter(t=>t.roomId===allyId):[])]:[];
+  if(spell==='dimension_door')for(const traveler of travelers)tacticalTeleportPending.add(String(traveler.roomId));
  // Start the visual effect immediately; do not wait for the server response.
  let arrivalFailed=false;
  const departure=travelers.map(t=>dimensionDoorEffect(t,'depart'));
