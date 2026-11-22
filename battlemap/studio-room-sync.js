@@ -785,6 +785,7 @@ async function syncRoomOnce(){
   }
   const changed=applyRoomEvents([...update.events,...pings],update.reset,update.scene?update.revision:oldRevision);
   roomCursor=update.cursor;roomRevision=update.revision;
+  if(!roomProfile.gm&&update.active)tacticalScheduleScan();
   if(hudToken&&ownsRoomStandee(hudToken))updateHudSize(hudToken);
   const initiativeChanged=(!roomProfile.gm||(!initiativeWritesPending&&initiativeVersionAtRead===initiativeWriteVersion))&&applyRoomInitiative(update.initiative);
   if(!roomProfile.gm)for(const token of tokens)if(ownsRoomStandee(token)&&token.roomId===roomProfile.characterKey&&roomProfile.character)token.playerDisplayName=roomProfile.character;

@@ -39,7 +39,10 @@ function tacticalRecordExplored(points,blockers=visionBlockers()){
  let added=0;
  for(const point of points){
   const cell=tacticalDiscoveryCell(point);
-  if(!cell||known.has(cell)||!Number.isInteger(tacticalRoomAt(point)))continue;
+  if(!cell||known.has(cell))continue;
+  // The diagnostic flood-fill is not defined for scenes without opaque
+  // boundaries or outside its 24k-cell budget. It cannot gate discovery;
+  // the authoritative per-point visibility test below does that.
   // A valid ray is required even through an open portal. We remember only
   // directly observed sampled cells, never every cell in a connected region.
   if(!playerCanSeePoint(point,blockers))continue;
@@ -77,7 +80,7 @@ function tacticalScheduleScan(){
    for(const [dx,dy] of [[0,0],[1,0],[-1,0],[0,1],[0,-1],[2,0],[-2,0],[0,2],[0,-2],[1,1],[-1,1],[1,-1],[-1,-1]])
     samples.push([Math.floor(x)+dx+.5,Math.floor(y)+dy+.5,z]);
   }
-  try{tacticalRecordExplored(samples)}catch(error){console.warn('Tactical discovery scan failed',error)}
+  try{const added=tacticalRecordExplored(samples);if(added)tacticalMapRender()}catch(error){console.warn('Tactical discovery scan failed',error)}
  },100);
 }
 
