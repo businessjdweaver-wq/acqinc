@@ -4466,7 +4466,7 @@ el('fogOfWar').onchange=()=>{
 el('resetFogOfWar').onclick=()=>{
  if(roomProfile?.gm===false)return;
  const scene=areas.find(area=>area.shape==='appearance')?.appearance;
- if(!scene?.fogOfWar){el('fogStatus').textContent='Enable Fog of War before resetting it.';return}
+ if(!scene){el('fogStatus').textContent='Scene appearance is not loaded.';return}
  scene.fogRevision=(scene.fogRevision||0)+1;
  if(appearanceDraft)appearanceDraft.fogRevision=scene.fogRevision;
  scheduleRoomPatch();
