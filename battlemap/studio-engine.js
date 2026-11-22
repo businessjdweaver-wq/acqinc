@@ -5754,13 +5754,14 @@ railButton.onclick=async()=>{
   (roomProfile?.gm!==false||ownsRoomStandee(t)));
  if(!token){status.textContent='Place or select an accessible standee before testing.';return}
  const original={carry,ghost,route,angle,tilt,zoom,panX,panY,topDown,tokenX:token.x,tokenY:token.y,tokenZ:token.z,fogMemoryState,pendingFogTravel};
- const sceneId=currentSceneId,frames=120,results=[],start=basePoint(token);
- // A serpentine route covers the scene, including distant geometry, without
- // applying movement validation or changing authoritative game state.
+ const sceneId=currentSceneId,frames=120,results=[];
+ // Fixed route and fixed observer elevation make runs comparable even if
+ // the standee was moved between benchmarks. The actual position is restored.
  const margin=Math.max(1,token.size/2);
  const xmax=Math.max(margin,gridLimit(0)-margin),ymax=Math.max(margin,gridLimit(1)-margin);
+ const start=[margin,margin,0];
  const corners=[[margin,margin],[xmax,margin],[xmax,ymax],[margin,ymax],[margin,margin]];
- const nodes=[start,...corners.map(([x,y])=>[x,y,start[2]])];
+ const nodes=corners.map(([x,y])=>[x,y,start[2]]);
  const lengths=nodes.slice(1).map((p,i)=>Math.hypot(p[0]-nodes[i][0],p[1]-nodes[i][1]));
  const total=lengths.reduce((a,b)=>a+b,0);
  railTravelRunning=true;railButton.disabled=true;
@@ -5789,7 +5790,8 @@ railButton.onclick=async()=>{
   const pct=p=>ordered[Math.min(ordered.length-1,Math.ceil(ordered.length*p)-1)]??null;
   railTravelReport={sceneId,role:roomProfile?.gm===false?'player':'gm',frames:results.length,
    medianDrawMs:pct(.5),p95DrawMs:pct(.95),maxDrawMs:ordered.at(-1)??null,
-   note:'Local observer traversal with live visibility and lighting evaluation; route may cross walls. Standee and fog history restored; no room RPC.',samples:results};
+   routeStart:start,routeNodes:nodes,routeDistance:total,observerSize:token.size,
+   note:'Deterministic corner-to-corner route starting at map minimum at elevation zero; 120 frames. Route may cross walls. Standee and fog history restored; no room RPC.',samples:results};
   status.textContent='Rail traversal complete · median '+railTravelReport.medianDrawMs+
    ' ms · p95 '+railTravelReport.p95DrawMs+' ms · Copy log to share.';
  }catch(error){status.textContent=error.message}
