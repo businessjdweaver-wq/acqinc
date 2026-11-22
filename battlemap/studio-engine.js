@@ -4470,8 +4470,14 @@ el('resetFogOfWar').onclick=()=>{
  scene.fogRevision=(scene.fogRevision||0)+1;
  if(appearanceDraft)appearanceDraft.fogRevision=scene.fogRevision;
  scheduleRoomPatch();
+ if(typeof tacticalDiscoveryCache!=='undefined'){
+  tacticalDiscoveryCache={key:null,value:null};
+  tacticalScanSignature='';
+  tacticalPreviousCenters.clear();
+  tacticalMapRender();
+ }
  refresh();
- el('fogStatus').textContent='Fog visibility reset to current standee positions.';
+ el('fogStatus').textContent='Exploration reset requested. Players will rediscover only currently visible squares.';
 };
 el('ambientColor').oninput=()=>{
  const hex=el('ambientColor').value;
