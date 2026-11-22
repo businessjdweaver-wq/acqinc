@@ -5512,7 +5512,7 @@ function fogPatchDefinitelyDark(patch){
   const delta=Math.max(lo[i]-v,0,v-hi[i]);return sum+delta*delta;
  },0);
  if(observers.some(o=>minDistSq(o.distance)<=o.range*o.range))return false;
- for(const light of activeLights()){
+ for(const light of (lightingFrame?.lights??activeLights())){
   const radius=Number(light.radius)/5;
   if(!(radius>=0))return false;
   if(minDistSq(lightRangeCenter(light))<=radius*radius)return false;
@@ -5531,7 +5531,9 @@ function refinedFogBoundaryPatches(patch){
  const result=[],maxDepth=2;
  const visit=(part,depth,parentSeen)=>{
   const center=fogFaceCenter(part.world);
-  const points=[center,...part.world.map(vertex=>vertex.map((v,i)=>v*.92+center[i]*.08))];
+  // Leaf tiles use only their center; avoid constructing four unused
+  // vertex samples for every one of the many refined leaf patches.
+  const points=depth>=maxDepth?[center]:[center,...part.world.map(vertex=>vertex.map((v,i)=>v*.92+center[i]*.08))];
   // Stop sampling as soon as both visibility states are established.
   // At the refinement limit only the center determines the painted tile.
   const centerVisible=fogPointVisible(surfaceLightPoint(points[0],part.surfaceLightOffset));
