@@ -1945,11 +1945,16 @@ function pickFloorEdit(x,y,precise,elevated=false){
  // the nearest border: that made an entire strip of cursor positions select
  // the same edge square in oblique camera views.
  const projected=inverse(x,y,z);
- if(!projected.every((n,i)=>Number.isFinite(n)&&n>=-1e-6&&n<gridLimit(i)-1e-6)){
+ // Fitting an imported image can move the battlefield origin into negative
+ // grid coordinates. Its legal extent is [floorOrigin, floorOrigin + size],
+ // not [0, size]. Match the physical boundary used by the ground renderer.
+ const grid=sceneGrid();
+ const origins=[Number(grid.floorOriginX)||0,Number(grid.floorOriginY)||0];
+ if(!projected.every((n,i)=>Number.isFinite(n)&&n>=origins[i]-1e-6&&n<origins[i]+gridLimit(i)-1e-6)){
   el('floorStatus').textContent='Point at a square within the battlefield to select it.';
   return;
  }
- const cell=projected.map((n,i)=>Math.floor(Math.max(0,n)/step+1e-8)*step);
+ const cell=projected.map((n,i)=>origins[i]+Math.floor(Math.max(0,n-origins[i])/step+1e-8)*step);
  if(!floorEdit.first){
   floorEdit.first=cell;
   el('floorStatus').textContent='Click the opposite corner on the same floor.';
