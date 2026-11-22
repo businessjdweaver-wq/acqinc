@@ -4684,6 +4684,7 @@ if(window.BattlemapMapComposerEditor){
   resolveImage:src=>getArt(src),
   save:items=>{
    if(playing||roomProfile?.gm===false)throw Error('Map Composer editing requires GM build mode.');
+   if(items.some(item=>item.assetId.startsWith('preview-')))throw Error('Local preview uploads cannot be saved yet. Add images through Image Manager first.');
    const normalized=items.map(item=>window.BattlemapMapComposer.normalizePiece(item));
    remember();
    let area=areas.find(a=>a.shape==='appearance');
