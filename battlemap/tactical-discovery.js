@@ -176,7 +176,7 @@ function tacticalScheduleScan(){
   // Search the entire potentially visible footprint, not merely neighboring
   // squares. Authoritative line-of-sight and lighting checks still gate every
   // candidate, so this does not grant vision through walls or darkness.
-  for(const [x,y,z] of [...centers.slice(0,12),...scanCenters.slice(0,240)]){
+  for(const [x,y,z] of [...centers.slice(0,12),...scanCenters.filter((_,i)=>i%4===0).slice(0,12)]){
    const radius=12; // 60 feet at five feet per grid square
    samples.push([x,y,z]);
    for(let dx=-radius;dx<=radius;dx++)for(let dy=-radius;dy<=radius;dy++){
