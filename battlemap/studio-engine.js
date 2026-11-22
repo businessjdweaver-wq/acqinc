@@ -7849,7 +7849,7 @@ function positionMoveActions(){
 }
 function pauseMove(){
  const blocker=movementBlocked();
- if(blocker){message((movementTerrainBlock(blocker)?'Raised terrain':standeeObscured(blocker)?'An obscured creature':blocker.displayName||blocker.name||'An opposing creature')+' blocks this route. Choose a waypoint around it.');draw();return}
+ if(blocker){message(carryBlockerLabel(blocker)+' blocks this route. Choose a waypoint around it.');draw();return}
  if(!validCarryDestination()){message('That standee does not fit there. Choose another destination.');draw();return}
  carry.paused=true;
  message('Tap '+pathLabel()+' to continue, or hold '+pathLabel()+' and click to add waypoints. Use × or ✓ to finish.');
@@ -7881,8 +7881,9 @@ async function dropCarry(){
  el('routeOverlay').hidden=true;
  const dismissed=!carry.light&&!carry.arcaneEye?dismissMovedReadouts(carriedMembers()):null;
  try{
-  // Give the browser a paint opportunity before validation, saving, or scene work.
-  await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  // One paint opportunity for the confirmation indicator; do not impose
+  // a second animation-frame delay on every movement.
+  await new Promise(resolve=>requestAnimationFrame(resolve));
   if(carry===pendingCarry)await commitCarry();
  }finally{
   moveConfirmPending=false;
@@ -7895,9 +7896,18 @@ async function dropCarry(){
   updateObjectHandleHover();
  }
 }
+function carryBlockerLabel(blocker){
+ if(!blocker)return 'An obstacle';
+ if(blocker.name)return blocker.name;
+ if(blocker.displayName)return blocker.displayName;
+ if(blocker.type==='standee')return standeeObscured(blocker)?'An obscured creature':'Another standee';
+ if(blocker.wallId||blocker.pathId||blocker.poly)return 'A wall';
+ if(movementTerrainBlock(blocker))return 'An obstacle or raised terrain';
+ return 'An obstacle';
+}
 async function commitCarry(){
  const blocker=movementBlocked();
- if(blocker){message((movementTerrainBlock(blocker)?'Raised terrain':standeeObscured(blocker)?'An obscured creature':blocker.displayName||blocker.name||'An opposing creature')+' blocks this route. Choose a waypoint around it.');draw();return}
+ if(blocker){message(carryBlockerLabel(blocker)+' blocks this route. Choose a waypoint around it.');draw();return}
  if(!validCarryDestination()){message('That standee does not fit there. Choose another destination.');draw();return}
  const piece=carry.piece;
  if(carry.arcaneEye){
@@ -7913,11 +7923,18 @@ async function commitCarry(){
  if(roomProfile&&!roomProfile.gm){
   if(roomMoving||roomState.paused||!ownsRoomStandee(piece))return;
   roomMoving=true;
+  const moveStart=performance.now();
   try{
    if(carry.light)await customizeRoomObject(carry.light,'move_light',[ghost.x,ghost.y,ghost.z]);
    else await moveRoomStandee(piece,ghost);
+   const serverMs=performance.now()-moveStart;
    if(!carry.light&&piece.type==='standee'&&route)rememberFogTravel(routeWithDetours([...route.points,basePoint(ghost)]),piece);
-   route=null;carry=null;ghost=null;await pollRoom();refresh();
+   route=null;carry=null;ghost=null;
+   const pollStart=performance.now();
+   await pollRoom();
+   const pollMs=performance.now()-pollStart;
+   refresh();
+   if(performanceDraw)performanceDraw.movementCommit={serverMs:Math.round(serverMs),pollMs:Math.round(pollMs),totalMs:Math.round(performance.now()-moveStart)};
   }catch(err){message(err.message);await pollRoom()}
   finally{roomMoving=false}
   return;
@@ -11752,7 +11769,7 @@ function setWaypoint(){
  if(!carry||carry.paused||(drag&&!drag.pickup))return;
  if(!ghost){message('Move the standee to a turning point, then press '+pathLabel()+' or use Path.');return}
  const blocker=movementBlocked();
- if(blocker){message((movementTerrainBlock(blocker)?'Raised terrain':standeeObscured(blocker)?'An obscured creature':blocker.displayName||blocker.name||'An opposing creature')+' blocks this route. Choose a waypoint around it.');return}
+ if(blocker){message(carryBlockerLabel(blocker)+' blocks this route. Choose a waypoint around it.');return}
  if(!validCarryDestination()){message('That waypoint is blocked. Choose another square.');return}
  const waypoint=basePoint(ghost),last=route.points[route.points.length-1];
  if(waypoint.every((value,i)=>value===last[i])){
