@@ -128,9 +128,9 @@ function tacticalMapOpenWindow(){
 function tacticalMapInit(){
  const button=document.getElementById('tacticalMapToggle'),panel=document.getElementById('tacticalMapPanel'),playerButton=document.getElementById('playerTacticalMap');
  if(!button||!panel)return;panel.style.display='none';
- const toggle=()=>{panel.hidden=!panel.hidden;panel.style.display=panel.hidden?'none':'flex';button.setAttribute('aria-expanded',String(!panel.hidden));playerButton?.setAttribute('aria-expanded',String(!panel.hidden));if(!panel.hidden){tacticalScheduleScan();tacticalMapRender()}};
- button.addEventListener('click',toggle);playerButton?.addEventListener('click',toggle);
- document.getElementById('tacticalMapClose').addEventListener('click',()=>{panel.hidden=true;panel.style.display='none';button.setAttribute('aria-expanded','false')});
+
+ document.addEventListener('tactical-map-opened',()=>{try{tacticalScheduleScan();tacticalMapRender()}catch(error){console.warn('Tactical map rendering error',error)}});
+
  document.getElementById('tacticalMapPopout').addEventListener('click',tacticalMapOpenWindow);
  tacticalMapRefresh=setInterval(()=>{if(playerButton)playerButton.hidden=roomProfile?.gm!==false||!roomState?.active;if(!panel.hidden||tacticalMapWindow&&!tacticalMapWindow.closed)tacticalMapRender()},1500);
 }
