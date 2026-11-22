@@ -4673,3 +4673,25 @@ el('journalManagedRemove').onclick=()=>{
  if(journalDraft&&canUseJournal()){delete journalDraft.image;renderManagedPin()}
 };
 
+
+
+// Map Composer is intentionally hosted outside index.html. Its pieces live
+// in the existing appearance area, so scene autosave and room patches see them.
+if(window.BattlemapMapComposerEditor){
+ window.BattlemapMapComposerEditor.mount({host:{
+  load:()=>structuredClone(areas.find(a=>a.shape==='appearance')?.appearance?.mapComposerPieces||[]),
+  listImages:()=>managedImages.filter(item=>typeof item.url==='string'&&item.url).map(item=>({name:item.name,url:item.url})),
+  resolveImage:src=>getArt(src),
+  save:items=>{
+   if(playing||roomProfile?.gm===false)throw Error('Map Composer editing requires GM build mode.');
+   const normalized=items.map(item=>window.BattlemapMapComposer.normalizePiece(item));
+   remember();
+   let area=areas.find(a=>a.shape==='appearance');
+   if(!area){area={shape:'appearance',origin:[0,0,0],angle:0,size:1,appearance:{}};areas.push(area)}
+   area.appearance??={};
+   area.appearance.mapComposerPieces=normalized;
+   movementRenderCache=null;
+   refresh('Map Composer pieces applied');
+  }
+ }});
+}
