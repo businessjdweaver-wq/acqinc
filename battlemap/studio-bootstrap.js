@@ -7,10 +7,10 @@
     "./map-composer.js",
     "./map-composer-crop.js",
     "./map-composer-renderer.js",
+    "./map-composer-editor.js",
     "./studio-engine.js",
     "./studio-interactions.js",
-    "./studio-room-sync.js",
-    "./map-composer-editor.js"
+    "./studio-room-sync.js"
   ];
   Promise.all(parts.map(async path => {
     const response = await fetch(path, { cache: "no-cache" });
