@@ -65,11 +65,12 @@ function tacticalExplorationAt(point,blockers=visionBlockers()){
 /* Observe a small neighborhood around owned standees and active remote
    vision proxies. Called after an authoritative scene snapshot, never from
    the drawing loop. All samples are individually ray-checked. */
-let tacticalScanTimer=null,tacticalScanSignature='';
+let tacticalScanTimer=null,tacticalScanSignature='',tacticalScanStatus='Waiting for player scene';
 function tacticalScheduleScan(){
- if(roomProfile?.gm!==false||!roomState?.active||!roomState.sceneId)return;
+ if(roomProfile?.gm!==false||!roomState?.active||!roomState.sceneId){tacticalScanStatus='No active player scene';return;}
  const observers=visionObservers(tokens).filter(t=>ownsRoomStandee(t)&&!t.incognito&&!t.conditions?.includes('dead')&&(!t.conditions?.includes('blinded')||t.blindsight>0));
  const centers=[...observers.map(basePoint),...spellEyes()];
+ tacticalScanStatus=centers.length?'Scanning '+centers.length+' vision source(s)':'No controlled vision sources';
  const signature=[roomState.sceneId,tacticalFogRevision(),tacticalTopologyVersion(),...centers.map(p=>p.join(',')),...observers.map(t=>[t.roomId,t.vision,t.darkvision,t.torch,t.torchBright,t.torchDim].join(':'))].join('|');
  if(signature===tacticalScanSignature)return;
  tacticalScanSignature=signature;
@@ -81,7 +82,14 @@ function tacticalScheduleScan(){
    for(const [dx,dy] of [[0,0],[1,0],[-1,0],[0,1],[0,-1],[2,0],[-2,0],[0,2],[0,-2],[1,1],[-1,1],[1,-1],[-1,-1]])
     samples.push([Math.floor(x)+dx+.5,Math.floor(y)+dy+.5,z]);
   }
-  try{const added=tacticalRecordExplored(samples);if(added)tacticalMapRender()}catch(error){console.warn('Tactical discovery scan failed',error)}
+  try{
+   const blockers=visionBlockers();
+   const candidates=samples.filter(p=>playerCanSeePoint(p,blockers));
+   tacticalScanStatus='Sources '+centers.length+' · samples '+samples.length+' · visible '+candidates.length;
+   const added=tacticalRecordExplored(candidates,blockers);
+   tacticalScanStatus+=' · added '+added;
+   tacticalMapRender();
+  }catch(error){tacticalScanStatus='Scan error: '+error.message;console.warn('Tactical discovery scan failed',error)}
  },100);
 }
 
@@ -113,7 +121,7 @@ function tacticalDrawCanvas(canvas,label){
  for(const [x,y] of visible)ctx.fillRect(ox+(x-minX)*scale+.7,oy+(y-minY)*scale+.7,Math.max(1,scale-1.4),Math.max(1,scale-1.4));
  ctx.fillStyle='#f5d28d';
  for(const p of owned){if(Math.floor(p[2])!==floor)continue;ctx.beginPath();ctx.arc(ox+(p[0]-minX)*scale,oy+(p[1]-minY)*scale,Math.max(3,scale*.27),0,Math.PI*2);ctx.fill()}
- if(label)label.textContent=visible.length+' explored squares · level '+floor+(roomProfile?.gm===false&&!owned.length?' · no controlled standee':'');
+ if(label)label.textContent=visible.length+' squares · level '+floor+' · '+tacticalScanStatus;
 }
 function tacticalMapRender(){
  const panel=document.getElementById('tacticalMapPanel');
@@ -133,7 +141,7 @@ function tacticalMapInit(){
  const button=document.getElementById('tacticalMapToggle'),panel=document.getElementById('tacticalMapPanel'),playerButton=document.getElementById('playerTacticalMap');
  if(!button||!panel)return;panel.style.display='none';
 
- document.addEventListener('tactical-map-opened',()=>{try{tacticalScheduleScan();tacticalMapRender()}catch(error){console.warn('Tactical map rendering error',error)}});
+ document.addEventListener('tactical-map-opened',()=>{try{tacticalScanSignature='';tacticalScheduleScan();tacticalMapRender()}catch(error){tacticalScanStatus='Map error: '+error.message;console.warn('Tactical map rendering error',error)}});
 
  document.getElementById('tacticalMapPopout').addEventListener('click',tacticalMapOpenWindow);
  tacticalMapRefresh=setInterval(()=>{if(playerButton)playerButton.hidden=roomProfile?.gm!==false||!roomState?.active;if(!panel.hidden||tacticalMapWindow&&!tacticalMapWindow.closed)tacticalMapRender()},1500);
