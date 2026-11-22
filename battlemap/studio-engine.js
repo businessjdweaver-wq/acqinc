@@ -3166,8 +3166,13 @@ function closeWallTool(){
  el('wallPathPanel').hidden=true;el('wallPathOpen').focus();draw();
 }
 function wallMapPoint(event){
+ // The imported image remains in physical world coordinates after nine-point
+ // calibration. Grid-space 0..width/depth is NOT the visible image boundary:
+ // clamping here made wall tracing stop early along the top/right of maps.
+ // Preserve the actual inverse-projected point; wall geometry uses the same
+ // calibrated grid coordinates as the image projection.
  const [x,y]=inverse(...coords(event),0);
- return [Math.max(0,Math.min(gridLimit(0),x)),Math.max(0,Math.min(gridLimit(1),y))];
+ return [x,y];
 }
 function wallSnappedPoint(p,event,ignore=null){
  if(event.altKey)return p;
