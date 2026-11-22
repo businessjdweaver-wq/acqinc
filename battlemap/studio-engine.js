@@ -5487,7 +5487,7 @@ function startLightingFrame(){
  fogDistantDarkComponentHashes=fogComponentHashes;
  fogFastPatchSkips=0;
  fogDistantDarkHits=0;
- fogDistantDarkEligible=!gmVisionObserver()&&!spellEyes().length&&!activeVisionFamiliar();
+ fogDistantDarkEligible=!gmVisionObserver()&&!spellEyes().length&&!activeVisionFamiliar()&&!lights.some(light=>light.carried);
  fogRegionStats={regions:new Set(),samples:0,cacheHits:0,observerTests:0,rangeRejects:0,rayTests:0};
  // Audit is per draw, never cumulative across the rail. Keep the previous frame's
  // values immutable in its performance snapshot.
