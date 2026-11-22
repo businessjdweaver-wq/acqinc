@@ -5900,7 +5900,35 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  addDoorFaces();
  addFixtureFaces(blockers);
  recordGeometryStage('faceGeometryMs');
+ // Read-only geometry audit. Count existing faces; never alter rendering.
+ const geometryAudit=performanceDraw?{generated:faces.length,afterProjection:0,afterFog:0,projectionRejected:0,fogRejected:0,byType:{},stairGroups:{},fogInputByType:{},finalByType:{}}:null;
+ const geometryFaceType=f=>{
+  if(f.standee)return 'standee';
+  if(f.shadow)return 'shadow';
+  if(f.fixtureFace)return 'fixture';
+  if(f.doorFace)return 'door';
+  if(f.p?.stairGroup||f.p?.curvedStair)return 'staircase';
+  if(f.p?.type==='volume')return 'volume';
+  if(f.p?.type==='column')return 'column';
+  if(f.p?.type)return f.p.type;
+  if(f.p?.kind)return f.p.kind;
+  if(f.canopy!==undefined)return 'canopy';
+  return 'unclassified';
+ };
+ if(geometryAudit)for(const f of faces){
+  const type=geometryFaceType(f);
+  geometryAudit.byType[type]=(geometryAudit.byType[type]||0)+1;
+  if(type==='staircase'){
+   const group=String(f.p?.stairGroup||'ungrouped');
+   geometryAudit.stairGroups[group]=(geometryAudit.stairGroups[group]||0)+1;
+  }
+ }
  faces=faces.filter(f=>visibleProjection(f.projected,f.standee?55:2));
+ if(geometryAudit){
+  geometryAudit.afterProjection=faces.length;
+  geometryAudit.projectionRejected=geometryAudit.generated-faces.length;
+  for(const f of faces){const type=geometryFaceType(f);geometryAudit.fogInputByType[type]=(geometryAudit.fogInputByType[type]||0)+1}
+ }
  movementSurfaces=mapFogEnabled()?faces.filter(f=>(f.p?.stairTread||f.volumeTop||f.landing)&&Number.isFinite(f.z)&&!f.preview)
   .sort((a,b)=>a.depth-b.depth):[];
  recordGeometryStage('cullingMs');
@@ -5968,6 +5996,13 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   fogDetail.rayTests=fogRegionStats.rayTests;
   performanceDraw.fogDetail=fogDetail;
  }
+ }
+ if(geometryAudit){
+  geometryAudit.afterFog=faces.length;
+  geometryAudit.fogRejected=geometryAudit.afterProjection-faces.length;
+  for(const f of faces){const type=geometryFaceType(f);geometryAudit.finalByType[type]=(geometryAudit.finalByType[type]||0)+1}
+  // Negative fogRejected means fog refinement expanded faces, not a counter error.
+  performanceDraw.geometryAudit=geometryAudit;
  }
  recordGeometryStage('fogGeometryMs');
  if(pendingFogTravel){
