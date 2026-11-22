@@ -70,13 +70,13 @@ function tacticalScheduleScan(){
  if(roomProfile?.gm!==false||!roomState?.active||!roomState.sceneId){tacticalScanStatus='No active player scene';return;}
  const observers=visionObservers(tokens).filter(t=>ownsRoomStandee(t)&&!t.incognito&&!t.conditions?.includes('dead')&&(!t.conditions?.includes('blinded')||t.blindsight>0));
  const centers=[...observers.map(basePoint),...spellEyes()];
- tacticalScanStatus=centers.length?'Scanning '+centers.length+' vision source(s)':'No controlled vision sources';
  const signature=[roomState.sceneId,tacticalFogRevision(),tacticalTopologyVersion(),...centers.map(p=>p.join(',')),...observers.map(t=>[t.roomId,t.vision,t.darkvision,t.torch,t.torchBright,t.torchDim].join(':'))].join('|');
  if(signature===tacticalScanSignature)return;
+ tacticalScanStatus=centers.length?'Scanning '+centers.length+' vision source(s)':'No controlled vision sources';
  tacticalScanSignature=signature;
  clearTimeout(tacticalScanTimer);
  tacticalScanTimer=setTimeout(()=>{
-  if(roomProfile?.gm!==false||!roomState?.active)return;
+  if(roomProfile?.gm!==false||!roomState?.active){tacticalScanStatus='Scan aborted: inactive scene';return}
   const samples=[];
   for(const [x,y,z] of centers.slice(0,12)){
    for(const [dx,dy] of [[0,0],[1,0],[-1,0],[0,1],[0,-1],[2,0],[-2,0],[0,2],[0,-2],[1,1],[-1,1],[1,-1],[-1,-1]])
