@@ -263,10 +263,12 @@ let earlyForegroundWallCullCount=0;
 // Camera-side geometry is not part of the tactical backdrop. Compare
 // projection depth in world space, before constructing any wall faces.
 function earlyForegroundWallInvisible(poly){
- const scope=earlyRoomCull;
- if(!scope?.observers?.length||topDown||!poly?.length)return false;
+ // Camera cutaway must not depend on the room-topology culler:
+ // unknown regions and elevated standees can disable that separate filter.
+ const observers=fogPreparedObservers?.observers;
+ if(!playerFogEnabled()||gmVisionObserver()||!observers?.length||topDown||!poly?.length)return false;
  // Never trim a wall intersecting the observer's depth plane.
- const observerDepths=scope.observers.map(o=>point(o.distance[0],o.distance[1],0)[2]);
+ const observerDepths=observers.map(o=>point(o.distance[0],o.distance[1],0)[2]);
  const wallDepths=poly.map(p=>point(p[0],p[1],0)[2]);
  const nearestObserver=Math.max(...observerDepths);
  // Camera-facing side has greater projected depth. Preserve one grid
