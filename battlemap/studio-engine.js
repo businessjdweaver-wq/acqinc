@@ -1936,7 +1936,15 @@ function pickFloorEdit(x,y,precise){
   floorEdit.z=z;floorEdit.step=precise ? .25 : 1;
  }
  const {z,step}=floorEdit;
- const cell=inverse(x,y,z).map((n,i)=>Math.min(gridLimit(i)-step,Math.max(0,Math.floor(n/step+1e-8)*step)));
+ // Project against the selected floor plane. Never clamp an off-map ray to
+ // the nearest border: that made an entire strip of cursor positions select
+ // the same edge square in oblique camera views.
+ const projected=inverse(x,y,z);
+ if(!projected.every((n,i)=>Number.isFinite(n)&&n>=-1e-6&&n<gridLimit(i)-1e-6)){
+  el('floorStatus').textContent='Point at a square within the battlefield to select it.';
+  return;
+ }
+ const cell=projected.map((n,i)=>Math.floor(Math.max(0,n)/step+1e-8)*step);
  if(!floorEdit.first){
   floorEdit.first=cell;
   el('floorStatus').textContent='Click the opposite corner on the same floor.';
