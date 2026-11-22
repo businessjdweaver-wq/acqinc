@@ -4841,12 +4841,14 @@ function fogSeenDuringTravel(patch,blockers){
 }
 // Local cache remains available offline; Supabase is authoritative across sessions.
 function saveFogMemory(){
+ if(railTravelRunning)return;
  const state=fogMemoryState;
  if(!state?.dirty)return;
  try{localStorage.setItem('battlemap.fog:'+state.key,JSON.stringify([...state.seen]));state.dirty=false}catch{}
  state.pending=true;
 }
 async function syncFogMemory(state){
+ if(railTravelRunning)return;
  if(!state||!roomProfile?.token||!state.sceneId||state.profile!==roomProfile.name)return;
  if(!state.loaded&&!state.loading){
   state.loading=true;
@@ -5171,7 +5173,7 @@ railButton.onclick=async()=>{
  const token=tokens.find(t=>t.type==='standee'&&!standeeHidden(t)&&!standeeObscured(t)&&
   (roomProfile?.gm!==false||ownsRoomStandee(t)));
  if(!token){status.textContent='Place or select an accessible standee before testing.';return}
- const original={carry,ghost,route,angle,tilt,zoom,panX,panY,topDown};
+ const original={carry,ghost,route,angle,tilt,zoom,panX,panY,topDown,tokenX:token.x,tokenY:token.y,tokenZ:token.z,fogMemoryState,pendingFogTravel};
  const sceneId=currentSceneId,frames=120,results=[],start=basePoint(token);
  // A serpentine route covers the scene, including distant geometry, without
  // applying movement validation or changing authoritative game state.
@@ -5182,6 +5184,8 @@ railButton.onclick=async()=>{
  const lengths=nodes.slice(1).map((p,i)=>Math.hypot(p[0]-nodes[i][0],p[1]-nodes[i][1]));
  const total=lengths.reduce((a,b)=>a+b,0);
  railTravelRunning=true;railButton.disabled=true;
+ // Isolate fog exploration from persisted player history during the benchmark.
+ if(fogMemoryState)fogMemoryState={...fogMemoryState,seen:new Set(fogMemoryState.seen),dirty:false,pending:false};
  try{
   for(let frame=0;frame<frames;frame++){
    const timestamp=await new Promise(resolve=>requestAnimationFrame(resolve));
@@ -5191,9 +5195,10 @@ railButton.onclick=async()=>{
    const t=lengths[segment]?Math.min(1,distance/lengths[segment]):0;
    const a=nodes[segment],b=nodes[segment+1];
    const point=a.map((v,i)=>v+(b[i]-v)*t);
-   carry={piece:token,dx:0,dy:0};
-   ghost={...token,x:point[0]-token.size/2,y:point[1]-token.size/2,z:point[2]};
-   route={points:[start],end:point};
+   // Move the actual observer in local memory. A ghost/carry preview bypasses
+   // the player visibility pipeline and therefore cannot benchmark exploration.
+   token.x=point[0]-token.size/2;token.y=point[1]-token.size/2;token.z=point[2];
+   carry=null;ghost=null;route=null;
    const action='Test: Rail traversal';
    draw(action);
    const sample=performanceSamples.at(-1);
@@ -5204,12 +5209,13 @@ railButton.onclick=async()=>{
   const pct=p=>ordered[Math.min(ordered.length-1,Math.ceil(ordered.length*p)-1)]??null;
   railTravelReport={sceneId,role:roomProfile?.gm===false?'player':'gm',frames:results.length,
    medianDrawMs:pct(.5),p95DrawMs:pct(.95),maxDrawMs:ordered.at(-1)??null,
-   note:'Synthetic non-authoritative standee preview; route may cross walls. No game state changed.',samples:results};
+   note:'Local observer traversal with live visibility and lighting evaluation; route may cross walls. Standee and fog history restored; no room RPC.',samples:results};
   status.textContent='Rail traversal complete · median '+railTravelReport.medianDrawMs+
    ' ms · p95 '+railTravelReport.p95DrawMs+' ms · Copy log to share.';
  }catch(error){status.textContent=error.message}
  finally{
-  ({carry,ghost,route,angle,tilt,zoom,panX,panY,topDown}=original);
+  token.x=original.tokenX;token.y=original.tokenY;token.z=original.tokenZ;
+  ({carry,ghost,route,angle,tilt,zoom,panX,panY,topDown,fogMemoryState,pendingFogTravel}=original);
   railTravelRunning=false;railButton.disabled=false;draw('Test: restore');updatePerformanceReadout();
  }
 };
