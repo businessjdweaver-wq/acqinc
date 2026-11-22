@@ -6715,7 +6715,10 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(!f.world)return f.p?.origin&&fogObjectVisible(f.p)?[f]:[];
   // Never discard doors, openings, elevated terrain or fixtures using
   // the planar distance shortcut; they retain authoritative 3D checks.
-  if(!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture&&!f.volumeTop&&!f.pathWall&&preFogDistanceReject(f))return [];
+  // Raised surfaces (including platforms below five feet) can be visible
+  // over a nearby obstruction; never planar-prune them.
+  const raisedSurface=f.world.some(v=>fogPrepared.observers.some(o=>Math.abs((v[2]??0)-(o.distance[2]??0))>.15));
+  if(!raisedSurface&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture&&!f.volumeTop&&!f.pathWall&&preFogDistanceReject(f))return [];
   // Experimental aggressive culling: reject faces wholly in disconnected
   // authored-wall regions before fog patch generation and ray sampling.
   // Keep cross-boundary faces and dynamic/portal geometry in the 3D renderer.
@@ -6731,7 +6734,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    else if(roomCandidates.reachable.has(ids.values().next().value))roomCounts.reachable++;
    else {
     roomCounts.disconnected++;
-    const elevated=f.world.some(p=>Math.abs((p[2]??0)-(fogPrepared.observers[0]?.distance[2]??0))>1.5);
+    const elevated=raisedSurface;
     const portal=nearPortal(f);
     if(elevated)roomCounts.elevationGuarded++;
     if(portal)roomCounts.portalGuarded++;
