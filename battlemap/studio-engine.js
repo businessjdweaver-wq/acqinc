@@ -7237,6 +7237,8 @@ function openTerrainContext(piece,x,y){
  const menu=el('terrainContext');
  menu.replaceChildren();
  const close=()=>{menu.hidden=true};
+ if(piece.curvedStair&&piece.stairGroup&&!playing&&!terrainLocked)
+  menu.append(catalogButton('Transform staircase footprint / height…',()=>{close();editCurvedStairFootprint(piece)}));
  if(piece.type==='column')menu.append(catalogButton('Edit component',()=>{close();openFormationEditor(piece)}));
  if(piece.type==='volume'&&!playing&&!terrainLocked)menu.append(catalogButton('Set base elevation… ('+Number((piece.z*5).toFixed(2))+' ft)',()=>{
   close();
@@ -8343,6 +8345,48 @@ function updateStairSliders(){
 }
 for(const id of ['stairRise','stairRun'])el(id).oninput=updateStairSliders;
 updateStairSliders();
+function editCurvedStairFootprint(piece){
+ const members=pieces.filter(p=>p.curvedStair&&p.stairGroup===piece.stairGroup);
+ if(!members.length)return;
+ const left=Math.min(...members.map(p=>p.x)),front=Math.min(...members.map(p=>p.y));
+ const right=Math.max(...members.map(p=>p.x+dimensions(p)[0]));
+ const back=Math.max(...members.map(p=>p.y+dimensions(p)[1]));
+ const bottom=Math.min(...members.map(p=>p.z)),top=Math.max(...members.map(p=>p.z+dimensions(p)[2]));
+ const old=[right-left,back-front,top-bottom];
+ const dialog=document.createElement('dialog');dialog.className='form-dialog';
+ const form=document.createElement('form');form.style.cssText='display:grid;gap:10px;padding:18px';
+ const heading=document.createElement('h2');heading.textContent='Transform entire curved staircase';form.append(heading);
+ const inputs=[];
+ for(const [i,label] of ['Footprint width (ft)','Footprint depth (ft)','Total height (ft)'].entries()){
+  const row=document.createElement('label'),input=document.createElement('input');
+  input.type='number';input.min='1.25';input.max=String(i===2?maxHeight*5:100*5);
+  input.step='1.25';input.value=String(Number((old[i]*5).toFixed(3)));
+  row.append(label,input);form.append(row);inputs.push(input);
+ }
+ const note=document.createElement('p');note.textContent='Scales all stair treads together, preserving their relative rise and curved outline.';form.append(note);
+ const buttons=document.createElement('div');buttons.className='bar';
+ const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Cancel';cancel.onclick=()=>dialog.close();
+ const apply=document.createElement('button');apply.textContent='Apply transformation';buttons.append(cancel,apply);form.append(buttons);
+ form.onsubmit=e=>{
+  e.preventDefault();
+  const next=inputs.map(input=>Number(input.value)/5);
+  if(next.some(v=>!Number.isFinite(v)||v<.25)||bottom+next[2]>maxHeight){message('Enter valid staircase dimensions.');return}
+  const scale=next.map((v,i)=>v/old[i]);
+  const transformed=members.map(p=>{
+   const outline=terrainFootprint(p).map(([x,y])=>[left+(x-left)*scale[0],front+(y-front)*scale[1]]);
+   const xs=outline.map(v=>v[0]),ys=outline.map(v=>v[1]);
+   const x=Math.min(...xs),y=Math.min(...ys),w=Math.max(...xs)-x,d=Math.max(...ys)-y;
+   return {...p,x,y,z:bottom+(p.z-bottom)*scale[2],extents:[w,d,dimensions(p)[2]*scale[2]],
+    vertices:outline.map(([u,v])=>[(u-x)/w,(v-y)/d])};
+  });
+  const terrain=pieces.flatMap(p=>members.includes(p)?p===members[0]?transformed:[]:[p]);
+  if(transformed.some(p=>p.x<0||p.y<0||p.x+dimensions(p)[0]>gridLimit(0)||p.y+dimensions(p)[1]>gridLimit(1))||
+   tokens.some(t=>!supported(t,terrain))){message('The transformed staircase exceeds the map or displaces a standee.');return}
+  remember();pieces=terrain;group.clear();for(const p of transformed)group.add(p);
+  selected=transformed[0];dialog.close();refresh();message('Curved staircase resized as one structure.');
+ };
+ dialog.append(form);dialog.onclose=()=>dialog.remove();document.body.append(dialog);dialog.showModal();
+}
 function cutStairEdge(p,edge){
  if(!['terrace','stone','wall','pillar','bridge','crate','volume'].includes(p.type)||p.form||edge>3)return;
  if(drag.changed)return;
@@ -8350,6 +8394,10 @@ function cutStairEdge(p,edge){
  const shape=el('stairShape').value;
  const sections=shape==='straight'?stairSections(p,edge,rise,run):curvedStairSections(p,edge,rise,run,shape);
  if(!sections){message('Use a smaller rise or run, or a deeper block, to leave a top landing.');return}
+ if(shape!=='straight'){
+  const stairGroup=crypto.randomUUID();
+  for(const section of sections)section.stairGroup=stairGroup;
+ }
  const terrain=pieces.flatMap(piece=>piece===p?sections:[piece]);
  if(tokens.some(t=>!supported(t,terrain))||areas.some(a=>a.shape==='difficult'&&!validDifficultTerrain(a,terrain))){
   message('Move standees or difficult terrain off the cut first.');return;
@@ -10467,7 +10515,7 @@ el('file').onchange=async e=>{
   if(![1,2].includes(data.version)||!Array.isArray(data.pieces)||data.pieces.length>width*depth*maxHeight)throw Error('Expected version 1 or 2 and a pieces array within the scene capacity.');
   for(const [i,p] of data.pieces.entries()){
    context='Terrain #'+(i+1)+' ('+(p?.type??'unknown')+' at '+[p?.x,p?.y,p?.z].join(', ')+')';
-   if(p?.type==='volume'&&p.extents!==undefined&&(!Array.isArray(p.extents)||p.extents.length!==3||p.extents.some(n=>!Number.isInteger(n*4)||n<.25||n>100)))throw Error('extents '+JSON.stringify(p.extents)+' must contain three dimensions, each a multiple of 0.25 from 0.25 to 100.');
+   if(p?.type==='volume'&&p.extents!==undefined&&(!Array.isArray(p.extents)||p.extents.length!==3||p.extents.some(n=>(!p.curvedStair&&!Number.isInteger(n*4))||n<.001||n>100)))throw Error('extents '+JSON.stringify(p.extents)+' must contain three dimensions, each a multiple of 0.25 from 0.25 to 100.');
    if(!p||!Object.prototype.hasOwnProperty.call(types,p.type))throw Error('Unknown terrain type.');
    if(!(p.type==='column'?(p.freePlacement===true?[p.x,p.y].every(Number.isFinite):[p.x,p.y].every(v=>Number.isFinite(v)&&Number.isInteger(v-.25)))&&Number.isInteger(p.floorAdjusted===true?p.z*4:p.z):(p.type==='volume'?[p.x*4,p.y*4,p.z*4]:[p.x,p.y,p.floorAdjusted===true?p.z*4:p.z]).every(Number.isInteger))||![p.x,p.y,p.z].every(Number.isFinite))throw Error('Invalid coordinates: volumes use quarter units, columns use integer + 0.25 for x/y and integer z, other terrain uses integers.');
    if(![0,1,2,3].includes(p.r))throw Error('Rotation r must be 0, 1, 2 or 3.');
@@ -10483,7 +10531,7 @@ el('file').onchange=async e=>{
    if(sceneryPiece(p)&&!uploadedStandeeImage(p.art))throw Error('Invalid scenery artwork.');
    if(p.form!==undefined&&(!['wedge','pyramid','corners','polygon'].includes(p.form)||type!=='volume'))throw Error('Invalid form.');
    if(p.corners!==undefined&&(!Array.isArray(p.corners)||p.corners.length!==4||p.corners.some(pair=>!Array.isArray(pair)||pair.length!==2||pair.some(v=>!Number.isFinite(v)||v<0||v>1))))throw Error('Invalid corners.');
-   incoming.push({type,x,y,z,r,...(Number.isFinite(p.terrainYaw)&&p.terrainYaw>=0&&p.terrainYaw<360?{terrainYaw:p.terrainYaw}:{}),...(p.floorAdjusted===true?{floorAdjusted:true}:{}),...(p.wallOverlap===true&&wallVolume(p)?{wallOverlap:true}:{}),...(type==='volume'&&p.openingCut===true?{openingCut:true}:{}),...(type==='volume'&&p.groundSurface===true?{groundSurface:true}:{}),stairTread:type==='volume'&&p.stairTread===true,terrainShape:type==='column'&&p.terrainShape?cleanFormationSettings(p.terrainShape):undefined,form:p.form,vertices:p.form==='polygon'?p.vertices:undefined,corners:p.corners,extents:type==='volume'?p.extents:undefined,cut:cut&&{kind:cut.kind,depth:cut.depth},cuts,wash,opaquePaint,surfaceTextures,patterns:Array.isArray(p.patterns)?p.patterns.slice(0,5).map(value=>Array.isArray(value)?value.filter(layer=>layer&&typeof layer.kind==='string'&&Number.isFinite(layer.seed)).slice(0,12):typeof value==='string'?value:null):undefined,plainFaces:Array.isArray(p.plainFaces)?p.plainFaces.slice(0,5).map(Boolean):undefined,art:sceneryPiece(p)?p.art:undefined});
+   incoming.push({type,x,y,z,r,...(Number.isFinite(p.terrainYaw)&&p.terrainYaw>=0&&p.terrainYaw<360?{terrainYaw:p.terrainYaw}:{}),...(p.floorAdjusted===true?{floorAdjusted:true}:{}),...(p.wallOverlap===true&&wallVolume(p)?{wallOverlap:true}:{}),...(type==='volume'&&p.openingCut===true?{openingCut:true}:{}),...(type==='volume'&&p.groundSurface===true?{groundSurface:true}:{}),stairTread:type==='volume'&&p.stairTread===true,curvedStair:p.curvedStair===true,stairGroup:typeof p.stairGroup==='string'?p.stairGroup:undefined,terrainShape:type==='column'&&p.terrainShape?cleanFormationSettings(p.terrainShape):undefined,form:p.form,vertices:p.form==='polygon'?p.vertices:undefined,corners:p.corners,extents:type==='volume'?p.extents:undefined,cut:cut&&{kind:cut.kind,depth:cut.depth},cuts,wash,opaquePaint,surfaceTextures,patterns:Array.isArray(p.patterns)?p.patterns.slice(0,5).map(value=>Array.isArray(value)?value.filter(layer=>layer&&typeof layer.kind==='string'&&Number.isFinite(layer.seed)).slice(0,12):typeof value==='string'?value:null):undefined,plainFaces:Array.isArray(p.plainFaces)?p.plainFaces.slice(0,5).map(Boolean):undefined,art:sceneryPiece(p)?p.art:undefined});
   }
   context='Standees';
   const importedTokens=[];
