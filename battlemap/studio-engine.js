@@ -259,9 +259,31 @@ function polygonImpl(points,fill,stroke){
 let earlyRoomCull=null;
 let earlyRoomCullCount=0;
 function earlyRoomDisconnected(points){
- if(!earlyRoomCull||!points?.length)return false;
- const ids=new Set(points.map(v=>earlyRoomCull.regionAt(v)));
- return ids.size===1&&!ids.has(null)&&!earlyRoomCull.reachable.has(ids.values().next().value);
+ if(!earlyRoomCull?.eligible||!points?.length)return false;
+ // Do not exclude geometry spanning a region boundary. Include center
+ // so broad polygons cannot be classified by their corners alone.
+ const center=[points.reduce((n,p)=>n+p[0],0)/points.length,points.reduce((n,p)=>n+p[1],0)/points.length];
+ const ids=new Set([...points,center].map(v=>earlyRoomCull.regionAt(v)));
+ return ids.size===1&&!ids.has(null)&&!earlyRoomCull.eligible.has(ids.values().next().value);
+}
+function nearbyObserverRooms(topology,prepared){
+ if(!topology?.regionAt||!prepared?.observers?.length||prepared.preview||
+    prepared.observers.some(o=>Math.abs(o.distance[2])>.15))return null;
+ const eligible=new Set();
+ for(const observer of prepared.observers){
+  const own=topology.regionAt(observer.distance);
+  if(own===null||own===undefined)return null;
+  eligible.add(own);
+  for(const portal of topology.portals||[]){
+   const [a,b]=portal.regions||[];
+   if(a!==own&&b!==own)continue;
+   if(!(portal.kind==='Window'?!portal.shaded:portal.open))continue;
+   if(Math.hypot(observer.distance[0]-portal.center[0],observer.distance[1]-portal.center[1])>2)continue;
+   if(a!==null&&a!==undefined)eligible.add(a);
+   if(b!==null&&b!==undefined)eligible.add(b);
+  }
+ }
+ return {regionAt:topology.regionAt,eligible};
 }
 function face(points,fill,p,z,preview){
  points=turnTerrainPoints(points,p);
@@ -6513,7 +6535,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  // No culling in GM/editor/preview modes.
  earlyRoomCullCount=0;
  earlyRoomCull=playerFogEnabled()&&!floorSceneEditing&&!gmVisionObserver()
-  ?wallVisibilityCandidates(wallVisibilityTopology(),fogPreparedObservers||(fogPreparedObservers=prepareFogObservers()))
+  ?nearbyObserverRooms(wallVisibilityTopology(),fogPreparedObservers||(fogPreparedObservers=prepareFogObservers()))
   :null;
  recordGeometryStage('visibilitySetupMs');
  if(!cached){
