@@ -1118,6 +1118,19 @@ function gmVisionObserver(){
  return playing&&roomProfile?.gm!==false&&tokens.includes(gmVisionStandee)?gmVisionStandee:null;
 }
 function mapFogEnabled(){return !!gmVisionObserver()||playerFogEnabled()}
+// Shared, read-only visibility contract for the upcoming 3D/tactical-map renderers.
+// Do not infer visibility from room connectivity alone: doorways and windows
+// require an actual sightline. Unknown terrain must never be exposed by a map.
+// Both renderers will use this contract while the legacy fog pipeline remains.
+function tacticalVisibilityAt(target,blockers=visionBlockers()){
+ if(roomProfile?.gm!==false&&!gmVisionObserver())return 'visible';
+ const visible=playerCanSeePoint(target,blockers);
+ if(visible)return 'visible';
+ // The existing fog-memory keys identify rendered surface patches, not rooms.
+ // Until room discovery is persisted separately, never equate a nearby
+ // remembered patch with permission to reveal an entire room.
+ return 'unknown';
+}
 function computePlayerCanSeePoint(target,blockers,observers){
  if(gmVisionObserver())return fogPointVisible(target);
  const key=target.join(',');
