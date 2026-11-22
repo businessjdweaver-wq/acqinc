@@ -258,6 +258,25 @@ function polygonImpl(points,fill,stroke){
 }
 let earlyRoomCull=null;
 let earlyRoomCullCount=0;
+let earlySectorCullCount=0;
+function earlySectorInvisible(points){
+ const scope=earlyRoomCull;
+ if(!scope?.observers?.length||!points?.length)return false;
+ // Spatial broad phase: reject only a wholly dark, ground-level sector
+ // beyond every observer's darkvision and every light's reach.
+ const minX=Math.min(...points.map(p=>p[0])),maxX=Math.max(...points.map(p=>p[0]));
+ const minY=Math.min(...points.map(p=>p[1])),maxY=Math.max(...points.map(p=>p[1]));
+ const minDistSq=p=>{
+  const dx=Math.max(minX-p[0],0,p[0]-maxX),dy=Math.max(minY-p[1],0,p[1]-maxY);
+  return dx*dx+dy*dy;
+ };
+ if(scope.observers.some(o=>minDistSq(o.distance)<=(o.range+1)*(o.range+1)))return false;
+ if(scope.lights.some(l=>minDistSq(l.center)<=(l.radius+1)*(l.radius+1)))return false;
+ // Ambient or unclassified light must never be spatially culled.
+ if(!scope.dark)return false;
+ earlySectorCullCount++;
+ return true;
+}
 function earlyRoomDisconnected(points){
  if(!earlyRoomCull?.eligible||!points?.length)return false;
  // Do not exclude geometry spanning a region boundary. Include center
@@ -283,7 +302,13 @@ function nearbyObserverRooms(topology,prepared){
    if(b!==null&&b!==undefined)eligible.add(b);
   }
  }
- return {regionAt:topology.regionAt,eligible};
+ const lights=(lightingFrame?.lights??activeLights()).map(l=>({
+  center:lightRangeCenter(l),radius:Number(l.radius)/5
+ }));
+ // If ambient is enabled, sector darkness is not guaranteed.
+ const dark=areas.some(a=>a.shape==='appearance'&&a.appearance?.fogOfWar===true)&&
+  lights.every(l=>Number.isFinite(l.radius)&&l.radius>=0);
+ return {regionAt:topology.regionAt,eligible,observers:prepared.observers,lights,dark};
 }
 function face(points,fill,p,z,preview){
  points=turnTerrainPoints(points,p);
@@ -2140,9 +2165,10 @@ function drawPiece(p,preview=false){
   const [w,d]=dimensions(p);
   // Broad phase only: all footprint corners must share one disconnected region.
   // Complex terrain shapes continue through the ordinary renderer.
-  if(!p.terrainShape&&!p.surfaceTextures&&earlyRoomDisconnected([[p.x,p.y],[p.x+w,p.y],[p.x+w,p.y+d],[p.x,p.y+d]])){
-   earlyRoomCullCount++;
-   return;
+  if(!p.terrainShape&&!p.surfaceTextures){
+   const footprint=[[p.x,p.y],[p.x+w,p.y],[p.x+w,p.y+d],[p.x,p.y+d]];
+   if(earlyRoomDisconnected(footprint)){earlyRoomCullCount++;return}
+   if(Math.abs(p.z)<=.15&&earlySectorInvisible(footprint))return;
   }
  }
  if(p.type==='standee'){drawStandee(p,preview);return}
@@ -3083,6 +3109,7 @@ function renderPathWall(solid){
  const {poly,z,top,wall,opening}=solid;
  if(opening){renderPathOpening(solid);return}
  if(earlyRoomDisconnected(poly)){earlyRoomCullCount++;return}
+ if(Math.abs(z)<=.15&&earlySectorInvisible(poly))return;
  const surface=wall;
  if(!surface.opacity)return;
  const bottom=poly.map(([x,y])=>[x,y,z]),upper=poly.map(([x,y])=>[x,y,top]);
@@ -6534,6 +6561,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  // Precompute the same authored-wall room reachability before any mesh faces.
  // No culling in GM/editor/preview modes.
  earlyRoomCullCount=0;
+ earlySectorCullCount=0;
  earlyRoomCull=playerFogEnabled()&&!floorSceneEditing&&!gmVisionObserver()
   ?nearbyObserverRooms(wallVisibilityTopology(),fogPreparedObservers||(fogPreparedObservers=prepareFogObservers()))
   :null;
@@ -6578,7 +6606,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  addDoorFaces();
  addFixtureFaces(blockers);
  recordGeometryStage('faceGeometryMs');
- if(performanceDraw)performanceDraw.earlyRoomCulledFaces=earlyRoomCullCount;
+ if(performanceDraw){performanceDraw.earlyRoomCulledFaces=earlyRoomCullCount;performanceDraw.earlySectorCulledFaces=earlySectorCullCount;}
  // Read-only geometry audit. Count existing faces; never alter rendering.
  const geometryAudit=performanceDraw?{generated:faces.length,afterProjection:0,afterFog:0,projectionRejected:0,fogRejected:0,byType:{},stairGroups:{},fogInputByType:{},finalByType:{},sharedSurfaceAudit:{exactDuplicateFaces:0,sharedFacePairs:0,byType:{},candidateFaces:0},projectionAudit:{offscreenVertices:0,fullyOffscreenFaces:0},wallAudit:{wallCount:0,byWall:[],faceKinds:{},sharedPlaneCandidates:0},fogAudit:{inputFacesByType:{},retainedFacesByType:{},rejectedFacesByType:{}}}:null;
  // Diagnostic-only world-space sector index. No visibility or rendering behavior changes.
