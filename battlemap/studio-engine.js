@@ -5567,7 +5567,25 @@ function terrainFogPatchVisible(patch){
   const raised=horizontal&&patch.world.some(p=>p[2]>.05);
   const visible=point=>{
    const sample=surfaceLightPoint(point,patch.surfaceLightOffset);
-   return fogPointVisible(raised?[sample[0],sample[1],sample[2]+.035]:sample);
+   if(!raised)return fogPointVisible(sample);
+   const above=[sample[0],sample[1],sample[2]+.035];
+   if(fogPointVisible(above))return true;
+   // A raised slab can block rays terminating on its own top. Retest only
+   // for surfaces below an observer's eye, excluding the sampled slab
+   // itself while retaining every other wall, door and terrain blocker.
+   // This does not reveal high platforms or anything placed on top.
+   const piece=patch.ownerPiece;
+   if(!piece)return false;
+   const observers=(fogPreparedObservers||(fogPreparedObservers=prepareFogObservers())).observers;
+   const candidates=observers.filter(o=>o.eye[2]>=above[2]-.01);
+   if(!candidates.length)return false;
+   const blockers=visionBlockers().filter(b=>b.piece!==piece);
+   const lit=ambientAt(above,visionBlockers())||lightAt(above,visionBlockers());
+   return candidates.some(o=>{
+    const dx=o.distance[0]-above[0],dy=o.distance[1]-above[1],dz=o.distance[2]-above[2];
+    if(dx*dx+dy*dy+dz*dz>o.range*o.range&&!lit)return false;
+    return sightlineClear(o.eye,above,blockers);
+   });
   };
   patch.visible=visible(center)||patch.world.some(vertex=>
    visible(vertex.map((value,i)=>value*.8+center[i]*.2)));
@@ -6791,7 +6809,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    // that the patch is still visible. Reusing it unconditionally leaves
    // old torch/fog squares behind as a player moves or extinguishes light.
    const visibilityStart=performance.now();
-   const currentlyVisible=forceTerrainVisible()||terrainFogPatchVisible(patch);
+   const currentlyVisible=forceTerrainVisible()||terrainFogPatchVisible(f.p?{...patch,ownerPiece:f.p}:patch);
    if(fogDetail)fogDetail.visibilityMs+=performance.now()-visibilityStart;
    const travelStart=performance.now();
    if(rememberTerrain&&roomProfile?.gm!==false&&!currentlyVisible&&!fogMemoryState.seen.has(patch.memoryKey)&&fogSeenDuringTravel(patch,blockers)){
