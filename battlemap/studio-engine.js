@@ -5954,9 +5954,38 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)activeSectorKeys.add((cx+dx)+','+(cy+dy));
   }
  }
+ // Candidate sectors are a conservative superset, not an occlusion decision.
+ // Camera-facing geometry, light sources and observer neighborhoods are retained.
+ // No sector is excluded from the existing fog evaluator until proven invisible.
+ const candidateSectorKeys=sectorAudit?new Set(activeSectorKeys):null;
+ if(sectorAudit){
+  const includeRadius=(x,y,r)=>{
+   if(!Number.isFinite(x)||!Number.isFinite(y)||!Number.isFinite(r))return;
+   const radius=Math.max(0,Math.min(256,r)),x0=Math.floor((x-radius)/8),x1=Math.floor((x+radius)/8),y0=Math.floor((y-radius)/8),y1=Math.floor((y+radius)/8);
+   for(let ix=x0;ix<=x1;ix++)for(let iy=y0;iy<=y1;iy++)candidateSectorKeys.add(ix+','+iy);
+  };
+  const prepared=prepareFogObservers();
+  for(const observer of prepared.observers)includeRadius(observer.distance[0],observer.distance[1],observer.range);
+  // Lighting and sightlines can reach beyond observer proximity.
+  // Keep these as diagnostic candidate regions; the original fog code remains authoritative.
+  for(const area of areas)if(area.kind==='Light'||area.shape==='light'){
+   const origin=area.origin||[area.x,area.y];
+   const radius=Number(area.range??area.radius??0);
+   includeRadius(origin[0],origin[1],radius);
+  }
+  sectorAudit.candidateInputFaces=0;
+  sectorAudit.nonCandidateInputFaces=0;
+  sectorAudit.candidateOutputFaces=0;
+  sectorAudit.nonCandidateOutputFaces=0;
+  sectorAudit.candidateSectorCount=0;
+  sectorAudit.cullingEnabled=false;
+  sectorAudit.reason='Candidate indexing only; geometry outside candidate sectors is still processed to preserve distant visibility, ambient light and exploration memory.';
+ }
  const indexSectorFace=(f,output=false)=>{
   const keys=sectorKeysForFace(f);
   const active=keys.some(key=>activeSectorKeys.has(key));
+  const candidate=keys.some(key=>candidateSectorKeys.has(key));
+  sectorAudit[(candidate?'candidate':'nonCandidate')+(output?'OutputFaces':'InputFaces')]++;
   if(output){sectorAudit[active?'activeOutputFaces':'inactiveOutputFaces']++;return}
   sectorAudit[active?'activeInputFaces':'inactiveInputFaces']++;
   sectorAudit.sectorReferences+=keys.length;
@@ -6125,6 +6154,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(sectorAudit){
    for(const f of faces)indexSectorFace(f,true);
    sectorAudit.sectorCount=sectorMap.size;
+   sectorAudit.candidateSectorCount=[...sectorMap.keys()].filter(key=>candidateSectorKeys.has(key)).length;
    sectorAudit.activeSectorCount=[...sectorMap.keys()].filter(key=>activeSectorKeys.has(key)).length;
    sectorAudit.topSectors=[...sectorMap].sort((a,b)=>b[1].faces-a[1].faces).slice(0,12).map(([key,counts])=>({key,...counts,active:activeSectorKeys.has(key)}));
    geometryAudit.sectorAudit=sectorAudit;
