@@ -31,7 +31,7 @@
       })) };
     }
     assert(crop.type === 'rect', 'Unknown crop type.');
-    const x = clamp(finite(crop.x, 0), 0, 1), y = clamp(finite(crop.y, 0), 0, 1);
+    const x = clamp(finite(crop.x, 0), 0, 0.9999), y = clamp(finite(crop.y, 0), 0, 0.9999);
     return { type: 'rect', x, y,
       width: clamp(finite(crop.width, 1), 0.0001, 1 - x),
       height: clamp(finite(crop.height, 1), 0.0001, 1 - y) };
