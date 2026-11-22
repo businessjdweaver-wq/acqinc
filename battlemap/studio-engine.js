@@ -4698,10 +4698,38 @@ function paintRoundLightPatch(points,projection,ranges,paint,depth,budget,refine
 }
 let lightingFrame=null,performanceDraw=null,lightingCache=null;
 let fogCache=null,fogMemoryState=null;
+// Local cache remains available offline; Supabase is authoritative across sessions.
 function saveFogMemory(){
- if(!fogMemoryState?.dirty)return;
- try{localStorage.setItem('battlemap.fog:'+fogMemoryState.key,JSON.stringify([...fogMemoryState.seen]));fogMemoryState.dirty=false}catch{}
+ const state=fogMemoryState;
+ if(!state?.dirty)return;
+ try{localStorage.setItem('battlemap.fog:'+state.key,JSON.stringify([...state.seen]));state.dirty=false}catch{}
+ state.pending=true;
 }
+async function syncFogMemory(state){
+ if(!state||!roomProfile?.token||!state.sceneId||state.profile!==roomProfile.name)return;
+ if(!state.loaded&&!state.loading){
+  state.loading=true;
+  try{
+   const result=await roomRpc('fog_load',{ticket:roomProfile.token,scene_id:state.sceneId,fog_revision:state.revision});
+   if(result?.error)throw Error(result.error);
+   if(Array.isArray(result?.seen)){
+    for(const key of result.seen)state.seen.add(key);
+    state.dirty=true;saveFogMemory();
+    if(fogMemoryState===state)draw('Fog history restored');
+   }
+   state.loaded=true;
+  }catch(error){console.warn('Fog history load failed',error)}
+  finally{state.loading=false}
+ }
+ if(!state.loaded||!state.pending||state.saving)return;
+ state.saving=true;state.pending=false;
+ try{
+  const result=await roomRpc('fog_save',{ticket:roomProfile.token,scene_id:state.sceneId,fog_revision:state.revision,seen:[...state.seen]});
+  if(result?.error)throw Error(result.error);
+ }catch(error){state.pending=true;console.warn('Fog history save failed',error)}
+ finally{state.saving=false}
+}
+
 function fogRemember(key,visible){
  if(gmVisionObserver()||preferences.fogMemory===0)return visible?1:0;
  if(visible){
@@ -4858,13 +4886,28 @@ function startLightingFrame(){
  const preview=gmVisionObserver();
  const terrainLightSignature=JSON.stringify([blockers,lights,rooms,sceneWallPaths(),wallRoomDefinitions(),preferences.graphicsQuality]);
  const signature=JSON.stringify([roomProfile?.gm,gmIgnoreLighting,playing,terrainLightSignature,observers,familiarView,spellEyes(),preview&&[basePoint(preview),preview.darkvision,preview.blindsight,preview.conditions]]);
- const memoryKey=JSON.stringify([roomProfile?.name,currentSceneId,roomState.title,areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision]);
+ const fogRevision=Number(areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision)||0;
+ const memoryKey=JSON.stringify([roomProfile?.name,currentSceneId,fogRevision]);
  if(!playerFogEnabled()||preferences.fogMemory===0){saveFogMemory();fogMemoryState=null}
  else if(fogMemoryState?.key!==memoryKey){
   saveFogMemory();
   let seen=[];
-  try{seen=JSON.parse(localStorage.getItem('battlemap.fog:'+memoryKey))??[]}catch{}
-  fogMemoryState={key:memoryKey,seen:new Set(Array.isArray(seen)?seen:[]),shading:new Map(),dirty:false};
+  try{
+   seen=JSON.parse(localStorage.getItem('battlemap.fog:'+memoryKey))??[];
+   // Migrate older browser history keyed with the mutable room title.
+   for(let i=0;i<localStorage.length;i++){
+    const key=localStorage.key(i);
+    if(!key?.startsWith('battlemap.fog:'))continue;
+    let identity;try{identity=JSON.parse(key.slice('battlemap.fog:'.length))}catch{continue}
+    if(Array.isArray(identity)&&identity.length===4&&identity[0]===roomProfile?.name&&identity[1]===currentSceneId&&Number(identity[3]||0)===fogRevision){
+     const prior=JSON.parse(localStorage.getItem(key)||'[]');
+     if(Array.isArray(prior))seen.push(...prior);
+    }
+   }
+  }catch{}
+  fogMemoryState={key:memoryKey,profile:roomProfile?.name,sceneId:currentSceneId,revision:fogRevision,seen:new Set(Array.isArray(seen)?seen:[]),shading:new Map(),dirty:false,pending:false,loaded:false,loading:false,saving:false};
+  if(fogMemoryState.seen.size){fogMemoryState.dirty=true;saveFogMemory()}
+  void syncFogMemory(fogMemoryState);
  }
  const fogSignature=JSON.stringify([signature,roomProfile?.name,areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision]);
  if(fogCache?.signature!==fogSignature)fogCache={signature:fogSignature,points:new Map(),terrainPatches:new Map(),terrainPatchCount:0};
