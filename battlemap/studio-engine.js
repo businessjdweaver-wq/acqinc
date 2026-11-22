@@ -5901,8 +5901,10 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  addFixtureFaces(blockers);
  recordGeometryStage('faceGeometryMs');
  // Read-only geometry audit. Count existing faces; never alter rendering.
- const geometryAudit=performanceDraw?{generated:faces.length,afterProjection:0,afterFog:0,projectionRejected:0,fogRejected:0,byType:{},stairGroups:{},fogInputByType:{},finalByType:{}}:null;
+ const geometryAudit=performanceDraw?{generated:faces.length,afterProjection:0,afterFog:0,projectionRejected:0,fogRejected:0,byType:{},stairGroups:{},fogInputByType:{},finalByType:{},sharedSurfaceAudit:{exactDuplicateFaces:0,sharedFacePairs:0,byType:{},candidateFaces:0},projectionAudit:{offscreenVertices:0,fullyOffscreenFaces:0}}:null;
  const geometryFaceType=f=>{
+  if(f.pathWall)return 'path wall';
+  if(f.p?.type==='volume'&&f.p?.form)return 'shaped volume';
   if(f.standee)return 'standee';
   if(f.shadow)return 'shadow';
   if(f.fixtureFace)return 'fixture';
@@ -5915,6 +5917,34 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(f.canopy!==undefined)return 'canopy';
   return 'unclassified';
  };
+ if(geometryAudit){
+  // Detect exact coincident faces without altering geometry. This is a lower
+  // bound on redundant internal faces, not a general solid-union test.
+  const surfaces=new Map();
+  const quantize=v=>Math.round(Number(v)*10000)/10000;
+  for(const f of faces){
+   if(!f.world||f.world.length<3||f.preview||f.standee||f.shadow)continue;
+   const vertices=f.world.map(v=>v.map(quantize).join(','));
+   if(new Set(vertices).size!==vertices.length)continue;
+   geometryAudit.sharedSurfaceAudit.candidateFaces++;
+   const key=vertices.slice().sort().join('|');
+   let entries=surfaces.get(key);
+   if(!entries){entries=[];surfaces.set(key,entries)}
+   entries.push(f);
+   if(f.projected?.every(v=>v[0]<0||v[0]>W||v[1]<0||v[1]>H))
+    geometryAudit.projectionAudit.offscreenVertices++;
+  }
+  for(const entries of surfaces.values())if(entries.length>1){
+   geometryAudit.sharedSurfaceAudit.exactDuplicateFaces+=entries.length-1;
+   // A matching pair may be a shared interior surface; confirm adjacency
+   // before deleting it in any future optimization.
+   geometryAudit.sharedSurfaceAudit.sharedFacePairs+=Math.floor(entries.length/2);
+   for(const f of entries){
+    const type=geometryFaceType(f);
+    geometryAudit.sharedSurfaceAudit.byType[type]=(geometryAudit.sharedSurfaceAudit.byType[type]||0)+1;
+   }
+  }
+ }
  if(geometryAudit)for(const f of faces){
   const type=geometryFaceType(f);
   geometryAudit.byType[type]=(geometryAudit.byType[type]||0)+1;
