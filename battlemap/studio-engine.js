@@ -6515,9 +6515,32 @@ function furniturePlacementSurface(x,y,exclude){
 }
 function draggedTerrainPosition(x,y,alt){
  const {piece,dx,dy}=drag;
- if(!alt||!piece.stairTread)return candidate(x,y,piece,dx,dy,null,alt);
+ if(!alt)return candidate(x,y,piece,dx,dy,null,false);
+ // Alt-drag must project onto the block's ORIGINAL elevation, not onto
+ // whichever raised surface happens to be under the cursor.
  const [u,v]=inverse(x,y,piece.z),[a,b]=inverse(drag.x,drag.y,piece.z);
- return {...piece,x:Math.round((piece.x+u-a)*4)/4,y:Math.round((piece.y+v-b)*4)/4};
+ const moved={...piece,x:Math.round((piece.x+u-a)*4)/4,y:Math.round((piece.y+v-b)*4)/4};
+ if(piece.type!=='volume'||piece.stairTread)return moved;
+ const dims=dimensions(moved),epsilon=1e-6;
+ // Snap the nearest adjacent face, never overlapping the neighbor.
+ let best=null;
+ for(const neighbor of pieces){
+  if(neighbor===piece||neighbor.type!=='volume'||neighbor.stairTread)continue;
+  const other=dimensions(neighbor);
+  if(moved.z+dims[2]<=neighbor.z+epsilon||neighbor.z+other[2]<=moved.z+epsilon)continue;
+  for(let axis=0;axis<2;axis++){
+   const key=axis===0?'x':'y',cross=axis===0?'y':'x',crossAxis=1-axis;
+   if(moved[cross]+dims[crossAxis]<=neighbor[cross]+epsilon||neighbor[cross]+other[crossAxis]<=moved[cross]+epsilon)continue;
+   for(const edge of [neighbor[key]-dims[axis],neighbor[key]+other[axis]]){
+    const distance=Math.abs(moved[key]-edge);
+    if(distance<=.5&&(!best||distance<best.distance)){
+     const trial={...moved,[key]:edge};
+     if(valid(trial,undefined,piece,areas,false,false,false))best={trial,distance};
+    }
+   }
+  }
+ }
+ return best?.trial??moved;
 }
 function candidate(x,y,p,dx=0,dy=0,snap=null,alt=false){
  const excluded=drag?.members?new Set(drag.members):carry?.piece||drag?.piece||(visionTool==='moveTerrain'?visionSelection:null);
@@ -7760,7 +7783,7 @@ canvas.onpointerup=e=>{
    remember();drag.members.forEach((piece,i)=>Object.assign(piece,positions[i]));message('Terrain group moved.');
   }else message('The group does not fit there.');
  }else if(drag.piece&&ghost){
-  if(isFurniture(drag.piece)||drag.piece.stairTread)ghost=draggedTerrainPosition(x,y,e.altKey);
+  if(isFurniture(drag.piece)||drag.piece.stairTread||drag.piece.type==='volume'&&e.altKey)ghost=draggedTerrainPosition(x,y,e.altKey);
   const stairOverride=e.altKey&&drag.piece.stairTread;
   if(valid(ghost,undefined,drag.piece,areas,e.altKey,stairOverride)&&(stairOverride||preservesSupport(ghost))){remember();Object.assign(drag.piece,ghost);if(stairOverride)drag.piece.floorAdjusted=true;message('Piece moved.')}
   else message('That piece does not fit here.');
