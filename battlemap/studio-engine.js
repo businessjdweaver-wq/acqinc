@@ -5496,7 +5496,11 @@ function fogPatchDefinitelyDark(patch){
  // Conservative full-patch test, including its interior. No hard vision
  // cutoff: this shortcut is used only for explicitly dark rooms without
  // openings and when no emitter can illuminate the patch.
- if(!fogDistantDarkEligible||!patch.world?.length||areas.some(a=>a.shape==='opening'))return false;
+ if(!fogDistantDarkEligible||!patch.world?.length)return false;
+ // An opening elsewhere in the scene cannot illuminate a patch by itself.
+ // Keep the conservative distance-to-observer and distance-to-every-light
+ // checks below; these prevent suppressing visible geometry near portals.
+ // This also allows region-level dark rejection in maps containing doors.
  const observers=(fogPreparedObservers||(fogPreparedObservers=prepareFogObservers())).observers;
  if(!observers.length)return false;
  const pts=patch.world.map(p=>surfaceLightPoint(p,patch.surfaceLightOffset));
