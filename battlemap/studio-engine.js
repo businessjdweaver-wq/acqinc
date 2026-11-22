@@ -5022,30 +5022,35 @@ function saveFogMemory(){
  state.pending=true;
 }
 async function syncFogMemory(state){
- if(railTravelRunning)return;
- if(!state||!roomProfile?.token||!state.sceneId||state.profile!==roomProfile.name)return;
- if(!state.loaded&&!state.loading){
-  state.loading=true;
+ if(railTravelRunning||!state||fogMemoryState!==state)return;
+ if(!state.sceneId||state.profile!==roomProfile?.name){state.syncStatus='identity-mismatch';return}
+ if(!roomProfile?.token){state.syncStatus='waiting-for-session';return}
+ if(state.loading||state.saving)return;
+ if(!state.loaded){
+  state.loading=true;state.syncStatus='loading';
   try{
    const result=await roomRpc('fog_load',{ticket:roomProfile.token,scene_id:state.sceneId,fog_revision:state.revision});
    if(result?.error)throw Error(result.error);
-   if(Array.isArray(result?.seen)){
-    const before=state.seen.size;
-    for(const key of result.seen)state.seen.add(key);
-    console.info('[Fog memory] remote restoration',{sceneId:state.sceneId,remote:result.seen.length,before,after:state.seen.size});
-    state.dirty=true;saveFogMemory();
-    if(fogMemoryState===state)draw('Fog history restored');
-   }
-   state.loaded=true;
-  }catch(error){console.warn('Fog history load failed',error)}
-  finally{state.loading=false}
+   if(!Array.isArray(result?.seen))throw Error('Fog load returned no history array');
+   if(fogMemoryState!==state)return;
+   const before=state.seen.size;
+   for(const key of result.seen)state.seen.add(key);
+   state.loaded=true;state.syncStatus='loaded';state.loadError=null;
+   console.info('[Fog memory] remote restoration',{sceneId:state.sceneId,remote:result.seen.length,before,after:state.seen.size});
+   if(state.seen.size!==before){state.dirty=true;saveFogMemory();draw('Fog history restored')}
+  }catch(error){
+   state.syncStatus='load-failed';state.loadError=String(error?.message||error);
+   console.warn('Fog history load failed; remote saving blocked',error);
+  }finally{state.loading=false}
  }
- if(!state.loaded||!state.pending||state.saving)return;
- state.saving=true;state.pending=false;
+ // Never overwrite remote exploration with a partial local snapshot.
+ if(!state.loaded||!state.pending||state.saving||fogMemoryState!==state)return;
+ state.saving=true;state.pending=false;state.syncStatus='saving';
  try{
   const result=await roomRpc('fog_save',{ticket:roomProfile.token,scene_id:state.sceneId,fog_revision:state.revision,seen:[...state.seen]});
   if(result?.error)throw Error(result.error);
- }catch(error){state.pending=true;console.warn('Fog history save failed',error)}
+  state.syncStatus='saved';
+ }catch(error){state.pending=true;state.syncStatus='save-failed';state.loadError=String(error?.message||error);console.warn('Fog history save failed',error)}
  finally{state.saving=false}
 }
 
@@ -5558,9 +5563,16 @@ function startLightingFrame(){
     }
    }
   }catch{}
-  fogMemoryState={key:memoryKey,profile:roomProfile?.name,sceneId:currentSceneId,revision:fogRevision,seen:new Set(Array.isArray(seen)?seen:[]),shading:new Map(),dirty:false,pending:false,loaded:false,loading:false,saving:false};
+  fogMemoryState={key:memoryKey,profile:roomProfile?.name,sceneId:currentSceneId,revision:fogRevision,seen:new Set(Array.isArray(seen)?seen:[]),shading:new Map(),dirty:false,pending:false,loaded:false,loading:false,saving:false,syncStatus:'not-loaded',loadError:null};
   console.info('[Fog memory] local restoration',{sceneId:currentSceneId,revision:fogRevision,stored:fogMemoryState.seen.size,profile:roomProfile?.name});
   if(fogMemoryState.seen.size){fogMemoryState.dirty=true;saveFogMemory()}
+  void syncFogMemory(fogMemoryState);
+ }
+ // Retry history restoration after the player session becomes available.
+ // Throttle failed requests to avoid repeated network calls during redraws.
+ if(fogMemoryState&&!fogMemoryState.loaded&&!fogMemoryState.loading&&
+    (!fogMemoryState.lastLoadAttempt||Date.now()-fogMemoryState.lastLoadAttempt>5000)){
+  fogMemoryState.lastLoadAttempt=Date.now();
   void syncFogMemory(fogMemoryState);
  }
  const fogSignature=JSON.stringify([signature,roomProfile?.name,areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision]);
@@ -6724,7 +6736,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    geometryAudit.fogAudit.rejectedFacesByType[type]=n-(geometryAudit.finalByType[type]||0);
   // Negative fogRejected means fog refinement expanded faces, not a counter error.
   performanceDraw.geometryAudit=geometryAudit;
-  performanceDraw.fogMemory={sceneId:currentSceneId,revision:fogMemoryState?.revision,stored:fogMemoryState?.seen.size||0,remoteLoaded:!!fogMemoryState?.loaded,remoteLoading:!!fogMemoryState?.loading,pendingSave:!!fogMemoryState?.pending,...fogMemoryDrawAudit};
+  performanceDraw.fogMemory={sceneId:currentSceneId,revision:fogMemoryState?.revision,stored:fogMemoryState?.seen.size||0,remoteLoaded:!!fogMemoryState?.loaded,remoteLoading:!!fogMemoryState?.loading,pendingSave:!!fogMemoryState?.pending,syncStatus:fogMemoryState?.syncStatus||'inactive',loadError:fogMemoryState?.loadError||null,sessionReady:!!roomProfile?.token,...fogMemoryDrawAudit};
  }
  recordGeometryStage('fogGeometryMs');
  if(pendingFogTravel)pendingFogTravel=null;
