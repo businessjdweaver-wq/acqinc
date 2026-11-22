@@ -4932,18 +4932,30 @@ function sightlineClear(eye,target,blockers){
   return interval&&interval[0]<.995;
  });
 }
+let fogIlluminationCache=null;
 function fogPointVisible(target,respectFogMode=true){
  if(respectFogMode&&!mapFogEnabled())return true;
  const key=target.join(',');
  if(fogCache?.points.has(key))return fogCache.points.get(key);
  const blockers=visionBlockers();
  const preview=gmVisionObserver();
+ // Static illumination is reusable as observers travel; wall/door/light edits
+ // invalidate it independently via terrainLightSignature.
+ let illumination;
+ const illuminated=()=>{
+  if(illumination!==undefined)return illumination;
+  const cache=fogIlluminationCache?.values;
+  if(cache?.has(key))return illumination=cache.get(key);
+  illumination=!!(ambientAt(target,blockers)||lightAt(target,blockers));
+  if(cache&&cache.size<180000)cache.set(key,illumination);
+  return illumination;
+ };
  const visible=(!preview&&eyeSees(target,blockers))||(preview?[preview]:visionObservers(tokens)).some(token=>{
   if((!preview&&(!ownsRoomStandee(token)||token.incognito))||(token.conditions?.includes('dead')||token.conditions?.includes('blinded')&&!token.blindsight))return false;
   const eye=basePoint(token);eye[2]+=.65;
   // Illumination and darkvision are independent of observer occlusion.
   // Reject unlit, out-of-range samples before the expensive wall ray test.
-  return (darkvisionReaches(token,target)||ambientAt(target,blockers)||lightAt(target,blockers))&&
+  return (darkvisionReaches(token,target)||illuminated())&&
    sightlineClear(eye,target,blockers);
  });
  // Boundary refinement samples many shared world points. The former 24k cap
@@ -5096,6 +5108,8 @@ function startLightingFrame(){
   void syncFogMemory(fogMemoryState);
  }
  const fogSignature=JSON.stringify([signature,roomProfile?.name,areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision]);
+ if(fogIlluminationCache?.signature!==terrainLightSignature)
+  fogIlluminationCache={signature:terrainLightSignature,values:new Map()};
  if(fogCache?.signature!==fogSignature)fogCache={signature:fogSignature,points:new Map(),terrainPatches:new Map(),terrainPatchCount:0};
  if(lightingCache?.signature!==signature||lightingCache.lightResults.size+lightingCache.surfaceLighting.size>24000){
   lightingCache={signature,lightResults:new Map(),surfaceLighting:new Map()};
