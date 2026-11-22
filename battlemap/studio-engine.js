@@ -5115,6 +5115,76 @@ let fogIlluminationCache=null;
 let fogMovingLightCache={signature:null,positions:new Map()};
 const FOG_LIGHT_POSITION_LIMIT=24;
 const FOG_LIGHT_POINT_LIMIT=180000;
+// Opportunistic world-space light prewarming. Never changes visibility decisions.
+let fogPrewarmJob=null;
+let fogPrewarmTimer=null;
+let fogPrewarmCompletedKey=null;
+function fogPrewarmStatus(message){
+ let node=document.getElementById('fogPrewarmStatus');
+ if(!node){
+  node=document.createElement('div');
+  node.id='fogPrewarmStatus';
+  node.setAttribute('role','status');
+  node.style.cssText='position:fixed;bottom:12px;left:12px;z-index:1000;background:#17212bdc;color:white;padding:6px 10px;border-radius:6px;font:12px sans-serif;pointer-events:none';
+  document.body.appendChild(node);
+ }
+ node.textContent=message;
+ node.hidden=!message;
+}
+function queueFogPrewarm(signature,lights){
+ if(!playing||!currentSceneId||!lights.some(light=>light.carried))return;
+ const emitters=lights.filter(light=>light.carried);
+ const positionKey=JSON.stringify(emitters.map(light=>[
+  lightRangeCenter(light),light.radius,light.bright,light.tint,light.lightElevation,light.spell
+ ]));
+ const jobKey=signature+'|'+positionKey;
+ if(fogPrewarmCompletedKey===jobKey||fogPrewarmJob?.key===jobKey)return;
+ if(fogPrewarmTimer!==null){clearTimeout(fogPrewarmTimer);fogPrewarmTimer=null}
+ const origins=tokens.filter(ownsRoomStandee).map(basePoint);
+ if(!origins.length)return;
+ // Small local grid first; never enumerate the entire scene.
+ const points=[],seen=new Set();
+ for(let radius=0;radius<=5;radius++)for(const origin of origins){
+  for(let dx=-radius;dx<=radius;dx++)for(let dy=-radius;dy<=radius;dy++){
+   if(Math.max(Math.abs(dx),Math.abs(dy))!==radius)continue;
+   const p=[Math.floor(origin[0])+dx+.5,Math.floor(origin[1])+dy+.5,Math.floor(origin[2])+.65];
+   const k=p.join(',');
+   if(!seen.has(k)){seen.add(k);points.push(p)}
+  }
+ }
+ const job={key:jobKey,signature,positionKey,points,index:0};
+ fogPrewarmJob=job;
+ const run=()=>{
+  fogPrewarmTimer=null;
+  if(fogPrewarmJob!==job||fogMovingLightCache.signature!==signature){fogPrewarmStatus('');return}
+  // Yield after at most 8 samples or 6ms, whichever occurs first.
+  const started=performance.now();
+  let count=0;
+  let cache=fogMovingLightCache.positions.get(positionKey);
+  if(!cache){
+   cache=new Map();fogMovingLightCache.positions.set(positionKey,cache);
+   if(fogMovingLightCache.positions.size>FOG_LIGHT_POSITION_LIMIT)
+    fogMovingLightCache.positions.delete(fogMovingLightCache.positions.keys().next().value);
+  }
+  let blockers;
+  while(job.index<points.length&&count<8&&performance.now()-started<6){
+   const p=points[job.index++],key=p.join(',');
+   if(!cache.has(key)){
+    blockers=blockers||visionBlockers();
+    cache.set(key,!!(ambientAt(p,blockers)||lightAt(p,blockers)));
+   }
+   count++;
+  }
+  if(job.index<points.length){
+   fogPrewarmStatus('Preparing nearby lighting '+Math.round(100*job.index/points.length)+'%');
+   fogPrewarmTimer=setTimeout(run,16);
+  }else{
+   fogPrewarmCompletedKey=job.key;fogPrewarmJob=null;fogPrewarmStatus('');
+  }
+ };
+ fogPrewarmStatus('Preparing nearby lighting 0%');
+ fogPrewarmTimer=setTimeout(run,0);
+}
 let fogMovingLightHits=0;
 let fogMovingLightMisses=0;
 let fogDistantDarkCache=null;
@@ -5497,6 +5567,7 @@ function startLightingFrame(){
  if(lightingCache?.signature!==signature||lightingCache.lightResults.size+lightingCache.surfaceLighting.size>24000){
   lightingCache={signature,lightResults:new Map(),surfaceLighting:new Map()};
  }
+ queueFogPrewarm(terrainLightSignature,lights);
  return {...lightingCache,blockers,lights,terrainLightSignature,visibility:new Map()};
 }
 function timeLighting(work){
