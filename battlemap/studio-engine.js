@@ -7905,6 +7905,26 @@ function carryBlockerLabel(blocker){
  if(movementTerrainBlock(blocker))return 'An obstacle or raised terrain';
  return 'An obstacle';
 }
+let confirmedMovementRepaint=null;
+let confirmedMovementRepaintSerial=0;
+function scheduleConfirmedMovementRepaint(){
+ const serial=++confirmedMovementRepaintSerial;
+ if(confirmedMovementRepaint!==null){
+  if(typeof cancelIdleCallback==='function')cancelIdleCallback(confirmedMovementRepaint);
+  else clearTimeout(confirmedMovementRepaint);
+ }
+ // Allow input, context menus and double clicks to be dispatched before
+ // expensive fog and lighting work. A bounded timeout avoids starving paint.
+ const repaint=()=>{
+  if(serial!==confirmedMovementRepaintSerial)return;
+  confirmedMovementRepaint=null;
+  if(carry||drag?.piece)return; // Active interaction owns the next repaint.
+  refresh();
+ };
+ if(typeof requestIdleCallback==='function')
+  confirmedMovementRepaint=requestIdleCallback(repaint,{timeout:180});
+ else confirmedMovementRepaint=setTimeout(repaint,80);
+}
 async function commitCarry(){
  const blocker=movementBlocked();
  if(blocker){message(carryBlockerLabel(blocker)+' blocks this route. Choose a waypoint around it.');draw();return}
@@ -7940,12 +7960,12 @@ async function commitCarry(){
    await pollRoom();
    const pollMs=performance.now()-pollStart;
    route=null;carry=null;ghost=null;
-   // v1.544: yield after the authoritative room update before the expensive
-   // sharp lighting/fog repaint. Keep the last confirmed visibility bitmap
-   // until that repaint; never render provisional newly discovered terrain.
-   // This is an interaction-first scheduling step, not a worker-based renderer.
-   await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
-   refresh();
+   // v1.545: prioritize browser input before the confirmed sharp-light repaint.
+   // Keep the last verified visibility bitmap; never preview undiscovered terrain.
+   // Coalesce successive confirmed movements so an obsolete queued repaint
+   // cannot compete with a newer position. This does not interrupt an active
+   // synchronous draw; a worker/chunked renderer is still needed for that.
+   scheduleConfirmedMovementRepaint();
    if(performanceDraw)performanceDraw.movementCommit={serverMs:Math.round(serverMs),pollMs:Math.round(pollMs),totalMs:Math.round(performance.now()-moveStart)};
   }catch(err){message(err.message);await pollRoom()}
   finally{roomMoving=false}
