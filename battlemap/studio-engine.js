@@ -6790,6 +6790,24 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  };
  const roomTopology=wallVisibilityTopology();
  const roomCandidates=roomTopology?wallVisibilityCandidates(roomTopology,fogPrepared):null;
+ // Apply the same 10-foot portal eligibility used by point visibility
+ // before generating terrain patches. Connectivity alone is not visibility.
+ const eligibleRoomIds=new Set();
+ let roomEligibilityReliable=!!roomCandidates&&!fogPrepared.preview&&
+  fogPrepared.observers.length>0&&fogPrepared.observers.every(o=>Math.abs(o.distance[2])<=.15);
+ if(roomEligibilityReliable)for(const observer of fogPrepared.observers){
+  const own=roomTopology.regionAt(observer.distance);
+  if(own===null||own===undefined){roomEligibilityReliable=false;break}
+  eligibleRoomIds.add(own);
+  for(const portal of roomTopology.portals||[]){
+   const [a,b]=portal.regions||[];
+   if(a!==own&&b!==own)continue;
+   if(!(portal.kind==='Window'?!portal.shaded:portal.open))continue;
+   if(Math.hypot(observer.distance[0]-portal.center[0],observer.distance[1]-portal.center[1])>2)continue;
+   if(a!==null&&a!==undefined)eligibleRoomIds.add(a);
+   if(b!==null&&b!==undefined)eligibleRoomIds.add(b);
+  }
+ }
  const roomCounts={facesChecked:0,reachable:0,disconnected:0,mixed:0,unknown:0,culledFaces:0,regionCacheHits:0,regionCacheMisses:0,portalGuarded:0,elevationGuarded:0};
  // Cache topology lookups across the thousands of wall and floor vertices.
  // Portals and elevated geometry remain in the authoritative 3D path.
@@ -6837,14 +6855,14 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    ids.add(cachedRegionAt(center));
    if(ids.has(null))roomCounts.unknown++;
    else if(ids.size!==1)roomCounts.mixed++;
-   else if(roomCandidates.reachable.has(ids.values().next().value))roomCounts.reachable++;
+   else if(!roomEligibilityReliable||eligibleRoomIds.has(ids.values().next().value))roomCounts.reachable++;
    else {
     roomCounts.disconnected++;
     const elevated=raisedSurface;
     const portal=nearPortal(f);
     if(elevated)roomCounts.elevationGuarded++;
     if(portal)roomCounts.portalGuarded++;
-    if(!fogPrepared.preview&&!elevated&&!portal&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture){
+    if(roomEligibilityReliable&&!elevated&&!portal&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture){
      roomCounts.culledFaces++;
      return [];
     }
