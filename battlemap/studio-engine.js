@@ -5332,7 +5332,13 @@ function queueFogPrewarm(signature,lights){
  const run=()=>{
   fogPrewarmTimer=null;
   if(fogPrewarmJob!==job||fogMovingLightCache.signature!==signature){fogPrewarmStatus('');return}
-  // Yield after at most 8 samples or 6ms, whichever occurs first.
+  // v1.546: cooperative idle-time lighting preparation. Never run a
+  // background batch during a standee drag, pending confirmation, or input.
+  // Preserve exact ray/gradient calculations; only the scheduling changes.
+  if(carry||drag||roomMoving){
+   fogPrewarmTimer=setTimeout(run,60);
+   return;
+  }
   const started=performance.now();
   let count=0;
   let cache=fogMovingLightCache.positions.get(positionKey);
@@ -5342,7 +5348,7 @@ function queueFogPrewarm(signature,lights){
     fogMovingLightCache.positions.delete(fogMovingLightCache.positions.keys().next().value);
   }
   let blockers;
-  while(job.index<points.length&&count<8&&performance.now()-started<6){
+  while(job.index<points.length&&count<4&&performance.now()-started<3){
    const p=points[job.index++],key=p.join(',');
    if(!cache.has(key)){
     blockers=blockers||visionBlockers();
