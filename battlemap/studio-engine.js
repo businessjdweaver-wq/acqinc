@@ -872,11 +872,48 @@ function visionBlockers(){
  if(lightingFrame)lightingFrame.blockers=blockers;
  return blockers;
 }
+// Broad-phase ray acceleration. Static blocker bounds are indexed once per
+// lighting frame, while exact prism/terrain intersections remain unchanged.
+// AABB overlap is inclusive here to avoid excluding grazing wall hits.
+const rayBlockerIndices=new WeakMap();
+function rayBlockerCandidates(blockers,start,end){
+ if(blockers.length<24)return blockers;
+ let index=rayBlockerIndices.get(blockers);
+ if(!index){
+  const cell=8,buckets=new Map(),oversize=[];
+  blockers.forEach((bounds,i)=>{
+   const x0=Math.floor(bounds[0][0]/cell),x1=Math.floor(bounds[0][1]/cell);
+   const y0=Math.floor(bounds[1][0]/cell),y1=Math.floor(bounds[1][1]/cell);
+   const count=(x1-x0+1)*(y1-y0+1);
+   if(!Number.isFinite(count)||count>256){oversize.push(i);return}
+   for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++){
+    const key=x+','+y;
+    if(!buckets.has(key))buckets.set(key,[]);
+    buckets.get(key).push(i);
+   }
+  });
+  index={cell,buckets,oversize};
+  rayBlockerIndices.set(blockers,index);
+ }
+ const loX=Math.min(start[0],end[0]),hiX=Math.max(start[0],end[0]);
+ const loY=Math.min(start[1],end[1]),hiY=Math.max(start[1],end[1]);
+ const loZ=Math.min(start[2],end[2]),hiZ=Math.max(start[2],end[2]);
+ const x0=Math.floor(loX/index.cell),x1=Math.floor(hiX/index.cell);
+ const y0=Math.floor(loY/index.cell),y1=Math.floor(hiY/index.cell);
+ // Very long or off-map rays fall back to the original exhaustive scan.
+ if(!Number.isFinite(x0+y0+x1+y1)||(x1-x0+1)*(y1-y0+1)>4096)return blockers;
+ const ids=new Set(index.oversize);
+ for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)
+  for(const id of index.buckets.get(x+','+y)??[])ids.add(id);
+ // Preserve original order, including for partially transmitting walls.
+ return [...ids].sort((a,b)=>a-b).map(i=>blockers[i]).filter(b=>
+  b[0][1]>=loX&&b[0][0]<=hiX&&b[1][1]>=loY&&b[1][0]<=hiY&&b[2][1]>=loZ&&b[2][0]<=hiZ);
+}
 function visionRayClear(from,to,blockers){
  if(performanceDraw)performanceDraw.rays++;
  const start=[from[0],from[1],from[2]+.65],end=[to[0],to[1],to[2]+.65];
  const min=start.map((v,i)=>Math.min(v,end[i])),max=start.map((v,i)=>Math.max(v,end[i]));
- return !blockers.some(bounds=>{
+ return !rayBlockerCandidates(blockers,start,end).some(bounds=>{
   if(bounds.wallPrism)return !wallPassage(bounds.wallPrism).sight&&wallPrismInterval(bounds.wallPrism,start,end);
   if(bounds.terrain)return movementInterval(...turnTerrainPoints([start,end],bounds.terrain,-bounds.terrain.terrainYaw),bounds);
   return bounds.every(([lo,hi],i)=>max[i]>lo&&min[i]<hi)&&movementInterval(start,end,bounds);
@@ -2846,7 +2883,7 @@ function wallPassage(solid){
 function wallRayTransmission(start,end,blockers){
  let transmission=1;
  const traversed=new Map();
- for(const bounds of blockers){
+ for(const bounds of rayBlockerCandidates(blockers,start,end)){
   if(bounds.wallPrism){
    const solid=bounds.wallPrism;
    if(!wallPrismInterval(solid,start,end))continue;
