@@ -163,7 +163,7 @@ function valid(p,others=[...pieces,...tokens],ignore=selected,sceneAreas=areas,a
  const [w,d,h]=dimensions(p),onStair=stairSupportsStandee(p,others);
  if(p.type==='standee'&&!gmMovementOverride){
   const center=[p.x+w/2,p.y+d/2,p.z];
-  if(pathWallSolids(sceneAreas).some(solid=>wallStopsMovement(solid)&&wallPrismInterval(solid,center,center,w/2,h)))return false;
+  if(pathWallSolids(sceneAreas).some(solid=>wallStopsMovement(solid)&&wallPrismInterval(solid,center,center,0,h)))return false;
  }
  const onMap=(p.terrainYaw?terrainFootprint(p):[[p.x,p.y],[p.x+w,p.y+d]]).every(([x,y])=>x>=-1e-8&&y>=-1e-8&&x<=sceneGrid(sceneAreas).width+1e-8&&y<=sceneGrid(sceneAreas).depth+1e-8);
  const source=ignore?.type==='standee'?ignore:carry?.members?.find(t=>t.roomId===p.roomId)||carry?.piece;
@@ -6147,7 +6147,7 @@ function movementSegment(start,end,mover,members=[]){
  const distance=5*Math.hypot(...end.map((v,i)=>v-start[i]));
  if(!mover||!distance)return {cost:distance,hazards:[],blocked:false};
  const half=mover.size/2, height=dimensions(mover)[2],intervals=[];
- const wall=pathWallSolids().find(solid=>wallStopsMovement(solid)&&wallPrismInterval(solid,start,end,half,height));
+ const wall=pathWallSolids().find(solid=>wallStopsMovement(solid)&&wallPrismInterval(solid,start,end,0,height));
  if(wall)return {cost:distance,hazards:[],blocked:true,blocker:wall};
  for(const opening of visionObjects()){
   const window=opening.kind==='Window';
