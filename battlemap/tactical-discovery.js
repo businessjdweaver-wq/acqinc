@@ -37,6 +37,7 @@ function tacticalRecordExplored(points,blockers=visionBlockers()){
  // GM preview and unauthenticated clients must not add to player memory.
  if(!key||roomProfile?.gm!==false||!Array.isArray(points))return 0;
  const topology=tacticalTopologyVersion(),old=tacticalReadDiscovery();
+ // A changed wall layout starts a fresh discovery epoch. Do not reuse old cells.
  const known=new Set(old.topology===topology?old.cells:[]);
  let added=0;
  for(const point of points){
@@ -72,7 +73,7 @@ function tacticalScheduleScan(){
  const observers=visionObservers(tokens).filter(t=>ownsRoomStandee(t)&&!t.incognito&&!t.conditions?.includes('dead')&&(!t.conditions?.includes('blinded')||t.blindsight>0));
  const centers=[...observers.map(basePoint),...spellEyes()];
  const signature=[roomState.sceneId,tacticalFogRevision(),tacticalTopologyVersion(),...centers.map(p=>p.join(',')),...observers.map(t=>[t.roomId,t.vision,t.darkvision,t.torch,t.torchBright,t.torchDim].join(':'))].join('|');
- if(signature===tacticalScanSignature)return;
+ if(signature===tacticalScanSignature&&tacticalReadDiscovery().topology===tacticalTopologyVersion())return;
  tacticalScanStatus=centers.length?'Scanning '+centers.length+' vision source(s)':'No controlled vision sources';
  tacticalScanSignature=signature;
  clearTimeout(tacticalScanTimer);
@@ -80,6 +81,8 @@ function tacticalScheduleScan(){
   if(roomProfile?.gm!==false||!roomState?.active){tacticalScanStatus='Scan aborted: inactive scene';return}
   const samples=[];
   for(const [x,y,z] of centers.slice(0,12)){
+   // Always sample the observer's actual position as well as adjacent cell centers.
+   samples.push([x,y,z]);
    for(const [dx,dy] of [[0,0],[1,0],[-1,0],[0,1],[0,-1],[2,0],[-2,0],[0,2],[0,-2],[1,1],[-1,1],[1,-1],[-1,-1]])
     samples.push([Math.floor(x)+dx+.5,Math.floor(y)+dy+.5,z]);
   }
@@ -88,7 +91,7 @@ function tacticalScheduleScan(){
    const candidates=samples.filter(p=>playerCanSeePoint(p,blockers));
    tacticalScanStatus='Sources '+centers.length+' · samples '+samples.length+' · visible '+candidates.length;
    const added=tacticalRecordExplored(candidates,blockers);
-   tacticalScanStatus+=' · added '+added;
+   tacticalScanStatus+=' · added '+added+' · stored '+tacticalMapCells().length;
    tacticalMapRender();
   }catch(error){tacticalScanStatus='Scan error: '+error.message;console.warn('Tactical discovery scan failed',error)}
  },100);
@@ -147,7 +150,7 @@ function tacticalMapInit(){
  document.addEventListener('tactical-map-opened',()=>{try{tacticalScanSignature='';tacticalScheduleScan();tacticalMapRender()}catch(error){tacticalScanStatus='Map error: '+error.message;console.warn('Tactical map rendering error',error)}});
 
  document.getElementById('tacticalMapPopout').addEventListener('click',tacticalMapOpenWindow);
- tacticalMapRefresh=setInterval(()=>{if(playerButton)playerButton.hidden=roomProfile?.gm!==false||!roomState?.active;if(!panel.hidden||tacticalMapWindow&&!tacticalMapWindow.closed)tacticalMapRender()},1500);
+ tacticalMapRefresh=setInterval(()=>{if(playerButton)playerButton.hidden=roomProfile?.gm!==false||!roomState?.active;if(!panel.hidden||tacticalMapWindow&&!tacticalMapWindow.closed){if(tacticalReadDiscovery().topology!==tacticalTopologyVersion())tacticalScheduleScan();tacticalMapRender()}},1500);
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',tacticalMapInit,{once:true});
 else tacticalMapInit();
