@@ -6186,7 +6186,7 @@ function draw(action,reusePan=false){
   const snapshot=paintedCamera;
   const useSnapshot=(snapshotZoom||snapshotPan)&&snapshot&&snapshot.angle===angle&&snapshot.tilt===tilt&&snapshot.topDown===topDown&&
    canvas.clientWidth===snapshot.width&&canvas.clientHeight===snapshot.height&&(!drag||snapshotPan)&&!carry;
-  if(action==='Standee movement'&&canReuseStandeeLayer()){
+  if((action==='Standee movement'||(!action&&carry?.piece?.type==='standee'&&!carry.light&&!carry.arcaneEye))&&canReuseStandeeLayer()){
    paintMovingStandeeLayer(movingStandeeLayer);
    drawRoute();positionMoveActions();drawStandeeNames();
    if(performanceDraw)performanceDraw.standeeLayerOnly=true;
