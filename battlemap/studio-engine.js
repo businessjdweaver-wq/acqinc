@@ -4941,7 +4941,10 @@ function fogPointVisible(target,respectFogMode=true){
  const visible=(!preview&&eyeSees(target,blockers))||(preview?[preview]:visionObservers(tokens)).some(token=>{
   if((!preview&&(!ownsRoomStandee(token)||token.incognito))||(token.conditions?.includes('dead')||token.conditions?.includes('blinded')&&!token.blindsight))return false;
   const eye=basePoint(token);eye[2]+=.65;
-  return sightlineClear(eye,target,blockers)&&(darkvisionReaches(token,target)||ambientAt(target,blockers)||lightAt(target,blockers));
+  // Illumination and darkvision are independent of observer occlusion.
+  // Reject unlit, out-of-range samples before the expensive wall ray test.
+  return (darkvisionReaches(token,target)||ambientAt(target,blockers)||lightAt(target,blockers))&&
+   sightlineClear(eye,target,blockers);
  });
  // Boundary refinement samples many shared world points. The former 24k cap
  // saturated early in complex scenes and forced repeated expensive ray tests.
