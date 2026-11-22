@@ -1929,14 +1929,13 @@ function previewFloorEdit(){
  draw();
  return plan;
 }
-function pickFloorEdit(x,y,precise){
+function pickFloorEdit(x,y,precise,elevated=false){
  if(!floorEdit.first){
   // Default to the actual ground plane, not the frontmost rendered
   // terrain face. An elevated plateau farther up-screen can overlap
   // the ground in perspective and incorrectly lock the selection to
   // its height, producing a false straight-line selection boundary.
   // Shift-click explicitly targets an elevated floor instead.
-  const elevated=!!window.event?.shiftKey;
   const face=elevated?hit(x,y,null,true,f=>!f.p||flatFloorPiece(f.p)):null;
   const z=elevated?(face?.z??0):0;
   floorEdit.z=z;floorEdit.step=precise ? .25 : 1;
@@ -7201,7 +7200,7 @@ canvas.onpointerdown=e=>{
  if(!middle&&modifier&&!topDown){e.preventDefault();if(!carry)ghost=null;drag={orbit:true,x,y,angle,tilt,pivot:measurePoint(x,y)};return}
  if(middle||panMode||(topDown&&modifier)){if(!carry)ghost=null;cancelPanSettle();drag={pan:true,x,y,panX,panY,button:e.button};if(carry)draw();return}
  if(facingTarget){void applyFacingTarget(f);return}
- if(floorEdit&&canEditFloor()){pickFloorEdit(x,y,e.altKey);return}
+ if(floorEdit&&canEditFloor()){pickFloorEdit(x,y,e.altKey,e.shiftKey);return}
  if(!carry&&!areaMode&&!journalPlacing&&!measuring&&!tool&&!tokenTool&&!brush){
   const fixture=hit(x,y,null,false,null,true);
   const light=fixture?.fixtureFace&&areas.includes(fixture.p)?fixture.p:null;
