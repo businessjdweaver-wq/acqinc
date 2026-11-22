@@ -6714,6 +6714,13 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  const portalCenters=roomTopology?.portals?.map(p=>p.center).filter(p=>Array.isArray(p)&&p.length>=2)||[];
  const nearPortal=f=>portalCenters.some(p=>f.world.some(v=>Math.hypot(v[0]-p[0],v[1]-p[1])<2));
  const fogStartDetail=performance.now();
+ // Retain only the geometry of raised terrain caps for a possible outline.
+ // This is not visibility evidence: a cap may be outlined only when one of
+ // its own vertical faces survives the authoritative fog checks.
+ const raisedCapCandidates=faces.filter(f=>f.p&&f.world?.length>=3&&f.z!==null&&f.z!==undefined&&
+  !f.pathWall&&!f.fixtureFace&&!f.doorFace&&!f.preview&&!f.standee&&!f.shadow&&
+  f.world.every(v=>Math.abs((v[2]??0)-(f.world[0][2]??0))<.001)&&
+  (f.world[0][2]??0)>.05);
  faces=faces.flatMap(f=>{
  if(fogDetail)fogDetail.faces++;
   const preview=gmVisionObserver();
@@ -6821,6 +6828,17 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   }
   return visible;
  });
+ // A visible vertical side establishes that the player knows this raised
+ // structure exists. Draw its top perimeter as a line, never its top fill,
+ // texture, lighting, occupants, or fog-memory contents.
+ const visibleRaisedSides=new Set(faces.filter(f=>f.p&&f.z===null&&!f.rememberedFog&&
+  !f.fixtureFace&&!f.doorFace&&!f.preview).map(f=>f.p));
+ const visibleCaps=new Set(faces.filter(f=>f.p&&f.z!==null&&f.z!==undefined&&
+  !f.rememberedFog&&!f.perimeterOnly).map(f=>f.p));
+ for(const cap of raisedCapCandidates){
+  if(!visibleRaisedSides.has(cap.p)||visibleCaps.has(cap.p))continue;
+  faces.push({...cap,perimeterOnly:true});
+ }
  if(fogDetail){
   const measured=fogDetail.patchGenerationMs+fogDetail.boundaryRefinementMs+fogDetail.visibilityMs+fogDetail.travelMemoryMs+fogDetail.memoryMs+fogDetail.projectionMs;
   fogDetail.otherMs=Math.max(0,performance.now()-fogStartDetail-measured);
@@ -7031,6 +7049,15 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
     painted.getContext('2d').drawImage(canvas,0,0);
     movementRenderCache.painted=painted;
    }
+  }
+  if(f.perimeterOnly){
+   // Outline only: never shade or paint the concealed horizontal surface.
+   ctx.save();ctx.globalAlpha=1;ctx.strokeStyle='#b7a58b';
+   ctx.lineWidth=1.65;ctx.setLineDash([5,3]);
+   ctx.beginPath();
+   f.projected.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
+   ctx.closePath();ctx.stroke();ctx.restore();
+   continue;
   }
   if(paintFocusCutaway(f))continue;
   if(!f.p){
