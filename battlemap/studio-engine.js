@@ -5030,7 +5030,9 @@ async function syncFogMemory(state){
    const result=await roomRpc('fog_load',{ticket:roomProfile.token,scene_id:state.sceneId,fog_revision:state.revision});
    if(result?.error)throw Error(result.error);
    if(Array.isArray(result?.seen)){
+    const before=state.seen.size;
     for(const key of result.seen)state.seen.add(key);
+    console.info('[Fog memory] remote restoration',{sceneId:state.sceneId,remote:result.seen.length,before,after:state.seen.size});
     state.dirty=true;saveFogMemory();
     if(fogMemoryState===state)draw('Fog history restored');
    }
@@ -5059,13 +5061,18 @@ function scheduleFogMemorySync(state){
 window.addEventListener('pagehide',()=>{
  if(fogMemoryState?.dirty)saveFogMemory();
 });
+let fogMemoryDrawAudit={visible:0,remembered:0,unseen:0,storedMatches:0};
 function fogRemember(key,visible){
+ const audit=fogMemoryDrawAudit;
+ if(audit){if(visible)audit.visible++;else if(fogMemoryState?.seen.has(key))audit.storedMatches++;else audit.unseen++;}
  if(gmVisionObserver()||preferences.fogMemory===0)return visible?1:0;
  if(visible){
   if(fogMemoryState&&!fogMemoryState.seen.has(key)){fogMemoryState.seen.add(key);fogMemoryState.dirty=true}
   return 1;
  }
- return preferences.fogMemory===1&&fogMemoryState?.seen.has(key)?2:0;
+ const remembered=preferences.fogMemory===1&&fogMemoryState?.seen.has(key);
+ if(remembered&&audit)audit.remembered++;
+ return remembered?2:0;
 }
 function playerFogEnabled(){
  return roomProfile?.gm===false&&(preferences.fogMemory===0||areas.some(a=>a.shape==='appearance'&&a.appearance?.fogOfWar===true));
@@ -5532,6 +5539,7 @@ function startLightingFrame(){
  ]));
  const signature=JSON.stringify([roomProfile?.gm,gmIgnoreLighting,playing,terrainLightSignature,movingLightSignature,observers,familiarView,spellEyes(),preview&&[basePoint(preview),preview.darkvision,preview.blindsight,preview.conditions]]);
  const fogRevision=Number(areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision)||0;
+ fogMemoryDrawAudit={visible:0,remembered:0,unseen:0,storedMatches:0};
  const memoryKey=JSON.stringify([roomProfile?.name,currentSceneId,fogRevision]);
  if(!playerFogEnabled()||preferences.fogMemory===0){saveFogMemory();fogMemoryState=null}
  else if(fogMemoryState?.key!==memoryKey){
@@ -5551,6 +5559,7 @@ function startLightingFrame(){
    }
   }catch{}
   fogMemoryState={key:memoryKey,profile:roomProfile?.name,sceneId:currentSceneId,revision:fogRevision,seen:new Set(Array.isArray(seen)?seen:[]),shading:new Map(),dirty:false,pending:false,loaded:false,loading:false,saving:false};
+  console.info('[Fog memory] local restoration',{sceneId:currentSceneId,revision:fogRevision,stored:fogMemoryState.seen.size,profile:roomProfile?.name});
   if(fogMemoryState.seen.size){fogMemoryState.dirty=true;saveFogMemory()}
   void syncFogMemory(fogMemoryState);
  }
@@ -6715,6 +6724,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    geometryAudit.fogAudit.rejectedFacesByType[type]=n-(geometryAudit.finalByType[type]||0);
   // Negative fogRejected means fog refinement expanded faces, not a counter error.
   performanceDraw.geometryAudit=geometryAudit;
+  performanceDraw.fogMemory={sceneId:currentSceneId,revision:fogMemoryState?.revision,stored:fogMemoryState?.seen.size||0,remoteLoaded:!!fogMemoryState?.loaded,remoteLoading:!!fogMemoryState?.loading,pendingSave:!!fogMemoryState?.pending,...fogMemoryDrawAudit};
  }
  recordGeometryStage('fogGeometryMs');
  if(pendingFogTravel)pendingFogTravel=null;
