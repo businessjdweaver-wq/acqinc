@@ -3,6 +3,7 @@
 const tacticalDiscoveryVersion=1;
 const tacticalDiscoveryPrefix='battlemap.tacticalDiscovery.v1:';
 let tacticalDiscoveryCache={key:null,value:null};
+let tacticalLastRecorded=null;
 function tacticalFogRevision(){return Number(areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision)||0;}
 function tacticalDiscoveryKey(){
  // A distinct key for each scene and account. Server-synchronized party-wide
@@ -52,7 +53,7 @@ function tacticalRecordExplored(points,blockers=visionBlockers()){
  }
  if(added||old.topology!==topology){
   const value={v:tacticalDiscoveryVersion,topology,cells:[...known]};
-  try{localStorage.setItem(key,JSON.stringify(value));tacticalDiscoveryCache={key,value}}
+  try{localStorage.setItem(key,JSON.stringify(value));tacticalDiscoveryCache={key,value};tacticalLastRecorded={key,value}}
   catch(error){console.warn('Tactical discovery could not be saved locally',error)}
  }
  return added;
@@ -97,8 +98,10 @@ function tacticalScheduleScan(){
    drawn. Never copy the full scene canvas, geometry, enemy tokens or fog. */
 let tacticalMapWindow=null,tacticalMapRefresh=null;
 function tacticalMapCells(){
- const state=tacticalReadDiscovery();
- return state.topology===tacticalTopologyVersion()?state.cells:[];
+ const state=tacticalReadDiscovery(),topology=tacticalTopologyVersion();
+ if(state.topology===topology)return state.cells;
+ // A topology mismatch must never expose previously discovered rooms.
+ return [];
 }
 function tacticalMapMarkup(){
  return '<!doctype html><html><head><meta charset="utf-8"><title>Tactical map</title><style>body{margin:0;background:#171c1a;color:#eee;font:14px system-ui}header{padding:10px;display:flex;justify-content:space-between;align-items:center}canvas{display:block;width:100%;height:calc(100vh - 52px);background:#101412}button{cursor:pointer}</style></head><body><header><strong>Tactical map · explored squares only</strong><span id="count"></span></header><canvas id="tacticalCanvas"></canvas></body></html>';
@@ -121,7 +124,7 @@ function tacticalDrawCanvas(canvas,label){
  for(const [x,y] of visible)ctx.fillRect(ox+(x-minX)*scale+.7,oy+(y-minY)*scale+.7,Math.max(1,scale-1.4),Math.max(1,scale-1.4));
  ctx.fillStyle='#f5d28d';
  for(const p of owned){if(Math.floor(p[2])!==floor)continue;ctx.beginPath();ctx.arc(ox+(p[0]-minX)*scale,oy+(p[1]-minY)*scale,Math.max(3,scale*.27),0,Math.PI*2);ctx.fill()}
- if(label)label.textContent=visible.length+' squares · level '+floor+' · '+tacticalScanStatus;
+ if(label){const state=tacticalReadDiscovery();const key=tacticalDiscoveryKey();const mismatch=state.topology!==tacticalTopologyVersion();label.textContent=visible.length+' squares · stored '+state.cells.length+' · level '+floor+' · '+tacticalScanStatus+(mismatch?' · topology mismatch':'')+(tacticalLastRecorded?.key&&tacticalLastRecorded.key!==key?' · storage key changed':'');}
 }
 function tacticalMapRender(){
  const panel=document.getElementById('tacticalMapPanel');
