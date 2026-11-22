@@ -6298,6 +6298,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   fogDetail.observerTests=fogRegionStats.observerTests;
   fogDetail.rangeRejects=fogRegionStats.rangeRejects;
   fogDetail.rayTests=fogRegionStats.rayTests;
+  fogDetail.sectorPruning={...fogSectorStats,eligibleSectors:fogSectorCache.size,enabled:true,mode:'strict-dark-no-lights-no-memory'};
   performanceDraw.fogDetail=fogDetail;
  if(performanceDraw)performanceDraw.planarVisionAudit=planarVisionAudit;
  }
