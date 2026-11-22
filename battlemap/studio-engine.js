@@ -6666,7 +6666,11 @@ function candidate(x,y,p,dx=0,dy=0,snap=null,alt=false){
  if(p.type==='column'||sceneryPiece(p)){
   const surface=alt&&isFurniture(p)?furniturePlacementSurface(x,y,excluded):hit(x,y,excluded,true),z=p.type==='ceilingArt'?p.z:surface?.z??0;
   const [a,b]=inverse(x,y,p.type==='ceilingArt'?0:z),offset=p.type==='column'?.25:0;
-  if(alt&&isFurniture(p)){
+  if(alt&&p.type==='column'&&!isFurniture(p)){
+    const [w,d]=dimensions(p);
+    return {...p,x:a-w/2,y:b-d/2,z,freePlacement:true};
+   }
+   if(alt&&isFurniture(p)){
    const [w,d]=dimensions(p),grab=drag?.piece===p?drag.freeFurnitureGrab:null;
    return {...p,x:a-(grab?.[0]??w/2),y:b-(grab?.[1]??d/2),z};
   }
@@ -10456,7 +10460,7 @@ el('file').onchange=async e=>{
    context='Terrain #'+(i+1)+' ('+(p?.type??'unknown')+' at '+[p?.x,p?.y,p?.z].join(', ')+')';
    if(p?.type==='volume'&&p.extents!==undefined&&(!Array.isArray(p.extents)||p.extents.length!==3||p.extents.some(n=>!Number.isInteger(n*4)||n<.25||n>100)))throw Error('extents '+JSON.stringify(p.extents)+' must contain three dimensions, each a multiple of 0.25 from 0.25 to 100.');
    if(!p||!Object.prototype.hasOwnProperty.call(types,p.type))throw Error('Unknown terrain type.');
-   if(!(p.type==='column'?[p.x,p.y].every(v=>Number.isFinite(v)&&Number.isInteger(v-.25))&&Number.isInteger(p.floorAdjusted===true?p.z*4:p.z):(p.type==='volume'?[p.x*4,p.y*4,p.z*4]:[p.x,p.y,p.floorAdjusted===true?p.z*4:p.z]).every(Number.isInteger))||![p.x,p.y,p.z].every(Number.isFinite))throw Error('Invalid coordinates: volumes use quarter units, columns use integer + 0.25 for x/y and integer z, other terrain uses integers.');
+   if(!(p.type==='column'?(p.freePlacement===true?[p.x,p.y].every(Number.isFinite):[p.x,p.y].every(v=>Number.isFinite(v)&&Number.isInteger(v-.25)))&&Number.isInteger(p.floorAdjusted===true?p.z*4:p.z):(p.type==='volume'?[p.x*4,p.y*4,p.z*4]:[p.x,p.y,p.floorAdjusted===true?p.z*4:p.z]).every(Number.isInteger))||![p.x,p.y,p.z].every(Number.isFinite))throw Error('Invalid coordinates: volumes use quarter units, columns use integer + 0.25 for x/y and integer z, other terrain uses integers.');
    if(![0,1,2,3].includes(p.r))throw Error('Rotation r must be 0, 1, 2 or 3.');
    if(!valid(p,incoming,null,incomingAreas,false,floorAdjusted,true))throw Error('Placement is out of bounds, unsupported or overlaps earlier terrain.');
    if(p.form==='polygon'&&!validPolygon(p.vertices))throw Error('Invalid polygon vertices.');
