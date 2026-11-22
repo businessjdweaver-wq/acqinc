@@ -5355,7 +5355,7 @@ function fogPointVisible(target,respectFogMode=true){
   if(moving){
    // Each exact carried-light configuration has its own bounded world-space
    // sample mask. Revisit a position without retracing identical light rays.
-   const positionKey=JSON.stringify((lightingFrame?.lights??activeLights()).filter(light=>light.carried).map(light=>[
+   const positionKey=lightingFrame?.movingLightSignature??JSON.stringify(activeLights().filter(light=>light.carried).map(light=>[
     lightRangeCenter(light),light.radius,light.bright,light.tint,light.lightElevation,light.spell
    ]));
    const positions=fogMovingLightCache.positions;
@@ -5677,7 +5677,7 @@ function startLightingFrame(){
  // Scene-load preparation will target stable wall geometry and fixed lights.
  if(fogPrewarmTimer!==null){clearTimeout(fogPrewarmTimer);fogPrewarmTimer=null}
  fogPrewarmJob=null;
- return {...lightingCache,blockers,lights,terrainLightSignature,visibility:new Map()};
+ return {...lightingCache,blockers,lights,terrainLightSignature,movingLightSignature,visibility:new Map()};
 }
 function timeLighting(work){
  if(!performanceDraw||performanceDraw.timingLighting)return work();
