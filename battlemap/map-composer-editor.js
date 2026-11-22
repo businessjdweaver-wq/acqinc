@@ -37,6 +37,14 @@ function mount(options={}){
  const file=dialog.querySelector('input[type=file]'),canvas=dialog.querySelector('canvas'),ctx=canvas.getContext('2d'),select=dialog.querySelector('select'),fields=dialog.querySelector('.map-composer-fields'),status=dialog.querySelector('[role=status]');
  const images=new Map();
  const resolveImage=assetId=>images.get(assetId)||host?.resolveImage?.(assetId)||null;
+ // Native pixel dimensions describe the image; width/depth describe battlefield grid squares.
+ // Fit a newly imported image inside a 40-square preview envelope without distortion.
+ function fittedDimensions(img){
+  const w=img.naturalWidth||img.width,h=img.naturalHeight||img.height;
+  if(!(w>0&&h>0))return {width:20,depth:20};
+  const scale=40/Math.max(w,h);
+  return {width:Number((w*scale).toFixed(3)),depth:Number((h*scale).toFixed(3))};
+ }
  const worldScale=10;
  const toScreen=(x,y)=>[canvas.width/2+x*worldScale,canvas.height/2+y*worldScale];
  const toWorld=(x,y)=>[(x-canvas.width/2)/worldScale,(y-canvas.height/2)/worldScale];
@@ -73,6 +81,8 @@ function mount(options={}){
   current=store.get(previous)?previous:store.list()[0]?.id||null;select.value=current||'';
   fields.replaceChildren();const p=current&&store.get(current);
   if(p){
+   const source=resolveImage(p.assetId);
+   if(source?.naturalWidth){const info=document.createElement('p');info.textContent='Source: '+source.naturalWidth+' × '+source.naturalHeight+' pixels · placement dimensions below are grid squares';info.style.cssText='font-size:12px;line-height:1.35;color:#d5c6a5';fields.append(info)}
    for(const [key,step] of [['x',.5],['y',.5],['width',.5],['depth',.5],['rotation',1],['opacity',.05]]){
     const label=document.createElement('label');label.style.cssText='display:block;margin:8px 0';label.textContent=key+' ';
     const input=document.createElement('input');input.type='number';input.step=step;input.value=p[key];input.style.width='90px';
@@ -98,7 +108,7 @@ function mount(options={}){
    try{await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=reject;img.src=url});
     const assetId='preview-'+(global.crypto?.randomUUID?.()||Math.random().toString(36).slice(2));
     images.set(assetId,img);urls.set(assetId,url);
-    const p=store.add({assetId,name:f.name,width:Math.max(5,Math.min(40,img.width/40)),depth:Math.max(5,Math.min(40,img.height/40)),order:store.list().length});
+    const p=store.add({assetId,name:f.name,...fittedDimensions(img),order:store.list().length});
     current=p.id;
    }catch{URL.revokeObjectURL(url);status.textContent='Could not load '+f.name}
   }
@@ -127,7 +137,7 @@ function mount(options={}){
    const index=Number(prompt('Choose an image by number:\\n'+names));
    if(!Number.isInteger(index)||index<1||index>items.length)return;
    const item=items[index-1],img=resolveImage(item.url);
-   const p=store.add({assetId:item.url,name:item.name,width:20,depth:20,order:store.list().length});current=p.id;refresh();
+   const p=store.add({assetId:item.url,name:item.name,...fittedDimensions(img),order:store.list().length});current=p.id;refresh();
   };
   file.before(managed);
  }
