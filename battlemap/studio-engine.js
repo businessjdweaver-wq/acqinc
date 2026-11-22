@@ -6630,156 +6630,35 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   .sort((a,b)=>a.depth-b.depth):[];
  recordGeometryStage('cullingMs');
  if(mapFogEnabled()){
- const fogDetail=performanceDraw?{faces:0,patches:0,refinedPatches:0,patchGenerationMs:0,boundaryRefinementMs:0,visibilityMs:0,travelMemoryMs:0,memoryMs:0,projectionMs:0,otherMs:0}:null;
- // Sector-level fast path: only prune when the entire scene is explicitly
- // dark, has no active emitters, and the sector lies beyond every observer's
- // darkvision. Otherwise retain the original full 3D visibility pipeline.
- // This deliberately does not equate "outside darkvision" with "invisible".
- const fogSectorStats={checked:0,skipped:0,unsafe:0};
- const fogSectorCache=new Map();
- const fogPrepared=fogPreparedObservers||(fogPreparedObservers=prepareFogObservers());
- const fogLights=activeLights();
- const fogSectorDark=key=>{
-  if(fogSectorCache.has(key))return fogSectorCache.get(key);
-  const [sx,sy]=key.split(',').map(Number);
-  const center=[sx*8+4,sy*8+4,0];
-  // A dark room can have openings admitting ambient illumination; skip only
-  // when there are no openings at all, and all corners are dark.
-  const dark=!fogLights.length&&!areas.some(a=>a.shape==='opening')&&
-   [[0,0],[0,8],[8,0],[8,8],[4,4]].every(([dx,dy])=>roomIsDark([sx*8+dx,sy*8+dy,center[2]]));
-  const far=fogPrepared.observers.length>0&&fogPrepared.observers.every(o=>{
-   const dx=Math.max(sx*8-o.distance[0],0,o.distance[0]-(sx+1)*8);
-   const dy=Math.max(sy*8-o.distance[1],0,o.distance[1]-(sy+1)*8);
-   return dx*dx+dy*dy>(o.range+1)*(o.range+1);
-  });
-  const safe=dark&&far&&!fogPrepared.preview&&!gmVisionObserver()&&!fogMemoryState;
-  fogSectorCache.set(key,safe);return safe;
- };
- const roomTopology=wallVisibilityTopology();
- const roomCandidates=roomTopology?wallVisibilityCandidates(roomTopology,fogPrepared):null;
- const roomCounts={facesChecked:0,reachable:0,disconnected:0,mixed:0,unknown:0,culledFaces:0};
- const fogStartDetail=performance.now();
- faces=faces.flatMap(f=>{
- if(fogDetail)fogDetail.faces++;
-  const preview=gmVisionObserver();
-  if(f.standee||f.shadow)return (preview?f.p===preview:ownsRoomStandee(f.p))||standeeVisibleToObserver(f.p,blockers)?[f]:[];
-  if(f.canopy!==undefined)return fogPointVisible(f.lightSample)?[f]:[];
-  // The fixture anchor was already checked once, before emitting its mesh.
-  if((f.staticFixture&&fogMemoryState)||f.spellMote)return [f];
-  if(!f.world)return f.p?.origin&&fogObjectVisible(f.p)?[f]:[];
-  // Experimental aggressive culling: reject faces wholly in disconnected
-  // authored-wall regions before fog patch generation and ray sampling.
-  // Keep cross-boundary faces and dynamic/portal geometry in the 3D renderer.
-  if(roomCandidates&&f.world?.length){
-   roomCounts.facesChecked++;
-   const ids=new Set(f.world.map(p=>roomCandidates.regionAt(p)));
-   if(ids.has(null))roomCounts.unknown++;
-   else if(ids.size!==1)roomCounts.mixed++;
-   else if(roomCandidates.reachable.has(ids.values().next().value))roomCounts.reachable++;
-   else {
-    roomCounts.disconnected++;
-    if(!fogPrepared.preview&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture){
-     roomCounts.culledFaces++;
-     return [];
-    }
-   }
+ // Tactical-discovery geometry gate replaces the legacy per-face fog patch
+ // subdivision and ray-refinement renderer. Never show an undiscovered face.
+ // Standee visibility is independently checked against actual sightlines.
+ const fogGateStart=performance.now();
+ const beforeFog=faces.length;
+ const blockersForGate=blockers;
+ faces=faces.filter(f=>{
+  if(f.standee||f.shadow){
+   const preview=gmVisionObserver();
+   return (preview?f.p===preview:ownsRoomStandee(f.p))||
+    standeeVisibleToObserver(f.p,blockersForGate);
   }
-  // Only skip ordinary terrain wholly inside one provably dark sector.
-  // Objects with openings, special visibility, or persistent memory retain
-  // the authoritative renderer.
-  if(f.world.length&&!f.doorFace&&!f.volumeTop&&!f.fixtureFace&&!f.preview){
-   const keys=new Set(f.world.map(v=>Math.floor(v[0]/8)+','+Math.floor(v[1]/8)));
-   if(keys.size===1){
-    fogSectorStats.checked++;
-    if(fogSectorDark(keys.values().next().value)){
-     fogSectorStats.skipped++;return [];
-    }
-   }else fogSectorStats.unsafe++;
-  }
-  let forceVisible;
-  const forceTerrainVisible=()=>forceVisible??=(f.doorFace&&f.p?.kind==='Door'&&fogOpeningVisible(f.p))||
-   (f.volumeTop&&playerCameraCutaway?.stairs.has(f.p))||false;
-  const visible=[];
-  const patchStart=performance.now(),basePatches=terrainFogPatches(f);
- if(fogDetail)fogDetail.patchGenerationMs+=performance.now()-patchStart;
- for(const basePatch of basePatches){
-  const refineStart=performance.now(),patches=f.p?[basePatch]:refinedFogBoundaryPatches(basePatch);
-  if(fogDetail){fogDetail.boundaryRefinementMs+=performance.now()-refineStart;fogDetail.refinedPatches+=patches.length}
-  for(const patch of patches){
-   if(fogDetail)fogDetail.patches++;
-   const rememberTerrain=fogMemoryState&&!f.fixtureFace&&!f.preview;
-   const paintKey=rememberTerrain?patch.memoryKey+'|'+(patch.surfaceLightOffset?.join(',')??''):null;
-   const saved=paintKey&&fogMemoryState.shading.get(paintKey);
-   // Visibility must be recomputed for the current observer position.
-   // A saved lighting patch is only a historical appearance, never proof
-   // that the patch is still visible. Reusing it unconditionally leaves
-   // old torch/fog squares behind as a player moves or extinguishes light.
-   const visibilityStart=performance.now();
-   const currentlyVisible=forceTerrainVisible()||terrainFogPatchVisible(patch);
-   if(fogDetail)fogDetail.visibilityMs+=performance.now()-visibilityStart;
-   const travelStart=performance.now();
-   if(rememberTerrain&&!currentlyVisible&&!fogMemoryState.seen.has(patch.memoryKey)&&fogSeenDuringTravel(patch,blockers)){
-     fogMemoryState.seen.add(patch.memoryKey);fogMemoryState.dirty=true;
-    }
-   if(fogDetail)fogDetail.travelMemoryMs+=performance.now()-travelStart;
-   const memoryStart=performance.now();
-    const state=fogRemember(patch.memoryKey,currentlyVisible);
-   if(fogDetail)fogDetail.memoryMs+=performance.now()-memoryStart;
-   if(!state||state===2&&!rememberTerrain)continue;
-   const memory=rememberTerrain?{paintKey,rememberedFog:state===2}:null;
-   // v1.489: remembered walls are a floor-plan footprint, not a full-height
-   // 3D wall. Keep the original wall solids in the occlusion system; only
-   // the rendered historical representation changes. The top cap supplies
-   // the footprint and side faces are omitted from remembered fog.
-   if(state===2&&f.pathWall){
-    if(f.z===null||f.z===undefined)continue;
-    const baseZ=Number(f.p?.z);
-    if(!Number.isFinite(baseZ))continue;
-    const world=patch.world.map(vertex=>[vertex[0],vertex[1],baseZ+.012]);
-    const projected=world.map(vertex=>point(...vertex));
-    visible.push({...f,...memory,world,projected,
-     depth:projected.reduce((sum,vertex)=>sum+vertex[2],0)/projected.length,
-     rememberedWallFootprint:true});
-    continue;
-   }
-   if(patch.wholeFace){visible.push(memory?{...f,...memory}:f);continue}
-   const world=patch.world;
-   const projectionStart=performance.now();
-   const projected=world.map(vertex=>point(...vertex));
-   if(fogDetail)fogDetail.projectionMs+=performance.now()-projectionStart;
-   visible.push({...f,...memory,world,projected,depth:projected.reduce((sum,vertex)=>sum+vertex[2],0)/projected.length});
-  }
-  }
-  return visible;
+  if(!Array.isArray(f.world)||!f.world.length)return false;
+  // A large face is retained only if all of its vertices and its center
+  // belong to previously discovered cells. This is deliberately conservative.
+  const center=fogFaceCenter(f.world);
+  return tacticalKnownAt(center)&&f.world.every(point=>tacticalKnownAt(point));
  });
- if(fogDetail){
-  const measured=fogDetail.patchGenerationMs+fogDetail.boundaryRefinementMs+fogDetail.visibilityMs+fogDetail.travelMemoryMs+fogDetail.memoryMs+fogDetail.projectionMs;
-  fogDetail.otherMs=Math.max(0,performance.now()-fogStartDetail-measured);
-  for(const key of ['patchGenerationMs','boundaryRefinementMs','visibilityMs','travelMemoryMs','memoryMs','projectionMs','otherMs'])fogDetail[key]=roundedMs(fogDetail[key]);
-  fogDetail.sampledRegions=fogRegionStats.regions.size;
-  fogDetail.sampledPoints=fogRegionStats.samples;
-  fogDetail.pointCacheHits=fogRegionStats.cacheHits;
-  fogDetail.observerTests=fogRegionStats.observerTests;
-  fogDetail.rangeRejects=fogRegionStats.rangeRejects;
-  fogDetail.rayTests=fogRegionStats.rayTests;
-  fogDetail.sectorPruning={...fogSectorStats,eligibleSectors:fogSectorCache.size,enabled:true,mode:'strict-dark-no-lights-no-memory'};
-  if(geometryAudit){
-   fogDetail.distantDarkCache={hits:fogDistantDarkHits,entries:fogDistantDarkCache?.values.size??0,enabled:fogDistantDarkEligible,signatureChanges:fogDistantDarkSignatureChanges,invalidations:fogDistantDarkInvalidations,changeReasons:{...fogDistantDarkChangeReasons},componentChanges:{...fogDistantDarkComponentChanges},lastChangedComponents:[...fogDistantDarkLastChanged]};
-   fogDetail.fastDarkPatchSkips=fogFastPatchSkips;
-   fogDetail.movingLightPositionCache={positions:fogMovingLightCache.positions.size,hits:fogMovingLightHits,misses:fogMovingLightMisses,limit:FOG_LIGHT_POSITION_LIMIT,prewarmCalculated:fogPrewarmCalculated,prewarmReused:fogPrewarmReused,evictions:fogMovingLightEvictions,observedSamplePoints:fogRecentSamplePoints.size};
-   fogDetail.wallTopology=roomTopology;
-   fogDetail.roomVisibilityAudit=roomCandidates?{
-    observerRegions:roomCandidates.observerRegions,
-    reachableRegions:roomCandidates.reachableRegions,
-    potentiallyDisconnectedRegions:roomCandidates.potentiallyDisconnectedRegions,
-    ...roomCounts,
-    note:'EXPERIMENTAL aggressive culling of disconnected 2D wall regions. Elevated sightlines, distant lighting and explored fog may be incorrectly hidden.'
-   }:{status:'Topology unavailable',culledFaces:0};
-  }
-  performanceDraw.fogDetail=fogDetail;
- if(performanceDraw)performanceDraw.planarVisionAudit=planarVisionAudit;
+ if(performanceDraw){
+  performanceDraw.fogDetail={
+   mode:'tactical-discovery-gate',
+   inputFaces:beforeFog,
+   retainedFaces:faces.length,
+   rejectedFaces:beforeFog-faces.length,
+   gateMs:Math.round((performance.now()-fogGateStart)*10)/10,
+   legacyFogRefinement:false
+  };
  }
- }
+}
  if(geometryAudit){
   if(sectorAudit){
    for(const f of faces)indexSectorFace(f,true);
