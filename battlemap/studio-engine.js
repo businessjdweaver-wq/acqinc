@@ -1944,17 +1944,21 @@ function pickFloorEdit(x,y,precise,elevated=false){
  // Project against the selected floor plane. Never clamp an off-map ray to
  // the nearest border: that made an entire strip of cursor positions select
  // the same edge square in oblique camera views.
- const projected=inverse(x,y,z);
- // Fitting an imported image can move the battlefield origin into negative
- // grid coordinates. Its legal extent is [floorOrigin, floorOrigin + size],
- // not [0, size]. Match the physical boundary used by the ground renderer.
+ // The battlefield origin is in physical WORLD coordinates, while
+ // inverse() returns calibrated VTT GRID coordinates. Check the ray in
+ // world space first, then transform it into the grid for tile selection.
+ // Comparing the grid result directly to floorOrigin rejects the entire
+ // scene after a nine-point calibration.
+ const world=rawInverse(x,y,z*calibratedVerticalScale());
  const grid=sceneGrid();
  const origins=[Number(grid.floorOriginX)||0,Number(grid.floorOriginY)||0];
- if(!projected.every((n,i)=>Number.isFinite(n)&&n>=origins[i]-1e-6&&n<origins[i]+gridLimit(i)-1e-6)){
+ if(!world.every((n,i)=>Number.isFinite(n)&&n>=origins[i]-1e-6&&n<origins[i]+gridLimit(i)-1e-6)){
   el('floorStatus').textContent='Point at a square within the battlefield to select it.';
   return;
  }
- const cell=projected.map((n,i)=>origins[i]+Math.floor(Math.max(0,n-origins[i])/step+1e-8)*step);
+ const projected=worldToGrid(...world);
+ if(!projected.every(Number.isFinite))return;
+ const cell=projected.map(n=>Math.floor(n/step+1e-8)*step);
  if(!floorEdit.first){
   floorEdit.first=cell;
   el('floorStatus').textContent='Click the opposite corner on the same floor.';
