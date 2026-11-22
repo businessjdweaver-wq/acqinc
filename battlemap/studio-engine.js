@@ -5110,6 +5110,9 @@ function planarVisionBlocked(eye,target,blockers){
  return false;
 }
 let fogIlluminationCache=null;
+let fogDistantDarkCache=null;
+let fogDistantDarkHits=0;
+let fogDistantDarkEligible=false;
 // Spatial fog workload counters, reset with each lighting frame. These identify
 // the regions actually sampled during movement without changing visibility.
 let fogRegionStats={regions:new Set(),samples:0,cacheHits:0,observerTests:0,rangeRejects:0,rayTests:0};
@@ -5139,6 +5142,17 @@ function fogPointVisible(target,respectFogMode=true){
  fogRegionStats.samples++;
  fogRegionStats.regions.add(fogRegionKey(target));
  const prepared=fogPreparedObservers||(fogPreparedObservers=prepareFogObservers());
+ // Reuse cross-frame unilluminated negatives only while the moving observer
+ // remains beyond darkvision; never reuse an old 3D occlusion result.
+ if(fogDistantDarkEligible&&fogDistantDarkCache?.values.has(key)&&prepared.observers.length&&
+  prepared.observers.every(o=>{
+   const dx=o.distance[0]-target[0],dy=o.distance[1]-target[1],dz=o.distance[2]-target[2];
+   return dx*dx+dy*dy+dz*dz>o.range*o.range;
+  })){
+  fogDistantDarkHits++;
+  if(fogCache&&fogCache.points.size<180000)fogCache.points.set(key,false);
+  return false;
+ }
  // Defer construction/lookup of 3D blockers until a sightline is actually
  // needed. Most fog samples are outside darkvision and unilluminated.
  let blockers;
@@ -5204,6 +5218,11 @@ function fogPointVisible(target,respectFogMode=true){
  // Boundary refinement samples many shared world points. The former 24k cap
  // saturated early in complex scenes and forced repeated expensive ray tests.
  // Bound the cache per visibility signature (reset on observer/lighting changes).
+ if(!visible&&illumination===false&&fogDistantDarkEligible&&prepared.observers.length&&
+  prepared.observers.every(o=>{
+   const dx=o.distance[0]-target[0],dy=o.distance[1]-target[1],dz=o.distance[2]-target[2];
+   return dx*dx+dy*dy+dz*dz>o.range*o.range;
+  })&&fogDistantDarkCache.values.size<180000)fogDistantDarkCache.values.set(key,true);
  if(fogCache&&fogCache.points.size<180000)fogCache.points.set(key,visible);
  return visible;
 }
@@ -5377,6 +5396,10 @@ function startLightingFrame(){
  if(fogSectorRayCache?.signature!==raySignature)fogSectorRayCache={signature:raySignature,sectors:new Map(),count:0,hits:0,misses:0};
  if(fogIlluminationCache?.signature!==terrainLightSignature)
   fogIlluminationCache={signature:terrainLightSignature,values:new Map()};
+ if(fogDistantDarkCache?.signature!==terrainLightSignature)
+  fogDistantDarkCache={signature:terrainLightSignature,values:new Map()};
+ fogDistantDarkHits=0;
+ fogDistantDarkEligible=!gmVisionObserver()&&!spellEyes().length&&!activeVisionFamiliar();
  fogRegionStats={regions:new Set(),samples:0,cacheHits:0,observerTests:0,rangeRejects:0,rayTests:0};
  // Audit is per draw, never cumulative across the rail. Keep the previous frame's
  // values immutable in its performance snapshot.
@@ -6436,6 +6459,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   fogDetail.rayTests=fogRegionStats.rayTests;
   fogDetail.sectorPruning={...fogSectorStats,eligibleSectors:fogSectorCache.size,enabled:true,mode:'strict-dark-no-lights-no-memory'};
   if(geometryAudit){
+   fogDetail.distantDarkCache={hits:fogDistantDarkHits,entries:fogDistantDarkCache?.values.size??0,enabled:fogDistantDarkEligible};
    fogDetail.wallTopology=roomTopology;
    fogDetail.roomVisibilityAudit=roomCandidates?{
     observerRegions:roomCandidates.observerRegions,
