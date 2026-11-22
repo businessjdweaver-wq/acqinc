@@ -6628,6 +6628,21 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    if(fogDetail)fogDetail.memoryMs+=performance.now()-memoryStart;
    if(!state||state===2&&!rememberTerrain)continue;
    const memory=rememberTerrain?{paintKey,rememberedFog:state===2}:null;
+   // v1.489: remembered walls are a floor-plan footprint, not a full-height
+   // 3D wall. Keep the original wall solids in the occlusion system; only
+   // the rendered historical representation changes. The top cap supplies
+   // the footprint and side faces are omitted from remembered fog.
+   if(state===2&&f.pathWall){
+    if(f.z===null||f.z===undefined)continue;
+    const baseZ=Number(f.p?.z);
+    if(!Number.isFinite(baseZ))continue;
+    const world=patch.world.map(vertex=>[vertex[0],vertex[1],baseZ+.012]);
+    const projected=world.map(vertex=>point(...vertex));
+    visible.push({...f,...memory,world,projected,
+     depth:projected.reduce((sum,vertex)=>sum+vertex[2],0)/projected.length,
+     rememberedWallFootprint:true});
+    continue;
+   }
    if(patch.wholeFace){visible.push(memory?{...f,...memory}:f);continue}
    const world=patch.world;
    const projectionStart=performance.now();
