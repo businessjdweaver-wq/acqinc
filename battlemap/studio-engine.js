@@ -4989,19 +4989,39 @@ function legacyWallSurfaceLighting(face,p){
  const yaw=(p.terrainYaw??0)*Math.PI/180,c=Math.cos(yaw),s=Math.sin(yaw);
  face.surfaceLightOffset=[(x*c-y*s)*surfaceClearance,(x*s+y*c)*surfaceClearance,0];
 }
+// Geometry is independent of the observer. Keep the subdivision topology
+// between rail positions, but never reuse mutable per-frame visibility flags.
+let persistentFogPatchGeometry={scene:null,patches:new Map(),count:0};
 function terrainFogPatches(face){
  const cache=fogCache;
+ if(persistentFogPatchGeometry.scene!==currentSceneId){
+  persistentFogPatchGeometry={scene:currentSceneId,patches:new Map(),count:0};
+ }
  const subdivide=face.p?.type==='volume'&&!face.p.form&&face.world.length===4&&
   (face.volumeTop||face.edge!==undefined);
  const worldKey=JSON.stringify(face.world);
  const cacheKey=(subdivide?'grid:':'face:')+worldKey+(face.surfaceLightOffset?'|'+face.surfaceLightOffset.join(','):'');
  const cached=cache?.terrainPatches.get(cacheKey);
  if(cached)return cached;
+ const persistent=persistentFogPatchGeometry.patches.get(cacheKey);
+ if(persistent){
+  const fresh=persistent.map(p=>({...p}));
+  if(cache&&cache.terrainPatchCount+fresh.length<=24000){
+   cache.terrainPatches.set(cacheKey,fresh);
+   cache.terrainPatchCount+=fresh.length;
+  }
+  return fresh;
+ }
  const patches=[];
  forEachTerrainLightPatch(face,world=>{
   patches.push({world,surfaceLightOffset:face.surfaceLightOffset,wholeFace:world===face.world,
    memoryKey:'face:'+(world===face.world?worldKey:JSON.stringify(world))});
  });
+ if(persistentFogPatchGeometry.count+patches.length<=48000){
+  // Store immutable topology only; the active frame owns its own patches.
+  persistentFogPatchGeometry.patches.set(cacheKey,patches.map(p=>({...p})));
+  persistentFogPatchGeometry.count+=patches.length;
+ }
  if(cache&&cache.terrainPatchCount+patches.length<=24000){
   cache.terrainPatches.set(cacheKey,patches);
   cache.terrainPatchCount+=patches.length;
