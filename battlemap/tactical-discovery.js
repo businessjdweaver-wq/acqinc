@@ -4,6 +4,7 @@ const tacticalDiscoveryVersion=1;
 const tacticalDiscoveryPrefix='battlemap.tacticalDiscovery.v1:';
 let tacticalDiscoveryCache={key:null,value:null};
 let tacticalLastRecorded=null;
+let tacticalStorageError='';
 function tacticalFogRevision(){return Number(areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision)||0;}
 function tacticalDiscoveryKey(){
  // A distinct key for each scene and account. Server-synchronized party-wide
@@ -15,7 +16,7 @@ function tacticalDiscoveryKey(){
 function tacticalReadDiscovery(){
  const key=tacticalDiscoveryKey();
  if(!key)return {v:tacticalDiscoveryVersion,topology:'',cells:[]};
- if(tacticalDiscoveryCache.key===key)return tacticalDiscoveryCache.value;
+ if(tacticalDiscoveryCache.key===key&&tacticalDiscoveryCache.value)return tacticalDiscoveryCache.value;
  let value;
  try{value=JSON.parse(localStorage.getItem(key)||'null')}catch{}
  if(!value||value.v!==tacticalDiscoveryVersion||!Array.isArray(value.cells))
@@ -54,8 +55,9 @@ function tacticalRecordExplored(points,blockers=visionBlockers()){
  }
  if(added||old.topology!==topology){
   const value={v:tacticalDiscoveryVersion,topology,cells:[...known]};
-  try{localStorage.setItem(key,JSON.stringify(value));tacticalDiscoveryCache={key,value};tacticalLastRecorded={key,value}}
-  catch(error){console.warn('Tactical discovery could not be saved locally',error)}
+  tacticalDiscoveryCache={key,value};tacticalLastRecorded={key,value};
+  try{localStorage.setItem(key,JSON.stringify(value));tacticalStorageError=''}
+  catch(error){tacticalStorageError=error?.name||'storage unavailable';console.warn('Tactical discovery could not be saved locally',error)}
  }
  return added;
 }
@@ -127,7 +129,7 @@ function tacticalDrawCanvas(canvas,label){
  for(const [x,y] of visible)ctx.fillRect(ox+(x-minX)*scale+.7,oy+(y-minY)*scale+.7,Math.max(1,scale-1.4),Math.max(1,scale-1.4));
  ctx.fillStyle='#f5d28d';
  for(const p of owned){if(Math.floor(p[2])!==floor)continue;ctx.beginPath();ctx.arc(ox+(p[0]-minX)*scale,oy+(p[1]-minY)*scale,Math.max(3,scale*.27),0,Math.PI*2);ctx.fill()}
- if(label){const state=tacticalReadDiscovery();const key=tacticalDiscoveryKey();const mismatch=state.topology!==tacticalTopologyVersion();label.textContent=visible.length+' squares · stored '+state.cells.length+' · level '+floor+' · '+tacticalScanStatus+(mismatch?' · topology mismatch':'')+(tacticalLastRecorded?.key&&tacticalLastRecorded.key!==key?' · storage key changed':'');}
+ if(label){const state=tacticalReadDiscovery();const key=tacticalDiscoveryKey();const mismatch=state.topology!==tacticalTopologyVersion();label.textContent=visible.length+' squares · stored '+state.cells.length+' · level '+floor+' · '+tacticalScanStatus+(mismatch?' · topology mismatch':'')+(tacticalStorageError?' · storage '+tacticalStorageError:'')+(tacticalLastRecorded?.key&&tacticalLastRecorded.key!==key?' · storage key changed':'');}
 }
 function tacticalMapRender(){
  const panel=document.getElementById('tacticalMapPanel');
