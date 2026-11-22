@@ -14,9 +14,21 @@ function mount(options={}){
  let current=null,drag=null;
  const trigger=document.createElement('button');
  trigger.id='mapComposerOpen';trigger.type='button';trigger.textContent='Map Composer (preview)';
- const anchor=document.getElementById('managedImageDialog')||document.getElementById('sceneAppearance');
- anchor?.insertAdjacentElement('afterend',trigger);
+ const imageManagerButton=document.getElementById('openManagedImages');
+ const imageManagerDialog=document.getElementById('managedImageDialog');
+ const anchor=imageManagerButton||document.getElementById('sceneAppearance');
  if(!anchor)return;
+ anchor.insertAdjacentElement('afterend',trigger);
+ // Keep a second entry point inside Image Manager, without placing controls after a hidden dialog.
+ let managerTrigger=null;
+ if(imageManagerDialog){
+  managerTrigger=document.createElement('button');
+  managerTrigger.type='button';managerTrigger.id='mapComposerFromImageManager';
+  managerTrigger.textContent='Open Map Composer';
+  const catalogButton=imageManagerDialog.querySelector('#managedExportCatalog');
+  if(catalogButton)catalogButton.insertAdjacentElement('afterend',managerTrigger);
+  else imageManagerDialog.querySelector('form')?.insertAdjacentElement('beforebegin',managerTrigger);
+ }
  const dialog=document.createElement('dialog');
  dialog.id='mapComposerDialog';
  dialog.style.cssText='max-width:min(95vw,1000px);width:900px;color:#f6eddb;background:#272a28;border:1px solid #8c806b;border-radius:10px';
@@ -105,7 +117,9 @@ function mount(options={}){
  canvas.onpointerup=canvas.onpointercancel=()=>{drag=null};
  dialog.querySelector('[data-action=delete]').onclick=()=>{if(current)try{store.remove(current)}catch(error){status.textContent=error.message}};
  dialog.querySelector('[data-action=close]').onclick=()=>dialog.close();
- trigger.onclick=()=>{if(host?.load)store.replace(host.load());refresh();dialog.showModal()};
+ const openComposer=()=>{if(host?.load)store.replace(host.load());refresh();if(imageManagerDialog?.open)imageManagerDialog.close();dialog.showModal()};
+ trigger.onclick=openComposer;
+ if(managerTrigger)managerTrigger.onclick=openComposer;
  if(host?.listImages){
   const managed=document.createElement('button');managed.type='button';managed.textContent='Add from Image Manager';
   managed.onclick=()=>{const items=host.listImages();if(!items.length){status.textContent='No managed images available.';return}
