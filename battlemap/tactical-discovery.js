@@ -173,11 +173,16 @@ function tacticalScheduleScan(){
  tacticalScanTimer=setTimeout(()=>{
   if(roomProfile?.gm!==false||!roomState?.active){tacticalScanStatus='Scan aborted: inactive scene';return}
   const samples=[];
-  for(const [x,y,z] of [...centers.slice(0,12),...scanCenters.slice(0,24)]){
-   // Always sample the observer's actual position as well as adjacent cell centers.
+  // Search the entire potentially visible footprint, not merely neighboring
+  // squares. Authoritative line-of-sight and lighting checks still gate every
+  // candidate, so this does not grant vision through walls or darkness.
+  for(const [x,y,z] of [...centers.slice(0,12),...scanCenters.slice(0,240)]){
+   const radius=12; // 60 feet at five feet per grid square
    samples.push([x,y,z]);
-   for(const [dx,dy] of [[0,0],[1,0],[-1,0],[0,1],[0,-1],[2,0],[-2,0],[0,2],[0,-2],[1,1],[-1,1],[1,-1],[-1,-1]])
+   for(let dx=-radius;dx<=radius;dx++)for(let dy=-radius;dy<=radius;dy++){
+    if(dx*dx+dy*dy>radius*radius)continue;
     samples.push([Math.floor(x)+dx+.5,Math.floor(y)+dy+.5,z]);
+   }
   }
   try{
    const blockers=visionBlockers();
