@@ -1153,6 +1153,7 @@ async function startStudio(){
  }catch{}
  const saveView=()=>{
   saveFogMemory();
+  void syncFogMemory(fogMemoryState);
   try{localStorage.setItem('battlemap.camera',JSON.stringify({angle,tilt,zoom,panX,panY,topDown}))}catch{}
  };
  setInterval(saveView,3000);
