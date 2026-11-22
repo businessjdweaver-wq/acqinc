@@ -256,8 +256,19 @@ function polygonImpl(points,fill,stroke){
  ctx.beginPath();points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();
  ctx.fillStyle=fill;ctx.fill();if(stroke){ctx.strokeStyle=stroke;ctx.stroke()}
 }
+let earlyRoomCull=null;
+let earlyRoomCullCount=0;
 function face(points,fill,p,z,preview){
  points=turnTerrainPoints(points,p);
+ // Reject static geometry before projection, lighting and fog patch generation.
+ // Match the experimental room-based fog culling eligibility.
+ if(earlyRoomCull&&!preview&&p?.type!=='standee'&&points.length){
+  const ids=new Set(points.map(v=>earlyRoomCull.regionAt(v)));
+  if(ids.size===1&&!ids.has(null)&&!earlyRoomCull.reachable.has(ids.values().next().value)){
+   earlyRoomCullCount++;
+   return;
+  }
+ }
  const projected=points.map(v=>point(...v));
  faces.push({projected,world:points,fill,p,z,preview,depth:projected.reduce((a,v)=>a+v[2],0)/projected.length});
 }
@@ -6070,6 +6081,12 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  const useStandeeLayer=action==='Standee movement'&&cacheable&&!cameraPreview&&!areaPreview&&!editingArea&&
   !areas.some(area=>area.shape==='difficult')&&!moving[0].aura;
  const windowCuts=cached?null:windowApertureCuts();
+ // Precompute the same authored-wall room reachability before any mesh faces.
+ // No culling in GM/editor/preview modes.
+ earlyRoomCullCount=0;
+ earlyRoomCull=playerFogEnabled()&&!floorSceneEditing&&!gmVisionObserver()
+  ?wallVisibilityCandidates(wallVisibilityTopology(),fogPreparedObservers||(fogPreparedObservers=prepareFogObservers()))
+  :null;
  recordGeometryStage('visibilitySetupMs');
  if(!cached){
  drawVisibleGround();
@@ -6106,9 +6123,12 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  for(const window of areas)if(window.kind==='Window'&&!window.secret)for(const section of windowWallSections(window))drawPiece(section);
  renderOptimizedPathWalls(pathWallSolids().filter(solid=>solid.wall.id!==wallPreview?.id));
  if(wallPreview)for(const solid of compileWallPath(wallPreview).solids)renderPathWall(solid);
+ // Opening and fixture meshes must retain their full geometry.
+ earlyRoomCull=null;
  addDoorFaces();
  addFixtureFaces(blockers);
  recordGeometryStage('faceGeometryMs');
+ if(performanceDraw)performanceDraw.earlyRoomCulledFaces=earlyRoomCullCount;
  // Read-only geometry audit. Count existing faces; never alter rendering.
  const geometryAudit=performanceDraw?{generated:faces.length,afterProjection:0,afterFog:0,projectionRejected:0,fogRejected:0,byType:{},stairGroups:{},fogInputByType:{},finalByType:{},sharedSurfaceAudit:{exactDuplicateFaces:0,sharedFacePairs:0,byType:{},candidateFaces:0},projectionAudit:{offscreenVertices:0,fullyOffscreenFaces:0},wallAudit:{wallCount:0,byWall:[],faceKinds:{},sharedPlaneCandidates:0},fogAudit:{inputFacesByType:{},retainedFacesByType:{},rejectedFacesByType:{}}}:null;
  // Diagnostic-only world-space sector index. No visibility or rendering behavior changes.
