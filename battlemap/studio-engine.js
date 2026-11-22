@@ -1931,8 +1931,14 @@ function previewFloorEdit(){
 }
 function pickFloorEdit(x,y,precise){
  if(!floorEdit.first){
-  const face=hit(x,y,null,true,f=>!f.p||flatFloorPiece(f.p));
-  const z=face?.z??0;
+  // Default to the actual ground plane, not the frontmost rendered
+  // terrain face. An elevated plateau farther up-screen can overlap
+  // the ground in perspective and incorrectly lock the selection to
+  // its height, producing a false straight-line selection boundary.
+  // Shift-click explicitly targets an elevated floor instead.
+  const elevated=!!window.event?.shiftKey;
+  const face=elevated?hit(x,y,null,true,f=>!f.p||flatFloorPiece(f.p)):null;
+  const z=elevated?(face?.z??0):0;
   floorEdit.z=z;floorEdit.step=precise ? .25 : 1;
  }
  const {z,step}=floorEdit;
@@ -1974,7 +1980,7 @@ function drawFloorEdit(){
 el('floorEdit').onclick=()=>{
  if(!canEditFloor())return;
  exitTool();floorEdit={};el('floorApply').disabled=true;
- el('floorStatus').textContent='Click one floor corner. Hold Alt for quarter-square selection.';
+ el('floorStatus').textContent='Click a ground-floor corner. Shift-click to start on a raised floor; Alt selects quarter-squares.';
  refresh();
 };
 el('floorHeight').oninput=previewFloorEdit;
