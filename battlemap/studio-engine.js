@@ -4933,6 +4933,30 @@ function sightlineClear(eye,target,blockers){
  });
 }
 let fogIlluminationCache=null;
+ // Cache each observer separately: moving one standee must not invalidate
+ // visibility rays belonging to stationary allies. Light/terrain changes reset all.
+let fogObserverVisibilityCache={signature:null,observers:new Map(),hits:0,misses:0};
+function observerFogVisibility(token,target,key,blockers,illuminated){
+ const eye=basePoint(token);eye[2]+=.65;
+ const identity=token.roomId||token.id;
+ // Without a stable identity, fall back to the exact original calculation.
+ if(identity===undefined||identity===null)return (darkvisionReaches(token,target)||illuminated())&&sightlineClear(eye,target,blockers);
+ const signature=JSON.stringify([eye,token.darkvision,token.blindsight,token.conditions,token.incognito]);
+ let entry=fogObserverVisibilityCache.observers.get(identity);
+ if(!entry||entry.signature!==signature){
+  entry={signature,points:new Map()};
+  fogObserverVisibilityCache.observers.set(identity,entry);
+ }
+ if(entry.points.has(key)){
+  fogObserverVisibilityCache.hits++;
+  return entry.points.get(key);
+ }
+ fogObserverVisibilityCache.misses++;
+ const visible=(darkvisionReaches(token,target)||illuminated())&&sightlineClear(eye,target,blockers);
+ if(entry.points.size<180000)entry.points.set(key,visible);
+ return visible;
+}
+
 function fogPointVisible(target,respectFogMode=true){
  if(respectFogMode&&!mapFogEnabled())return true;
  const key=target.join(',');
@@ -4952,11 +4976,9 @@ function fogPointVisible(target,respectFogMode=true){
  };
  const visible=(!preview&&eyeSees(target,blockers))||(preview?[preview]:visionObservers(tokens)).some(token=>{
   if((!preview&&(!ownsRoomStandee(token)||token.incognito))||(token.conditions?.includes('dead')||token.conditions?.includes('blinded')&&!token.blindsight))return false;
-  const eye=basePoint(token);eye[2]+=.65;
-  // Illumination and darkvision are independent of observer occlusion.
-  // Reject unlit, out-of-range samples before the expensive wall ray test.
-  return (darkvisionReaches(token,target)||illuminated())&&
-   sightlineClear(eye,target,blockers);
+  // Per-observer entries survive other standees moving, but never changes
+  // to this observer's position, senses, or the scene's light/occlusion.
+  return observerFogVisibility(token,target,key,blockers,illuminated);
  });
  // Boundary refinement samples many shared world points. The former 24k cap
  // saturated early in complex scenes and forced repeated expensive ray tests.
@@ -5130,6 +5152,8 @@ function startLightingFrame(){
  const fogSignature=JSON.stringify([signature,roomProfile?.name,areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision]);
  if(fogIlluminationCache?.signature!==terrainLightSignature)
   fogIlluminationCache={signature:terrainLightSignature,values:new Map()};
+ if(fogObserverVisibilityCache.signature!==terrainLightSignature)
+  fogObserverVisibilityCache={signature:terrainLightSignature,observers:new Map(),hits:0,misses:0};
  if(fogCache?.signature!==fogSignature)fogCache={signature:fogSignature,points:new Map(),terrainPatches:new Map(),terrainPatchCount:0};
  if(lightingCache?.signature!==signature||lightingCache.lightResults.size+lightingCache.surfaceLighting.size>24000){
   lightingCache={signature,lightResults:new Map(),surfaceLighting:new Map()};
