@@ -5706,6 +5706,19 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   ctx.save();
   if(floorImage)floorImage.opacity=sceneStyle?.floorImageOpacity??1;
   paintedGround=drawSceneGround(groundAppearance,flatTerrainTextures,floorImage);
+  // Map Composer pieces use fixed world coordinates and the existing projector.
+  // This optional scene field leaves legacy scenes and their grid unchanged.
+  if(window.BattlemapMapComposerRenderer&&Array.isArray(appearance?.mapComposerPieces)){
+   try{
+    const entries=appearance.mapComposerPieces.map(p=>window.BattlemapMapComposer.normalizePiece(p));
+    window.BattlemapMapComposerRenderer.paint(entries,{
+     project:(x,y,z)=>point(x,y,z),
+     resolveImage:assetId=>getArt(assetId),
+     mapImage:(image,quad)=>mapImage(image,quad),
+     context:ctx
+    });
+   }catch(error){console.error('Map Composer rendering failed',error)}
+  }
   ctx.restore();
   if(showTerrainTextures&&sceneStyle?.groundTexture&&!floorImage){
    const world=[[0,0,0],[gridLimit(0),0,0],[gridLimit(0),gridLimit(1),0],[0,gridLimit(1),0]];

@@ -1,0 +1,28 @@
+/* Run with: node battlemap/map-composer.test.cjs */
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const context = { window: {}, Date, Math };
+vm.runInNewContext(fs.readFileSync(__dirname + '/map-composer.js', 'utf8'), context);
+const api = context.window.BattlemapMapComposer;
+const store = api.createStore();
+const piece = store.add({assetId:'asset-1',name:'Saloon',x:50,y:20,width:30,depth:20,rotation:90});
+assert.equal(store.list().length,1);
+const point = api.worldFromLocal(piece,.5,.5);
+assert.equal(point[0],50);
+assert.equal(point[1],20);
+const corner = api.worldFromLocal(piece,0,0);
+const uv = api.localFromWorld(piece,corner[0],corner[1]);
+assert(Math.abs(uv[0]) < 1e-9 && Math.abs(uv[1]) < 1e-9);
+store.update(piece.id,{crop:{type:'rect',x:.1,y:.2,width:.8,height:.7}});
+const saved = JSON.parse(JSON.stringify(store.serialize()));
+const restored = api.deserialize(saved);
+assert.deepEqual(JSON.parse(JSON.stringify(restored.serialize())),saved);
+store.setLocked(piece.id,true);
+assert.throws(()=>store.update(piece.id,{x:4}),/Unlock/);
+assert.throws(()=>store.remove(piece.id),/Unlock/);
+assert.throws(()=>store.add({assetId:'asset-2',id:piece.id}),/Duplicate/);
+assert.throws(()=>api.normalizePiece({assetId:'a',width:0}),/positive/);
+assert.throws(()=>api.normalizePiece({assetId:'a',calibration:{ox:0,oy:0,xx:1,xy:1,yx:1,yy:1}}),/invertible/);
+assert.equal(api.normalizeCrop({type:'rect',x:.9,y:.9,width:1,height:1}).width,.1);
+console.log('Map Composer core tests passed');
