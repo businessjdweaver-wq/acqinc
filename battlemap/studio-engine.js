@@ -5453,7 +5453,6 @@ function startLightingFrame(){
   fogDistantDarkCache={signature:terrainLightSignature,values:new Map()};
  }
  fogDistantDarkComponentHashes=fogComponentHashes;
- }
  fogFastPatchSkips=0;
  fogDistantDarkHits=0;
  fogDistantDarkEligible=!gmVisionObserver()&&!spellEyes().length&&!activeVisionFamiliar();
