@@ -5312,6 +5312,41 @@ function prepareFogObservers(){
 function fogRegionKey(target){
  return Math.floor(target[0]/8)+','+Math.floor(target[1]/8)+','+Math.floor(target[2]/8);
 }
+// Conservative wall-region gate: only the observer's own room and rooms
+// reached through an aperture within 10 feet may be sampled. Unknown
+// topology and elevated viewpoints fall back to full 3D visibility.
+let proximityRoomGate={frame:null,topology:null,observers:null,allowed:null};
+let proximityRoomGateSkips=0;
+function roomProximityReject(target,prepared){
+ if(prepared.preview||!prepared.observers.length||Math.abs(target[2])>.15||
+    prepared.observers.some(o=>Math.abs(o.distance[2])>.15))return false;
+ const frame=fogCache;
+ if(proximityRoomGate.frame!==frame||proximityRoomGate.observers!==prepared){
+  const topology=wallVisibilityTopology();
+  const allowed=new Set();
+  for(const o of prepared.observers){
+   const own=topology.regionAt?.(o.distance);
+   if(own===null||own===undefined){proximityRoomGate={frame,topology,observers:prepared,allowed:null};return false;}
+   allowed.add(own);
+   for(const portal of topology.portals||[]){
+    const [a,b]=portal.regions||[];
+    if(a!==own&&b!==own)continue;
+    if(!(portal.kind==='Window'?!portal.shaded:portal.open))continue;
+    if(Math.hypot(o.distance[0]-portal.center[0],o.distance[1]-portal.center[1])>2)continue;
+    if(a!==null&&a!==undefined)allowed.add(a);
+    if(b!==null&&b!==undefined)allowed.add(b);
+   }
+  }
+  proximityRoomGate={frame,topology,observers:prepared,allowed};
+ }
+ const {topology,allowed}=proximityRoomGate;
+ if(!allowed)return false;
+ const region=topology.regionAt?.(target);
+ if(region===null||region===undefined)return false;
+ if(allowed.has(region))return false;
+ proximityRoomGateSkips++;
+ return true;
+}
 function fogPointVisible(target,respectFogMode=true){
  if(respectFogMode&&!mapFogEnabled())return true;
  const key=target.join(',');
@@ -5323,6 +5358,10 @@ function fogPointVisible(target,respectFogMode=true){
   if(fogRecentSamplePoints.size>10000)fogRecentSamplePoints.delete(fogRecentSamplePoints.keys().next().value);
  }
  const prepared=fogPreparedObservers||(fogPreparedObservers=prepareFogObservers());
+ if(roomProximityReject(target,prepared)){
+  if(fogCache&&fogCache.points.size<180000)fogCache.points.set(key,false);
+  return false;
+ }
  // Reuse cross-frame unilluminated negatives only while the moving observer
  // remains beyond darkvision; never reuse an old 3D occlusion result.
  if(fogDistantDarkEligible&&fogDistantDarkCache?.values.has(key)&&prepared.observers.length&&
