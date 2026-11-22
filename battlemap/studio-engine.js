@@ -6665,29 +6665,30 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   const safe=dark&&far&&!fogPrepared.preview&&!gmVisionObserver()&&!fogMemoryState;
   fogSectorCache.set(key,safe);return safe;
  };
- // v1.523: reject entire distant, unlit sectors before generating fog
- // patches. This is only active for the player current-sight renderer.
- // The sector must be outside every observer's darkvision and every
- // light's range; portals and special faces still use normal checks.
- const preFogSectorCache=new Map();
- const preFogSectorReject=key=>{
-  if(preFogSectorCache.has(key))return preFogSectorCache.get(key);
-  const [sx,sy]=key.split(',').map(Number),x0=sx*8,y0=sy*8;
-  const farFrom=(x,y,r)=>{
-   const dx=Math.max(x0-x,0,x-(x0+8)),dy=Math.max(y0-y,0,y-(y0+8));
-   return dx*dx+dy*dy>(r+1)*(r+1);
-  };
-  const safe=roomProfile?.gm===false&&!fogPrepared.preview&&
-   fogPrepared.observers.length>0&&
-   fogPrepared.observers.every(o=>farFrom(o.distance[0],o.distance[1],o.range))&&
-   fogLights.every(light=>{
-    const p=lightRangeCenter(light);
-    return farFrom(p[0],p[1],Math.max(0,Number(light.radius)||0)/5);
-   })&&
-   [[0,0],[0,8],[8,0],[8,8],[4,4]].every(([dx,dy])=>roomIsDark([x0+dx,y0+dy,0]));
-  preFogSectorCache.set(key,safe);return safe;
+ // v1.525: conservative distance-first exclusion. Unlike the old sector
+ // test, use each face's actual XY bounds, not sampled room darkness.
+ // Ambient illumination can reveal distant geometry, so only enable this
+ // shortcut when global ambient light is explicitly zero.
+ const ambientSetting=areas.find(a=>a.shape==='appearance')?.appearance?.ambient;
+ const noAmbient=ambientSetting?.enabled===true&&Number(ambientSetting.level)===0;
+ const distancePruneEnabled=roomProfile?.gm===false&&!fogPrepared.preview&&noAmbient&&fogPrepared.observers.length>0;
+ const distanceBoundsFar=(bounds,p,r)=>{
+  const dx=Math.max(bounds.minX-p[0],0,p[0]-bounds.maxX);
+  const dy=Math.max(bounds.minY-p[1],0,p[1]-bounds.maxY);
+  return dx*dx+dy*dy>(r+1)*(r+1);
  };
- let preFogSectorFaces=0,preFogSectorExceptions=0;
+ let distanceExcludedFaces=0,distanceCheckedFaces=0,distanceLightExceptions=0;
+ const preFogDistanceReject=f=>{
+  if(!distancePruneEnabled||!f.world?.length)return false;
+  distanceCheckedFaces++;
+  const xs=f.world.map(p=>p[0]),ys=f.world.map(p=>p[1]);
+  const bounds={minX:Math.min(...xs),maxX:Math.max(...xs),minY:Math.min(...ys),maxY:Math.max(...ys)};
+  if(!fogPrepared.observers.every(o=>distanceBoundsFar(bounds,o.distance,o.range)))return false;
+  if(!fogLights.every(light=>distanceBoundsFar(bounds,lightRangeCenter(light),Math.max(0,Number(light.radius)||0)/5))){
+   distanceLightExceptions++;return false;
+  }
+  distanceExcludedFaces++;return true;
+ };
  const roomTopology=wallVisibilityTopology();
  const roomCandidates=roomTopology?wallVisibilityCandidates(roomTopology,fogPrepared):null;
  const roomCounts={facesChecked:0,reachable:0,disconnected:0,mixed:0,unknown:0,culledFaces:0,regionCacheHits:0,regionCacheMisses:0,portalGuarded:0,elevationGuarded:0};
@@ -6712,15 +6713,9 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   // The fixture anchor was already checked once, before emitting its mesh.
   if((f.staticFixture&&fogMemoryState)||f.spellMote)return [f];
   if(!f.world)return f.p?.origin&&fogObjectVisible(f.p)?[f]:[];
-  // Whole-sector exclusion precedes expensive boundary refinement.
-  // A face crossing sector boundaries or involving portals is retained.
-  if(!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture&&!f.volumeTop&&f.world?.length){
-   const keys=new Set(f.world.map(v=>Math.floor(v[0]/8)+','+Math.floor(v[1]/8)));
-   if(keys.size===1&&preFogSectorReject(keys.values().next().value)){
-    preFogSectorFaces++;return [];
-   }
-   preFogSectorExceptions++;
-  }
+  // Never discard doors, openings, elevated terrain or fixtures using
+  // the planar distance shortcut; they retain authoritative 3D checks.
+  if(!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture&&!f.volumeTop&&!f.pathWall&&preFogDistanceReject(f))return [];
   // Experimental aggressive culling: reject faces wholly in disconnected
   // authored-wall regions before fog patch generation and ray sampling.
   // Keep cross-boundary faces and dynamic/portal geometry in the 3D renderer.
@@ -6818,7 +6813,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   const measured=fogDetail.patchGenerationMs+fogDetail.boundaryRefinementMs+fogDetail.visibilityMs+fogDetail.travelMemoryMs+fogDetail.memoryMs+fogDetail.projectionMs;
   fogDetail.otherMs=Math.max(0,performance.now()-fogStartDetail-measured);
   for(const key of ['patchGenerationMs','boundaryRefinementMs','visibilityMs','travelMemoryMs','memoryMs','projectionMs','otherMs'])fogDetail[key]=roundedMs(fogDetail[key]);
-  fogDetail.preFogSectorPruning={excludedFaces:preFogSectorFaces,retainedCandidates:preFogSectorExceptions,sectorDecisions:preFogSectorCache.size};
+  fogDetail.preFogDistancePruning={enabled:distancePruneEnabled,ambientZero:noAmbient,checkedFaces:distanceCheckedFaces,excludedFaces:distanceExcludedFaces,lightExceptions:distanceLightExceptions};
   fogDetail.sampledRegions=fogRegionStats.regions.size;
   fogDetail.sampledPoints=fogRegionStats.samples;
   fogDetail.pointCacheHits=fogRegionStats.cacheHits;
