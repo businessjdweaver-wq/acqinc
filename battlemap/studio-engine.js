@@ -3097,7 +3097,22 @@ function wallRayTransmission(start,end,blockers){
 }
 // Merge only consecutive, full-height, straight wall prisms for drawing.
 // Original prisms remain untouched for movement, raycasting, and openings.
+let earlyWallPreselected=0;
+let earlyStairGroupCulled=0;
+function preselectPathWall(solid){
+ if(!solid?.poly?.length||solid.opening)return true;
+ if(earlyRoomDisconnected(solid.poly))return false;
+ if(earlyForegroundWallInvisible(solid.poly))return false;
+ if(Math.abs(solid.z)<=.15&&earlySectorInvisible(solid.poly))return false;
+ return true;
+}
 function renderOptimizedPathWalls(solids){
+ // Reject invisible prisms before merging and constructing their faces.
+ // Keep openings and original collision/ray geometry untouched.
+ solids=solids.filter(solid=>{
+  if(preselectPathWall(solid))return true;
+  earlyWallPreselected++;return false;
+ });
  let pending=null;
  const flush=()=>{if(pending){renderPathWall(pending);pending=null}};
  const near=(a,b)=>Math.abs(a-b)<1e-6;
@@ -6584,6 +6599,8 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  earlyRoomCullCount=0;
  earlySectorCullCount=0;
  earlyForegroundWallCullCount=0;
+ earlyWallPreselected=0;
+ earlyStairGroupCulled=0;
  earlyRoomCull=playerFogEnabled()&&!floorSceneEditing&&!gmVisionObserver()
   ?nearbyObserverRooms(wallVisibilityTopology(),fogPreparedObservers||(fogPreparedObservers=prepareFogObservers()))
   :null;
@@ -6591,7 +6608,26 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  if(!cached){
  drawVisibleGround();
  recordGeometryStage('groundGeometryMs');
+ // Stair treads share a persistent staircase identity. Reject the entire
+ // group before creating any tread faces when its complete footprint is
+ // outside all eligible rooms. Individual treads still use normal drawing.
+ const stairGroups=new Map(),culledStairGroups=new Set();
+ if(earlyRoomCull)for(const p of pieces)if(p.stairTread&&p.stairGroup&&!p.curvedStair){
+  const key=p.stairGroup;
+  if(!stairGroups.has(key))stairGroups.set(key,[]);
+  stairGroups.get(key).push(p);
+ }
+ for(const [key,members] of stairGroups){
+  const footprint=members.flatMap(p=>{
+   const [w,d]=dimensions(p);return [[p.x,p.y],[p.x+w,p.y],[p.x+w,p.y+d],[p.x,p.y+d]];
+  });
+  // No group-wide exclusion if it crosses multiple rooms or is elevated.
+  if(members.every(p=>Math.abs(p.z)<=.15)&&earlyRoomDisconnected(footprint)){
+   culledStairGroups.add(key);earlyStairGroupCulled+=members.length;
+  }
+ }
  for(const p of [...pieces,...tokens]){
+  if(p.stairTread&&culledStairGroups.has(p.stairGroup))continue;
   if(!visiblePiece(p)||resizing?.next&&resizing.piece===p||
    ghost&&(drag?.piece===p||drag?.members?.includes(p)||moving.includes(p)))continue;
   const interiorHidden=!fogMemoryState&&!playerCameraCutaway?.stairs.has(p)&&hideRoomPiece(p,interiorVision);
@@ -6628,7 +6664,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  addDoorFaces();
  addFixtureFaces(blockers);
  recordGeometryStage('faceGeometryMs');
- if(performanceDraw){performanceDraw.earlyRoomCulledFaces=earlyRoomCullCount;performanceDraw.earlySectorCulledFaces=earlySectorCullCount;performanceDraw.earlyForegroundWallCulledSegments=earlyForegroundWallCullCount;}
+ if(performanceDraw){performanceDraw.earlyRoomCulledFaces=earlyRoomCullCount;performanceDraw.earlySectorCulledFaces=earlySectorCullCount;performanceDraw.earlyForegroundWallCulledSegments=earlyForegroundWallCullCount;performanceDraw.earlyWallPreselectedSegments=earlyWallPreselected;performanceDraw.earlyStairGroupCulledTreads=earlyStairGroupCulled;}
  // Read-only geometry audit. Count existing faces; never alter rendering.
  const geometryAudit=performanceDraw?{generated:faces.length,afterProjection:0,afterFog:0,projectionRejected:0,fogRejected:0,byType:{},stairGroups:{},fogInputByType:{},finalByType:{},sharedSurfaceAudit:{exactDuplicateFaces:0,sharedFacePairs:0,byType:{},candidateFaces:0},projectionAudit:{offscreenVertices:0,fullyOffscreenFaces:0},wallAudit:{wallCount:0,byWall:[],faceKinds:{},sharedPlaneCandidates:0},fogAudit:{inputFacesByType:{},retainedFacesByType:{},rejectedFacesByType:{}}}:null;
  // Diagnostic-only world-space sector index. No visibility or rendering behavior changes.
