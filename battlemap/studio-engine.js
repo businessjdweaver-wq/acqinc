@@ -5901,7 +5901,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  addFixtureFaces(blockers);
  recordGeometryStage('faceGeometryMs');
  // Read-only geometry audit. Count existing faces; never alter rendering.
- const geometryAudit=performanceDraw?{generated:faces.length,afterProjection:0,afterFog:0,projectionRejected:0,fogRejected:0,byType:{},stairGroups:{},fogInputByType:{},finalByType:{},sharedSurfaceAudit:{exactDuplicateFaces:0,sharedFacePairs:0,byType:{},candidateFaces:0},projectionAudit:{offscreenVertices:0,fullyOffscreenFaces:0}}:null;
+ const geometryAudit=performanceDraw?{generated:faces.length,afterProjection:0,afterFog:0,projectionRejected:0,fogRejected:0,byType:{},stairGroups:{},fogInputByType:{},finalByType:{},sharedSurfaceAudit:{exactDuplicateFaces:0,sharedFacePairs:0,byType:{},candidateFaces:0},projectionAudit:{offscreenVertices:0,fullyOffscreenFaces:0},wallAudit:{wallCount:0,byWall:[],faceKinds:{},sharedPlaneCandidates:0},fogAudit:{inputFacesByType:{},retainedFacesByType:{},rejectedFacesByType:{}}}:null;
  const geometryFaceType=f=>{
   if(f.pathWall)return 'path wall';
   if(f.p?.type==='volume'&&f.p?.form)return 'shaped volume';
@@ -5944,6 +5944,38 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
     geometryAudit.sharedSurfaceAudit.byType[type]=(geometryAudit.sharedSurfaceAudit.byType[type]||0)+1;
    }
   }
+ }
+ if(geometryAudit){
+  const walls=new Map(),planes=new Map();
+  for(const f of faces){
+   if(!f.pathWall)continue;
+   const id=String(f.wallId??'unknown');
+   let wall=walls.get(id);
+   if(!wall){wall={id,faces:0,cap:0,side:0,segments:new Set()};walls.set(id,wall)}
+   wall.faces++;
+   const isCap=f.z!==null&&f.z!==undefined;
+   if(isCap)wall.cap++;else wall.side++;
+   geometryAudit.wallAudit.faceKinds[isCap?'cap':'side']=(geometryAudit.wallAudit.faceKinds[isCap?'cap':'side']||0)+1;
+   if(f.pathSolid?.poly)wall.segments.add(JSON.stringify(f.pathSolid.poly));
+   // Plane signatures only flag potential coplanarity; they do not imply
+   // overlapping areas or safe removal.
+   if(f.world?.length>=3){
+    const [a,b,c]=f.world;
+    const u=b.map((v,i)=>v-a[i]),v=c.map((n,i)=>n-a[i]);
+    const normal=[u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0]];
+    const length=Math.hypot(...normal);
+    if(length>1e-8){
+     const n=normal.map(x=>x/length);
+     const sign=n.find(x=>Math.abs(x)>1e-7)<0?-1:1;
+     const plane=[...n.map(x=>Math.round(sign*x*1000)),Math.round(sign*n.reduce((sum,x,i)=>sum+x*a[i],0)*1000)].join(',');
+     const key=id+'|'+plane;
+     planes.set(key,(planes.get(key)||0)+1);
+    }
+   }
+  }
+  geometryAudit.wallAudit.wallCount=walls.size;
+  geometryAudit.wallAudit.byWall=[...walls.values()].map(w=>({id:w.id,faces:w.faces,cap:w.cap,side:w.side,segments:w.segments.size})).sort((a,b)=>b.faces-a.faces).slice(0,25);
+  geometryAudit.wallAudit.sharedPlaneCandidates=[...planes.values()].reduce((sum,n)=>sum+Math.max(0,n-1),0);
  }
  if(geometryAudit)for(const f of faces){
   const type=geometryFaceType(f);
@@ -6031,6 +6063,12 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   geometryAudit.afterFog=faces.length;
   geometryAudit.fogRejected=geometryAudit.afterProjection-faces.length;
   for(const f of faces){const type=geometryFaceType(f);geometryAudit.finalByType[type]=(geometryAudit.finalByType[type]||0)+1}
+  // Fog can subdivide one input face into multiple output patches, so
+  // these are descriptive counts rather than a one-to-one rejection map.
+  geometryAudit.fogAudit.inputFacesByType={...geometryAudit.fogInputByType};
+  geometryAudit.fogAudit.retainedFacesByType={...geometryAudit.finalByType};
+  for(const [type,n] of Object.entries(geometryAudit.fogInputByType))
+   geometryAudit.fogAudit.rejectedFacesByType[type]=n-(geometryAudit.finalByType[type]||0);
   // Negative fogRejected means fog refinement expanded faces, not a counter error.
   performanceDraw.geometryAudit=geometryAudit;
  }
