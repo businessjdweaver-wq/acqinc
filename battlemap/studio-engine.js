@@ -830,7 +830,7 @@ function standeeVisibleToObserver(token,blockers=visionBlockers()){
   const eye=basePoint(observer);
   eye[2]+=.65;
   return sightlineClear(eye,target,blockers)&&
-   (darkvisionReaches(observer,target)||ambientAt(target,blockers)||lightAt(target,blockers));
+   (darkvisionReaches(observer,target)||ambientAt(target,getBlockers())||lightAt(target,getBlockers()));
  })||!preview&&eyeSees(target,blockers));
 }
 function standeeHidden(p){
@@ -5031,8 +5031,11 @@ function fogPointVisible(target,respectFogMode=true){
  if(fogCache?.points.has(key)){fogRegionStats.cacheHits++;return fogCache.points.get(key);}
  fogRegionStats.samples++;
  fogRegionStats.regions.add(fogRegionKey(target));
- const blockers=visionBlockers();
  const prepared=fogPreparedObservers||(fogPreparedObservers=prepareFogObservers());
+ // Defer construction/lookup of 3D blockers until a sightline is actually
+ // needed. Most fog samples are outside darkvision and unilluminated.
+ let blockers;
+ const getBlockers=()=>blockers||(blockers=visionBlockers());
  // The working area is a measurement, not a visibility cutoff.
  // 30 feet of movement buffer beyond the longest observer darkvision.
  if(planarVisionAudit){
@@ -5054,7 +5057,7 @@ function fogPointVisible(target,respectFogMode=true){
   return illumination;
  };
  // Preserve Arcane Eye semantics, including its independent sight origin.
- const visible=(!prepared.preview&&eyeSees(target,blockers))||prepared.observers.some(observer=>{
+ const visible=(!prepared.preview&&eyeSees(target,getBlockers()))||prepared.observers.some(observer=>{
   fogRegionStats.observerTests++;
   const dx=observer.distance[0]-target[0],dy=observer.distance[1]-target[1],dz=observer.distance[2]-target[2];
   const inDarkvision=observer.range>0&&dx*dx+dy*dy+dz*dz<=observer.range*observer.range;
@@ -5065,7 +5068,7 @@ function fogPointVisible(target,respectFogMode=true){
   }
   if(planarVisionAudit&&Math.hypot(dx,dy)>observer.range+6){planarVisionAudit.distantIlluminated++;planarVisionAudit.farLitTests++;}
   fogRegionStats.rayTests++;
-  const result=cachedFogSightline(observer.eye,target,blockers);
+  const result=cachedFogSightline(observer.eye,target,getBlockers());
   if(planarVisionAudit){
    const audit=planarVisionAudit;
    const distance=Math.hypot(dx,dy),near=distance<=observer.range+6;
@@ -5077,7 +5080,7 @@ function fogPointVisible(target,respectFogMode=true){
    const eligible=audit.eligibleSamples%17===0&&(result?audit.visibleCompared<64:
     near?audit.nearCompared<64:audit.farCompared<64);
    if(eligible){
-    const planar=planarVisionBlocked(observer.eye,target,blockers);
+    const planar=planarVisionBlocked(observer.eye,target,getBlockers());
     audit.compared++;
     if(result)audit.visibleCompared++;
     else if(near)audit.nearCompared++;
