@@ -7929,10 +7929,17 @@ async function commitCarry(){
    else await moveRoomStandee(piece,ghost);
    const serverMs=performance.now()-moveStart;
    if(!carry.light&&piece.type==='standee'&&route)rememberFogTravel(routeWithDetours([...route.points,basePoint(ghost)]),piece);
-   route=null;carry=null;ghost=null;
+   // The server accepted the destination. Keep the provisional standee
+   // overlay visible over the OLD visibility bitmap during synchronization.
+   // Never run a full fog/lighting draw with unconfirmed room state.
+   if(piece.type==='standee'&&!carry.light){
+    draw('Standee movement');
+    await new Promise(resolve=>requestAnimationFrame(resolve));
+   }
    const pollStart=performance.now();
    await pollRoom();
    const pollMs=performance.now()-pollStart;
+   route=null;carry=null;ghost=null;
    refresh();
    if(performanceDraw)performanceDraw.movementCommit={serverMs:Math.round(serverMs),pollMs:Math.round(pollMs),totalMs:Math.round(performance.now()-moveStart)};
   }catch(err){message(err.message);await pollRoom()}
