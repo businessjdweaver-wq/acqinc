@@ -4935,38 +4935,21 @@ function sightlineClear(eye,target,blockers){
 let fogIlluminationCache=null;
 // Spatial fog workload counters, reset with each lighting frame. These identify
 // the regions actually sampled during movement without changing visibility.
-let fogRegionStats={regions:new Set(),samples:0,cacheHits:0,regionsReused:new Set(),regionsRecalculated:new Set(),stationaryHits:0,stationaryMisses:0};
-let fogStationaryRegions={environment:null,observers:new Map()};
-function fogObserverSignature(token){
- return JSON.stringify([basePoint(token),token.darkvision,token.blindsight,token.incognito,token.conditions]);
-}
-function fogStationarySight(token,target,key,blockers,illuminated){
- const id=token.roomId||token.id;
- if(id==null)return null;
- const signature=fogObserverSignature(token),region=fogRegionKey(target);
- let entry=fogStationaryRegions.observers.get(id);
- if(!entry||entry.signature!==signature){
-  entry={signature,regions:new Map(),lastFrame:-1};
-  fogStationaryRegions.observers.set(id,entry);
- }
- // Moving observers never reuse visibility across redraws. Their cached
- // regions are discarded when their position or senses change.
- let points=entry.regions.get(region);
- if(points?.has(key)){
-  fogRegionStats.stationaryHits++;
-  fogRegionStats.regionsReused.add(region);
-  return points.get(key);
- }
- fogRegionStats.stationaryMisses++;
- fogRegionStats.regionsRecalculated.add(region);
- const eye=basePoint(token);eye[2]+=.65;
- const visible=(darkvisionReaches(token,target)||illuminated())&&sightlineClear(eye,target,blockers);
- if(!points){
-  if(entry.regions.size>=128)return visible;
-  points=new Map();entry.regions.set(region,points);
- }
- if(points.size<6000)points.set(key,visible);
- return visible;
+let fogRegionStats={regions:new Set(),samples:0,cacheHits:0,observerTests:0,rangeRejects:0,rayTests:0};
+let fogPreparedObservers=null;
+function prepareFogObservers(){
+ const preview=gmVisionObserver();
+ const familiar=activeVisionFamiliar();
+ const eligible=(preview?[preview]:tokens.filter(t=>t.familiarCaster?t===familiar:t.roomId!==familiar?.familiarCaster||!familiar))
+  .filter(token=>(preview||ownsRoomStandee(token)&&!token.incognito)&&
+   !token.conditions?.includes('dead')&&
+   (!token.conditions?.includes('blinded')||!!token.blindsight));
+ return {preview,observers:eligible.map(token=>{
+  const eye=basePoint(token);eye[2]+=.65;
+  const distance=basePoint(token);
+  const range=Math.max(Number(token.blindsight)||0,token.conditions?.includes('blinded')?0:Number(token.darkvision)||0)/5;
+  return {eye,distance,range};
+ })};
 }
 function fogRegionKey(target){
  return Math.floor(target[0]/8)+','+Math.floor(target[1]/8)+','+Math.floor(target[2]/8);
@@ -4978,9 +4961,9 @@ function fogPointVisible(target,respectFogMode=true){
  fogRegionStats.samples++;
  fogRegionStats.regions.add(fogRegionKey(target));
  const blockers=visionBlockers();
- const preview=gmVisionObserver();
- // Static illumination is reusable as observers travel; wall/door/light edits
- // invalidate it independently via terrainLightSignature.
+ const prepared=fogPreparedObservers||(fogPreparedObservers=prepareFogObservers());
+ // Static illumination is reusable as observers travel; changes to terrain
+ // or light invalidate its separate signature.
  let illumination;
  const illuminated=()=>{
   if(illumination!==undefined)return illumination;
@@ -4990,13 +4973,14 @@ function fogPointVisible(target,respectFogMode=true){
   if(cache&&cache.size<180000)cache.set(key,illumination);
   return illumination;
  };
- const visible=(!preview&&eyeSees(target,blockers))||(preview?[preview]:visionObservers(tokens)).some(token=>{
-  if((!preview&&(!ownsRoomStandee(token)||token.incognito))||(token.conditions?.includes('dead')||token.conditions?.includes('blinded')&&!token.blindsight))return false;
-  // Preserve exact line-of-sight checks for every currently relevant sample.
-  const cached=fogStationarySight(token,target,key,blockers,illuminated);
-  if(cached!==null)return cached;
-  const eye=basePoint(token);eye[2]+=.65;
-  return (darkvisionReaches(token,target)||illuminated())&&sightlineClear(eye,target,blockers);
+ // Preserve Arcane Eye semantics, including its independent sight origin.
+ const visible=(!prepared.preview&&eyeSees(target,blockers))||prepared.observers.some(observer=>{
+  fogRegionStats.observerTests++;
+  const dx=observer.distance[0]-target[0],dy=observer.distance[1]-target[1],dz=observer.distance[2]-target[2];
+  const inDarkvision=observer.range>0&&dx*dx+dy*dy+dz*dz<=observer.range*observer.range;
+  if(!inDarkvision&&!illuminated()){fogRegionStats.rangeRejects++;return false}
+  fogRegionStats.rayTests++;
+  return sightlineClear(observer.eye,target,blockers);
  });
  // Boundary refinement samples many shared world points. The former 24k cap
  // saturated early in complex scenes and forced repeated expensive ray tests.
@@ -5170,10 +5154,8 @@ function startLightingFrame(){
  const fogSignature=JSON.stringify([signature,roomProfile?.name,areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision]);
  if(fogIlluminationCache?.signature!==terrainLightSignature)
   fogIlluminationCache={signature:terrainLightSignature,values:new Map()};
- fogRegionStats={regions:new Set(),samples:0,cacheHits:0,regionsReused:new Set(),regionsRecalculated:new Set(),stationaryHits:0,stationaryMisses:0};
- const fogEnvironment=JSON.stringify([terrainLightSignature,roomProfile?.name,currentSceneId,gmIgnoreLighting,playing,fogRevision]);
- if(fogStationaryRegions.environment!==fogEnvironment)
-  fogStationaryRegions={environment:fogEnvironment,observers:new Map()};
+ fogRegionStats={regions:new Set(),samples:0,cacheHits:0,observerTests:0,rangeRejects:0,rayTests:0};
+ fogPreparedObservers=null;
  if(fogCache?.signature!==fogSignature)fogCache={signature:fogSignature,points:new Map(),terrainPatches:new Map(),terrainPatchCount:0};
  if(lightingCache?.signature!==signature||lightingCache.lightResults.size+lightingCache.surfaceLighting.size>24000){
   lightingCache={signature,lightResults:new Map(),surfaceLighting:new Map()};
@@ -5981,10 +5963,9 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   fogDetail.sampledRegions=fogRegionStats.regions.size;
   fogDetail.sampledPoints=fogRegionStats.samples;
   fogDetail.pointCacheHits=fogRegionStats.cacheHits;
-  fogDetail.regionsReused=fogRegionStats.regionsReused.size;
-  fogDetail.regionsRecalculated=fogRegionStats.regionsRecalculated.size;
-  fogDetail.stationaryVisibilityHits=fogRegionStats.stationaryHits;
-  fogDetail.stationaryVisibilityMisses=fogRegionStats.stationaryMisses;
+  fogDetail.observerTests=fogRegionStats.observerTests;
+  fogDetail.rangeRejects=fogRegionStats.rangeRejects;
+  fogDetail.rayTests=fogRegionStats.rayTests;
   performanceDraw.fogDetail=fogDetail;
  }
  }
