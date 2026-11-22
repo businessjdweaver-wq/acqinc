@@ -5838,7 +5838,11 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  movementSurfaces=mapFogEnabled()?faces.filter(f=>(f.p?.stairTread||f.volumeTop||f.landing)&&Number.isFinite(f.z)&&!f.preview)
   .sort((a,b)=>a.depth-b.depth):[];
  recordGeometryStage('cullingMs');
- if(mapFogEnabled())faces=faces.flatMap(f=>{
+ if(mapFogEnabled()){
+ const fogDetail=performanceDraw?{faces:0,patches:0,refinedPatches:0,patchGenerationMs:0,boundaryRefinementMs:0,visibilityMs:0,travelMemoryMs:0,memoryMs:0,projectionMs:0,otherMs:0}:null;
+ const fogStartDetail=performance.now();
+ faces=faces.flatMap(f=>{
+ if(fogDetail)fogDetail.faces++;
   const preview=gmVisionObserver();
   if(f.standee||f.shadow)return (preview?f.p===preview:ownsRoomStandee(f.p))||standeeVisibleToObserver(f.p,blockers)?[f]:[];
   if(f.canopy!==undefined)return fogPointVisible(f.lightSample)?[f]:[];
@@ -5849,7 +5853,13 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   const forceTerrainVisible=()=>forceVisible??=(f.doorFace&&f.p?.kind==='Door'&&fogOpeningVisible(f.p))||
    (f.volumeTop&&playerCameraCutaway?.stairs.has(f.p))||false;
   const visible=[];
-  for(const basePatch of terrainFogPatches(f))for(const patch of (f.p?[basePatch]:refinedFogBoundaryPatches(basePatch))){
+  const patchStart=performance.now(),basePatches=terrainFogPatches(f);
+ if(fogDetail)fogDetail.patchGenerationMs+=performance.now()-patchStart;
+ for(const basePatch of basePatches){
+  const refineStart=performance.now(),patches=f.p?[basePatch]:refinedFogBoundaryPatches(basePatch);
+  if(fogDetail){fogDetail.boundaryRefinementMs+=performance.now()-refineStart;fogDetail.refinedPatches+=patches.length}
+  for(const patch of patches){
+   if(fogDetail)fogDetail.patches++;
    const rememberTerrain=fogMemoryState&&!f.fixtureFace&&!f.preview;
    const paintKey=rememberTerrain?patch.memoryKey+'|'+(patch.surfaceLightOffset?.join(',')??''):null;
    const saved=paintKey&&fogMemoryState.shading.get(paintKey);
@@ -5857,20 +5867,36 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    // A saved lighting patch is only a historical appearance, never proof
    // that the patch is still visible. Reusing it unconditionally leaves
    // old torch/fog squares behind as a player moves or extinguishes light.
+   const visibilityStart=performance.now();
    const currentlyVisible=forceTerrainVisible()||terrainFogPatchVisible(patch);
+   if(fogDetail)fogDetail.visibilityMs+=performance.now()-visibilityStart;
+   const travelStart=performance.now();
    if(rememberTerrain&&!currentlyVisible&&!fogMemoryState.seen.has(patch.memoryKey)&&fogSeenDuringTravel(patch,blockers)){
      fogMemoryState.seen.add(patch.memoryKey);fogMemoryState.dirty=true;
     }
+   if(fogDetail)fogDetail.travelMemoryMs+=performance.now()-travelStart;
+   const memoryStart=performance.now();
     const state=fogRemember(patch.memoryKey,currentlyVisible);
+   if(fogDetail)fogDetail.memoryMs+=performance.now()-memoryStart;
    if(!state||state===2&&!rememberTerrain)continue;
    const memory=rememberTerrain?{paintKey,rememberedFog:state===2}:null;
    if(patch.wholeFace){visible.push(memory?{...f,...memory}:f);continue}
    const world=patch.world;
+   const projectionStart=performance.now();
    const projected=world.map(vertex=>point(...vertex));
+   if(fogDetail)fogDetail.projectionMs+=performance.now()-projectionStart;
    visible.push({...f,...memory,world,projected,depth:projected.reduce((sum,vertex)=>sum+vertex[2],0)/projected.length});
+  }
   }
   return visible;
  });
+ if(fogDetail){
+  const measured=fogDetail.patchGenerationMs+fogDetail.boundaryRefinementMs+fogDetail.visibilityMs+fogDetail.travelMemoryMs+fogDetail.memoryMs+fogDetail.projectionMs;
+  fogDetail.otherMs=Math.max(0,performance.now()-fogStartDetail-measured);
+  for(const key of ['patchGenerationMs','boundaryRefinementMs','visibilityMs','travelMemoryMs','memoryMs','projectionMs','otherMs'])fogDetail[key]=roundedMs(fogDetail[key]);
+  performanceDraw.fogDetail=fogDetail;
+ }
+ }
  recordGeometryStage('fogGeometryMs');
  if(pendingFogTravel){
   pendingFogTravel=null;
