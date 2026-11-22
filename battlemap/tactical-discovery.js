@@ -149,10 +149,12 @@ function tacticalScheduleScan(){
  observers.forEach((observer,i)=>{
   const current=centers[i],id=String(observer.roomId);
   const previous=tacticalPreviousCenters.get(id);
+  const teleporting=tacticalTeleportPending.has(id);
+  if(previous&&teleporting&&Math.hypot(current[0]-previous.point[0],current[1]-previous.point[1])>0)tacticalTeleportPending.delete(id);
   nextCenters.set(id,{epoch,point:current});
   if(previous?.epoch===epoch){
    const a=previous.point,dist=Math.hypot(current[0]-a[0],current[1]-a[1]);
-   if(dist>0&&!tacticalTeleportPending.has(id)&&Math.abs(current[2]-a[2])<.5){
+   if(dist>0&&!teleporting&&Math.abs(current[2]-a[2])<.5){
     const steps=Math.min(240,Math.ceil(dist*2));
     for(let j=1;j<steps;j++)scanCenters.push([
      a[0]+(current[0]-a[0])*j/steps,
@@ -162,7 +164,7 @@ function tacticalScheduleScan(){
   }
  });
  tacticalPreviousCenters=nextCenters;
- tacticalTeleportPending.clear();
+ // Keep teleport markers until the corresponding standee position changes.
  const signature=[roomState.sceneId,tacticalFogRevision(),tacticalTopologyVersion(),...centers.map(p=>p.join(',')),...observers.map(t=>[t.roomId,t.vision,t.darkvision,t.torch,t.torchBright,t.torchDim].join(':'))].join('|');
  if(signature===tacticalScanSignature&&tacticalReadDiscovery().topology===tacticalTopologyVersion())return;
  tacticalScanStatus=centers.length?'Scanning '+centers.length+' vision source(s)':'No controlled vision sources';
