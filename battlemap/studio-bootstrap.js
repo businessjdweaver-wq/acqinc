@@ -9,6 +9,7 @@
     "./map-composer-renderer.js",
     "./map-composer-editor.js",
     "./studio-engine.js",
+    "./tactical-discovery.js",
     "./studio-interactions.js",
     "./studio-room-sync.js"
   ];

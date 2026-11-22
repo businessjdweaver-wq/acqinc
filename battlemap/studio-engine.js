@@ -2951,6 +2951,16 @@ function wallVisibilityTopology(){
  Object.defineProperty(result,'regionAt',{value:regionAt,enumerable:false});
  wallTopologyCache={signature,result};return result;
 }
+// Read-only topology lookup and a stable wall-layout signature. A room
+// number is diagnostic; it is not a permission to reveal room geometry.
+function tacticalTopologyVersion(){
+ return JSON.stringify(sceneWallPaths().map(w=>[w.id,w.nodes,w.closed,w.z,w.height,w.thickness,w.sight]));
+}
+function tacticalRoomAt(point){
+ if(!Array.isArray(point)||point.length<3||!point.slice(0,3).every(Number.isFinite))return null;
+ const region=wallVisibilityTopology().regionAt?.(point);
+ return Number.isInteger(region)?region:null;
+}
 // Diagnostic only: classify potential room connectivity without changing fog.
 function wallVisibilityCandidates(topology,prepared){
  if(!topology.regionAt)return null;
