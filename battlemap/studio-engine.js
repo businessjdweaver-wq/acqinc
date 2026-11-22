@@ -4463,21 +4463,32 @@ el('fogOfWar').onchange=()=>{
  refresh();
  el('fogStatus').textContent=enabled?'Fog of War enabled.':'Fog of War disabled.';
 };
-el('resetFogOfWar').onclick=()=>{
+el('resetFogOfWar').onclick=async()=>{
  if(roomProfile?.gm===false)return;
- const scene=areas.find(area=>area.shape==='appearance')?.appearance;
- if(!scene){el('fogStatus').textContent='Scene appearance is not loaded.';return}
- scene.fogRevision=(scene.fogRevision||0)+1;
- if(appearanceDraft)appearanceDraft.fogRevision=scene.fogRevision;
- scheduleRoomPatch();
- if(typeof tacticalDiscoveryCache!=='undefined'){
-  tacticalDiscoveryCache={key:null,value:null};
-  tacticalScanSignature='';
-  tacticalPreviousCenters.clear();
-  tacticalMapRender();
+ if(!roomProfile?.gm||!roomState?.active||!roomDraftAttached||
+    currentSceneId!==roomState.sceneId||!roomBaseline){
+  el('fogStatus').textContent='Reset not sent: open the active live scene as GM first.';
+  return;
  }
- refresh();
- el('fogStatus').textContent='Exploration reset requested. Players will rediscover only currently visible squares.';
+ const scene=areas.find(area=>area.shape==='appearance')?.appearance;
+ if(!scene){el('fogStatus').textContent='Reset not sent: scene appearance is not loaded.';return}
+ const old=Number(scene.fogRevision)||0;
+ scene.fogRevision=Math.max(old,Date.now());
+ if(appearanceDraft)appearanceDraft.fogRevision=scene.fogRevision;
+ el('fogStatus').textContent='Publishing exploration reset…';
+ // The reset is a room scene patch; do not report success until the server
+ // acknowledges it. Players derive a fresh discovery key from fogRevision.
+ await flushRoomPatch();
+ const confirmed=Number(roomBaseline?.areas?.find(a=>a.shape==='appearance')?.appearance?.fogRevision)===scene.fogRevision;
+ if(!confirmed){
+  el('fogStatus').textContent='Exploration reset not confirmed by server. Check connection and retry.';
+  return;
+ }
+ tacticalDiscoveryCache={key:null,value:null};
+ tacticalScanSignature='';
+ tacticalPreviousCenters.clear();
+ tacticalMapRender();
+ el('fogStatus').textContent='Exploration reset published to the live scene. Player clients will update on sync.';
 };
 el('ambientColor').oninput=()=>{
  const hex=el('ambientColor').value;
