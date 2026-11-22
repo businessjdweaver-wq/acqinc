@@ -4979,10 +4979,34 @@ function cachedFogSightline(eye,target,blockers){
  if(cache.count<120000&&bucket.size<6000){bucket.set(key,result);cache.count++}
  return result;
 }
+// v1.468: 2D plan-view visibility diagnostic. Never drives rendering.
+// Compare conservative planar blocker intersection with authoritative 3D rays;
+// this exposes where a future shared top-down visibility mask needs elevation logic.
+let planarVisionAudit=null;
+function planarVisionBlocked(eye,target,blockers){
+ const dx=target[0]-eye[0],dy=target[1]-eye[1];
+ if(dx*dx+dy*dy<1e-12)return false;
+ const candidates=rayBlockerCandidates(blockers,eye,target);
+ for(const b of candidates){
+  // Only count a blocker if it spans the complete eye-to-target height;
+  // otherwise 3D elevation may permit a sightline over or under it.
+  if(b[2][0]>Math.min(eye[2],target[2])||b[2][1]<Math.max(eye[2],target[2]))continue;
+  const loX=b[0][0],hiX=b[0][1],loY=b[1][0],hiY=b[1][1];
+  let t0=0,t1=1;
+  for(const [p,d,lo,hi] of [[eye[0],dx,loX,hiX],[eye[1],dy,loY,hiY]]){
+   if(Math.abs(d)<1e-10){if(p<lo||p>hi){t0=2;break}continue}
+   const a=(lo-p)/d,c=(hi-p)/d;
+   t0=Math.max(t0,Math.min(a,c));t1=Math.min(t1,Math.max(a,c));
+  }
+  if(t0<t1&&t1>0&&t0<.995)return true;
+ }
+ return false;
+}
 let fogIlluminationCache=null;
 // Spatial fog workload counters, reset with each lighting frame. These identify
 // the regions actually sampled during movement without changing visibility.
 let fogRegionStats={regions:new Set(),samples:0,cacheHits:0,observerTests:0,rangeRejects:0,rayTests:0};
+ planarVisionAudit={compared:0,planarBlocked:0,threeDBlocked:0,agreements:0,falseBlocked:0,missedBlockers:0,limit:96,note:'Diagnostic only; planar bounds are not used to reject or reveal fog.'};
 let fogPreparedObservers=null;
 function prepareFogObservers(){
  const preview=gmVisionObserver();
@@ -5027,7 +5051,17 @@ function fogPointVisible(target,respectFogMode=true){
   const inDarkvision=observer.range>0&&dx*dx+dy*dy+dz*dz<=observer.range*observer.range;
   if(!inDarkvision&&!illuminated()){fogRegionStats.rangeRejects++;return false}
   fogRegionStats.rayTests++;
-  return cachedFogSightline(observer.eye,target,blockers);
+  const result=cachedFogSightline(observer.eye,target,blockers);
+  if(planarVisionAudit&&planarVisionAudit.compared<planarVisionAudit.limit){
+   const planar=planarVisionBlocked(observer.eye,target,blockers);
+   planarVisionAudit.compared++;
+   if(planar)planarVisionAudit.planarBlocked++;
+   if(!result)planarVisionAudit.threeDBlocked++;
+   if(planar===!result)planarVisionAudit.agreements++;
+   else if(planar)planarVisionAudit.falseBlocked++;
+   else planarVisionAudit.missedBlockers++;
+  }
+  return result;
  });
  // Boundary refinement samples many shared world points. The former 24k cap
  // saturated early in complex scenes and forced repeated expensive ray tests.
@@ -6195,6 +6229,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   fogDetail.rangeRejects=fogRegionStats.rangeRejects;
   fogDetail.rayTests=fogRegionStats.rayTests;
   performanceDraw.fogDetail=fogDetail;
+ if(performanceDraw)performanceDraw.planarVisionAudit=planarVisionAudit;
  }
  }
  if(geometryAudit){
