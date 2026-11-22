@@ -5166,43 +5166,11 @@ function terrainFogPatches(face){
 }
 // Refine only mixed-visibility floor patches. The base fog tiles and their
 // remembered history remain unchanged; children inherit exploration history.
-// v1.472: A coarse bound can prove that a patch is wholly outside every
-// observer's *darkvision* radius. This is only a refinement hint: lit areas,
-// spell eyes and explored terrain still use the authoritative visibility path.
-function fogPatchOutsideDarkvision(patch){
- const prepared=fogPreparedObservers||(fogPreparedObservers=prepareFogObservers());
- if(prepared.preview||!prepared.observers.length)return false;
- const world=patch.world;
- if(!world?.length)return false;
- let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity,minZ=Infinity,maxZ=-Infinity;
- for(const p of world){
-  minX=Math.min(minX,p[0]);maxX=Math.max(maxX,p[0]);
-  minY=Math.min(minY,p[1]);maxY=Math.max(maxY,p[1]);
-  minZ=Math.min(minZ,p[2]);maxZ=Math.max(maxZ,p[2]);
- }
- return prepared.observers.every(o=>{
-  const dx=Math.max(minX-o.distance[0],0,o.distance[0]-maxX);
-  const dy=Math.max(minY-o.distance[1],0,o.distance[1]-maxY);
-  const dz=Math.max(minZ-o.distance[2],0,o.distance[2]-maxZ);
-  return dx*dx+dy*dy+dz*dz>o.range*o.range;
- });
-}
 function refinedFogBoundaryPatches(patch){
  // Apply in both camera projections: the visibility boundary is in world
  // coordinates, so isometric view must not fall back to whole-square fog.
  // Only ground faces are passed here; terrain walls retain their own tests.
  if(patch.world.length!==4)return [patch];
- // When all five existing probes agree that a distant patch is invisible,
- // there is no visibility boundary to subdivide. Do not assume darkness
- // from distance: every probe still evaluates ambient light and sightlines.
- if(fogPatchOutsideDarkvision(patch)){
-  const center=fogFaceCenter(patch.world);
-  const probes=[center,...patch.world.map(vertex=>vertex.map((v,i)=>v*.92+center[i]*.08))];
-  if(probes.every(point=>!fogPointVisible(surfaceLightPoint(point,patch.surfaceLightOffset)))){
-   patch.visible=false;
-   return [patch];
-  }
- }
  const result=[],maxDepth=2;
  const visit=(part,depth,parentSeen)=>{
   const center=fogFaceCenter(part.world);
@@ -6234,6 +6202,30 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  recordGeometryStage('cullingMs');
  if(mapFogEnabled()){
  const fogDetail=performanceDraw?{faces:0,patches:0,refinedPatches:0,patchGenerationMs:0,boundaryRefinementMs:0,visibilityMs:0,travelMemoryMs:0,memoryMs:0,projectionMs:0,otherMs:0}:null;
+ // Sector-level fast path: only prune when the entire scene is explicitly
+ // dark, has no active emitters, and the sector lies beyond every observer's
+ // darkvision. Otherwise retain the original full 3D visibility pipeline.
+ // This deliberately does not equate "outside darkvision" with "invisible".
+ const fogSectorStats={checked:0,skipped:0,unsafe:0};
+ const fogSectorCache=new Map();
+ const fogPrepared=fogPreparedObservers||(fogPreparedObservers=prepareFogObservers());
+ const fogLights=activeLights();
+ const fogSectorDark=key=>{
+  if(fogSectorCache.has(key))return fogSectorCache.get(key);
+  const [sx,sy]=key.split(',').map(Number);
+  const center=[sx*8+4,sy*8+4,0];
+  // A dark room can have openings admitting ambient illumination; skip only
+  // when there are no openings at all, and all corners are dark.
+  const dark=!fogLights.length&&!areas.some(a=>a.shape==='opening')&&
+   [[0,0],[0,8],[8,0],[8,8],[4,4]].every(([dx,dy])=>roomIsDark([sx*8+dx,sy*8+dy,center[2]]));
+  const far=fogPrepared.observers.length>0&&fogPrepared.observers.every(o=>{
+   const dx=Math.max(sx*8-o.distance[0],0,o.distance[0]-(sx+1)*8);
+   const dy=Math.max(sy*8-o.distance[1],0,o.distance[1]-(sy+1)*8);
+   return dx*dx+dy*dy>(o.range+1)*(o.range+1);
+  });
+  const safe=dark&&far&&!fogPrepared.preview&&!gmVisionObserver()&&!fogMemoryState;
+  fogSectorCache.set(key,safe);return safe;
+ };
  const fogStartDetail=performance.now();
  faces=faces.flatMap(f=>{
  if(fogDetail)fogDetail.faces++;
@@ -6243,6 +6235,18 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   // The fixture anchor was already checked once, before emitting its mesh.
   if((f.staticFixture&&fogMemoryState)||f.spellMote)return [f];
   if(!f.world)return f.p?.origin&&fogObjectVisible(f.p)?[f]:[];
+  // Only skip ordinary terrain wholly inside one provably dark sector.
+  // Objects with openings, special visibility, or persistent memory retain
+  // the authoritative renderer.
+  if(f.world.length&&!f.doorFace&&!f.volumeTop&&!f.fixtureFace&&!f.preview){
+   const keys=new Set(f.world.map(v=>Math.floor(v[0]/8)+','+Math.floor(v[1]/8)));
+   if(keys.size===1){
+    fogSectorStats.checked++;
+    if(fogSectorDark(keys.values().next().value)){
+     fogSectorStats.skipped++;return [];
+    }
+   }else fogSectorStats.unsafe++;
+  }
   let forceVisible;
   const forceTerrainVisible=()=>forceVisible??=(f.doorFace&&f.p?.kind==='Door'&&fogOpeningVisible(f.p))||
    (f.volumeTop&&playerCameraCutaway?.stairs.has(f.p))||false;
