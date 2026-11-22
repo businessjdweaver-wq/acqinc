@@ -4962,6 +4962,23 @@ function sightlineClear(eye,target,blockers){
   return interval&&interval[0]<.995;
  });
 }
+// Exact-ray cache, partitioned into 8-unit target sectors. This is not a
+// sector visibility shortcut: only identical eye/target rays can be reused.
+// Invalidate with the lighting/terrain signature, including doors and windows.
+let fogSectorRayCache=null;
+function cachedFogSightline(eye,target,blockers){
+ const cache=fogSectorRayCache;
+ if(!cache)return sightlineClear(eye,target,blockers);
+ const sector=fogRegionKey(target);
+ let bucket=cache.sectors.get(sector);
+ if(!bucket){bucket=new Map();cache.sectors.set(sector,bucket)}
+ const key=eye.join(',')+'>'+target.join(',');
+ if(bucket.has(key)){cache.hits++;return bucket.get(key)}
+ cache.misses++;
+ const result=sightlineClear(eye,target,blockers);
+ if(cache.count<120000&&bucket.size<6000){bucket.set(key,result);cache.count++}
+ return result;
+}
 let fogIlluminationCache=null;
 // Spatial fog workload counters, reset with each lighting frame. These identify
 // the regions actually sampled during movement without changing visibility.
@@ -5010,7 +5027,7 @@ function fogPointVisible(target,respectFogMode=true){
   const inDarkvision=observer.range>0&&dx*dx+dy*dy+dz*dz<=observer.range*observer.range;
   if(!inDarkvision&&!illuminated()){fogRegionStats.rangeRejects++;return false}
   fogRegionStats.rayTests++;
-  return sightlineClear(observer.eye,target,blockers);
+  return cachedFogSightline(observer.eye,target,blockers);
  });
  // Boundary refinement samples many shared world points. The former 24k cap
  // saturated early in complex scenes and forced repeated expensive ray tests.
@@ -5182,6 +5199,10 @@ function startLightingFrame(){
   void syncFogMemory(fogMemoryState);
  }
  const fogSignature=JSON.stringify([signature,roomProfile?.name,areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision]);
+ // A moving observer changes fogSignature but does not change static blockers.
+ // Reuse only exact rays; lighting still gets evaluated independently.
+ const raySignature=JSON.stringify([currentSceneId,terrainLightSignature,areas.filter(a=>a.shape==='opening').map(a=>[a.id,a.open,a.shaded,a.secret])]);
+ if(fogSectorRayCache?.signature!==raySignature)fogSectorRayCache={signature:raySignature,sectors:new Map(),count:0,hits:0,misses:0};
  if(fogIlluminationCache?.signature!==terrainLightSignature)
   fogIlluminationCache={signature:terrainLightSignature,values:new Map()};
  fogRegionStats={regions:new Set(),samples:0,cacheHits:0,observerTests:0,rangeRejects:0,rayTests:0};
