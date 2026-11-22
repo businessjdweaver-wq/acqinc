@@ -5119,6 +5119,9 @@ const FOG_LIGHT_POINT_LIMIT=180000;
 let fogPrewarmJob=null;
 let fogPrewarmTimer=null;
 let fogPrewarmCompletedKey=null;
+// Exact renderer coordinates observed during previous frames, not synthetic grid centers.
+const fogRecentSamplePoints=new Map();
+let fogPrewarmCalculated=0,fogPrewarmReused=0,fogMovingLightEvictions=0;
 function fogPrewarmStatus(message){
  let node=document.getElementById('fogPrewarmStatus');
  if(!node){
@@ -5142,16 +5145,14 @@ function queueFogPrewarm(signature,lights){
  if(fogPrewarmTimer!==null){clearTimeout(fogPrewarmTimer);fogPrewarmTimer=null}
  const origins=tokens.filter(ownsRoomStandee).map(basePoint);
  if(!origins.length)return;
- // Small local grid first; never enumerate the entire scene.
- const points=[],seen=new Set();
- for(let radius=0;radius<=5;radius++)for(const origin of origins){
-  for(let dx=-radius;dx<=radius;dx++)for(let dy=-radius;dy<=radius;dy++){
-   if(Math.max(Math.abs(dx),Math.abs(dy))!==radius)continue;
-   const p=[Math.floor(origin[0])+dx+.5,Math.floor(origin[1])+dy+.5,Math.floor(origin[2])+.65];
-   const k=p.join(',');
-   if(!seen.has(k)){seen.add(k);points.push(p)}
-  }
+ // Prewarm only coordinates the renderer actually requests. A synthetic
+ // square-center grid produced no cache hits in the v1.485 rail benchmark.
+ const points=[];
+ for(const p of fogRecentSamplePoints.values()){
+  if(origins.some(origin=>Math.hypot(p[0]-origin[0],p[1]-origin[1])<=6))points.push(p);
+  if(points.length>=256)break;
  }
+ if(!points.length)return;
  const job={key:jobKey,signature,positionKey,points,index:0};
  fogPrewarmJob=job;
  const run=()=>{
@@ -5172,6 +5173,8 @@ function queueFogPrewarm(signature,lights){
    if(!cache.has(key)){
     blockers=blockers||visionBlockers();
     cache.set(key,!!(ambientAt(p,blockers)||lightAt(p,blockers)));
+    (cache.prewarmed||(cache.prewarmed=new Set())).add(key);
+    fogPrewarmCalculated++;
    }
    count++;
   }
@@ -5226,6 +5229,10 @@ function fogPointVisible(target,respectFogMode=true){
  if(fogCache?.points.has(key)){fogRegionStats.cacheHits++;return fogCache.points.get(key);}
  fogRegionStats.samples++;
  fogRegionStats.regions.add(fogRegionKey(target));
+ if(!fogRecentSamplePoints.has(key)){
+  fogRecentSamplePoints.set(key,target.slice());
+  if(fogRecentSamplePoints.size>10000)fogRecentSamplePoints.delete(fogRecentSamplePoints.keys().next().value);
+ }
  const prepared=fogPreparedObservers||(fogPreparedObservers=prepareFogObservers());
  // Reuse cross-frame unilluminated negatives only while the moving observer
  // remains beyond darkvision; never reuse an old 3D occlusion result.
@@ -5270,10 +5277,10 @@ function fogPointVisible(target,respectFogMode=true){
    else{
     cache=new Map();
     positions.set(positionKey,cache);
-    if(positions.size>FOG_LIGHT_POSITION_LIMIT)positions.delete(positions.keys().next().value);
+    if(positions.size>FOG_LIGHT_POSITION_LIMIT){positions.delete(positions.keys().next().value);fogMovingLightEvictions++}
    }
   }
-  if(cache?.has(key)){if(moving)fogMovingLightHits++;return illumination=cache.get(key)}
+  if(cache?.has(key)){if(moving){fogMovingLightHits++;fogPrewarmReused+=cache.prewarmed?.delete(key)?1:0}return illumination=cache.get(key)}
   if(moving)fogMovingLightMisses++;
   illumination=!!(ambientAt(target,getBlockers())||lightAt(target,getBlockers()));
   if(cache&&cache.size<FOG_LIGHT_POINT_LIMIT)cache.set(key,illumination);
@@ -5542,8 +5549,10 @@ function startLightingFrame(){
  if(fogSectorRayCache?.signature!==raySignature)fogSectorRayCache={signature:raySignature,sectors:new Map(),count:0,hits:0,misses:0};
  if(fogIlluminationCache?.signature!==terrainLightSignature)
   fogIlluminationCache={signature:terrainLightSignature,values:new Map()};
- if(fogMovingLightCache.signature!==terrainLightSignature)
+ if(fogMovingLightCache.signature!==terrainLightSignature){
   fogMovingLightCache={signature:terrainLightSignature,positions:new Map()};
+  fogRecentSamplePoints.clear();fogPrewarmCompletedKey=null;
+ }
  fogMovingLightHits=0;fogMovingLightMisses=0;
  if(fogDistantDarkCache?.signature!==terrainLightSignature){
   if(fogDistantDarkCache){
@@ -6620,7 +6629,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(geometryAudit){
    fogDetail.distantDarkCache={hits:fogDistantDarkHits,entries:fogDistantDarkCache?.values.size??0,enabled:fogDistantDarkEligible,signatureChanges:fogDistantDarkSignatureChanges,invalidations:fogDistantDarkInvalidations,changeReasons:{...fogDistantDarkChangeReasons},componentChanges:{...fogDistantDarkComponentChanges},lastChangedComponents:[...fogDistantDarkLastChanged]};
    fogDetail.fastDarkPatchSkips=fogFastPatchSkips;
-   fogDetail.movingLightPositionCache={positions:fogMovingLightCache.positions.size,hits:fogMovingLightHits,misses:fogMovingLightMisses,limit:FOG_LIGHT_POSITION_LIMIT};
+   fogDetail.movingLightPositionCache={positions:fogMovingLightCache.positions.size,hits:fogMovingLightHits,misses:fogMovingLightMisses,limit:FOG_LIGHT_POSITION_LIMIT,prewarmCalculated:fogPrewarmCalculated,prewarmReused:fogPrewarmReused,evictions:fogMovingLightEvictions,observedSamplePoints:fogRecentSamplePoints.size};
    fogDetail.wallTopology=roomTopology;
    fogDetail.roomVisibilityAudit=roomCandidates?{
     observerRegions:roomCandidates.observerRegions,
