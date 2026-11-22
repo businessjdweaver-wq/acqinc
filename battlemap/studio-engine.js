@@ -3281,6 +3281,34 @@ function calibrateWallImage(first,second){
  style.floorImage=image;movementRenderCache=null;refresh('Floor plan calibrated');
  setWallTool('trace');
 }
+function deleteFinalWallPart(p,kind){
+ const hit=nearestWall(p);
+ if(!hit||hit.distance>Math.max(.2,12/S)){wallStatus('Click closer to a finalized wall.');return}
+ const wall=hit.wall, nodes=wall.nodes;
+ if(wall.openings?.length){wallStatus('This wall contains openings. Move or delete its openings before removing a segment or node.');return}
+ const nearest=nodes.map((n,i)=>({i,d:wallDistance(n.p,p)})).sort((a,b)=>a.d-b.d)[0];
+ let next=sceneWallPaths().filter(w=>w!==wall),parts=[];
+ if(kind==='node'){
+  if(nearest.d>Math.max(.2,12/S)){wallStatus('Click directly on a wall node.');return}
+  if(nodes.length<=2){wallStatus('Deleting this node would remove the whole wall. Use Delete selected instead.');return}
+  const draft=structuredClone(wall);draft.nodes.splice(nearest.i,1);
+  if(draft.closed&&draft.nodes.length<3)draft.closed=false;
+  parts=[draft];
+ }else{
+  if(wall.closed){wallStatus('Open the closed wall path before deleting an individual segment.');return}
+  let index=-1,dist=Infinity;
+  for(let i=0;i<nodes.length-1;i++){
+   const a=nodes[i].p,b=nodes[i+1].p,dx=b[0]-a[0],dy=b[1]-a[1];
+   const t=Math.max(0,Math.min(1,((p[0]-a[0])*dx+(p[1]-a[1])*dy)/(dx*dx+dy*dy||1)));
+   const d=wallDistance(p,[a[0]+t*dx,a[1]+t*dy]);
+   if(d<dist){dist=d;index=i}
+  }
+  if(dist>Math.max(.2,12/S)){wallStatus('Click a straight wall segment to delete it.');return}
+  const left=nodes.slice(0,index+1),right=nodes.slice(index+1);
+  parts=[left,right].filter(ns=>ns.length>=2).map(ns=>({...structuredClone(wall),id:crypto.randomUUID(),nodes:structuredClone(ns),closed:false,openings:[]}));
+ }
+ if(updateSceneWallPaths([...next,...parts])){wallSelection.clear();wallOpeningIndex=-1;wallStatus('Finalized wall '+kind+' deleted. Undo is available.')}
+}
 function handleWallPointerDown(event){
  if(!wallTool||['view','inspect'].includes(wallTool.mode)||!wallCanEdit()||!topDown||event.button!==0||carry)return;
  event.stopImmediatePropagation();event.preventDefault();
@@ -3291,6 +3319,16 @@ function handleWallPointerDown(event){
   return;
  }
  if(mode==='room'){selectWallRoom(p);return}
+  if(mode==='rectangle'){
+   const start=wallTool.nodes[0]?.p;
+   if(!start){wallTool.nodes=[{p:wallSnappedPoint(p,event)}];wallStatus('Click the opposite corner of the rectangular partition.');draw();return}
+   const end=wallSnappedPoint(p,event),x0=Math.min(start[0],end[0]),x1=Math.max(start[0],end[0]),y0=Math.min(start[1],end[1]),y1=Math.max(start[1],end[1]);
+   if(x1-x0<.15||y1-y0<.15){wallStatus('Choose a rectangle with nonzero width and depth.');return}
+   const wall={...pathWallDefaults,id:crypto.randomUUID(),nodes:[[x0,y0],[x1,y0],[x1,y1],[x0,y1]].map(p=>({p})),closed:true,openings:[]};
+   if(updateSceneWallPaths([...sceneWallPaths(),wall])){wallTool.nodes=[];wallSelection.clear();wallSelection.add(wall.id);wallStatus('Rectangular partition created. Click two corners to create another.');}
+   return;
+  }
+  if(mode==='edit'&&event.ctrlKey&&!event.metaKey){deleteFinalWallPart(p,event.altKey?'node':'segment');return}
  if(mode==='Door'||mode==='Window'){addWallOpening(nearestWall(p),mode);return}
  if(mode==='trace'){
   // Ctrl+Alt starts a separate wall without connecting to the prior path.
@@ -3648,13 +3686,13 @@ function initializeWallPaths(){
    '<button id="wallPlanScale" type="button">Calibrate image</button><button id="wallPlanVisible" type="button">Toggle floor image</button>'+
    '<label>Image opacity <input id="wallPlanOpacity" type="range" min="0" max="100" value="100"></label></div></div>'+pane('walls')+'<div class="wall-path-actions">'+
    '<button id="wallTrace" type="button">Trace wall</button><button id="wallFinish" type="button">Finish wall</button>'+
-   '<button id="wallEdit" type="button">Edit points</button></div>'+
+   '<button id="wallEdit" type="button">Edit points</button><button id="wallRectangle" type="button">Rectangle partition</button></div>'+
    '<div class="wall-path-actions" style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">'+
    '<button id="wallCopyStyle" type="button">Copy wall style</button>'+
    '<button id="wallPaintSelected" type="button">Paint selected walls</button>'+
    '<button id="wallPaintAll" type="button">Paint all walls</button></div>'+
    '<label>Walls <select id="wallPathList" multiple size="4"></select></label>'+
-   '<p>Shift-click walls on the map to select several. Alt bypasses snapping.</p><div id="wallTraceShortcutGuide" style="padding:8px 10px;margin:8px 0;border:1px solid #70e8ff66;border-radius:6px;background:#142c35;color:#e8f8fa;font-size:12px;line-height:1.65"><strong>Wall tracing · Key + click reference</strong><div>Click — add point / drag for curve</div><div>Alt + click — place without snapping</div><div>Command + drag point — move unfinished point</div><div>Control + click point — delete unfinished point</div><div>Control + Alt + click — finish current path and begin a separate wall</div><div>Esc / Delete — undo last point (repeat to backtrack)</div><div>Enter — finish current wall</div><div>Finish wall / Done — save or exit deliberately</div></div>'+
+   '<p>Shift-click walls to select several. In Edit points: Control-click deletes a finalized segment; Control+Alt-click deletes a node. Rectangle partition: click opposite corners. Alt bypasses snapping.</p><div id="wallTraceShortcutGuide" style="padding:8px 10px;margin:8px 0;border:1px solid #70e8ff66;border-radius:6px;background:#142c35;color:#e8f8fa;font-size:12px;line-height:1.65"><strong>Wall tracing · Key + click reference</strong><div>Click — add point / drag for curve</div><div>Alt + click — place without snapping</div><div>Command + drag point — move unfinished point</div><div>Control + click point — delete unfinished point</div><div>Control + Alt + click — finish current path and begin a separate wall</div><div>Esc / Delete — undo last point (repeat to backtrack)</div><div>Enter — finish current wall</div><div>Finish wall / Done — save or exit deliberately</div></div>'+
    '<form id="wallProperties"><div class="wall-path-fields">'+wallNodeFields(wallPropertyFields,'wp-')+'</div>'+
    '<button type="submit">Apply changed settings to selected walls</button> <button id="wallDelete" type="button">Delete selected</button></form></div>'+pane('openings')+
    '<div class="wall-path-actions"><button id="wallDoor" type="button">Paint door</button><button id="wallWindow" type="button">Paint window</button> <button id="wallOpeningPaste" type="button" disabled>Paste opening</button></div>'+
@@ -3719,7 +3757,7 @@ function initializeWallPaths(){
   if(!wallCanEdit()||!area?.appearance?.groundImage)return;
   remember();area.floorImageOpacity=el('wallPlanOpacity').valueAsNumber/100;movementRenderCache=null;refresh();
  };
- for(const [id,mode] of [['wallTrace','trace'],['wallEdit','edit'],['wallDoor','Door'],['wallWindow','Window'],['wallView','view'],['wallDetectRoom','room']])
+ for(const [id,mode] of [['wallTrace','trace'],['wallEdit','edit'],['wallRectangle','rectangle'],['wallDoor','Door'],['wallWindow','Window'],['wallView','view'],['wallDetectRoom','room']])
   el(id).onclick=()=>{setWallTool(mode);if(mode==='view'){topDown=false;tilt=.69;draw()}};
  el('wallDone').onclick=closeWallTool;
  el('wallFinish').onclick=()=>{if(wallTool?.mode==='trace')finishWallPath(false)};
