@@ -5285,9 +5285,64 @@ function sightlineClear(eye,target,blockers){
 // sector visibility shortcut: only identical eye/target rays can be reused.
 // Invalidate with the lighting/terrain signature, including doors and windows.
 let fogSectorRayCache=null;
+const fogWorkerEnabled=new URLSearchParams(location.search).get('fogWorker')==='1';
+let fogRayWorker=null,fogWorkerCache=null,fogWorkerJob=null,fogWorkerSerial=0;
+const fogWorkerStats={queued:0,completed:0,reused:0,failed:0,lastRayCount:0,lastWorkerMs:0};
+
+function queueWorkerSightlines(destination){
+ const cache=fogSectorRayCache;
+ if(!fogWorkerEnabled||!cache?.blockers||!playerFogEnabled()||!fogRecentSamplePoints.size)return;
+ try{
+  if(!fogRayWorker){
+   fogRayWorker=new Worker('./studio-fog-worker.js');
+   fogRayWorker.onerror=()=>{
+    fogWorkerStats.failed++;
+    fogRayWorker.terminate();
+    fogRayWorker=null;fogWorkerCache=null;fogWorkerJob=null;
+   };
+   fogRayWorker.onmessage=({data})=>{
+    const job=fogWorkerJob;
+    if(data.id!==job?.id)return;
+    fogWorkerJob=null;
+    if(job.cache!==fogSectorRayCache)return;
+    if(data.error||data.visible?.length!==job.points.length){fogWorkerStats.failed++;return}
+    job.cache.workerRays={eye:job.eye.join(','),points:new Map(job.points.map((point,i)=>[point.join(','),!!data.visible[i]]))};
+    fogWorkerStats.completed++;
+    fogWorkerStats.lastRayCount=job.points.length;
+    fogWorkerStats.lastWorkerMs=data.elapsedMs;
+   };
+  }
+  const eye=basePoint(destination);eye[2]+=.65;
+  const points=[...fogRecentSamplePoints.values()].slice(-4096);
+  const id=++fogWorkerSerial;
+  const blockers=fogWorkerCache===cache?null:cache.blockers.map(bounds=>({
+   bounds:[bounds[0],bounds[1],bounds[2]],
+   prism:bounds.wallPrism?{
+    z:bounds.wallPrism.z,top:bounds.wallPrism.top,axes:bounds.wallPrism.axes,spans:bounds.wallPrism.spans,
+    sight:!!wallPassage(bounds.wallPrism).sight
+   }:null,
+   terrain:bounds.terrain&&Object.hasOwn(types,bounds.terrain.type)?{
+    x:bounds.terrain.x,y:bounds.terrain.y,type:bounds.terrain.type,
+    terrainYaw:bounds.terrain.terrainYaw,size:dimensions(bounds.terrain).slice(0,2)
+   }:null
+  }));
+  fogWorkerJob={id,cache,eye,points};
+  fogRayWorker.postMessage({id,blockers,eye,points});
+  fogWorkerCache=cache;
+  fogWorkerStats.queued++;
+ }catch(error){
+  fogWorkerStats.failed++;
+  fogWorkerCache=null;fogWorkerJob=null;
+ }
+}
 function cachedFogSightline(eye,target,blockers){
  const cache=fogSectorRayCache;
  if(!cache)return sightlineClear(eye,target,blockers);
+ const warmed=blockers===cache.blockers&&cache.workerRays;
+ if(warmed?.eye===eye.join(',')){
+  const visible=warmed.points.get(target.join(','));
+  if(visible!==undefined){fogWorkerStats.reused++;return visible}
+ }
  const sector=fogRegionKey(target);
  let bucket=cache.sectors.get(sector);
  if(!bucket){bucket=new Map();cache.sectors.set(sector,bucket)}
@@ -5882,6 +5937,7 @@ function startLightingFrame(){
  // Reuse only exact rays; lighting still gets evaluated independently.
  const raySignature=JSON.stringify([currentSceneId,terrainLightSignature,areas.filter(a=>a.shape==='opening').map(a=>[a.id,a.open,a.shaded,a.secret])]);
  if(fogSectorRayCache?.signature!==raySignature)fogSectorRayCache={signature:raySignature,sectors:new Map(),count:0,hits:0,misses:0};
+ fogSectorRayCache.blockers=blockers;
  if(fogIlluminationCache?.signature!==terrainLightSignature)
   fogIlluminationCache={signature:terrainLightSignature,values:new Map()};
  if(fogMovingLightCache.signature!==terrainLightSignature){
@@ -5927,7 +5983,22 @@ function timeLighting(work){
   delete performanceDraw.timingLighting;
  }
 }
-const performanceSamples=[];
+const performanceSamples=[],standeeInputSamples=[];
+let pendingStandeeInput=null;
+function recordStandeeInput(event,standee){
+ const sample=pendingStandeeInput;
+ if(!sample||sample.scene!==currentSceneId||sample.standee!==standee.roomId)return;
+ const accepted=performance.now();
+ if(accepted-sample.confirmedAt>15000){pendingStandeeInput=null;return}
+ const pointerAt=event.timeStamp;
+ standeeInputSamples.push({
+  confirmToAcceptedMs:roundedMs(accepted-sample.confirmedAt),
+  pointerToAcceptedMs:Number.isFinite(pointerAt)&&pointerAt>=sample.confirmedAt&&pointerAt<=accepted
+   ?roundedMs(accepted-pointerAt):null
+ });
+ if(standeeInputSamples.length>100)standeeInputSamples.shift();
+ pendingStandeeInput=null;
+}
 let performanceTimer=null,renderingReport=null,lastCameraDraw=null,cameraReleasedAt=null;
 const roundedMs=value=>Number(value.toFixed(2));
 function updatePerformanceReadout(){
@@ -5946,7 +6017,9 @@ function updatePerformanceReadout(){
   latest.paintBreakdown?Object.entries(latest.paintBreakdown).map(([name,data])=>name+' '+data.ms+' ms ('+data.calls+')').join(' · '):'',
   'Last redraw: ordering '+latest.orderMs+' ms · lighting '+latest.lightingMs+' ms · '+latest.faces+' faces',
   latest.rays+' visibility rays · '+latest.lightCandidates+' light candidates',
-  latest.pieces+' terrain pieces · '+latest.lights+' active lights'
+  latest.pieces+' terrain pieces · '+latest.lights+' active lights',
+  standeeInputSamples.length?'Last accepted standee click: '+standeeInputSamples.at(-1).confirmToAcceptedMs+' ms after confirm · '+(standeeInputSamples.at(-1).pointerToAcceptedMs??'unavailable')+' ms from pointer event':'',
+  fogWorkerEnabled?'Fog worker: '+fogWorkerStats.completed+'/'+fogWorkerStats.queued+' batches · '+fogWorkerStats.reused+' rays reused':' '
  ].filter(Boolean).join('\n');
 }
 el('performanceToggle').onclick=()=>{
@@ -5958,11 +6031,11 @@ el('performanceToggle').onclick=()=>{
   updatePerformanceReadout();performanceTimer=setInterval(updatePerformanceReadout,400);
  }
 };
-el('performanceReset').onclick=()=>{performanceSamples.length=0;renderingReport=textureTestReport=null;lastCameraDraw=cameraReleasedAt=null;el('performanceStatus').textContent='';updatePerformanceReadout()};
+el('performanceReset').onclick=()=>{performanceSamples.length=0;standeeInputSamples.length=0;pendingStandeeInput=null;renderingReport=textureTestReport=null;lastCameraDraw=cameraReleasedAt=null;el('performanceStatus').textContent='';updatePerformanceReadout()};
 el('performanceCopy').onclick=async()=>{
  const output=el('performanceStatus');
  try{
-  await navigator.clipboard.writeText(JSON.stringify({build:el('battlemapBuild').textContent.slice(1),samples:performanceSamples,benchmark:renderingReport,railTravel:railTravelReport,textureTest:textureTestReport},null,2));
+  await navigator.clipboard.writeText(JSON.stringify({build:el('battlemapBuild').textContent.slice(1),samples:performanceSamples,standeeInput:standeeInputSamples,fogWorker:{enabled:fogWorkerEnabled,...fogWorkerStats},benchmark:renderingReport,railTravel:railTravelReport,textureTest:textureTestReport},null,2));
   output.textContent='Copied';
  }catch{output.textContent='Clipboard unavailable'}
 };
@@ -7920,7 +7993,7 @@ el('moveConfirm').onclick=()=>{if(carry)dropCarry()};
 let moveConfirmPending=false;
 async function dropCarry(){
  if(!carry||moveConfirmPending)return;
- const pendingCarry=carry;
+ const pendingCarry=carry,confirmedAt=performance.now();
  moveConfirmPending=true;
  el('moveActions').hidden=true;
  el('routeOverlay').hidden=true;
@@ -7929,7 +8002,7 @@ async function dropCarry(){
   // One paint opportunity for the confirmation indicator; do not impose
   // a second animation-frame delay on every movement.
   await new Promise(resolve=>requestAnimationFrame(resolve));
-  if(carry===pendingCarry)await commitCarry();
+  if(carry===pendingCarry)await commitCarry(confirmedAt);
  }finally{
   moveConfirmPending=false;
   if(dismissed&&carry===pendingCarry){
@@ -7970,7 +8043,7 @@ function scheduleConfirmedMovementRepaint(){
   confirmedMovementRepaint=requestIdleCallback(repaint,{timeout:180});
  else confirmedMovementRepaint=setTimeout(repaint,80);
 }
-async function commitCarry(){
+async function commitCarry(confirmedAt=performance.now()){
  const blocker=movementBlocked();
  if(blocker){message(carryBlockerLabel(blocker)+' blocks this route. Choose a waypoint around it.');draw();return}
  if(!validCarryDestination()){message('That standee does not fit there. Choose another destination.');draw();return}
@@ -7991,7 +8064,11 @@ async function commitCarry(){
   const moveStart=performance.now();
   try{
    if(carry.light)await customizeRoomObject(carry.light,'move_light',[ghost.x,ghost.y,ghost.z]);
-   else await moveRoomStandee(piece,ghost);
+   else{
+    queueWorkerSightlines(ghost);
+    await moveRoomStandee(piece,ghost);
+    pendingStandeeInput={scene:currentSceneId,standee:piece.roomId,confirmedAt};
+   }
    const serverMs=performance.now()-moveStart;
    if(!carry.light&&piece.type==='standee'&&route)rememberFogTravel(routeWithDetours([...route.points,basePoint(ghost)]),piece);
    // The server accepted the destination. Keep the provisional standee
@@ -8924,6 +9001,7 @@ canvas.onpointerdown=e=>{
  if(playing){
   if(f?.p?.type==='standee'){
    selected=f.p;
+   recordStandeeInput(e,selected);
    closeStandeeHud();
    drag={standee:selected,grabPlane:f.shadow?f.shadowLevel:selected.z,x,y,previewVision:gmVisionArmed};
    gmVisionArmed=false;
