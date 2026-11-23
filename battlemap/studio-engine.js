@@ -11534,6 +11534,23 @@ function cameraHandleTest(blockers){
   return visible;
  };
 }
+// Player door controls are limited to the observer's current authored-wall
+// region. Never use camera visibility alone to reveal another room's doors.
+function playerDoorInOccupiedRoom(object){
+ const topology=wallVisibilityTopology();
+ if(typeof topology?.regionAt!=='function')return false;
+ const observers=prepareFogObservers().observers;
+ if(!observers.length)return false;
+ const [x,y,z]=object.origin;
+ const doorPoint=[x+.5,y+.5,z];
+ const doorRegion=topology.regionAt(doorPoint);
+ if(doorRegion===null||doorRegion===undefined)return false;
+ return observers.some(observer=>{
+  if(Math.abs(observer.distance[2]-z)>1.5)return false;
+  const own=topology.regionAt(observer.distance);
+  return own!==null&&own!==undefined&&own===doorRegion;
+ });
+}
 function drawVisionObjects(blockers,standeeReadouts){
  const player=roomProfile?.gm===false;
  const cameraVisible=player?cameraHandleTest(blockers):null;
@@ -11556,6 +11573,7 @@ function drawVisionObjects(blockers,standeeReadouts){
   const anchor=[x+(object.shape==='room'?object.size/2:.5),y+(object.shape==='room'?object.depth/2:.5),z+fixtureElevation(object)];
   const projected=point(...anchor),[sx,sy]=projected;
   if(player&&(sx<0||sx>W||sy<0||sy>H||!cameraVisible(anchor)))continue;
+  if(player&&object.kind==='Door'&&!playerDoorInOccupiedRoom(object))continue;
   let button=byObject.get(object)??(object.roomId?byId.get(object.roomId):null);
   if(!button){
    button=createMapHandle();
@@ -11571,6 +11589,21 @@ function drawVisionObjects(blockers,standeeReadouts){
   }
   button.visionObject=object;
   button.toggleAttribute('data-hover-handle',object.shape!=='room');
+  const nearbyPlayerDoor=player&&object.kind==='Door';
+  button.toggleAttribute('data-player-door',nearbyPlayerDoor);
+  if(nearbyPlayerDoor){
+   button.style.background='rgba(24,36,43,.88)';
+   button.style.color='#ffe4a0';
+   button.style.border='1px solid #e5b95b';
+   button.style.borderRadius='7px';
+   button.style.boxShadow='0 0 0 2px rgba(0,0,0,.45)';
+   button.style.fontWeight='700';
+   button.style.fontSize='15px';
+   button.style.padding='4px 8px';
+  }else if(button.hasAttribute('data-player-door-style')){
+   for(const key of ['background','color','border','borderRadius','boxShadow','fontWeight','fontSize','padding'])button.style[key]='';
+  }
+  button.toggleAttribute('data-player-door-style',nearbyPlayerDoor);
   button.hoverAnchor=object.shape==='light'?(!object.fixture&&!object.dropped?projected:null):
    (object.open||topDown?projected:null);
   active.add(button);
@@ -11580,7 +11613,7 @@ function drawVisionObjects(blockers,standeeReadouts){
   const label=object.dropped?(object.on?'🔥 Dropped light':'◈ Dropped light'):object.fixture?fixtureType(object)[0]+(object.on?' · on':' · off'):object.shape==='room'?(object.dark?'Dark room':'Room') : object.kind==='Door'?(object.open?'Open door':'Closed door'):object.kind||(object.on?'Light on':'Light off');
   button.classList.toggle('spell-light-target',object.fixture==='spellLight');
   if(object.fixture==='spellLight')button.style.setProperty('--spell-target',Math.max(26,S*.86)+'px');
-  const caption=object.fixture==='spellLight'?'':player||playing?(object.shape==='light'?'✦':object.kind==='Window'?'▦':'▯'):object.shape==='room'&&!object.dark?'◈':label;
+  const caption=nearbyPlayerDoor?(object.open?'◯':'▣'):object.fixture==='spellLight'?'':player||playing?(object.shape==='light'?'✦':object.kind==='Window'?'▦':'▯'):object.shape==='room'&&!object.dark?'◈':label;
   if(button.textContent!==caption)button.textContent=caption;
   if(button.getAttribute('aria-label')!==label)button.setAttribute('aria-label',label);
   let hidden=!!visionTool&&object.shape!=='room';
