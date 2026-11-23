@@ -378,7 +378,32 @@ function mergeRoomToken(local,prior,remote){
       Object.assign(local,{x:remote.x,y:remote.y,z:remote.z});
      }
 }
+function mergeRoomPathDoorState(local,prior,remote){
+ if(!local?.wallPaths||!prior?.wallPaths||!remote?.wallPaths)return;
+ const baseline=new Map(prior.wallPaths.map(wall=>[wall.id,wall]));
+ const incoming=new Map(remote.wallPaths.map(wall=>[wall.id,wall]));
+ local.wallPaths=local.wallPaths.map(wall=>{
+  const before=baseline.get(wall.id),after=incoming.get(wall.id);
+  if(!before||!after||
+   canonicalSceneValue([wall.nodes,wall.closed,wall.z])!==canonicalSceneValue([before.nodes,before.closed,before.z]))return wall;
+  let changed=false;
+  const openings=wall.openings.map((opening,index)=>{
+   const previous=before.openings[index],next=after.openings[index];
+   if(opening.kind!=='Door'||!previous||!next||opening.open!==previous.open||next.open===previous.open)return opening;
+   const geometry=o=>[o.kind,o.at,o.width,o.height,o.sill];
+   if(canonicalSceneValue(geometry(opening))!==canonicalSceneValue(geometry(previous))||
+    canonicalSceneValue(geometry(next))!==canonicalSceneValue(geometry(previous)))return opening;
+   changed=true;
+   return {...opening,open:next.open};
+  });
+  return changed?{...wall,openings}:wall;
+ });
+}
 function mergeRoomOpeningState(local,prior,remote){
+ if(remote?.shape==='appearance'){
+  mergeRoomPathDoorState(local,prior,remote);
+  return;
+ }
  if(!local||!prior||!remote||!['opening','light'].includes(remote.shape))return;
  const keys=remote.shape==='light'?['on','origin']:remote.kind==='Window'?['open','shaded']:['open'];
  for(const key of keys){
@@ -731,9 +756,10 @@ async function syncRoomOnce(){
     const removedLights=new Set((roomBaseline?.areas||[]).filter(a=>a.shape==='light'&&!remoteAreaIds.has(a.roomId)).map(a=>a.roomId));
     if(removedLights.size)areas=areas.filter(a=>!removedLights.has(a.roomId));
     for(const remote of update.scene.areas||[]){
-     if(!['opening','light'].includes(remote.shape))continue;
-     const local=areas.find(a=>a.roomId===remote.roomId);
-     const previous=roomBaseline?.areas.find(a=>a.roomId===remote.roomId);
+     if(!['opening','light','appearance'].includes(remote.shape))continue;
+     const matches=a=>remote.shape==='appearance'?a.shape==='appearance':a.roomId===remote.roomId;
+     const local=areas.find(matches);
+     const previous=roomBaseline?.areas.find(matches);
      mergeRoomOpeningState(local,previous,remote);
      if(remote.dropped&&!local&&!previous)areas.push(structuredClone(remote));
     }

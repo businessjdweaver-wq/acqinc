@@ -3912,6 +3912,26 @@ function editPathOpening(wall,opening){
  wallStatus(opening.kind+' selected. Edit its dimensions or change its open state below.');
  el('wallOpeningFields').scrollIntoView({block:'nearest'});
 }
+let playerPathDoorPending=false;
+async function togglePlayerPathDoor(wall,opening){
+ if(playerPathDoorPending||opening.kind!=='Door'||opening.secret)return;
+ if(playerScenePaused()||opening.locked){
+  message(opening.locked?'That door is locked.':'The scene is paused.');
+  return;
+ }
+ const openingIndex=wall.openings.indexOf(opening);
+ if(openingIndex<0)return;
+ playerPathDoorPending=true;
+ try{
+  await roomRpc('opening',{ticket:roomProfile.token,opening_id:'path-wall:'+openingIndex+':'+wall.id,
+   desired_open:!opening.open,expected_revision:roomRevision});
+ }catch(error){
+  message(error.message);
+ }finally{
+  await pollRoom();
+  playerPathDoorPending=false;
+ }
+}
 function togglePathOpening(wall,opening,key){
  if(!playing||!roomProfile?.gm||!sceneWallPaths().includes(wall))return;
  const next={...wall,openings:wall.openings.map(o=>o===opening?{...o,[key]:!o[key]}:o)};
@@ -11490,10 +11510,7 @@ function drawPathObjectHandles(standeeReadouts){
      const currentOpening=current&&compileWallPath(current).openings[index]?.opening;
      if(!currentOpening)return;
      if(playing&&roomProfile&&!roomProfile.gm){
-      // Path-wall openings are scene geometry, not the ordinary opening
-      // records supported by the player opening RPC. Never mutate local
-      // state and pretend it has synchronized to the GM.
-      message('This wall door requires a GM to open or close it.');
+      void togglePlayerPathDoor(current,currentOpening);
      }else if(playing)togglePathOpening(current,currentOpening,door?'open':'shaded');
      else editPathOpening(current,currentOpening);
     },opening);
