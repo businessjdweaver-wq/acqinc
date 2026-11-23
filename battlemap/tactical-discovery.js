@@ -306,27 +306,48 @@ function bindTacticalMapContext(canvas){
   close();
   const caster=mapDimensionDoorCaster();
   const cell=tacticalMapCellAt(canvas,event.clientX,event.clientY);
-  if(!caster||!cell||carry||spellPlacement)return;
-  const [x,y,z]=cell;
-  const target=spellRangeTargetInGrid(x+.5,y+.5,z,caster,'dimension_door',true);
+  const note=tacticalNoteAt(canvas,event.clientX,event.clientY);
+  if(!cell||carry||spellPlacement)return;
+  const [x,y,z]=cell,origin=[x+.5,y+.5,z];
+  const canPlaceNote=playerNoteCanCreate()&&floorAcceptsDestination(origin[0],origin[1],0,0);
+  const ownedNotes=playerNoteCanCreate()?playerNotesOwned():[];
+  const target=caster?spellRangeTargetInGrid(origin[0],origin[1],z,caster,'dimension_door',true):null;
+  if(!canPlaceNote&&!ownedNotes.length&&!(note&&canEditPlayerNote(note))&&!caster)return;
   const scene=tacticalDiscoveryKey();
   menu=doc.createElement('div');
-  menu.style.cssText='position:fixed;z-index:10000;padding:5px;background:#28241c;border:1px solid #756448;border-radius:6px';
-  const action=doc.createElement('button');
-  action.type='button';
-  action.textContent=target.inRange?'Dimension Door here':'Dimension Door · out of range';
-  action.disabled=!target.inRange;
-  action.onclick=()=>{
-   close();
-   if(scene===tacticalDiscoveryKey()&&tacticalMapCells().includes(cell.join(',')))
-    castDimensionDoorAtSquare(caster,spellRangeTargetInGrid(x+.5,y+.5,z,caster,'dimension_door',true));
+  menu.style.cssText='position:fixed;z-index:10000;padding:5px;display:grid;gap:4px;max-height:70vh;overflow:auto;background:#28241c;border:1px solid #756448;border-radius:6px';
+  const addAction=(label,action,disabled=false)=>{
+   const button=doc.createElement('button');button.type='button';button.textContent=label;button.disabled=disabled;
+   button.onclick=()=>{close();if(scene===tacticalDiscoveryKey()&&tacticalMapCells().includes(cell.join(',')))action()};
+   menu.append(button);return button;
   };
-  menu.append(action);
+  if(note&&canEditPlayerNote(note))addAction('Move this note here',()=>void movePlayerNoteTo(note,origin));
+  if(note)addAction('Open scene note',()=>doc===document?openPlayerNote(note):showTacticalNote(doc,note));
+  if(canPlaceNote)addAction('Add scene note here',()=>openPlayerNote({shape:'player_note',size:1,angle:0,origin}));
+  for(const owned of ownedNotes){
+   if(note?.roomId===owned.roomId)continue;
+   const label='Move '+(owned.marker||'•')+' '+(owned.title||'scene note')+' here';
+   addAction(label,()=>void movePlayerNoteTo(owned,origin),!floorAcceptsDestination(origin[0],origin[1],0,0));
+  }
+  if(caster)addAction(target.inRange?'Dimension Door here':'Dimension Door · out of range',()=>{
+   if(scene===tacticalDiscoveryKey()&&tacticalMapCells().includes(cell.join(',')))
+    castDimensionDoorAtSquare(caster,spellRangeTargetInGrid(origin[0],origin[1],z,caster,'dimension_door',true));
+  },!target.inRange);
+  addAction('Close',()=>{});
   doc.body.append(menu);
   menu.style.left=Math.max(4,Math.min(event.clientX,win.innerWidth-menu.offsetWidth-4))+'px';
   menu.style.top=Math.max(4,Math.min(event.clientY,win.innerHeight-menu.offsetHeight-4))+'px';
-  if(target.inRange)action.focus();
+  menu.querySelector('button:not(:disabled)')?.focus();
  });
+}
+function showTacticalNote(doc,note){
+ const detail=doc.createElement('dialog');
+ detail.style.cssText='width:min(26rem,85vw);color:#e9fff8;background:#213832;border:1px solid #9bdac7;border-radius:6px';
+ const title=doc.createElement('h2'),body=doc.createElement('p'),button=doc.createElement('button');
+ title.textContent=(note.marker||'•')+' '+(note.title||'Scene note');
+ body.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';body.textContent=note.notes;
+ button.textContent='Close';button.onclick=()=>detail.close();
+ detail.append(title,body,button);doc.body.append(detail);detail.onclose=()=>detail.remove();detail.showModal();
 }
 function tacticalMapRender(){
  const panel=document.getElementById('tacticalMapPanel');

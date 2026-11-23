@@ -2057,6 +2057,7 @@ for(const symbol of journalSymbols)el('journalMarker').add(new Option(symbol,sym
 const playerNoteDialog=el('playerNoteDialog');
 for(const symbol of journalSymbols)el('playerNoteMarker').add(new Option(symbol,symbol));
 let playerNoteDraft=null;
+let playerNoteMoveDraft=null;
 let showPlayerNotes=true;
 try{showPlayerNotes=localStorage.getItem('battlemap.showPlayerNotes')!=='false'}catch{}
 const playerNotesToggle=catalogButton('Player notes',()=>{
@@ -2070,6 +2071,42 @@ el('tacticalMapToggle').after(playerNotesToggle);
 function canEditPlayerNote(note){
  return roomProfile?.gm===false&&!!roomState.sceneId&&!playerScenePaused()&&
   (!note.roomId||note.areaOwner===roomProfile.name);
+}
+function playerNoteCanCreate(){
+ return roomProfile?.gm===false&&!!roomState.sceneId&&!playerScenePaused();
+}
+function playerNotesOwned(){
+ return areas.filter(note=>note.shape==='player_note'&&canEditPlayerNote(note));
+}
+function startPlayerNoteMove(note){
+ if(!canEditPlayerNote(note))return false;
+ playerNoteMoveDraft={note,scene:roomState.sceneId,profile:roomProfile};
+ el('terrainContext').hidden=true;
+ message('Click a new square for this scene note. Press Esc to cancel.');
+ canvas.focus();
+ return true;
+}
+document.addEventListener('keydown',event=>{
+ if(event.key==='Escape'&&playerNoteMoveDraft){
+  event.preventDefault();event.stopImmediatePropagation();playerNoteMoveDraft=null;
+  message('Note move cancelled.');
+ }
+},true);
+async function movePlayerNoteTo(note,origin){
+ if(!canEditPlayerNote(note)||!floorAcceptsDestination(origin[0],origin[1],0,0)){
+  message('Choose a clear map square for the note.');return false;
+ }
+ const saved=await changePlayerArea('area_update',{...note,origin});
+ if(saved){drawJournalPins();tacticalMapRender();message('Scene note moved.');return true}
+ return false;
+}
+function openPlayerNoteContext(note,clientX,clientY){
+ const menu=el('terrainContext');menu.replaceChildren();
+ const add=(label,action)=>menu.append(catalogButton(label,()=>{menu.hidden=true;action()}));
+ add('Open scene note',()=>openPlayerNote(note));
+ if(canEditPlayerNote(note))add('Move note…',()=>startPlayerNoteMove(note));
+ add('Close',()=>{});
+ positionGroundMenu(menu,clientX,clientY);
 }
 function visiblePlayerNotes(tactical=false){
  if(roomProfile?.gm===true&&!showPlayerNotes)return [];
@@ -2131,7 +2168,13 @@ function drawJournalPins(){
   const [x,y]=point(...pin.origin);
   if(x<0||y<0||x>W||y>H)continue;
   const button=catalogButton(pin.marker||'•',()=>pin.shape==='player_note'?openPlayerNote(pin):editJournalPin(pin));
-  if(pin.shape==='player_note')button.classList.add('playerSceneNote');
+  if(pin.shape==='player_note'){
+   button.classList.add('playerSceneNote');
+   button.oncontextmenu=event=>{
+    event.preventDefault();event.stopPropagation();
+    if(roomProfile?.gm===false)openPlayerNoteContext(pin,event.clientX,event.clientY);
+   };
+  }
   button.style.left=x+'px';button.style.top=y+'px';
   button.title=pin.title||'Journal pin';
   button.setAttribute('aria-label',button.title);

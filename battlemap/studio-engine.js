@@ -9406,6 +9406,19 @@ document.addEventListener('pointerdown',e=>{if(e.target!==canvas)dismissStatus()
 document.addEventListener('keydown',e=>{if(e.key==='Escape')dismissStatus()});
 canvas.onpointerdown=e=>{
  if(moveConfirmPending)return;
+ if(e.button===0&&playerNoteMoveDraft){
+  e.preventDefault();e.stopImmediatePropagation();
+  const draft=playerNoteMoveDraft;
+  if(draft.scene!==roomState.sceneId||draft.profile!==roomProfile){playerNoteMoveDraft=null;message('The scene changed. Start the note move again.');return}
+  const [x,y]=coords(e),face=hit(x,y,null,false,null,true),pivot=measurePoint(x,y,face);
+  const origin=[Math.floor(pivot[0]+1e-8)+.5,Math.floor(pivot[1]+1e-8)+.5,pivot[2]];
+  if(!pivot.every(Number.isFinite)||!floorAcceptsDestination(origin[0],origin[1],0,0)){
+   message('Choose a clear map square for the note.');return;
+  }
+  playerNoteMoveDraft=null;
+  void movePlayerNoteTo(draft.note,origin);
+  return;
+ }
  let downFace;
  if(e.button===0&&!carry&&!drag&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&!e.altKey){
   const mark=statusAt(e);
