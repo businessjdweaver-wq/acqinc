@@ -11463,7 +11463,7 @@ function drawPathObjectHandles(standeeReadouts){
   button.oncontextmenu=event=>{event.preventDefault();event.stopPropagation();activate()};
   button.onkeydown=event=>{if(event.shiftKey&&event.key==='F10'){event.preventDefault();activate()}};
  };
- if((playing?roomProfile?.gm:!carry&&!drag&&wallCanEdit())&&(!wallTool||['edit','view','inspect'].includes(wallTool.mode))){
+ if((playing?true:!carry&&!drag&&wallCanEdit())&&(!wallTool||['edit','view','inspect'].includes(wallTool.mode))){
   for(const [index,wall] of sceneWallPaths().entries()){
    const path=compileWallPath(wall),middle=sampleWall(path,path.length/2);
    if(!playing)place(wall.id+':wall',[...middle,wall.z+wall.height+.18],'Edit wall '+(index+1),'▰',()=>{
@@ -11473,11 +11473,28 @@ function drawPathObjectHandles(standeeReadouts){
     const anchor=sampleWall(path,(start+end)/2),door=opening.kind==='Door';
     const z=topDown?wall.z:wall.z+opening.sill+opening.height*.55;
     const label=playing?(door?(opening.open?'Close door':'Open door'):(opening.shaded?'Open window cover':'Close window cover')):'Edit '+opening.kind.toLowerCase();
-    place(wall.id+':opening:'+index,[...anchor,z],label,door?'▯':'▦',()=>{
+    // Only expose path-wall door controls to a player when the door borders
+    // their occupied topology region and is visible to their camera.
+    if(playing&&!roomProfile?.gm){
+     if(!door||opening.secret)continue;
+     const topology=wallVisibilityTopology();
+     const portal=topology.portals?.find(p=>p.wallId===wall.id&&p.kind==='Door'&&
+      Math.hypot(p.center[0]-anchor[0],p.center[1]-anchor[1])<.35);
+     const ownRegions=new Set(prepareFogObservers().observers.map(o=>topology.regionAt?.(o.distance)));
+     if(!portal?.regions?.some(region=>region!==null&&ownRegions.has(region)))continue;
+     const projected=point(...anchor,z);
+     if(!cameraHandleTest(visionBlockers())([...anchor,z]))continue;
+    }
+    place(wall.id+':opening:'+index,[...anchor,z],label,door?(opening.open?'◯':'▣'):'▦',()=>{
      const current=sceneWallPaths().find(pathWall=>pathWall.id===wall.id);
      const currentOpening=current&&compileWallPath(current).openings[index]?.opening;
      if(!currentOpening)return;
-     if(playing)togglePathOpening(current,currentOpening,door?'open':'shaded');
+     if(playing&&roomProfile&&!roomProfile.gm){
+      // Path-wall openings are scene geometry, not the ordinary opening
+      // records supported by the player opening RPC. Never mutate local
+      // state and pretend it has synchronized to the GM.
+      message('This wall door requires a GM to open or close it.');
+     }else if(playing)togglePathOpening(current,currentOpening,door?'open':'shaded');
      else editPathOpening(current,currentOpening);
     },opening);
    }
