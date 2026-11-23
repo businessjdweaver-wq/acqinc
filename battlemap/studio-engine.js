@@ -5144,7 +5144,7 @@ function forEachTerrainLightPatch(face,paint){
  for(let y=0;y<rows;y++)for(let x=0;x<columns;x++)
   paint([grid(x,y),grid(x+1,y),grid(x+1,y+1),grid(x,y+1)]);
 }
-function paintRoundLightPatch(points,projection,ranges,paint,depth,budget,refined=false,offset,shadowSample){
+function paintRoundLightPatch(points,projection,ranges,paint,depth,budget,refined=false,offset,shadowSample,worldOnly=false){
  const center=fogFaceCenter(points),sample=surfaceLightPoint(center,offset);
  if(depth&&budget.remaining>0&&points.length===4&&ranges.length){
   const span=Math.max(...points.map(p=>Math.hypot(p[0]-center[0],p[1]-center[1],p[2]-center[2])));
@@ -5165,11 +5165,11 @@ function paintRoundLightPatch(points,projection,ranges,paint,depth,budget,refine
    budget.remaining--;
    const midpoints=points.map((p,i)=>p.map((value,axis)=>(value+points[(i+1)%4][axis])/2));
    for(let i=0;i<4;i++)paintRoundLightPatch(
-    [points[i],midpoints[i],center,midpoints[(i+3)%4]],null,nearby??edges,paint,depth-1,budget,true,offset,shadowSample);
+    [points[i],midpoints[i],center,midpoints[(i+3)%4]],null,nearby??edges,paint,depth-1,budget,true,offset,shadowSample,worldOnly);
    return;
   }
  }
- paint(refined||offset?sample:sample.map(value=>Math.round(value*4)/4),projection??points.map(p=>point(...p)),points);
+ paint(refined||offset?sample:sample.map(value=>Math.round(value*4)/4),worldOnly?null:projection??points.map(p=>point(...p)),points);
 }
 let lightingFrame=null,performanceDraw=null,lightingCache=null;
 let fogCache=null,fogMemoryState=null;
@@ -6542,6 +6542,7 @@ function draw(action,reusePan=false){
  }finally{
   if(action==='Camera settled')lastCameraDraw=cameraReleasedAt=null;
   lightingFrame=null;performanceDraw=null;
+  if(progressiveLight&&!action?.startsWith?.('Test: '))scheduleProgressiveLightSlice();
   if(!action?.startsWith?.('Test: '))sendRepaintRays();
  }
 }
@@ -7480,6 +7481,8 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  }
  const lightBlockers=blockers;
  const sceneDark=showLighting;
+ const stage=progressiveLightFrame(action,sceneDark&&!cameraPreview&&!simplified&&!carry&&quality===2);
+ if(performanceDraw&&stage)performanceDraw.progressiveLighting=stage.phase;
  const lightEdgeDepth=simplified&&!carry||cameraPreview||lightOrbit||quality===0||quality===3?0:quality===4?1:quality===2?3:2;
  const sharpLight=quality===2&&lightEdgeDepth>0;
  const lightEdgeBudget={remaining:240};
@@ -7491,6 +7494,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   const light=lightAt(target,lightBlockers);
   return light?.transmission??(light?1:0);
  }:null;
+ if(stage){stage.ranges=lightRanges;stage.shadowSample=shadowSample}
  const tintLightPatch=(target,projection)=>{
   const tint=roomLighting(target,lightBlockers,quality===2);
   if(tint)polygon(projection,tint,null);
@@ -7504,6 +7508,28 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(face.cachedShade){
    for(const [points,tint] of face.cachedShade)if(tint)polygon(points.map(vertex=>point(...vertex)),tint,null);
    return;
+  }
+  if(stage){
+   const key=[face.p?.type,!!face.p?.form,!!face.volumeTop,face.edge!==undefined,face.world,face.surfaceLightOffset].map(value=>JSON.stringify(value)).join('|');
+   const exact=stage.patches.get(key);
+   if(exact){
+    for(const [world,tint] of exact)polygon(world.map(vertex=>point(...vertex)),tint,null);
+    return;
+   }
+   if(stage.phase!=='sharp'){
+    if(!stage.faces.has(key)){
+     const patches=[];
+     forEachTerrainLightPatch(face,points=>patches.push(points));
+     stage.faces.set(key,{key,patches,offset:face.surfaceLightOffset,
+      depth:topDown&&roomProfile?.gm===false&&!face.p?Math.max(3,lightEdgeDepth):lightEdgeDepth});
+    }
+    forEachTerrainLightPatch(face,(points,projection)=>paintRoundLightPatch(
+     points,projection,lightRanges,(target,projected)=>{
+      const tint=roomLighting(target,lightBlockers,false);
+      if(tint)polygon(projected,tint,null);
+     },1,stage.mediumBudget,false,face.surfaceLightOffset,null));
+    return;
+   }
   }
   const saved=face.paintKey?[]:null;
   if(sceneDark)measurePaint('terrainLighting',()=>forEachTerrainLightPatch(face,(points,projection)=>{
@@ -8188,25 +8214,80 @@ function carryBlockerLabel(blocker){
  if(movementTerrainBlock(blocker))return 'An obstacle or raised terrain';
  return 'An obstacle';
 }
-let confirmedMovementRepaint=null;
-let confirmedMovementRepaintSerial=0;
-function scheduleConfirmedMovementRepaint(){
- const serial=++confirmedMovementRepaintSerial;
- if(confirmedMovementRepaint!==null){
-  if(typeof cancelIdleCallback==='function')cancelIdleCallback(confirmedMovementRepaint);
-  else clearTimeout(confirmedMovementRepaint);
+let progressiveLight=null,progressiveLightTimer=null;
+let lastProgressiveInput=-Infinity;
+for(const type of ['pointerdown','wheel','keydown'])
+ window.addEventListener(type,()=>{lastProgressiveInput=performance.now()},{capture:true,passive:true});
+function progressiveViewKey(){
+ return JSON.stringify([currentSceneId,roomState.sceneId,roomRevision,angle,tilt,zoom,panX,panY,topDown,W,H]);
+}
+function progressiveLightFrame(action,eligible){
+ if(!eligible||action?.startsWith?.('Test: '))return null;
+ const key=progressiveViewKey(),signature=lightingFrame.signature;
+ if(action==='Confirmed move · medium'){
+  progressiveLight={key,signature,phase:'medium',patches:new Map(),faces:new Map(),cursor:0,
+   frame:lightingFrame,observer:tokens.find(ownsRoomStandee)};
  }
- // Allow input, context menus and double clicks to be dispatched before
- // expensive fog and lighting work. A bounded timeout avoids starving paint.
- const repaint=()=>{
-  if(serial!==confirmedMovementRepaintSerial)return;
+ const job=progressiveLight;
+ if(!job)return null;
+ if(job.key!==key||job.signature!==signature){progressiveLight=null;return null}
+ job.mediumBudget={remaining:120};
+ if(job.phase==='sharp')progressiveLight=null;
+ return job;
+}
+function scheduleProgressiveLightSlice(){
+ if(progressiveLightTimer!==null||!progressiveLight)return;
+ progressiveLightTimer=setTimeout(runProgressiveLightSlice,24);
+}
+function runProgressiveLightSlice(){
+ progressiveLightTimer=null;
+ const job=progressiveLight;
+ if(!job)return;
+ if(job.key!==progressiveViewKey()||preferences.graphicsQuality!==2){progressiveLight=null;return}
+ if(document.hidden||carry||drag||roomMoving||moveConfirmPending||performance.now()-lastProgressiveInput<100){
+  scheduleProgressiveLightSlice();return;
+ }
+ if(!job.queue){
+  const eye=job.observer?basePoint(job.observer):null;
+  job.queue=[...job.faces.values()];
+  if(eye)job.queue.sort((a,b)=>{
+   const distance=part=>{const p=part.patches[0][0];return Math.hypot(p[0]-eye[0],p[1]-eye[1],p[2]-eye[2])};
+   return distance(a)-distance(b);
+  });
+ }
+ const deadline=performance.now()+6;
+ lightingFrame=job.frame;
+ try{
+  while(job.cursor<job.queue.length&&performance.now()<deadline){
+   const face=job.queue[job.cursor],points=face.patches[face.cursor??0];
+   const patches=face.shades??=[];
+   paintRoundLightPatch(points,null,job.ranges, (target,projected,world)=>{
+    const tint=roomLighting(target,job.frame.blockers,true);
+    if(tint)patches.push([world,tint]);
+   },face.depth,{remaining:21,shadowProbes:5},false,face.offset,job.shadowSample,true);
+   face.cursor=(face.cursor??0)+1;
+   if(face.cursor===face.patches.length){job.patches.set(face.key,patches);job.cursor++}
+  }
+ }finally{lightingFrame=null}
+ if(job.cursor===job.queue.length){
+  job.phase='sharp';
+  draw('Confirmed move · Sharp settled');
+ }else if(job.phase==='medium'&&job.cursor>=Math.ceil(job.queue.length*.35)){
+  job.phase='near';
+  draw('Confirmed move · nearby Sharp');
+ }
+ scheduleProgressiveLightSlice();
+}
+let confirmedMovementRepaint=null;
+function scheduleConfirmedMovementRepaint(action){
+ clearTimeout(confirmedMovementRepaint);
+ confirmedMovementRepaint=setTimeout(()=>{
   confirmedMovementRepaint=null;
-  if(carry||drag?.piece)return; // Active interaction owns the next repaint.
-  refresh();
- };
- if(typeof requestIdleCallback==='function')
-  confirmedMovementRepaint=requestIdleCallback(repaint,{timeout:180});
- else confirmedMovementRepaint=setTimeout(repaint,80);
+  if(carry||drag||roomMoving||moveConfirmPending||performance.now()-lastProgressiveInput<75){
+   scheduleConfirmedMovementRepaint(action);return;
+  }
+  refresh(action);
+ },40);
 }
 async function commitCarry(confirmedAt=performance.now()){
  const blocker=movementBlocked();
@@ -8239,7 +8320,7 @@ async function commitCarry(confirmedAt=performance.now()){
    // The server accepted the destination. Keep the provisional standee
    // overlay visible over the OLD visibility bitmap during synchronization.
    // Never run a full fog/lighting draw with unconfirmed room state.
-   if(piece.type==='standee'&&!carry.light){
+   if(piece.type==='standee'&&!carry.light&&canReuseStandeeLayer()){
     draw('Standee movement');
     await new Promise(resolve=>requestAnimationFrame(resolve));
    }
@@ -8252,7 +8333,7 @@ async function commitCarry(confirmedAt=performance.now()){
    // Coalesce successive confirmed movements so an obsolete queued repaint
    // cannot compete with a newer position. This does not interrupt an active
    // synchronous draw; a worker/chunked renderer is still needed for that.
-   scheduleConfirmedMovementRepaint();
+   scheduleConfirmedMovementRepaint(pendingStandeeInput?'Confirmed move · medium':undefined);
    if(performanceDraw)performanceDraw.movementCommit={serverMs:Math.round(serverMs),pollMs:Math.round(pollMs),totalMs:Math.round(performance.now()-moveStart)};
   }catch(err){message(err.message);await pollRoom()}
   finally{roomMoving=false}

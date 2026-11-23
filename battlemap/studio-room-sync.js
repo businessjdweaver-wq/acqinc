@@ -816,7 +816,9 @@ async function syncRoomOnce(){
   const initiativeChanged=(!roomProfile.gm||(!initiativeWritesPending&&initiativeVersionAtRead===initiativeWriteVersion))&&applyRoomInitiative(update.initiative);
   if(!roomProfile.gm)for(const token of tokens)if(ownsRoomStandee(token)&&token.roomId===roomProfile.characterKey&&roomProfile.character)token.playerDisplayName=roomProfile.character;
   updateJoinSharedEncounter();
-  if(changed||initiativeChanged||update.scene||wasPaused!==update.paused)refresh();
+  const localMoveRepaint=!roomProfile.gm&&roomMoving&&pendingStandeeInput?.scene===currentSceneId&&
+   !sceneChanged&&wasPaused===update.paused&&preferences.graphicsQuality===2;
+  if((changed||initiativeChanged||update.scene||wasPaused!==update.paused)&&!localMoveRepaint)refresh();
   roomFailureCount=0;roomRetryAt=0;roomConnection(roomPatchPending&&roomPatchFailures?'Synchronizing':'Connected',!!(roomPatchPending&&roomPatchFailures));
   return true;
  }catch(err){
