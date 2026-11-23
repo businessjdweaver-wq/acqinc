@@ -2914,7 +2914,12 @@ function makeWallPrism(poly,z,top,wall,opening=null){
   const dots=poly.map(p=>p[0]*axis[0]+p[1]*axis[1]);
   return [Math.min(...dots),Math.max(...dots)];
  });
- return {poly,z,top,axes,spans,wall,opening,type:'volume',name:opening?.kind||'Wall'};
+ const [[left,right],[near,far]]=spans;
+ const axisAlignedBox=!opening&&poly.length===4&&left<right&&near<far&&
+  [[left,near],[left,far],[right,near],[right,far]].every(([x,y])=>
+   poly.some(p=>p[0]===x&&p[1]===y))&&
+  poly.every(([x,y],i)=>{const next=poly[(i+1)%4];return x===next[0]||y===next[1]});
+ return {poly,z,top,axes,spans,wall,opening,axisAlignedBox,type:'volume',name:opening?.kind||'Wall'};
 }
 function compileWallPath(wall){
  const cached=pathWallCache.get(wall);
@@ -3090,10 +3095,13 @@ function wallPrismInterval(solid,start,end,half=0,height=0){
  });
  return movementInterval([...from,start[2]],[...to,end[2]],[...bounds,[solid.z-height,solid.top]]);
 }
-let wallBenchmarkBounds=false,wallBenchmarkProbes=null;
+let wallBenchmarkHybrid=false,wallBenchmarkProbes=null,wallBenchmarkBoxTests=0;
 function wallSightInterval(bounds,start,end){
- if(!wallBenchmarkBounds)return wallPrismInterval(bounds.wallPrism,start,end);
- const span=movementInterval(start,end,bounds);
+ const solid=bounds.wallPrism;
+ if(!wallBenchmarkHybrid||!solid.axisAlignedBox)return wallPrismInterval(solid,start,end);
+ wallBenchmarkBoxTests++;
+ const span=bounds.some(([lo,hi],i)=>Math.max(start[i],end[i])<=lo||
+  Math.min(start[i],end[i])>=hi)?null:movementInterval(start,end,bounds);
  if(wallBenchmarkProbes&&wallBenchmarkProbes.length<8)
   wallBenchmarkProbes.push({bounds,start,end,span});
  return span;
@@ -5978,7 +5986,7 @@ function startLightingFrame(){
  const stableBlockers=blockers.map(b=>[b[0],b[1],b[2],b.wallPrism?.poly,b.wallPrism?.spans,b.terrain?.terrainYaw]);
  const fogSignatureParts={
   scene:currentSceneId,
-  wallBenchmarkBounds,
+  wallBenchmarkHybrid,
   blockers:stableBlockers,
   lights:lights.filter(light=>!light.carried),
   rooms,
@@ -6214,7 +6222,7 @@ async function runRailTraversal(compare){
  const original={carry,ghost,route,angle,tilt,zoom,panX,panY,topDown,tokenX:token.x,tokenY:token.y,tokenZ:token.z,fogMemoryState,pendingFogTravel};
  const sceneId=currentSceneId,frames=compare?12:120;
  // Each mode runs once as the first pass and once as the second pass.
- const phases=compare?['Exact prisms','Box blockers','Box blockers','Exact prisms']:['Rail traversal'];
+ const phases=compare?['Exact prisms','Hybrid blockers','Hybrid blockers','Exact prisms']:['Rail traversal'];
  const comparisons=[];
  // Fixed route and fixed observer elevation make runs comparable even if
  // the standee was moved between benchmarks. The actual position is restored.
@@ -6263,11 +6271,12 @@ async function runRailTraversal(compare){
    const queuedAt=performance.now();
    const inputDelay=compare?new Promise(resolve=>setTimeout(()=>resolve(roundedMs(performance.now()-queuedAt)),0)):null;
    if(compare)({angle,tilt,zoom,panX,panY,topDown}=original);
-   const probes=phase==='Box blockers'?[]:null;
-   wallBenchmarkBounds=!!probes;
+   const probes=phase==='Hybrid blockers'?[]:null;
+   wallBenchmarkBoxTests=0;
+   wallBenchmarkHybrid=!!probes;
    wallBenchmarkProbes=probes;
-   try{draw(action)}finally{wallBenchmarkBounds=false;wallBenchmarkProbes=null}
-   const sample=performanceSamples.at(-1);
+   try{draw(action)}finally{wallBenchmarkHybrid=false;wallBenchmarkProbes=null}
+   const sample=performanceSamples.at(-1),boxTests=wallBenchmarkBoxTests;
    const queuedCallbackMs=compare?await inputDelay:null;
    for(const {bounds,start,end,span} of probes??[]){
     const exact=wallPrismInterval(bounds.wallPrism,start,end);
@@ -6278,7 +6287,7 @@ async function runRailTraversal(compare){
     if(Boolean(exact)!==Boolean(span)){audit.changedHits++;group.changedHits++}
     if((!!exact&&exact[0]<.995)!==(!!span&&span[0]<.995))audit.changedSightlineCutoff++;
    }
-   if(sample?.action===action)results.push({...sample,frame,position:point,timestamp,queuedCallbackMs});
+   if(sample?.action===action)results.push({...sample,frame,position:point,timestamp,queuedCallbackMs,boxTests});
    if(frame%4===0)status.textContent=(compare?'Pass '+(pass+1)+' of '+phases.length+' · ':'')+phase+' · '+Math.round(100*frame/(frames-1))+'%';
   }
   const ordered=results.map(s=>s.drawMs).sort((a,b)=>a-b);
@@ -6289,7 +6298,7 @@ async function runRailTraversal(compare){
    note:'Deterministic corner-to-corner route starting at map minimum at elevation zero; 120 frames. Route may cross walls. Standee and fog history restored; no room RPC.',samples:results};
   if(compare){
    const delays=results.map(s=>s.queuedCallbackMs).sort((a,b)=>a-b);
-   comparisons.push({...report,phase,pass:pass+1,orderInPair:pass%2+1,probeAudit:audit,callbackP95Ms:delays[Math.ceil(delays.length*.95)-1],
+   comparisons.push({...report,phase,boxTests:results.reduce((sum,s)=>sum+s.boxTests,0),pass:pass+1,orderInPair:pass%2+1,probeAudit:audit,callbackP95Ms:delays[Math.ceil(delays.length*.95)-1],
     note:'Synthetic callback queued immediately before each draw. All passes use the same camera and one-square out-and-back steps from the torch bearer’s starting position.'});
   }else railTravelReport=report;
  }
@@ -6302,7 +6311,7 @@ async function runRailTraversal(compare){
  finally{
   token.x=original.tokenX;token.y=original.tokenY;token.z=original.tokenZ;
   ({carry,ghost,route,angle,tilt,zoom,panX,panY,topDown,fogMemoryState,pendingFogTravel}=original);
-  wallBenchmarkBounds=false;wallBenchmarkProbes=null;
+  wallBenchmarkHybrid=false;wallBenchmarkProbes=null;
   fogCache=null;fogSectorRayCache=null;
   railTravelRunning=false;controls.forEach((button,i)=>button.disabled=disabled[i]);
   draw('Test: restore');updatePerformanceReadout();
