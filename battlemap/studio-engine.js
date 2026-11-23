@@ -70,7 +70,8 @@ function setSceneGrid(sceneAreas,grid){
  if(!appearance){appearance={shape:'appearance',origin:[0,0,0],angle:0,size:1,appearance:{}};sceneAreas.push(appearance)}
  appearance.grid=grid;
 }
-function dimensions(p){if(isFurniture(p)){const v=furnitureValues(p),kind=v.componentKind,[w,d]=furnitureFootprint(v),h=.15+v.furnHeight*.025,H=kind==='rug'?.024:kind==='chair'&&v.furnDetail>25?h*1.4:Math.max(h,.15);return p.r%2?[d,w,H]:[w,d,H]}if(p.type==='standee')return [p.size,p.size,1];const [,w,d,h]=types[p.type];const [width,depth,height]=p.type==='volume'?(p.extents??[w,d,h]):[w,d,h];return p.r%2?[depth,width,height]:[width,depth,height]}
+function furnitureHeight(v){const h=v.furnHeight??35;return ({tumbleweed:.2+h*.006,hitchingPost:.45+h*.01,feedTrough:.18+h*.005,waterTower:1.2+h*.025,splitRailFence:.35+h*.008}[v.componentKind]??(.15+h*.025))}
+function dimensions(p){if(isFurniture(p)){const v=furnitureValues(p),kind=v.componentKind,[w,d]=furnitureFootprint(v),h=furnitureHeight(v),H=kind==='rug'?.024:kind==='chair'&&v.furnDetail>25?h*1.4:Math.max(h,.15);return p.r%2?[d,w,H]:[w,d,H]}if(p.type==='standee')return [p.size,p.size,1];const [,w,d,h]=types[p.type];const [width,depth,height]=p.type==='volume'?(p.extents??[w,d,h]):[w,d,h];return p.r%2?[depth,width,height]:[width,depth,height]}
 function sceneryPiece(p){return ['scatter','backdrop','ceilingArt'].includes(p.type)}
 function formationLanding(p,terrain,sceneAreas=areas){
  const appearance=sceneAreas.find(a=>a.shape==='appearance')?.appearance;
@@ -1020,7 +1021,7 @@ function visionRayClear(from,to,blockers){
 }
 const roomFloorPatterns={
  dirt:'Dirt',grass:'Grass',gravel:'Gravel',cobble:'Cobblestone',brick:'Brick',roughRock:'Rough stone',moss:'Moss',
- furrows:'Furrows',seeded:'Seeded ground',ancient:'Ancient stone',vines:'Vines',soot:'Soot',
+ furrows:'Furrows',seeded:'Seeded ground',ancient:'Ancient stone',vines:'Vines',soot:'Soot',boardwalk:'Boardwalk',wagonRuts:'Wagon ruts',splitRail:'Split-rail wood',
  fluting:'Fluting',blood:'Blood spatter',plain:'Solid color',
  squareTile:'Square tile',checkerTile:'Checkerboard tile',hexTile:'Hex tile',planks:'Wood planks',parquet:'Parquet',herringbone:'Herringbone'
 };
@@ -1529,7 +1530,7 @@ function convertBiomeColumns(previous,next){
  }
 }
 function drawFurniture(p,preview,fill,kind,settings){
- const v={...terrainShapeDefaults,...settings},[w,d]=v.tableShape==='round'&&kind==='table'?furnitureFootprint(furnitureValues(p)):[.25+v.furnWidth*.035,.25+v.furnDepth*.035],h=.15+v.furnHeight*.025,c=v.furnColor||'#79563b',a=v.furnAccent||'#a79b75',cx=p.x+dimensions(p)[0]/2,cy=p.y+dimensions(p)[1]/2,ang=p.r*Math.PI/2;
+ const v={...terrainShapeDefaults,...settings},[w,d]=v.tableShape==='round'&&kind==='table'?furnitureFootprint(furnitureValues(p)):furnitureFootprint(v),h=furnitureHeight(v),c=v.furnColor||'#79563b',a=v.furnAccent||'#a79b75',cx=p.x+dimensions(p)[0]/2,cy=p.y+dimensions(p)[1]/2,ang=p.r*Math.PI/2;
  const emit=(pts,color)=>{face(pts.map(([x,y,z])=>[cx+x*Math.cos(ang)-y*Math.sin(ang),cy+x*Math.sin(ang)+y*Math.cos(ang),p.z+z]),preview?fill:color,p,null,preview);Object.assign(faces.at(-1),{special:true,biomeShape:true})};
  const box=(x,y,z,W,D,H,color)=>{const lo=[[x,y,z],[x+W,y,z],[x+W,y+D,z],[x,y+D,z]],hi=lo.map(q=>[q[0],q[1],q[2]+H]);if(!topDown)for(let i=0;i<4;i++)emit([lo[i],lo[(i+1)%4],hi[(i+1)%4],hi[i]],shadeTreeColor(color,.72+i*.07));emit(hi,color)};
  const slab=(z,H,color)=>box(-w/2,-d/2,z,w,d,H,color),legs=(height)=>{for(const x of [-w/2,w/2-.09])for(const y of [-d/2,d/2-.09])box(x,y,0,.09,.09,height,c)};
@@ -1583,6 +1584,31 @@ function drawFurniture(p,preview,fill,kind,settings){
  else if(kind==='bed'){legs(h*.28);slab(h*.28,h*.24,c);box(-w*.46,-d*.46,h*.52,w*.92,d*.92,.13,a);box(-w*.38,d*.22,h*.65,w*.76,d*.18,.08,'#d2c5a6');box(-w/2,d/2-.08,0,w,.08,h,c);}
  else if(kind==='barrel'){const n=8,ring=(z,r)=>Array.from({length:n},(_,i)=>[Math.cos(i*2*Math.PI/n)*r,Math.sin(i*2*Math.PI/n)*r,z]);const levels=[ring(0,w*.4),ring(h*.15,w*.48),ring(h*.85,w*.48),ring(h,w*.4)];for(let j=1;j<levels.length;j++)for(let i=0;i<n;i++)if(!topDown)emit([levels[j-1][i],levels[j-1][(i+1)%n],levels[j][(i+1)%n],levels[j][i]],j===2?c:a);emit(levels[3],c);}
  else if(kind==='rack'){box(-w/2,-d/2,0,w,d,.09,c);box(-w/2,d/2-.1,0,w,.1,h,c);for(let i=0;i<Math.max(2,Math.round(v.furnDetail/12));i++){const count=Math.max(2,Math.round(v.furnDetail/12));box(-w*.4+i*w*.8/count,0,.1,.045,.045,h*.85,a)}}
+ else if(kind==='tumbleweed'){
+  const n=8,ring=(z,r)=>Array.from({length:n},(_,i)=>[Math.cos(i*2*Math.PI/n)*r,Math.sin(i*2*Math.PI/n)*r,z]);
+  const lower=ring(h*.12,w*.28),upper=ring(h*.86,w*.24);
+  for(let i=0;i<n;i++){const j=(i+1)%n;if(!topDown)emit([lower[i],lower[j],upper[j],upper[i]],i%2?c:a);}
+  emit(upper,a);for(let i=0;i<4;i++){const t=i*Math.PI/4,x=Math.cos(t)*w*.32,y=Math.sin(t)*d*.32;box(-x/2,-.018, h*.45,Math.abs(x)||.025,.036,.035,i%2?c:a);box(-.018,-y/2,h*.43,.036,Math.abs(y)||.025,.035,c)}
+ }
+ else if(kind==='hitchingPost'){
+  const postW=Math.min(.12,w*.12),postD=Math.min(.12,d*.2);
+  for(const x of [-w*.38,w*.38])box(x-postW/2,-postD/2,0,postW,postD,h,c);
+  box(-w*.48,-postD/2,h*.67,w*.96,postD,h*.09,a);
+ }
+ else if(kind==='feedTrough'){
+  const rim=.09;box(-w/2,-d/2,0,w,.08,h,c);box(-w/2,d/2-.08,0,w,.08,h,c);box(-w/2,-d/2,.04,.08,d-.08,h*.8,c);box(w/2-.08,-d/2,.04,.08,d-.08,h*.8,c);
+  box(-w/2+rim,-d/2+rim,h*.78,w-2*rim,d-2*rim,.025,a);
+ }
+ else if(kind==='waterTower'){
+  const leg=.12,legH=h*.65;for(const x of [-w*.38,w*.38])for(const y of [-d*.38,d*.38])box(x-leg/2,y-leg/2,0,leg,leg,legH,c);
+  if(v.furnDetail>20){for(const x of [-1,1])box(-w*.38,-.035,legH*.35,w*.76,.07,.07,a);for(const y of [-1,1])box(-.035,-d*.38,legH*.58,.07,d*.76,.07,a)}
+  box(-w*.48,-d*.48,legH,w*.96,d*.96,h*.15,a);box(-w*.46,-d*.46,legH+h*.15,w*.92,d*.92,h*.12,c);
+  box(-w*.49,-d*.49,legH+h*.27,w*.98,d*.98,.04,a);
+ }
+ else if(kind==='splitRailFence'){
+  const postW=.13,postD=.13,postH=h;for(const x of [-w*.46,w*.46])box(x-postW/2,-postD/2,0,postW,postD,postH,c);
+  const railCount=v.furnDetail>66?3:2;for(let i=0;i<railCount;i++){const z=h*(.24+i*.48/(railCount-1));box(-w*.48,-.045,z,w*.96,.09,.09,i%2?a:c)}
+ }
  else {slab(0,h,c);if(!topDown){box(-w/2,-d/2-.01,h*.2,w,.035,.06,a);box(-w/2,-d/2-.01,h*.75,w,.035,.06,a);if(kind==='cabinet')box(-.025,-d/2-.04,h*.5,.05,.05,.12,a)}}
 }
 function drawBiomeColumn(p,preview,fill,formation,settings,landingTerrain){
@@ -2340,7 +2366,8 @@ const terrainThemes=Object.freeze({jungle:{ground:'#5d7042',top:'#476334',side:'
 underdarkBasalt:{ground:'#40666f',side:'#252d40',top:'#65717e',column:'#646359',groundPattern:'roughRock',topPattern:'cobble',sidePattern:'brick',formation:'cave'},
 underdarkWarm:{ground:'#34596e',side:'#816b56',top:'#ab9580',column:'#646359',groundPattern:'roughRock',topPattern:'cobble',sidePattern:'brick',formation:'cave'},
 underdarkDwarven:{ground:'#343e4d',side:'#85796e',top:'#bdab96',column:'#646359',groundPattern:'roughRock',topPattern:'cobble',sidePattern:'brick',formation:'cave'},
-underdarkBio:{ground:'#285d77',side:'#49365f',top:'#9366cd',column:'#646359',groundPattern:'roughRock',topPattern:'cobble',sidePattern:'brick',formation:'cave'}
+underdarkBio:{ground:'#285d77',side:'#49365f',top:'#9366cd',column:'#646359',groundPattern:'roughRock',topPattern:'cobble',sidePattern:'brick',formation:'cave'},
+frontierWestern:{ground:'#9a8061',top:'#9b7951',side:'#765337',wall:'#765337',column:'#806044',groundPattern:'wagonRuts',topPattern:'planks',sidePattern:'barn'}
 });
 const scenePatterns=new Map();
 function scenePattern(kind,seed){
@@ -2350,9 +2377,20 @@ function scenePattern(kind,seed){
  const g=tile.getContext('2d');
  let state=seed>>>0;
  const rand=()=>{state=(Math.imul(state,1664525)+1013904223)>>>0;return state/4294967296};
- const colors={vines:'#426144',grass:'#637044',soot:'#252329',blood:'#842d28',gravel:'#655949',seeded:'#73734e'};
+ const colors={vines:'#426144',grass:'#637044',soot:'#252329',blood:'#842d28',gravel:'#655949',seeded:'#73734e',dirt:'#6c5540',wagonRuts:'#594632',planks:'#493626',boardwalk:'#30251b',splitRail:'#3e2b1d'};
  g.strokeStyle=colors[kind]||'#5d4933';g.fillStyle=g.strokeStyle;
- if(['roughRock','dirt','furrows','barn','ancient','moss'].includes(kind)){
+ if(['wagonRuts','planks','boardwalk','splitRail'].includes(kind)){
+  g.lineWidth=2;g.strokeStyle=kind==='wagonRuts'?'#40332988':'#24190e88';
+  if(kind==='wagonRuts'){
+   for(const x of [36,92]){g.beginPath();g.moveTo(x,0);g.bezierCurveTo(x-8,36,x+8,82,x,128);g.stroke();g.globalAlpha=.3;g.lineWidth=5;g.stroke();g.globalAlpha=1;g.lineWidth=2}
+   for(let i=0;i<18;i++){const x=rand()*128,y=rand()*128;g.globalAlpha=.1+rand()*.16;g.fillStyle=i%2?'#d1b58b':'#24190e';g.fillRect(x,y,2+rand()*6,1+rand()*3)}
+  }else{
+   const horizontal=kind==='boardwalk'||kind==='splitRail';const step=kind==='splitRail'?22:16;
+   for(let i=0;i<=128;i+=step){if(kind==='splitRail'){g.lineWidth=4;g.beginPath();g.moveTo(0,i);g.lineTo(128,i+5);g.stroke();g.lineWidth=2}else{g.globalAlpha=.55;g.beginPath();if(horizontal){g.moveTo(0,i);g.lineTo(128,i)}else{g.moveTo(i,0);g.lineTo(i,128)}g.stroke();g.globalAlpha=1}}
+   if(kind==='planks')for(let i=0;i<10;i++){const x=rand()*128,y=rand()*128;g.globalAlpha=.35;g.fillStyle='#24190e';g.beginPath();g.ellipse(x,y,2+rand()*4,1+rand()*2,rand(),0,Math.PI*2);g.fill()}
+   if(kind==='boardwalk')for(let y=9;y<128;y+=16)for(let x=8;x<128;x+=20){g.fillStyle='#21170f99';g.fillRect(x,y,2,2);g.fillRect(x+10,y,2,2)}
+  }
+ }else if(['roughRock','dirt','furrows','barn','ancient','moss'].includes(kind)){
   if(kind==='roughRock'||kind==='ancient'){
    for(let y=-16;y<144;y+=16)for(let x=-24;x<152;x+=24){
     const a=x+(Math.floor(y/16)%2)*12,b=y+(rand()-.5)*6;
@@ -4351,7 +4389,7 @@ function drawSceneBackdrop(config){
  ctx.drawImage(skyLayer,0,0);
 }
 const columnDefaults={columnHeight:30,columnDiameter:25,columnTaper:0,columnOrnament:0,columnWear:0,columnOxidation:0,columnBase:33,columnTop:33};
-const componentNames={tree:'Tree',light:'Light',boulder:'Boulder',cave:'Stalagmite',column:'Column',rug:'Rug',chair:'Chair / stool / bench',barrel:'Barrel',furnitureCrate:'Crate',rack:'Weapon rack',cabinet:'Armoire / cabinet',bed:'Bed',table:'Table / desk'};
+const componentNames={tree:'Tree',light:'Light',boulder:'Boulder',cave:'Stalagmite',column:'Column',rug:'Rug',chair:'Chair / stool / bench',barrel:'Barrel',furnitureCrate:'Crate',rack:'Weapon rack',cabinet:'Armoire / cabinet',bed:'Bed',table:'Table / desk',tumbleweed:'Tumbleweed',hitchingPost:'Hitching post',feedTrough:'Feed trough',waterTower:'Water tower',splitRailFence:'Split-rail fence'};
 const componentKey='battlemap.componentTemplates.v1';
 let componentTemplates=[],componentPlacement=null;
 try{const saved=JSON.parse(localStorage.getItem(componentKey));if(Array.isArray(saved))componentTemplates=saved}catch{}
@@ -4396,7 +4434,7 @@ el('placeComponent').onclick=()=>{
  message('Click a surface to place '+(item?.name||componentNames[kind])+'. Esc cancels.');refresh();
 };
 updateComponentOptions();
-const furnitureKinds=["rug","chair","barrel","furnitureCrate","rack","cabinet","bed","table"];
+const furnitureKinds=["rug","chair","barrel","furnitureCrate","rack","cabinet","bed","table","tumbleweed","hitchingPost","feedTrough","waterTower","splitRailFence"];
 const isFurniture=p=>p?.type==='column'&&furnitureKinds.includes(p.terrainShape?.componentKind);
 const furnitureValues=p=>({...terrainShapeDefaults,...(formationDraft?.piece===p?formationDraft.values:p.terrainShape)});
 function furnitureFootprint(values){
@@ -4405,7 +4443,7 @@ function furnitureFootprint(values){
   return [diameter,diameter];
  }
  const width=.25+values.furnWidth*.035;
- return [width,values.componentKind==='barrel'?width:.25+values.furnDepth*.035];
+ return [width,['barrel','tumbleweed','waterTower'].includes(values.componentKind)?width:.25+values.furnDepth*.035];
 }
 const terrainShapeDefaults={...columnDefaults,furnWidth:35,furnDepth:35,furnHeight:35,furnDetail:50,"treeThickness":45,"treeBaseDiameter":50,"treeRoots":0,"treeRootTangle":35,"treeRootSpread":30,"treeFoliageWidth":50,"treeFoliageDrop":0,"treeRootThickness":40,"treeHeight":75,"treeBranches":0,"treeBranchAngle":50,"treeBranchThickness":45,"treeBulb":0,"treeCrannies":0,"sceneTreeHeightScale":100,"sceneTreeWidthScale":100,"sceneTreeVariation":0,"rockHeight":50,"rockDiameter":55,"rockBulb":55,"rockCrannies":55,"caveHeight":50,"caveTaper":50,"caveDiameter":45,"caveBulb":40,"caveCrannies":45};
 const furnitureFields=[['furnWidth','Width'],['furnDepth','Depth'],['furnHeight','Height'],['furnDetail','Detail / variation']];
