@@ -946,27 +946,45 @@ function visionBlockers(){
  if(lightingFrame)lightingFrame.blockers=blockers;
  return blockers;
 }
-// Broad-phase ray acceleration. Static blocker bounds are indexed once per
-// lighting frame, while exact prism/terrain intersections remain unchanged.
-// AABB overlap is inclusive here to avoid excluding grazing wall hits.
+// Reuse broad-phase buckets across frames while blocker cell coverage is
+// unchanged. Exact intersection tests always use the current frame's bounds.
 const rayBlockerIndices=new WeakMap();
+let lastSceneRayIndex=null;
+let completeSceneRayBlockers=null;
+const rayBlockerCell=8;
+function rayBlockerCoverage(bounds){
+ const x0=Math.floor(bounds[0][0]/rayBlockerCell),x1=Math.floor(bounds[0][1]/rayBlockerCell);
+ const y0=Math.floor(bounds[1][0]/rayBlockerCell),y1=Math.floor(bounds[1][1]/rayBlockerCell);
+ const count=(x1-x0+1)*(y1-y0+1);
+ return !Number.isFinite(count)||count>256?null:[x0,x1,y0,y1];
+}
+function sceneRayBlockerIndex(blockers){
+ const coverage=blockers.map(rayBlockerCoverage);
+ const complete=blockers===completeSceneRayBlockers;
+ const previous=complete&&lastSceneRayIndex?.scene===currentSceneId?lastSceneRayIndex:null;
+ if(previous?.coverage.length===coverage.length&&coverage.every((range,i)=>{
+  const prior=previous.coverage[i];
+  return range===prior||range&&prior&&range.every((value,j)=>value===prior[j]);
+ }))return previous.index;
+ const buckets=new Map(),oversize=[];
+ coverage.forEach((range,i)=>{
+  if(!range){oversize.push(i);return}
+  const [x0,x1,y0,y1]=range;
+  for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++){
+   const key=x+','+y;
+   if(!buckets.has(key))buckets.set(key,[]);
+   buckets.get(key).push(i);
+  }
+ });
+ const index={cell:rayBlockerCell,buckets,oversize};
+ if(complete)lastSceneRayIndex={scene:currentSceneId,coverage,index};
+ return index;
+}
 function rayBlockerCandidates(blockers,start,end){
  if(blockers.length<24)return blockers;
  let index=rayBlockerIndices.get(blockers);
  if(!index){
-  const cell=8,buckets=new Map(),oversize=[];
-  blockers.forEach((bounds,i)=>{
-   const x0=Math.floor(bounds[0][0]/cell),x1=Math.floor(bounds[0][1]/cell);
-   const y0=Math.floor(bounds[1][0]/cell),y1=Math.floor(bounds[1][1]/cell);
-   const count=(x1-x0+1)*(y1-y0+1);
-   if(!Number.isFinite(count)||count>256){oversize.push(i);return}
-   for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++){
-    const key=x+','+y;
-    if(!buckets.has(key))buckets.set(key,[]);
-    buckets.get(key).push(i);
-   }
-  });
-  index={cell,buckets,oversize};
+  index=sceneRayBlockerIndex(blockers);
   rayBlockerIndices.set(blockers,index);
  }
  const loX=Math.min(start[0],end[0]),hiX=Math.max(start[0],end[0]);
@@ -5800,6 +5818,7 @@ function fogObjectVisible(object){
 }
 function startLightingFrame(){
  const blockers=visionBlockers(),lights=activeLights();
+ completeSceneRayBlockers=blockers;
  const rooms=areas.filter(area=>area.shape==='room'||area.shape==='opening'||
   area.shape==='appearance').map(area=>area.shape==='appearance'?area.appearance?.ambient:area);
  const observers=tokens.filter(ownsRoomStandee).map(token=>
