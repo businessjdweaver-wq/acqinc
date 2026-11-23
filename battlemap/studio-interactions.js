@@ -2635,24 +2635,41 @@ for(const [id,spell] of [['dimensionDoor','dimension_door'],['arcaneEye','arcane
    if(!chosen){message('Choose a listed familiar.');return}
    sizeCategory=chosen.size;templateId=chosen.id;
   }
-  let allyId=null;
-  if(spell==='dimension_door'){
-   const caster=hudToken,[x,y,z]=basePoint(caster);
-   const allies=tokens.filter(t=>t!==caster&&t.size<=1&&['pc','ally'].includes(baseStandeeRole(t))&&
-    !standeeHidden(t)&&!t.conditions?.includes('dead')&&Math.abs(t.z-z)<1&&
-    Math.max(Math.abs(t.x+.5-x),Math.abs(t.y+.5-y))<=caster.size/2+.5);
-   if(allies.length===1&&confirm('Take '+libraryName(allies[0])+' through Dimension Door?'))allyId=allies[0].roomId;
-   if(allies.length>1){
-    const answer=prompt('Who should travel with you? Choose 0 to go alone.\n'+allies.map((t,i)=>(i+1)+'. '+libraryName(t)).join('\n'),'0');
-    if(answer===null)return;
-    const choice=Number(answer);
-    if(!Number.isInteger(choice)||choice<0||choice>allies.length){message('Choose a listed ally or 0 to go alone.');return}
-    allyId=allies[choice-1]?.roomId??null;
-   }
-  }
-  spellPlacement={token:hudToken,spell,sizeCategory,allyId,templateId};
+  const allyId=spell==='dimension_door'?chooseDimensionDoorAlly(caster):null;
+  if(allyId===undefined)return;
+  spellPlacement={token:caster,spell,sizeCategory,allyId,templateId};
   closeStandeeHud();message('Click a destination on the map. Esc cancels.');
  };
+}
+function chooseDimensionDoorAlly(caster){
+ let allyId=null;
+ const [x,y,z]=basePoint(caster);
+ const allies=tokens.filter(t=>t!==caster&&t.size<=1&&['pc','ally'].includes(baseStandeeRole(t))&&
+  !standeeHidden(t)&&!t.conditions?.includes('dead')&&Math.abs(t.z-z)<1&&
+  Math.max(Math.abs(t.x+.5-x),Math.abs(t.y+.5-y))<=caster.size/2+.5);
+ if(allies.length===1&&confirm('Take '+libraryName(allies[0])+' through Dimension Door?'))allyId=allies[0].roomId;
+ if(allies.length>1){
+  const answer=prompt('Who should travel with you? Choose 0 to go alone.\n'+allies.map((t,i)=>(i+1)+'. '+libraryName(t)).join('\n'),'0');
+  if(answer===null)return undefined;
+  const choice=Number(answer);
+  if(!Number.isInteger(choice)||choice<0||choice>allies.length){message('Choose a listed ally or 0 to go alone.');return undefined}
+  allyId=allies[choice-1]?.roomId??null;
+ }
+ return allyId;
+}
+function mapDimensionDoorCaster(){
+ if(!playing||roomProfile?.gm!==false||playerScenePaused()||roomMoving)return null;
+ const candidates=[selected,hudToken,...tokens.filter(t=>t.roomId===roomProfile.characterKey),...tokens];
+ return candidates.find(t=>tokens.includes(t)&&t.roomId&&ownsRoomStandee(t)&&!t.incognito&&!t.conditions?.includes('dead'))??null;
+}
+function castDimensionDoorAtSquare(caster,target){
+ if(!tokens.includes(caster)||!ownsRoomStandee(caster)||standeeHidden(caster)||caster.conditions?.includes('dead')||
+  playerScenePaused()||carry||spellPlacement||roomMoving||!target.inRange)return;
+ const allyId=chooseDimensionDoorAlly(caster);
+ if(allyId===undefined)return;
+ spellPlacement={token:caster,spell:'dimension_door',allyId};
+ closeStandeeHud();
+ void placeStandeeSpell(null,target);
 }
 let eyeRangeLine;
 function clearSpellPlacement(){
@@ -2666,18 +2683,23 @@ function dimensionDoorIgnoredObject(object){
   object.shape==='light'||object.terrainShape?.componentKind==='light');
 }
 function spellRangeTarget(e,token,spell){
- const [x,y]=coords(e);
+ return spellRangeTargetAt(...coords(e),token,spell);
+}
+function spellRangeTargetAt(x,y,token,spell,square=false){
  const accept=spell==='dimension_door'?face=>!dimensionDoorIgnoredObject(face.p):null;
  const z=spell==='arcane_eye'?token.z:hit(x,y,token,true,accept)?.z??0;
  const [rawU,rawV]=inverse(x,y,z);
+ return spellRangeTargetInGrid(rawU,rawV,z,token,spell,square);
+}
+function spellRangeTargetInGrid(rawU,rawV,z,token,spell,square=false){
  const teleport=spell==='dimension_door';
- const u=teleport?rawU:Math.floor(rawU+1e-8)+.5,v=teleport?rawV:Math.floor(rawV+1e-8)+.5;
+ const u=teleport&&!square?rawU:Math.floor(rawU+1e-8)+.5,v=teleport&&!square?rawV:Math.floor(rawV+1e-8)+.5;
  const width=teleport?token.size:1;
  const px=teleport?u-width/2:Math.floor(rawU+1e-8),py=teleport?v-width/2:Math.floor(rawV+1e-8);
  const start=[Math.max(token.x,Math.min(u,token.x+token.size)),Math.max(token.y,Math.min(v,token.y+token.size))];
  const dz=spell==='dimension_door'?z-token.z:0;
  const range=placementSpellRanges[spell];
- return {u,v,px,py,z,start,inRange:px>=0&&px+width<=gridLimit(0)&&py>=0&&py+width<=gridLimit(1)&&
+ return {u,v,px,py,z,start,inRange:floorAcceptsDestination(px,py,width,width)&&
   (u-start[0])**2+(v-start[1])**2+dz**2<=range**2};
 }
 el('map').parentElement.addEventListener('pointermove',e=>{
@@ -2753,12 +2775,12 @@ function dimensionDoorEffect(token,phase,delay=0){
   requestAnimationFrame(frame);
  });
 }
-async function placeStandeeSpell(e){
+async function placeStandeeSpell(e,target=null){
  const placement=spellPlacement;
  if(!placement||placement.pending)return;
  const {spell,sizeCategory,allyId,templateId}=placement;
  const token=tokens.find(t=>t.roomId===placement.token.roomId)??placement.token;
- const {u,v,z,px,py,inRange}=spellRangeTarget(e,token,spell);
+ const {u,v,z,px,py,inRange}=target??spellRangeTarget(e,token,spell);
  if(!inRange){message('Choose a point within '+placementSpellRanges[spell]*5+' ft of the caster’s footprint. Esc cancels.');return}
  if(spell==='arcane_eye'){
   placement.pending=true;
@@ -2778,11 +2800,13 @@ async function placeStandeeSpell(e){
   if(spell==='dimension_door')for(const traveler of travelers)tacticalTeleportPending.add(String(traveler.roomId));
  // Start the visual effect immediately; do not wait for the server response.
  let arrivalFailed=false;
+ const castProfile=roomProfile,castScene=roomState.sceneId,castRevision=roomRevision;
+ const sameEncounter=()=>roomProfile===castProfile&&roomState.sceneId===castScene;
  const departure=travelers.map(t=>dimensionDoorEffect(t,'depart'));
  if(spell==='dimension_door'){
   // Hide the original tokens once their departure squeeze completes, even if the RPC is pending.
   Promise.all(departure).then(()=>{
-   if(arrivalFailed)return;
+   if(arrivalFailed||!sameEncounter())return;
    travelers.forEach(t=>dimensionDoorHidden.add(t.roomId));
    movementRenderCache=null;draw('Dimension Door departure');
   });
@@ -2815,9 +2839,31 @@ async function placeStandeeSpell(e){
   destinationGlow?.remove();
   if(spell==='dimension_door'){
    await Promise.all(departure);
-   const arrivals=travelers.map(t=>tokens.find(updated=>updated.roomId===t.roomId)).filter(Boolean);
+   if(!sameEncounter()){
+    travelers.forEach(t=>dimensionDoorHidden.delete(t.roomId));
+    return;
+   }
+   // A poll already in flight when the cast completed can return the old
+   // revision. Apply the accepted position locally until the next poll.
+   const arrivals=travelers.map(traveler=>{
+    const current=tokens.find(updated=>updated.roomId===traveler.roomId);
+    const arrival=result?.arrivals?.[traveler.roomId];
+    if(current&&arrival&&roomRevision<=castRevision+1&&[arrival.x,arrival.y,arrival.z].every(Number.isFinite)){
+     Object.assign(current,{x:arrival.x,y:arrival.y,z:arrival.z});
+    }
+    return current;
+   }).filter(Boolean);
+   if(playerStandeePreview?.scene===currentSceneId&&
+      travelers.some(traveler=>traveler.roomId===playerStandeePreview.token.roomId)){
+    playerStandeePreview=null;
+   }
    arrivals.forEach(t=>dimensionDoorHidden.add(t.roomId));
-   movementRenderCache=null;draw('Dimension Door arrival hidden');
+   movementRenderCache=null;
+   const caster=arrivals.find(standee=>standee.roomId===token.roomId);
+   if(caster){
+    selected=caster;
+    focusStandee(caster,'Dimension Door arrival',false,{preserveZoom:true});
+   }else draw('Dimension Door arrival hidden');
    await Promise.all(arrivals.map(t=>dimensionDoorEffect(t,'arrive')));
    travelers.forEach(t=>dimensionDoorHidden.delete(t.roomId));
    movementRenderCache=null;draw('Dimension Door arrival complete');

@@ -205,6 +205,7 @@ function tacticalScheduleScan(){
 /* Deliberately sparse tactical map: only sight-verified sampled squares are
    drawn. Never copy the full scene canvas, geometry, enemy tokens or fog. */
 let tacticalMapWindow=null,tacticalMapRefresh=null;
+const tacticalMapViews=new WeakMap();
 function tacticalMapCells(){
  const state=tacticalReadDiscovery(),topology=tacticalTopologyVersion();
  if(state.topology===topology)return state.cells;
@@ -228,11 +229,52 @@ function tacticalDrawCanvas(canvas,label){
  const minY=ys.length?Math.min(...ys)-2:0,maxY=ys.length?Math.max(...ys)+3:20;
  const scale=Math.max(3,Math.min(35,(width-24)/(maxX-minX),(height-24)/(maxY-minY)));
  const ox=(width-(maxX-minX)*scale)/2,oy=(height-(maxY-minY)*scale)/2;
+ tacticalMapViews.set(canvas,{ox,oy,minX,minY,scale,floor,scene:tacticalDiscoveryKey()});
  ctx.fillStyle='#526f68';
  for(const [x,y] of visible)ctx.fillRect(ox+(x-minX)*scale+.7,oy+(y-minY)*scale+.7,Math.max(1,scale-1.4),Math.max(1,scale-1.4));
  ctx.fillStyle='#f5d28d';
  for(const p of owned){if(Math.floor(p[2])!==floor)continue;ctx.beginPath();ctx.arc(ox+(p[0]-minX)*scale,oy+(p[1]-minY)*scale,Math.max(3,scale*.27),0,Math.PI*2);ctx.fill()}
  if(label){const state=tacticalReadDiscovery();const key=tacticalDiscoveryKey();const mismatch=state.topology!==tacticalTopologyVersion();label.textContent=visible.length+' squares · stored '+state.cells.length+' · level '+floor+' · '+tacticalScanStatus+(mismatch?' · topology mismatch':'')+(tacticalStorageError?' · storage '+tacticalStorageError:'')+(tacticalLastRecorded?.key&&tacticalLastRecorded.key!==key?' · storage key changed':'');}
+}
+function tacticalMapCellAt(canvas,clientX,clientY){
+ const view=tacticalMapViews.get(canvas),rect=canvas.getBoundingClientRect();
+ if(!view||!rect.width||!rect.height||view.scene!==tacticalDiscoveryKey())return null;
+ const x=(clientX-rect.left)*canvas.width/rect.width,y=(clientY-rect.top)*canvas.height/rect.height;
+ const cell=[Math.floor((x-view.ox)/view.scale+view.minX),Math.floor((y-view.oy)/view.scale+view.minY),view.floor];
+ return tacticalMapCells().includes(cell.join(','))?cell:null;
+}
+function bindTacticalMapContext(canvas){
+ const doc=canvas.ownerDocument,win=doc.defaultView;
+ let menu=null;
+ const close=()=>{menu?.remove();menu=null};
+ doc.addEventListener('pointerdown',event=>{if(menu&&!menu.contains(event.target))close()});
+ doc.addEventListener('keydown',event=>{if(event.key==='Escape'&&menu){event.preventDefault();event.stopPropagation();close()}},true);
+ canvas.addEventListener('contextmenu',event=>{
+  event.preventDefault();
+  close();
+  const caster=mapDimensionDoorCaster();
+  const cell=tacticalMapCellAt(canvas,event.clientX,event.clientY);
+  if(!caster||!cell||carry||spellPlacement)return;
+  const [x,y,z]=cell;
+  const target=spellRangeTargetInGrid(x+.5,y+.5,z,caster,'dimension_door',true);
+  const scene=tacticalDiscoveryKey();
+  menu=doc.createElement('div');
+  menu.style.cssText='position:fixed;z-index:10000;padding:5px;background:#28241c;border:1px solid #756448;border-radius:6px';
+  const action=doc.createElement('button');
+  action.type='button';
+  action.textContent=target.inRange?'Dimension Door here':'Dimension Door · out of range';
+  action.disabled=!target.inRange;
+  action.onclick=()=>{
+   close();
+   if(scene===tacticalDiscoveryKey()&&tacticalMapCells().includes(cell.join(',')))
+    castDimensionDoorAtSquare(caster,spellRangeTargetInGrid(x+.5,y+.5,z,caster,'dimension_door',true));
+  };
+  menu.append(action);
+  doc.body.append(menu);
+  menu.style.left=Math.max(4,Math.min(event.clientX,win.innerWidth-menu.offsetWidth-4))+'px';
+  menu.style.top=Math.max(4,Math.min(event.clientY,win.innerHeight-menu.offsetHeight-4))+'px';
+  if(target.inRange)action.focus();
+ });
 }
 function tacticalMapRender(){
  const panel=document.getElementById('tacticalMapPanel');
@@ -246,11 +288,13 @@ function tacticalMapOpenWindow(){
  if(!win){message('Allow pop-up windows to detach the tactical map.');return}
  tacticalMapWindow=win;
  win.document.open();win.document.write(tacticalMapMarkup());win.document.close();
+ bindTacticalMapContext(win.document.getElementById('tacticalCanvas'));
  tacticalMapRender();
 }
 function tacticalMapInit(){
  const button=document.getElementById('tacticalMapToggle'),panel=document.getElementById('tacticalMapPanel'),playerButton=document.getElementById('playerTacticalMap');
  if(!button||!panel)return;panel.style.display='none';
+ bindTacticalMapContext(document.getElementById('tacticalMapCanvas'));
 
  document.addEventListener('tactical-map-opened',()=>{try{tacticalScanSignature='';tacticalScheduleScan();tacticalMapRender()}catch(error){tacticalScanStatus='Map error: '+error.message;console.warn('Tactical map rendering error',error)}});
 

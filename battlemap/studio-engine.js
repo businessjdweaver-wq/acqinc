@@ -1,6 +1,7 @@
 "use strict";
 
 const el=id=>document.getElementById(id);
+el('studioWebGLToggle').onclick=toggleStudioWebGL;
 const types={
  terrace:['Grass terrace',3,2,1,'#718a55','#495539'],
  stone:['Stone platform',2,2,2,'#999e90','#626b64'],
@@ -263,6 +264,7 @@ let earlyForegroundWallCullCount=0;
 // Camera-side geometry is not part of the tactical backdrop. Compare
 // projection depth in world space, before constructing any wall faces.
 function earlyForegroundWallInvisible(poly){
+ if(studioWebGLCapture)return false;
  // Camera cutaway must not depend on the room-topology culler:
  // unknown regions and elevated standees can disable that separate filter.
  const observers=fogPreparedObservers?.observers;
@@ -305,6 +307,10 @@ function earlyRoomDisconnected(points){
  const ids=new Set([...points,center].map(v=>earlyRoomCull.regionAt(v)));
  return ids.size===1&&!ids.has(null)&&!earlyRoomCull.eligible.has(ids.values().next().value);
 }
+function portalWithinVisibilityRange(observer,portal){
+ const range=portal.kind==='Window'?2:12; // Grid cells are 5 feet.
+ return Math.hypot(observer.distance[0]-portal.center[0],observer.distance[1]-portal.center[1])<=range;
+}
 function nearbyObserverRooms(topology,prepared){
  if(!topology?.regionAt||!prepared?.observers?.length||prepared.preview||
     prepared.observers.some(o=>Math.abs(o.distance[2])>.15))return null;
@@ -317,7 +323,7 @@ function nearbyObserverRooms(topology,prepared){
    const [a,b]=portal.regions||[];
    if(a!==own&&b!==own)continue;
    if(!(portal.kind==='Window'?!portal.shaded:portal.open))continue;
-   if(Math.hypot(observer.distance[0]-portal.center[0],observer.distance[1]-portal.center[1])>2)continue;
+   if(!portalWithinVisibilityRange(observer,portal))continue;
    if(a!==null&&a!==undefined)eligible.add(a);
    if(b!==null&&b!==undefined)eligible.add(b);
   }
@@ -719,7 +725,7 @@ function areaCoversStandee(area,p){
  return false;
 }
 function visibleStandeeAura(token){
- if(!token.aura||standeeHidden(token)||playerFogEnabled()&&!ownsRoomStandee(token)&&!fogPointVisible(basePoint(token)))return null;
+ if(!token.aura||standeeHidden(token)||playerFogEnabled()&&!ownsRoomStandee(token)&&!studioWebGLOverlayTokens?.has(token)&&!fogPointVisible(basePoint(token)))return null;
  const origin=basePoint(token);
  origin[2]+=.5;
  return {shape:'sphere',size:token.aura.radius/5,origin,angle:0,auraColor:token.aura.color};
@@ -908,6 +914,7 @@ function standeeVisibleToObserver(token,blockers=visionBlockers()){
  })||!preview&&eyeSees(target,blockers));
 }
 function standeeHidden(p){
+ if(studioWebGLOverlayTokens?.has(p))return false;
  return roomProfile?.gm===false&&(p.incognito===true||
   !ownsRoomStandee(p)&&!standeeVisibleToObserver(p));
 }
@@ -2289,6 +2296,8 @@ function drawPiece(p,preview=false){
  }
 }
 function visibleProjection(points,margin=2){
+ if(studioWebGLCapture&&!studioWebGLBoundedCapture)return true;
+ if(studioWebGLCapture&&studioWebGLBoundedCapture)margin+=studioWebGLCaptureMargin();
  return !(points.every(p=>p[0]<-margin)||points.every(p=>p[0]>W+margin)||
   points.every(p=>p[1]<-margin)||points.every(p=>p[1]>H+margin));
 }
@@ -4843,35 +4852,42 @@ function clipFloorGridCell(poly,axis,limit,keepGreater){
  }
  return out;
 }
-function calibrationForGround(){return activeGridCalibration()}
+function importedFloorFootprint(){
+ const appearance=areas.find(a=>a.shape==='appearance')?.appearance;
+ const floorSettings=appearance?.floorImage;
+ if(!floorSettings||appearance.ground!=='image')return null;
+ const a=(Number(floorSettings.rotation)||0)*Math.PI/180,c=Math.cos(a),si=Math.sin(a);
+ const x=(Number(floorSettings.x)||0)/5,y=(Number(floorSettings.y)||0)/5;
+ const w=(Number(floorSettings.width)||0)/5,d=(Number(floorSettings.depth)||0)/5;
+ if(w<=0||d<=0)return null;
+ // The image's crop is in normalized source-image coordinates. Its visible
+ // footprint, not the old rectangular battlefield, bounds the VTT grid.
+ const crop=validFloorCrop(floorSettings.crop)?floorSettings.crop:null;
+ const points=crop?crop.flatMap(segment=>segment):[];
+ const loU=points.length?Math.max(0,Math.min(...points.map(p=>p[0]))):0;
+ const hiU=points.length?Math.min(1,Math.max(...points.map(p=>p[0]))):1;
+ const loV=points.length?Math.max(0,Math.min(...points.map(p=>p[1]))):0;
+ const hiV=points.length?Math.min(1,Math.max(...points.map(p=>p[1]))):1;
+ if(hiU<=loU||hiV<=loV)return null;
+ return [[loU,loV],[hiU,loV],[hiU,hiV],[loU,hiV]].map(([u,v])=>{
+  const px=(u-.5)*w,py=(v-.5)*d;
+  return [x+px*c-py*si,y+px*si+py*c];
+ });
+}
 function drawVisibleGround(){
  // Keep the physical battlefield fixed when calibrating the VTT grid.
  const width=gridLimit(0),depth=gridLimit(1);
  const physicalGrid=floorSceneEditing&&floorSceneGridDraft?floorSceneGridDraft:sceneGrid();
  const offsetX=Number(physicalGrid.floorOriginX)||0,offsetY=Number(physicalGrid.floorOriginY)||0;
  const maxX=offsetX+width,maxY=offsetY+depth;
- const rawCorners=[rawInverse(-2,-2,0),rawInverse(W+2,-2,0),rawInverse(W+2,H+2,0),rawInverse(-2,H+2,0)];
+ const margin=studioWebGLBoundedCapture?studioWebGLCaptureMargin()+2:2;
+ const rawCorners=studioWebGLCapture&&!studioWebGLBoundedCapture?
+  [[offsetX,offsetY],[maxX,offsetY],[maxX,maxY],[offsetX,maxY]]:
+  [rawInverse(-margin,-margin,0),rawInverse(W+margin,-margin,0),
+   rawInverse(W+margin,H+margin,0),rawInverse(-margin,H+margin,0)];
  // A calibrated imported map defines the visible grid footprint.
  // Do not render a separate battlefield-sized grid beyond its edges.
- const floorSettings=areas.find(a=>a.shape==='appearance')?.appearance?.floorImage;
- const hasImage=!!(calibrationForGround()&&floorSettings&&areas.find(a=>a.shape==='appearance')?.appearance?.ground==='image');
- const imagePolygon=hasImage?(()=>{
-  const a=(Number(floorSettings.rotation)||0)*Math.PI/180,c=Math.cos(a),si=Math.sin(a);
-  const x=(Number(floorSettings.x)||0)/5,y=(Number(floorSettings.y)||0)/5;
-  const w=(Number(floorSettings.width)||0)/5,d=(Number(floorSettings.depth)||0)/5;
-  // The image's crop is in normalized source-image coordinates. Its visible
-  // footprint, not the old rectangular battlefield, bounds the VTT grid.
-  const crop=validFloorCrop(floorSettings.crop)?floorSettings.crop:null;
-  const points=crop?crop.flatMap(segment=>segment):[];
-  const loU=points.length?Math.max(0,Math.min(...points.map(p=>p[0]))):0;
-  const hiU=points.length?Math.min(1,Math.max(...points.map(p=>p[0]))):1;
-  const loV=points.length?Math.max(0,Math.min(...points.map(p=>p[1]))):0;
-  const hiV=points.length?Math.min(1,Math.max(...points.map(p=>p[1]))):1;
-  return [[loU,loV],[hiU,loV],[hiU,hiV],[loU,hiV]].map(([u,v])=>{
-   const px=(u-.5)*w,py=(v-.5)*d;
-   return [x+px*c-py*si,y+px*si+py*c];
-  });
- })():null;
+ const imagePolygon=activeGridCalibration()?importedFloorFootprint():null;
  const fixedFloor=()=>face([[offsetX,offsetY,0],[maxX,offsetY,0],[maxX,maxY,0],[offsetX,maxY,0]].map(([x,y,z])=>[...worldToGrid(x,y),z]),'#e2d4b5',null,0,false);
  if(floorSceneEditing){fixedFloor();return}
  const calibration=activeGridCalibration();
@@ -5221,14 +5237,14 @@ function fogSeenDuringTravel(patch,blockers){
 }
 // Local cache remains available offline; Supabase is authoritative across sessions.
 function saveFogMemory(){
- if(railTravelRunning)return;
+ if(railTravelRunning||pathWallBenchmarkDrawing)return;
  const state=fogMemoryState;
  if(!state?.dirty)return;
  try{localStorage.setItem('battlemap.fog:'+state.key,JSON.stringify([...state.seen]));state.dirty=false}catch{}
  state.pending=true;
 }
 async function syncFogMemory(state){
- if(railTravelRunning||!state||fogMemoryState!==state)return;
+ if(railTravelRunning||pathWallBenchmarkDrawing||!state||fogMemoryState!==state)return;
  if(!state.sceneId||state.profile!==roomProfile?.name){state.syncStatus='identity-mismatch';return}
  if(!roomProfile?.token){state.syncStatus='waiting-for-session';return}
  if(state.loading||state.saving)return;
@@ -5262,7 +5278,7 @@ async function syncFogMemory(state){
 
 let fogMemorySyncTimer=null;
 function scheduleFogMemorySync(state){
- if(!state||railTravelRunning)return;
+ if(!state||railTravelRunning||pathWallBenchmarkDrawing)return;
  if(fogMemorySyncTimer!==null)clearTimeout(fogMemorySyncTimer);
  fogMemorySyncTimer=setTimeout(()=>{
   fogMemorySyncTimer=null;
@@ -5307,6 +5323,15 @@ function sightlineClear(eye,target,blockers){
 let fogSectorRayCache=null;
 const fogWorkerEnabled=new URLSearchParams(location.search).get('fogWorker')==='1';
 let fogRayWorker=null,fogWorkerCache=null,fogWorkerJob=null,fogWorkerSerial=0;
+const webGLFogWarmupBudgetMs=120;
+function useFogRayWorker(){
+ return fogWorkerEnabled||(studioWebGLEnabled&&roomProfile?.gm===false&&playing&&!topDown);
+}
+function finishFogWorkerJob(job,success){
+ if(!job)return;
+ job.pending=false;
+ job.complete(success);
+}
 const fogWorkerStats={queued:0,completed:0,reused:0,failed:0,lastRayCount:0,lastWorkerMs:0,
  lightRaysQueued:0,lightRaysCompleted:0,lightRaysReused:0,lastLightBatch:null,
  repaintRayMisses:0,repaintRaysQueued:0,repaintRaysCompleted:0,repaintRaysReused:0,repaintFailed:0};
@@ -5314,7 +5339,7 @@ const recentSharpLightTargets=new Map();
 let sharpLightTargetScene=null;
 function sampledLightTransmission(start,end,blockers){
  const cache=fogSectorRayCache;
- if(fogWorkerEnabled&&roomProfile?.gm===false){
+ if(useFogRayWorker()&&roomProfile?.gm===false){
   if(sharpLightTargetScene!==currentSceneId){
    recentSharpLightTargets.clear();
    sharpLightTargetScene=currentSceneId;
@@ -5390,21 +5415,25 @@ function sendRepaintRays(){
 }
 function queueWorkerSightlines(destination,standee){
  const cache=fogSectorRayCache;
- if(!fogWorkerEnabled||!cache?.blockers||!playerFogEnabled()||!fogRecentSamplePoints.size)return;
+ if(!useFogRayWorker()||!cache?.blockers||!playerFogEnabled()||!fogRecentSamplePoints.size)return null;
+ let job;
  try{
   if(!fogRayWorker){
    fogRayWorker=new Worker('./studio-fog-worker.js');
    fogRayWorker.onerror=()=>{
     fogWorkerStats.failed++;
     fogRayWorker.terminate();
+    finishFogWorkerJob(fogWorkerJob,false);
     fogRayWorker=null;fogWorkerCache=null;fogWorkerJob=null;
    };
    fogRayWorker.onmessage=({data})=>{
     const job=fogWorkerJob;
     if(data.id!==job?.id)return;
     fogWorkerJob=null;
-    if(job.cache!==fogSectorRayCache)return;
-    if(data.error||data.visible?.length!==job.points.length){fogWorkerStats.failed++;return}
+    if(job.cache!==fogSectorRayCache){finishFogWorkerJob(job,false);return}
+    if(data.error||data.visible?.length!==job.points.length){
+     fogWorkerStats.failed++;finishFogWorkerJob(job,false);return;
+    }
     job.cache.workerRays={eye:job.eye.join(','),points:new Map(job.points.map((point,i)=>[point.join(','),!!data.visible[i]]))};
     if(job.lightStart&&data.transmission?.length===job.lightPoints.length){
      job.cache.workerLight=new Map([[job.lightStart.join(','),new Map(job.lightPoints.map((point,i)=>
@@ -5414,6 +5443,8 @@ function queueWorkerSightlines(destination,standee){
     fogWorkerStats.completed++;
     fogWorkerStats.lastRayCount=job.points.length;
     fogWorkerStats.lastWorkerMs=data.elapsedMs;
+    job.workerMs=data.elapsedMs;
+    finishFogWorkerJob(job,true);
    };
   }
   const eye=basePoint(destination);eye[2]+=.65;
@@ -5427,14 +5458,28 @@ function queueWorkerSightlines(destination,standee){
   fogWorkerStats.lightRaysQueued+=lightPoints.length;
   const id=++fogWorkerSerial;
   const blockers=fogWorkerCache===cache?null:serializeFogWorkerBlockers(cache.blockers);
-  fogWorkerJob={id,cache,eye,points,lightStart,lightPoints};
+  finishFogWorkerJob(fogWorkerJob,false);
+  let complete;
+  const done=new Promise(resolve=>{complete=resolve});
+  job={id,cache,eye,points,lightStart,lightPoints,done,complete,pending:true,started:performance.now()};
+  fogWorkerJob=job;
   fogRayWorker.postMessage({id,blockers,eye,points,lightStart,lightPoints});
   fogWorkerCache=cache;
   fogWorkerStats.queued++;
+  return job;
  }catch(error){
+  finishFogWorkerJob(job,false);
   fogWorkerStats.failed++;
   fogWorkerCache=null;fogWorkerJob=null;
+  return null;
  }
+}
+async function waitForWebGLFogRays(job){
+ const remaining=job.started+webGLFogWarmupBudgetMs-performance.now();
+ if(!job.pending||remaining<=0)return;
+ let timeout;
+ try{await Promise.race([job.done,new Promise(resolve=>{timeout=setTimeout(resolve,remaining)})])}
+ finally{clearTimeout(timeout)}
 }
 function cachedFogSightline(eye,target,blockers){
  const cache=fogSectorRayCache;
@@ -5503,7 +5548,7 @@ function fogPrewarmStatus(message){
  node.hidden=!message;
 }
 function queueFogPrewarm(signature,lights){
- if(!playing||!currentSceneId||!lights.some(light=>light.carried))return;
+ if(pathWallBenchmarkDrawing||!playing||!currentSceneId||!lights.some(light=>light.carried))return;
  const emitters=lights.filter(light=>light.carried);
  const positionKey=JSON.stringify(emitters.map(light=>[
   lightRangeCenter(light),light.radius,light.bright,light.tint,light.lightElevation,light.spell
@@ -5591,14 +5636,44 @@ function prepareFogObservers(){
   const eye=basePoint(token);eye[2]+=.65;
   const distance=basePoint(token);
   const range=Math.max(Number(token.blindsight)||0,token.conditions?.includes('blinded')?0:Number(token.darkvision)||0)/5;
-  return {eye,distance,range};
+  return {eye,distance,range,grounded:!token.flying};
  })};
+}
+function occupiedPlatformVisibility(observers){
+ const platforms=new Map();
+ const terrain=pieces.filter(piece=>!piece.stairTread&&
+  (piece.groundSurface||['volume','terrace','stone','bridge'].includes(piece.type)));
+ for(const {distance:[x,y,z],grounded} of observers){
+  if(!grounded||z<=0)continue;
+  for(const piece of terrain){
+   if(platforms.has(piece)||Math.abs(piece.z+dimensions(piece)[2]-z)>1e-7)continue;
+   const footprint=terrainFootprint(piece);
+   if(!carryPointInsideFloor([x,y],footprint))continue;
+   let below=0;
+   for(const floor of terrain){
+    const top=floor.z+dimensions(floor)[2];
+    if(top>below&&top<=piece.z+1e-7&&footprintsOverlap(footprint,terrainFootprint(floor)))below=top;
+   }
+   const xs=footprint.map(point=>point[0]),ys=footprint.map(point=>point[1]);
+   platforms.set(piece,{below,bounds:[Math.min(...xs)-1,Math.min(...ys)-1,Math.max(...xs)+1,Math.max(...ys)+1]});
+  }
+ }
+ return platforms;
+}
+function platformLowerFloorVisible(world,platforms){
+ if(!platforms.size)return false;
+ const [x,y,z]=fogFaceCenter(world);
+ if(!world.every(vertex=>Math.abs(vertex[2]-z)<1e-7))return false;
+ for(const {below,bounds:[left,top,right,bottom]} of platforms.values()){
+  if(Math.abs(z-below)<1e-7&&x>=left&&x<=right&&y>=top&&y<=bottom)return true;
+ }
+ return false;
 }
 function fogRegionKey(target){
  return Math.floor(target[0]/8)+','+Math.floor(target[1]/8)+','+Math.floor(target[2]/8);
 }
 // Conservative wall-region gate: only the observer's own room and rooms
-// reached through an aperture within 10 feet may be sampled. Unknown
+// reached through an aperture within its visibility range may be sampled. Unknown
 // topology and elevated viewpoints fall back to full 3D visibility.
 let proximityRoomGate={frame:null,topology:null,observers:null,allowed:null};
 let proximityRoomGateSkips=0;
@@ -5617,7 +5692,7 @@ function roomProximityReject(target,prepared){
     const [a,b]=portal.regions||[];
     if(a!==own&&b!==own)continue;
     if(!(portal.kind==='Window'?!portal.shaded:portal.open))continue;
-    if(Math.hypot(o.distance[0]-portal.center[0],o.distance[1]-portal.center[1])>2)continue;
+    if(!portalWithinVisibilityRange(o,portal))continue;
     if(a!==null&&a!==undefined)allowed.add(a);
     if(b!==null&&b!==undefined)allowed.add(b);
    }
@@ -5949,16 +6024,19 @@ function terrainFogPatchVisible(patch){
  }
  return patch.visible;
 }
-function nearbyPlayerDoor(object){
+function nearbyPlayerDoor(object,reach=.5){
  if(object.kind!=='Door'||object.secret)return false;
  const [x,y,z]=object.origin;
+ return playerCanReachDoor([x+.5,y+.5,z],reach);
+}
+function playerCanReachDoor([x,y,z],reach=.5){
  return tokens.some(token=>{
   if(!ownsRoomStandee(token)||token.incognito||token.conditions?.includes('dead'))return false;
   const [tx,ty,tz]=basePoint(token);
   return Math.abs(tz-z)<=.5&&Math.hypot(
-   Math.max(0,Math.abs(tx-x-.5)-token.size/2),
-   Math.max(0,Math.abs(ty-y-.5)-token.size/2)
-  )<=.5;
+   Math.max(0,Math.abs(tx-x)-token.size/2),
+   Math.max(0,Math.abs(ty-y)-token.size/2)
+  )<=reach;
  });
 }
 function fogOpeningVisible(object){
@@ -6087,6 +6165,7 @@ function timeLighting(work){
   delete performanceDraw.timingLighting;
  }
 }
+let pathWallBenchmarkReport=null,pathWallBenchmarkDrawing=false;
 const performanceSamples=[],standeeInputSamples=[];
 let pendingStandeeInput=null;
 function recordStandeeInput(event,standee){
@@ -6122,8 +6201,10 @@ function updatePerformanceReadout(){
   'Last redraw: ordering '+latest.orderMs+' ms · lighting '+latest.lightingMs+' ms · '+latest.faces+' faces',
   latest.rays+' visibility rays · '+latest.lightCandidates+' light candidates',
   latest.pieces+' terrain pieces · '+latest.lights+' active lights',
-  standeeInputSamples.length?'Last accepted standee click: '+standeeInputSamples.at(-1).confirmToAcceptedMs+' ms after confirm · '+(standeeInputSamples.at(-1).pointerToAcceptedMs??'unavailable')+' ms from pointer event':'',
-  fogWorkerEnabled?'Fog worker: '+fogWorkerStats.completed+'/'+fogWorkerStats.queued+' batches · '+fogWorkerStats.reused+' rays reused':' '
+  standeeInputSamples.length?(standeeInputSamples.at(-1).confirmToPreviewDrawMs!=null
+   ?'Last movement preview: '+standeeInputSamples.at(-1).confirmToPreviewDrawMs+' ms after confirm'
+   :'Last accepted standee click: '+standeeInputSamples.at(-1).confirmToAcceptedMs+' ms after confirm · '+(standeeInputSamples.at(-1).pointerToAcceptedMs??'unavailable')+' ms from pointer event'):'',
+  useFogRayWorker()?'Fog worker: '+fogWorkerStats.completed+'/'+fogWorkerStats.queued+' batches · '+fogWorkerStats.reused+' rays reused':' '
  ].filter(Boolean).join('\n');
 }
 el('performanceToggle').onclick=()=>{
@@ -6135,11 +6216,11 @@ el('performanceToggle').onclick=()=>{
   updatePerformanceReadout();performanceTimer=setInterval(updatePerformanceReadout,400);
  }
 };
-el('performanceReset').onclick=()=>{performanceSamples.length=0;standeeInputSamples.length=0;pendingStandeeInput=null;renderingReport=textureTestReport=null;lastCameraDraw=cameraReleasedAt=null;el('performanceStatus').textContent='';updatePerformanceReadout()};
+el('performanceReset').onclick=()=>{performanceSamples.length=0;standeeInputSamples.length=0;pendingStandeeInput=null;renderingReport=textureTestReport=pathWallBenchmarkReport=null;lastCameraDraw=cameraReleasedAt=null;el('performanceStatus').textContent='';updatePerformanceReadout()};
 el('performanceCopy').onclick=async()=>{
  const output=el('performanceStatus');
  try{
-  await navigator.clipboard.writeText(JSON.stringify({build:el('battlemapBuild').textContent.slice(1),samples:performanceSamples,standeeInput:standeeInputSamples,fogWorker:{enabled:fogWorkerEnabled,...fogWorkerStats},benchmark:renderingReport,railTravel:railTravelReport,wallBlockerComparison,textureTest:textureTestReport},null,2));
+  await navigator.clipboard.writeText(JSON.stringify({build:el('battlemapBuild').textContent.slice(1),samples:performanceSamples,standeeInput:standeeInputSamples,fogWorker:{enabled:useFogRayWorker(),...fogWorkerStats},benchmark:renderingReport,pathWallBenchmark:pathWallBenchmarkReport,railTravel:railTravelReport,wallBlockerComparison,textureTest:textureTestReport},null,2));
   output.textContent='Copied';
  }catch{output.textContent='Clipboard unavailable'}
 };
@@ -6459,12 +6540,24 @@ function fadePreviousBattlefield(previous){
  fade.onfinish=()=>image.remove();
 }
 function draw(action,reusePan=false){
- scheduleScenePreparation();
+ const webglUnavailableReason=studioWebGLUnavailableReason();
+ const webglAvailable=!webglUnavailableReason;
+ const webgl=studioWebGLEnabled&&webglAvailable;
+ const toggle=el('studioWebGLToggle');
+ toggle.textContent=webgl?'Renderer: WebGL':'Renderer: Standard';
+ toggle.title=webglUnavailableReason||'Switch between the standard and WebGL renderers';
+ toggle.setAttribute('aria-pressed',String(webgl));
+ if(!webgl){
+  studioWebGL?.hide();
+  studioWebGLFrame=null;
+  canvas.classList.remove('studioWebGLActive');
+ }
+ if(!pathWallBenchmarkDrawing)scheduleScenePreparation();
  cancelPanSettle();
  cancelMovementPaint();
  const homeScene=JSON.stringify([currentSceneId,roomProfile?.name]);
  if(W&&H&&loadedHomeScene!==homeScene){loadedHomeScene=homeScene;applyHomeView(chosenSessionView()||chosenHomeView())}
- scheduleSessionViewSave()
+ if(!pathWallBenchmarkDrawing)scheduleSessionViewSave()
  if(action!=='Standee movement'){
   updateCameraCompass();
   el('playerShowAllies').hidden=!(playing&&roomProfile?.gm===false);
@@ -6491,9 +6584,54 @@ function draw(action,reusePan=false){
  const fixedStandeeMove=movementPreview&&!cameraPreview&&carry.piece?.type==='standee'&&!carry.light&&!carry.arcaneEye;
  const simplified=movementPreview&&!fixedStandeeMove||!topDown&&(cameraPreview||action==='Test: Orbit'||action==='Test: Zoom');
  const start=el('performancePanel').hidden&&!action?.startsWith?.('Test: ')?null:performance.now();
+ const workerCounts=start!==null?[fogWorkerStats.reused,fogWorkerStats.lightRaysReused]:null;
  const dragFrame=cameraMoving&&(drag?.orbit||drag?.pan)&&start!==null;
  if(start!==null)performanceDraw={rays:0,lightCandidates:0,orderMs:0,lightingMs:0,geometryMs:0,paintMs:0,groundMs:0,facePaintMs:0,overlayMs:0,action:typeof action==='string'?action:carry?'Standee preview':drag?.orbit?'Camera rotation':drag?.pan?'Camera pan':drag?.piece||drag?.members?'Build movement':'Other redraw'};
  try{
+  if(webgl){
+   if(performanceDraw)performanceDraw.renderer='WebGL trial';
+   try{
+    prepareStudioWebGL();
+    if(zoomTransformActive){
+     canvas.style.transform='';
+     el('movingStandeeOverlay').style.transform='';
+     el('routeOverlay').style.transform='';
+     canvas.parentElement.style.background=zoomBackgroundBefore;
+     zoomTransformActive=false;
+    }
+    clearPanPaint();
+    el('battlefieldFade')?.remove();
+    el('movingStandeeOverlay').hidden=true;
+    const key=studioWebGLKey(), frame=studioWebGLFrame;
+    const reuse=frame&&studioWebGLCoverageContains(frame.coverage,studioWebGLView())&&frame.key.every((value,i)=>Object.is(value,key[i]))&&
+     (studioWebGLCameraAction.test(action)||!!carry&&carry.piece?.type==='standee'&&!carry.light&&!carry.arcaneEye);
+    if(performanceDraw)performanceDraw.webGLTerrainReused=!!reuse;
+    if(reuse){
+     const {width,height}=canvas.getBoundingClientRect();
+     if(!width||!height)return;
+     W=width;H=height;S=Math.min(W/(gridLimit(0)+17),H/(gridLimit(1)+6))*zoom;C=Math.cos(angle);D=Math.sin(angle);
+     keepBattlefieldVisible();
+     const ratio=battlefieldPixelRatio(preferences.graphicsQuality,false);
+     if(canvas.width!==Math.round(W*ratio))canvas.width=Math.round(W*ratio);
+     if(canvas.height!==Math.round(H*ratio))canvas.height=Math.round(H*ratio);
+     drawStudioWebGLFrame(frame,ratio,carry&&ghost?ghost:null);
+    }else{
+     studioWebGLCapture=true;
+     studioWebGLBoundedCapture=mapFogEnabled()&&action?.startsWith?.('Confirmed move');
+     lightingFrame=timeLighting(startLightingFrame);
+     drawBattlefield(false,action,false,false);
+    }
+    paintedCamera={angle,tilt,topDown,zoom,panX,panY,width:canvas.clientWidth,height:canvas.clientHeight,preview:false};
+    if(handleLayer)handleLayer.style.visibility='';
+   }catch(error){
+    console.error('Battlemap WebGL trial failed:',error);
+    disableStudioWebGL('WebGL trial failed. Restored the standard view.');
+    studioWebGLCapture=false;
+    studioWebGLBoundedCapture=false;
+    draw('WebGL fallback');
+    return;
+   }finally{studioWebGLCapture=false;studioWebGLBoundedCapture=false}
+  }else{
   const snapshot=paintedCamera;
   const useSnapshot=(snapshotZoom||snapshotPan)&&snapshot&&snapshot.angle===angle&&snapshot.tilt===tilt&&snapshot.topDown===topDown&&
    canvas.clientWidth===snapshot.width&&canvas.clientHeight===snapshot.height&&(!drag||snapshotPan)&&!carry;
@@ -6501,12 +6639,10 @@ function draw(action,reusePan=false){
    paintMovingStandeeLayer(movingStandeeLayer);
    drawRoute();positionMoveActions();drawStandeeNames();
    if(performanceDraw)performanceDraw.standeeLayerOnly=true;
-  }else if(fixedStandeeMove&&roomProfile?.gm===false&&paintedCamera&&
-   (action==='Standee movement'||action==='Group movement'||!action)){
-   // Retain the last visibility-checked frame when no movement overlay can
-   // be reused. The route remains live and confirmation schedules a repaint.
+  }else if(fixedStandeeMove&&roomProfile?.gm===false&&ghost&&paintedCamera&&
+   carriedMembers().length===1&&(action==='Standee movement'||!action)&&paintPlayerStandees(ghost)){
+   // Reuse the visibility-checked frame only if the overlay was drawn.
    movingStandeeLayer=null;
-   paintPlayerStandees(ghost);
    drawRoute();positionMoveActions();drawStandeeNames();
    if(performanceDraw)performanceDraw.movementRouteOnly=true;
   }else{
@@ -6571,6 +6707,7 @@ function draw(action,reusePan=false){
   }
   }
   if(performanceDraw){performanceDraw.zoomSnapshot=!!useSnapshot&&snapshotZoom;performanceDraw.panSnapshot=!!useSnapshot&&snapshotPan;}
+  }
   if(performanceDraw){
    if(dragFrame){
     if(lastCameraDraw?.drag===drag)performanceDraw.cameraFrameMs=roundedMs(start-lastCameraDraw.start);
@@ -6579,8 +6716,10 @@ function draw(action,reusePan=false){
    if(action==='Camera settled'&&cameraReleasedAt!==null){
     performanceDraw.cameraReleaseMs=roundedMs(performance.now()-cameraReleasedAt);
    }
+   performanceDraw.fogWorkerSightHits=fogWorkerStats.reused-workerCounts[0];
+   performanceDraw.fogWorkerLightHits=fogWorkerStats.lightRaysReused-workerCounts[1];
    performanceSamples.push({...performanceDraw,lightingMs:Number(performanceDraw.lightingMs.toFixed(2)),at:Date.now(),drawMs:Number((performance.now()-start).toFixed(2)),
-    detail:lightOrbit?'Light orbit preview':cameraPreview?'Camera preview':simplified?'Reduced':'Full',renderScale:battlefieldPixelRatio(preferences.graphicsQuality,cameraPreview),zoom,view:topDown?'Top down':'3D',role:roomProfile?.gm===false?'Player':roomProfile?.gm?'GM':'Local',
+    detail:webgl?'WebGL trial':lightOrbit?'Light orbit preview':cameraPreview?'Camera preview':simplified?'Reduced':'Full',renderScale:battlefieldPixelRatio(preferences.graphicsQuality,!webgl&&cameraPreview),zoom,view:topDown?'Top down':'3D',role:roomProfile?.gm===false?'Player':roomProfile?.gm?'GM':'Local',
     mode:playing?'Play':'Build',session:roomState.active?(roomState.paused?'Paused session':'Live session'):'No active session',
     faces:faces.length,pieces:pieces.length,lights:(lightingFrame?.lights??activeLights()).length});
    if(performanceSamples.length>300)performanceSamples.shift();
@@ -6588,8 +6727,8 @@ function draw(action,reusePan=false){
  }finally{
   if(action==='Camera settled')lastCameraDraw=cameraReleasedAt=null;
   lightingFrame=null;performanceDraw=null;
-  if(progressiveLight&&!action?.startsWith?.('Test: '))scheduleProgressiveLightSlice();
-  if(!action?.startsWith?.('Test: '))sendRepaintRays();
+  if(!pathWallBenchmarkDrawing&&progressiveLight&&!action?.startsWith?.('Test: '))scheduleProgressiveLightSlice();
+  if(!pathWallBenchmarkDrawing&&!action?.startsWith?.('Test: '))sendRepaintRays();
  }
 }
 let movementRenderCache=null;
@@ -6639,11 +6778,13 @@ function playerCameraTerrainMode(piece,rays){
  }
  return fade?'fade':null;
 }
-function buildPlayerCameraCutaway(){
+function playerCameraCutawayToken(){
  if(!playing||roomProfile?.gm!==false)return null;
  const owned=tokens.filter(token=>ownsRoomStandee(token)&&!token.incognito&&!token.conditions?.includes('dead'));
- const token=(owned.includes(carry?.piece)&&carry.piece)||(owned.includes(selected)&&selected)||
-  owned.find(actor=>actor.roomId===roomProfile.characterKey)||owned[0];
+ return (owned.includes(carry?.piece)&&carry.piece)||(owned.includes(selected)&&selected)||
+  owned.find(actor=>actor.roomId===roomProfile.characterKey)||owned[0]||null;
+}
+function buildPlayerCameraCutaway(token=playerCameraCutawayToken()){
  if(!token)return null;
  // Keep walls and stair visibility anchored to the confirmed position while dragging.
  const direction=topDown?[0,0,1]:[D*Math.cos(tilt),C*Math.cos(tilt),Math.sin(tilt)],rays=[];
@@ -6847,6 +6988,13 @@ function projectedBounds(points){
  return [Math.min(...x),Math.min(...y),Math.max(...x),Math.max(...y)];
 }
 function paintPlayerStandees(destination=null){
+ if(studioWebGLEnabled&&studioWebGLFrame&&canvas.classList.contains('studioWebGLActive')){
+  const view=studioWebGLView();
+  const sameView=paintedCamera&&!paintedCamera.preview&&
+   Object.keys(view).every(key=>paintedCamera[key]===view[key]);
+  drawStudioWebGLFrame(studioWebGLFrame,canvas.width/W,destination,sameView);
+  return true;
+ }
  const frame=playerStandeeFrame,view=standeeLayerViewKey();
  if(!frame||!frame.view.every((value,index)=>Object.is(value,view[index])))return;
  const layer=el('movingStandeeOverlay');
@@ -6854,6 +7002,9 @@ function paintPlayerStandees(destination=null){
  if(layer.height!==canvas.height)layer.height=canvas.height;
  const main=ctx,savedFaces=faces;
  const preview=destination?{token:destination}:playerStandeePreview?.scene===currentSceneId?playerStandeePreview:null;
+ const focal=playerCameraCutawayToken();
+ const isFocal=token=>!!focal&&(token===focal||!!focal.roomId&&token.roomId===focal.roomId||
+  token===destination&&carry?.piece===focal);
  try{
   ctx=layer.getContext('2d');
   ctx.setTransform(layer.width/W,0,0,layer.height/H,0,0);
@@ -6862,8 +7013,9 @@ function paintPlayerStandees(destination=null){
   if(preview){faces=[];drawStandee(preview.token,false);moved=faces}
   const paint=(face,index)=>{
    ctx.save();
+   const cover=topDown||isFocal(face.p)?[]:frame.cover;
    const standeeBounds=projectedBounds(face.projected);
-   for(const [order,terrain,box] of frame.cover){
+   for(const [order,terrain,box] of cover){
     if(index==null?terrain.depth<=face.depth:order<=index)continue;
     if(box[2]<=standeeBounds[0]||box[0]>=standeeBounds[2]||box[3]<=standeeBounds[1]||box[1]>=standeeBounds[3])continue;
     ctx.beginPath();ctx.rect(0,0,W,H);
@@ -6874,11 +7026,12 @@ function paintPlayerStandees(destination=null){
    ctx.restore();
   };
   for(const [face,index] of frame.faces){
-   if(preview&&face.p.roomId===preview.token.roomId)continue;
+   if(preview&&(destination&&face.p===carry?.piece||preview.token.roomId&&face.p.roomId===preview.token.roomId))continue;
    paint(face,index);
   }
   for(const face of moved)paint(face,null);
   layer.hidden=false;
+  return true;
  }finally{ctx=main;faces=savedFaces}
 }
 function standeeLayerViewKey(){
@@ -6910,6 +7063,13 @@ function paintMovingStandeeLayer(layer){
   layer.preview=ghost;
   faces=stationary.concat(movingFaces);
  }finally{ctx=main;lightingFrame=activeFrame}
+}
+function paintRaisedPlatformOutline(face){
+ ctx.save();ctx.globalAlpha=1;ctx.strokeStyle='#b7a58b';
+ ctx.lineWidth=1.65;ctx.setLineDash([5,3]);
+ ctx.beginPath();
+ face.projected.forEach(([x,y],index)=>index?ctx.lineTo(x,y):ctx.moveTo(x,y));
+ ctx.closePath();ctx.stroke();ctx.restore();
 }
 function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=null){
  const {width,height}=canvas.getBoundingClientRect();
@@ -6950,18 +7110,18 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  const appearance=floorSceneEditing&&appearanceDraft?{...savedAppearance,...appearanceDraft,ground:'image',floorImage:readFloorImageSettings()}:savedAppearance;
  const showLighting=(roomProfile?.gm===false||playing&&(!gmIgnoreLighting||!!gmVisionObserver()))&&(wallRooms().some(a=>a.dark)||areas.some(a=>a.shape==='room'&&a.dark)||!!appearance?.ambient?.enabled||tokens.some(t=>t.torch&&!t.incognito));
  const blockers=showLighting||roomProfile?.gm===false?visionBlockers():[];
- const stage=progressiveLightFrame(action,showLighting&&!cameraPreview&&!simplified&&!carry&&quality===2);
+ const stage=progressiveLightFrame(action,!studioWebGLCapture&&showLighting&&!cameraPreview&&!simplified&&!carry&&quality===2);
  const interiorVision=roomInteriorVisibility(blockers);
  const sampleWallSurfaces=showLighting||mapFogEnabled();
- playerCameraCutaway=buildPlayerCameraCutaway();
- const cacheable=!floorSceneEditing&&(action==='Standee movement'||action==='Test: Standee cached')&&moving.length===1&&
+ playerCameraCutaway=studioWebGLCapture?null:buildPlayerCameraCutaway();
+ const cacheable=!studioWebGLCapture&&!floorSceneEditing&&(action==='Standee movement'||action==='Test: Standee cached')&&moving.length===1&&
   moving[0]?.type==='standee'&&!moving[0].flying&&!moving[0].carriedFixture&&!carry.light&&!carry.arcaneEye&&
   !gmVisionObserver()&&!resizing&&!repeatPreview.length;
  const cutaway=cacheable?movementCutawayKey(playerCameraCutaway,pieces):null;
  const cacheKey=cacheable?[W,H,gridLimit(0),gridLimit(1),ratio,zoom,angle,tilt,panX,panY,topDown,simplified,lightOrbit,paintTerrainTextures,paintVolumeGrids,quality,showThroughTerrain,playerShowAllies,moving[0],roomProfile?.name,lightingFrame?.signature,playerFogEnabled(),preferences.fogMemory,fogCache?.signature,focusCutaway,cutaway]:null;
  if(!cacheKey||!movementRenderCache?.key.every((value,i)=>value===cacheKey[i]))movementRenderCache=null;
  const cached=movementRenderCache;
- const useStandeeLayer=action==='Standee movement'&&cacheable&&!cameraPreview&&!areaPreview&&!editingArea&&
+ const useStandeeLayer=!topDown&&action==='Standee movement'&&cacheable&&!cameraPreview&&!areaPreview&&!editingArea&&
   !areas.some(area=>area.shape==='difficult')&&!moving[0].aura;
  const windowCuts=cached?null:windowApertureCuts();
  // Precompute the same authored-wall room reachability before any mesh faces.
@@ -7225,6 +7385,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  const fogSectorStats={checked:0,skipped:0,unsafe:0};
  const fogSectorCache=new Map();
  const fogPrepared=fogPreparedObservers||(fogPreparedObservers=prepareFogObservers());
+ const occupiedPlatforms=occupiedPlatformVisibility(fogPrepared.observers);
  const fogLights=activeLights();
  const fogSectorDark=key=>{
   if(fogSectorCache.has(key))return fogSectorCache.get(key);
@@ -7268,7 +7429,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  };
  const roomTopology=wallVisibilityTopology();
  const roomCandidates=roomTopology?wallVisibilityCandidates(roomTopology,fogPrepared):null;
- // Apply the same 10-foot portal eligibility used by point visibility
+ // Apply the same portal eligibility used by point visibility
  // before generating terrain patches. Connectivity alone is not visibility.
  const eligibleRoomIds=new Set();
  let roomEligibilityReliable=!!roomCandidates&&!fogPrepared.preview&&
@@ -7281,7 +7442,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    const [a,b]=portal.regions||[];
    if(a!==own&&b!==own)continue;
    if(!(portal.kind==='Window'?!portal.shaded:portal.open))continue;
-   if(Math.hypot(observer.distance[0]-portal.center[0],observer.distance[1]-portal.center[1])>2)continue;
+   if(!portalWithinVisibilityRange(observer,portal))continue;
    if(a!==null&&a!==undefined)eligibleRoomIds.add(a);
    if(b!==null&&b!==undefined)eligibleRoomIds.add(b);
   }
@@ -7315,12 +7476,15 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   // The fixture anchor was already checked once, before emitting its mesh.
   if((f.staticFixture&&fogMemoryState)||f.spellMote)return [f];
   if(!f.world)return f.p?.origin&&fogObjectVisible(f.p)?[f]:[];
+  const platformSide=f.z===null&&occupiedPlatforms.has(f.p)&&!f.preview;
+  const lowerPlatformFloor=occupiedPlatforms.size&&!f.preview&&!f.doorFace&&!f.fixtureFace&&!f.pathWall&&
+   (!f.p||f.z!==null&&(f.p.groundSurface||['volume','terrace','stone','bridge'].includes(f.p.type)));
   // Never discard doors, openings, elevated terrain or fixtures using
   // the planar distance shortcut; they retain authoritative 3D checks.
   // Raised surfaces (including platforms below five feet) can be visible
   // over a nearby obstruction; never planar-prune them.
   const raisedSurface=f.world.some(v=>fogPrepared.observers.some(o=>Math.abs((v[2]??0)-(o.distance[2]??0))>.15));
-  if(!raisedSurface&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture&&!f.volumeTop&&!f.pathWall&&preFogDistanceReject(f))return [];
+  if(!raisedSurface&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture&&!f.volumeTop&&!f.pathWall&&!platformSide&&!lowerPlatformFloor&&preFogDistanceReject(f))return [];
   // Experimental aggressive culling: reject faces wholly in disconnected
   // authored-wall regions before fog patch generation and ray sampling.
   // Keep cross-boundary faces and dynamic/portal geometry in the 3D renderer.
@@ -7340,7 +7504,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
     const portal=nearPortal(f);
     if(elevated)roomCounts.elevationGuarded++;
     if(portal)roomCounts.portalGuarded++;
-    if(roomEligibilityReliable&&!elevated&&!portal&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture){
+    if(roomEligibilityReliable&&!elevated&&!portal&&!platformSide&&!lowerPlatformFloor&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture){
      roomCounts.culledFaces++;
      return [];
     }
@@ -7349,7 +7513,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   // Only skip ordinary terrain wholly inside one provably dark sector.
   // Objects with openings, special visibility, or persistent memory retain
   // the authoritative renderer.
-  if(f.world.length&&!f.doorFace&&!f.volumeTop&&!f.fixtureFace&&!f.preview){
+  if(f.world.length&&!platformSide&&!lowerPlatformFloor&&!f.doorFace&&!f.volumeTop&&!f.fixtureFace&&!f.preview){
    const keys=new Set(f.world.map(v=>Math.floor(v[0]/8)+','+Math.floor(v[1]/8)));
    if(keys.size===1){
     fogSectorStats.checked++;
@@ -7377,7 +7541,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    // that the patch is still visible. Reusing it unconditionally leaves
    // old torch/fog squares behind as a player moves or extinguishes light.
    const visibilityStart=performance.now();
-   const currentlyVisible=forceTerrainVisible()||terrainFogPatchVisible(f.p?{...patch,ownerPiece:f.p}:patch);
+   const currentlyVisible=platformSide||lowerPlatformFloor&&platformLowerFloorVisible(patch.world,occupiedPlatforms)||forceTerrainVisible()||terrainFogPatchVisible(f.p?{...patch,ownerPiece:f.p}:patch);
    if(fogDetail)fogDetail.visibilityMs+=performance.now()-visibilityStart;
    const travelStart=performance.now();
    if(rememberTerrain&&roomProfile?.gm!==false&&!currentlyVisible&&!fogMemoryState.seen.has(patch.memoryKey)&&fogSeenDuringTravel(patch,blockers)){
@@ -7491,6 +7655,13 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   faces=cached.faces.concat(faces.filter(f=>visibleProjection(f.projected,f.standee?55:2)));
  }
  if(performanceDraw)performanceDraw.geometryMs=Number(Math.max(0,performance.now()-geometryStart-(performanceDraw.lightingMs-geometryLighting)).toFixed(2));
+ if(studioWebGLCapture){
+  studioWebGLCapture=false;
+  uploadStudioWebGLFrame(blockers,showLighting,appearance,action);
+  const destination=carry?.piece?.type==='standee'&&!carry.light&&!carry.arcaneEye?ghost:null;
+  drawStudioWebGLFrame(studioWebGLFrame,ratio,destination);
+  return;
+ }
  const orderStart=performanceDraw?performance.now():0;
  const groundLayer=f=>topDown?!f.p:f.z===0&&!f.standee;
  if(!cached)faces.sort((a,b)=>Number(groundLayer(b))-Number(groundLayer(a))||
@@ -7567,6 +7738,8 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  }
  const lightBlockers=blockers;
  const separatePlayerStandees=playing&&roomProfile?.gm===false&&!useStandeeLayer&&!cameraPreview&&!overlap;
+ const topDownStandeePreview=separatePlayerStandees&&topDown&&moving.length===1&&
+  carry.piece?.type==='standee'&&!carry.light&&!carry.arcaneEye?ghost:null;
  const playerStandeeFaces=[];
  const sceneDark=showLighting;
  if(performanceDraw&&stage)performanceDraw.progressiveLighting=stage.phase;
@@ -7666,11 +7839,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   }
   if(f.perimeterOnly){
    // Outline only: never shade or paint the concealed horizontal surface.
-   ctx.save();ctx.globalAlpha=1;ctx.strokeStyle='#b7a58b';
-   ctx.lineWidth=1.65;ctx.setLineDash([5,3]);
-   ctx.beginPath();
-   f.projected.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
-   ctx.closePath();ctx.stroke();ctx.restore();
+   paintRaisedPlatformOutline(f);
    continue;
   }
   if(paintFocusCutaway(f))continue;
@@ -7711,7 +7880,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    ctx.restore();continue;
   }
   if(f.doorFace||f.fixtureFace){polygon(f.projected,f.fill,f.spellBubble?f.p.tint+'88':'#452c1c');if(f.doorFace&&!f.windowPane){if(!simplified&&f.doorDetailReverse!==undefined&&f.p.details)paintDoorDetails(f);shadeTerrain(f);}continue;}
-  if(f.preview&&f.standee&&useStandeeLayer)continue;
+  if(f.preview&&f.standee&&(useStandeeLayer||f.p===topDownStandeePreview))continue;
   if(f.shadow||f.standee){
    if(separatePlayerStandees&&ownsRoomStandee(f.p)&&!f.preview)playerStandeeFaces.push([f,playerFaceOrder]);
    else paintBattlefieldStandee(f,showLighting,lightBlockers);
@@ -7838,7 +8007,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    !face.perimeterOnly&&face.projected?.length>=3&&(!face.pathWall||face.p.opacity===undefined||face.p.opacity>=1)
    ?[[index,face,projectedBounds(face.projected)]]:[]);
   playerStandeeFrame={view:standeeLayerViewKey(),faces:playerStandeeFaces,cover,lighting:showLighting,blockers};
-  paintPlayerStandees();
+  paintPlayerStandees(topDownStandeePreview);
  }else if(!useStandeeLayer)playerStandeeFrame=null;
  if(pinnedStatus)pinnedStatus=statusMarks.find(mark=>mark.token===pinnedStatus.token&&mark.id===pinnedStatus.id);
  statusTooltip(pinnedStatus);
@@ -8063,15 +8232,32 @@ function carriedPosition(member){
  const leader=carry.piece;
  return {...member,x:member.x+ghost.x-leader.x,y:member.y+ghost.y-leader.y,z:member.z+ghost.z-leader.z};
 }
+function carryPointInsideFloor(point,polygon){
+ const tolerance=1e-7;
+ return polygon.every(([x,y],index)=>{
+  const [u,v]=polygon[(index+1)%polygon.length];
+  const dx=u-x,dy=v-y;
+  return dx*(point[1]-y)-dy*(point[0]-x)>=-tolerance*Math.hypot(dx,dy);
+ });
+}
+function floorAcceptsDestination(x,y,width,depth,image=importedFloorFootprint()){
+ if(![x,y,width,depth].every(Number.isFinite))return false;
+ const grid=sceneGrid(),left=Number(grid.floorOriginX)||0,top=Number(grid.floorOriginY)||0;
+ const floor=[[left,top],[left+grid.width,top],[left+grid.width,top+grid.depth],[left,top+grid.depth]];
+ // The imported artwork can extend beyond the original battlefield. Accept
+ // partial squares by their center, while keeping the normal footprint rule.
+ if(image&&carryPointInsideFloor(gridToWorld(x+width/2,y+depth/2),image))return true;
+ return [[x,y],[x+width,y],[x+width,y+depth],[x,y+depth]]
+  .every(([u,v])=>carryPointInsideFloor(gridToWorld(u,v),floor));
+}
 function validCarryDestination(){
- if(carry?.arcaneEye)return !!ghost&&ghost.x>=0&&ghost.x<gridLimit(0)&&ghost.y>=0&&ghost.y<gridLimit(1)&&Number.isFinite(ghost.z)&&ghost.z>=0;
  if(!ghost||!carry)return false;
- const members=carriedMembers(),others=[...pieces,...tokens.filter(t=>!members.includes(t))];
- // The GM adjudicates vertical movement. Keep map bounds, but do not
- // demand support or a particular climb height for a standee destination.
- return members.every(member=>{
+ const image=importedFloorFootprint();
+ if(carry.arcaneEye)return Number.isFinite(ghost.z)&&ghost.z>=0&&floorAcceptsDestination(ghost.x,ghost.y,1,1,image);
+ // The GM adjudicates elevation. Route collision is checked independently.
+ return carriedMembers().every(member=>{
   const p=carriedPosition(member),[w,d]=dimensions(p);
-  return Number.isFinite(p.z)&&p.z>=0&&p.x>=0&&p.y>=0&&p.x+w<=gridLimit(0)&&p.y+d<=gridLimit(1);
+  return Number.isFinite(p.z)&&p.z>=-1e-7&&floorAcceptsDestination(p.x,p.y,w,d,image);
  });
 }
 function carrySegment(start,end){
@@ -8259,12 +8445,13 @@ function positionMoveActions(){
 function pauseMove(){
  const blocker=movementBlocked();
  if(blocker){message(carryBlockerLabel(blocker)+' blocks this route. Choose a waypoint around it.');draw();return}
- if(!validCarryDestination()){message('That standee does not fit there. Choose another destination.');draw();return}
+ if(!validCarryDestination()){message('That destination is outside the playable floor. Choose another destination.');draw();return}
  carry.paused=true;
  message('Tap '+pathLabel()+' to continue, or hold '+pathLabel()+' and click to add waypoints. Use × or ✓ to finish.');
- // The last drag frame already paints the preview. Expose confirmation without
- // rebuilding terrain, fog, lighting, menus, or room state before the next click.
  positionMoveActions();
+ // A camera redraw may have invalidated the previous movement layer.
+ // Queue the final position without delaying the confirmation controls.
+ if(carry.piece?.type==='standee'&&!carry.light&&!carry.arcaneEye)queueMovementPaint();
 }
 function resumeMove(){
  if(!carry?.paused||!ghost||!route?.points?.length)return;
@@ -8379,22 +8566,33 @@ function runProgressiveLightSlice(){
  scheduleProgressiveLightSlice();
 }
 let confirmedMovementRepaint=null;
-function scheduleConfirmedMovementRepaint(action,scene=currentSceneId){
+function scheduleConfirmedMovementRepaint(action,scene=currentSceneId,preview=null){
  clearTimeout(confirmedMovementRepaint);
  confirmedMovementRepaint=setTimeout(()=>{
   confirmedMovementRepaint=null;
-  if(currentSceneId!==scene){playerStandeePreview=null;return}
-  if(carry||drag||roomMoving||moveConfirmPending||performance.now()-lastProgressiveInput<75){
-   scheduleConfirmedMovementRepaint(action,scene);return;
+  if(currentSceneId!==scene){
+   if(playerStandeePreview===preview)playerStandeePreview=null;
+   return;
+  }
+  if(preview&&playerStandeePreview!==preview)return;
+  if(document.hidden||preview?.awaitingFrame||carry||drag||roomMoving||moveConfirmPending||performance.now()-lastProgressiveInput<75){
+   scheduleConfirmedMovementRepaint(action,scene,preview);return;
+  }
+  const workerJob=preview?.workerJob;
+  if(workerJob?.pending&&workerJob.cache===fogSectorRayCache&&performance.now()-workerJob.started<webGLFogWarmupBudgetMs){
+   scheduleConfirmedMovementRepaint(action,scene,preview);return;
   }
   playerStandeePreview=null;
+  const sample=preview?.sample;
+  if(sample)sample.confirmToRepaintStartMs=roundedMs(performance.now()-preview.confirmedAt);
   refresh(action);
+  if(sample)sample.confirmToRepaintDrawMs=roundedMs(performance.now()-preview.confirmedAt);
  },40);
 }
 async function commitCarry(confirmedAt=performance.now()){
  const blocker=movementBlocked();
  if(blocker){message(carryBlockerLabel(blocker)+' blocks this route. Choose a waypoint around it.');draw();return}
- if(!validCarryDestination()){message('That standee does not fit there. Choose another destination.');draw();return}
+ if(!validCarryDestination()){message('That destination is outside the playable floor. Choose another destination.');draw();return}
  const piece=carry.piece;
  if(carry.arcaneEye){
   if(roomMoving||playerScenePaused())return;
@@ -8410,14 +8608,28 @@ async function commitCarry(confirmedAt=performance.now()){
   if(roomMoving||roomState.paused||!ownsRoomStandee(piece))return;
   roomMoving=true;
   const moveStart=performance.now();
+  let preview=null;
   try{
    if(carry.light)await customizeRoomObject(carry.light,'move_light',[ghost.x,ghost.y,ghost.z]);
    else{
-    playerStandeePreview={scene:currentSceneId,token:{...piece,x:ghost.x,y:ghost.y,z:ghost.z}};
-    paintPlayerStandees();
-    queueWorkerSightlines(ghost,piece);
+    const webgl=studioWebGLEnabled&&!!studioWebGLFrame;
+    preview={scene:currentSceneId,token:{...piece,x:ghost.x,y:ghost.y,z:ghost.z},confirmedAt,awaitingFrame:true};
+    playerStandeePreview=preview;
+    if(paintPlayerStandees()&&!el('performancePanel').hidden){
+     preview.sample={renderer:webgl?'WebGL trial':'Standard',confirmToPreviewDrawMs:roundedMs(performance.now()-confirmedAt)};
+     standeeInputSamples.push(preview.sample);
+     if(standeeInputSamples.length>100)standeeInputSamples.shift();
+    }
+    // Allow the preview frame to reach the compositor before preparing fog work.
+    requestAnimationFrame(()=>{
+     preview.awaitingFrame=false;
+     if(playerStandeePreview!==preview||currentSceneId!==preview.scene)return;
+     if(preview.sample)preview.sample.confirmToPreviewFrameOpportunityMs=roundedMs(performance.now()-confirmedAt);
+     const job=queueWorkerSightlines(preview.token,piece);
+     if(webgl)preview.workerJob=job;
+    });
     await moveRoomStandee(piece,ghost);
-    pendingStandeeInput={scene:currentSceneId,standee:piece.roomId,confirmedAt};
+    if(currentSceneId===preview.scene)pendingStandeeInput={scene:preview.scene,standee:piece.roomId,confirmedAt};
    }
    const serverMs=performance.now()-moveStart;
    if(!carry.light&&piece.type==='standee'&&route)rememberFogTravel(routeWithDetours([...route.points,basePoint(ghost)]),piece);
@@ -8430,11 +8642,13 @@ async function commitCarry(confirmedAt=performance.now()){
    // Coalesce successive confirmed movements so an obsolete queued repaint
    // cannot compete with a newer position. This does not interrupt an active
    // synchronous draw; a worker/chunked renderer is still needed for that.
-   scheduleConfirmedMovementRepaint(pendingStandeeInput?'Confirmed move · medium':undefined);
+   scheduleConfirmedMovementRepaint(preview?'Confirmed move · medium':undefined,preview?.scene??currentSceneId,preview);
    if(performanceDraw)performanceDraw.movementCommit={serverMs:Math.round(serverMs),pollMs:Math.round(pollMs),totalMs:Math.round(performance.now()-moveStart)};
   }catch(err){
-   playerStandeePreview=null;
-   paintPlayerStandees();
+   if(preview&&playerStandeePreview===preview){
+    playerStandeePreview=null;
+    if(currentSceneId===preview.scene)paintPlayerStandees();
+   }
    message(err.message);await pollRoom();
   }
   finally{roomMoving=false}
@@ -9072,7 +9286,7 @@ function groundMenuPing(pivot,normal,recenter=false){
 }
 function openGroundContext(x,y,clientX,clientY){
  const menu=el('terrainContext'),face=hit(x,y,null,false,null,true),pivot=measurePoint(x,y,face);
- if(!pivot.every(Number.isFinite)||pivot[0]<0||pivot[1]<0||pivot[0]>gridLimit(0)||pivot[1]>gridLimit(1))return;
+ if(!pivot.every(Number.isFinite)||!floorAcceptsDestination(pivot[0],pivot[1],0,0))return;
  const scene=currentSceneId;
  const close=()=>{menu.hidden=true};
  const add=(label,action)=>menu.append(catalogButton(label,()=>{
@@ -9087,6 +9301,9 @@ function openGroundContext(x,y,clientX,clientY){
  });
  if(!playerScenePaused()){
   add('Ping here',()=>groundMenuPing(pivot,pingSurfaceNormal(face)));
+  const caster=mapDimensionDoorCaster();
+  const destination=caster&&spellRangeTargetAt(x,y,caster,'dimension_door',true);
+  if(destination?.inRange)add('Dimension Door here',()=>castDimensionDoorAtSquare(caster,destination));
   add('Place area template…',()=>{
    menu.replaceChildren();
    for(const shape of ['circle','square','cone','line','sphere','cube','cone3d']){
@@ -11869,6 +12086,7 @@ function createMapHandle(){
 let mapHandlePointer=null,hoveredMapHandle=null;
 function objectHandlesBlocked(){return !!(carry||moveConfirmPending)}
 function updateObjectHandleHover(){
+ visionMarkers.toggleAttribute('data-handles-blocked',objectHandlesBlocked());
  let next=null;
  if(mapHandlePointer&&!objectHandlesBlocked()&&!drag&&!zoomTransformActive){
   const [x,y]=coords(mapHandlePointer);
@@ -11909,13 +12127,14 @@ canvas.parentElement.addEventListener('pointerleave',()=>{
 });
 function drawPathObjectHandles(standeeReadouts){
  const existing=new Map([...visionMarkers.children].filter(node=>node.dataset.pathHandle).map(node=>[node.dataset.pathHandle,node]));
- const place=(id,world,label,caption,action,opening=null)=>{
+ const place=(id,world,label,caption,action,opening=null,nearby=false)=>{
   const anchor=point(...world),[x,y]=anchor;
   if(x<0||x>W||y<0||y>H||!playing&&standeeReadouts.some(([l,t,r,b])=>x>=l-10&&x<=r+10&&y>=t-10&&y<=b+10))return;
   const button=existing.get(id)??createMapHandle();
   existing.delete(id);button.dataset.pathHandle=id;
-  button.toggleAttribute('data-hover-handle',!!opening);
-  button.pathOpening=opening;button.hoverAnchor=opening?.open||topDown?anchor:null;
+  button.toggleAttribute('data-hover-handle',!!opening&&!nearby);
+  button.toggleAttribute('data-reachable-door',nearby);
+  button.pathOpening=opening;button.hoverAnchor=opening?.open||topDown||nearby?anchor:null;
   const left=x+'px',top=y+'px';
   if(button.style.left!==left)button.style.left=left;
   if(button.style.top!==top)button.style.top=top;
@@ -11939,15 +12158,15 @@ function drawPathObjectHandles(standeeReadouts){
     const label=playing?(door?(opening.open?'Close door':'Open door'):(opening.shaded?'Open window cover':'Close window cover')):'Edit '+opening.kind.toLowerCase();
     // Only expose path-wall door controls to a player when the door borders
     // their occupied topology region and is visible to their camera.
+    const nearby=roomProfile?.gm===false&&door&&playerCanReachDoor([...anchor,wall.z+opening.sill],1);
     if(playing&&!roomProfile?.gm){
      if(!door||opening.secret)continue;
      const topology=wallVisibilityTopology();
      const portal=topology.portals?.find(p=>p.wallId===wall.id&&p.kind==='Door'&&
       Math.hypot(p.center[0]-anchor[0],p.center[1]-anchor[1])<.35);
      const ownRegions=new Set(prepareFogObservers().observers.map(o=>topology.regionAt?.(o.distance)));
-     if(!portal?.regions?.some(region=>region!==null&&ownRegions.has(region)))continue;
-     const projected=point(...anchor,z);
-     if(!cameraHandleTest(visionBlockers())([...anchor,z]))continue;
+     if(!nearby&&!portal?.regions?.some(region=>region!==null&&ownRegions.has(region)))continue;
+     if(!nearby&&!cameraHandleTest(visionBlockers())([...anchor,z]))continue;
     }
     place(wall.id+':opening:'+index,[...anchor,z],label,door?(opening.open?'◯':'▣'):'▦',()=>{
      const current=sceneWallPaths().find(pathWall=>pathWall.id===wall.id);
@@ -11957,7 +12176,7 @@ function drawPathObjectHandles(standeeReadouts){
       void togglePlayerPathDoor(current,currentOpening);
      }else if(playing)togglePathOpening(current,currentOpening,door?'open':'shaded');
      else editPathOpening(current,currentOpening);
-    },opening);
+    },opening,nearby);
    }
   }
  }
@@ -11970,7 +12189,8 @@ function handleBlockerKey(blockers){
 function updateMapHandleLayer(blockers,standeeReadouts){
  const objects=visionObjects();
  const key=playing?JSON.stringify([currentSceneId,roomProfile?.gm,W,H,S,angle,tilt,topDown,panX,panY,
-  String(cutawayHeight),visionTool,objects,sceneWallPaths(),roomProfile?.gm===false?handleBlockerKey(blockers):null]):null;
+  String(cutawayHeight),visionTool,objects,sceneWallPaths(),roomProfile?.gm===false?
+  [handleBlockerKey(blockers),tokens.filter(ownsRoomStandee).map(t=>[basePoint(t),t.size,t.incognito,t.conditions?.includes('dead')])]:null]):null;
  if(key!==null&&key===lastMapHandleLayout){
   // A scene snapshot may replace object references even if its fixtures are identical.
   const live=new Map(objects.filter(object=>object.roomId).map(object=>[object.roomId,object]));
@@ -12050,8 +12270,9 @@ function drawVisionObjects(blockers,standeeReadouts){
   const [x,y,z]=object.origin;
   const anchor=[x+(object.shape==='room'?object.size/2:.5),y+(object.shape==='room'?object.depth/2:.5),z+fixtureElevation(object)];
   const projected=point(...anchor),[sx,sy]=projected;
-  if(player&&(sx<0||sx>W||sy<0||sy>H||!cameraVisible(anchor)))continue;
-  if(player&&object.kind==='Door'&&!playerDoorInOccupiedRoom(object))continue;
+  const doorInReach=player&&nearbyPlayerDoor(object,1);
+  if(player&&(sx<0||sx>W||sy<0||sy>H||!doorInReach&&!cameraVisible(anchor)))continue;
+  if(player&&object.kind==='Door'&&!doorInReach&&!playerDoorInOccupiedRoom(object))continue;
   let button=byObject.get(object)??(object.roomId?byId.get(object.roomId):null);
   if(!button){
    button=createMapHandle();
@@ -12066,10 +12287,11 @@ function drawVisionObjects(blockers,standeeReadouts){
    button.onkeydown=e=>{if(e.shiftKey&&e.key==='F10' ){e.preventDefault();openVisionActions(button.visionObject,button,true)}};
   }
   button.visionObject=object;
-  button.toggleAttribute('data-hover-handle',object.shape!=='room');
-  const nearbyPlayerDoor=player&&object.kind==='Door';
-  button.toggleAttribute('data-player-door',nearbyPlayerDoor);
-  if(nearbyPlayerDoor){
+  button.toggleAttribute('data-hover-handle',object.shape!=='room'&&!doorInReach);
+  button.toggleAttribute('data-reachable-door',doorInReach);
+  const isPlayerDoor=player&&object.kind==='Door';
+  button.toggleAttribute('data-player-door',isPlayerDoor);
+  if(isPlayerDoor){
    button.style.background='rgba(24,36,43,.88)';
    button.style.color='#ffe4a0';
    button.style.border='1px solid #e5b95b';
@@ -12081,9 +12303,9 @@ function drawVisionObjects(blockers,standeeReadouts){
   }else if(button.hasAttribute('data-player-door-style')){
    for(const key of ['background','color','border','borderRadius','boxShadow','fontWeight','fontSize','padding'])button.style[key]='';
   }
-  button.toggleAttribute('data-player-door-style',nearbyPlayerDoor);
+  button.toggleAttribute('data-player-door-style',isPlayerDoor);
   button.hoverAnchor=object.shape==='light'?(!object.fixture&&!object.dropped?projected:null):
-   (object.open||topDown?projected:null);
+   (object.open||topDown||doorInReach?projected:null);
   active.add(button);
   const left=sx+'px',top=sy+'px';
   if(button.style.left!==left)button.style.left=left;
@@ -12091,7 +12313,7 @@ function drawVisionObjects(blockers,standeeReadouts){
   const label=object.dropped?(object.on?'🔥 Dropped light':'◈ Dropped light'):object.fixture?fixtureType(object)[0]+(object.on?' · on':' · off'):object.shape==='room'?(object.dark?'Dark room':'Room') : object.kind==='Door'?(object.open?'Open door':'Closed door'):object.kind||(object.on?'Light on':'Light off');
   button.classList.toggle('spell-light-target',object.fixture==='spellLight');
   if(object.fixture==='spellLight')button.style.setProperty('--spell-target',Math.max(26,S*.86)+'px');
-  const caption=nearbyPlayerDoor?(object.open?'◯':'▣'):object.fixture==='spellLight'?'':player||playing?(object.shape==='light'?'✦':object.kind==='Window'?'▦':'▯'):object.shape==='room'&&!object.dark?'◈':label;
+  const caption=isPlayerDoor?(object.open?'◯':'▣'):object.fixture==='spellLight'?'':player||playing?(object.shape==='light'?'✦':object.kind==='Window'?'▦':'▯'):object.shape==='room'&&!object.dark?'◈':label;
   if(button.textContent!==caption)button.textContent=caption;
   if(button.getAttribute('aria-label')!==label)button.setAttribute('aria-label',label);
   let hidden=!!visionTool&&object.shape!=='room';
@@ -13157,12 +13379,12 @@ el('preferencesDialog').onclose=()=>{
  ({zoom,panX,panY}=preview);
  draw();
 };
-function focusStandee(token,action='Focus standee',partyRoster=false){
+function focusStandee(token,action='Focus standee',partyRoster=false,{preserveZoom=false}={}){
  if(standeeHidden(token)&&!(partyRoster&&baseStandeeRole(token)==='pc'&&!token.incognito))return;
  if(!preferencePreview)currentMoveReadouts().delete(moveReadoutKey(token));
  if(!preferencePreview){focusedTitle=token;focusedTitleFade=null}
  const target=carry?.piece===token&&ghost?ghost:token;
- zoom=preferences.focusZoom/100;
+ if(!preserveZoom)zoom=preferences.focusZoom/100;
  S=Math.min(W/(gridLimit(0)+17),H/(gridLimit(1)+6))*zoom;
  const [x,y]=point(...basePoint(target));
  panX+=W/2-x;

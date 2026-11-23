@@ -801,7 +801,10 @@ async function syncRoomOnce(){
 
   }
   el('roomTurnState').hidden=!roomProfile.gm&&!ready;
-  el('roomTurnState').textContent=currentSceneId&&scenes.find(scene=>scene.id===currentSceneId)?.name?scenes.find(scene=>scene.id===currentSceneId).name+(roomState.sceneId===currentSceneId&&roomDraftAttached?' · Live encounter':' · Editing inactive scene'):update.active?(update.title||'Battlemap')+' · Live encounter':'No scene selected';
+  const draftName=roomProfile.gm&&scenes.find(scene=>scene.id===currentSceneId)?.name;
+  const editingDraft=draftName&&(!roomDraftAttached||roomState.sceneId!==currentSceneId);
+  el('roomTurnState').textContent=editingDraft?draftName+' · Editing inactive scene':
+   ready?(update.title||draftName||'Battlemap')+' · Live encounter':'No scene selected';
   
   if(roomProfile.gm&&el('sceneDialog').open&&sceneChanged)renderScenes();
   const now=Date.now(),pings=[];
@@ -816,8 +819,8 @@ async function syncRoomOnce(){
   const initiativeChanged=(!roomProfile.gm||(!initiativeWritesPending&&initiativeVersionAtRead===initiativeWriteVersion))&&applyRoomInitiative(update.initiative);
   if(!roomProfile.gm)for(const token of tokens)if(ownsRoomStandee(token)&&token.roomId===roomProfile.characterKey&&roomProfile.character)token.playerDisplayName=roomProfile.character;
   updateJoinSharedEncounter();
-  const localMoveRepaint=!roomProfile.gm&&roomMoving&&pendingStandeeInput?.scene===currentSceneId&&
-   !sceneChanged&&wasPaused===update.paused&&preferences.graphicsQuality===2;
+  const localMoveRepaint=!roomProfile.gm&&playerStandeePreview?.scene===currentSceneId&&
+   !sceneChanged&&wasPaused===update.paused;
   if((changed||initiativeChanged||update.scene||wasPaused!==update.paused)&&!localMoveRepaint)refresh();
   roomFailureCount=0;roomRetryAt=0;roomConnection(roomPatchPending&&roomPatchFailures?'Synchronizing':'Connected',!!(roomPatchPending&&roomPatchFailures));
   return true;

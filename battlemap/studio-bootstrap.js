@@ -8,7 +8,9 @@
     "./map-composer-crop.js",
     "./map-composer-renderer.js",
     "./map-composer-editor.js",
+    "./studio-webgl.js",
     "./studio-engine.js",
+    "./studio-path-benchmark.js",
     "./tactical-discovery.js",
     "./studio-interactions.js",
     "./studio-room-sync.js"
