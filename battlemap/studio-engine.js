@@ -5292,7 +5292,8 @@ let fogSectorRayCache=null;
 const fogWorkerEnabled=new URLSearchParams(location.search).get('fogWorker')==='1';
 let fogRayWorker=null,fogWorkerCache=null,fogWorkerJob=null,fogWorkerSerial=0;
 const fogWorkerStats={queued:0,completed:0,reused:0,failed:0,lastRayCount:0,lastWorkerMs:0,
- lightRaysQueued:0,lightRaysCompleted:0,lightRaysReused:0,lastLightBatch:null};
+ lightRaysQueued:0,lightRaysCompleted:0,lightRaysReused:0,lastLightBatch:null,
+ repaintRayMisses:0,repaintRaysQueued:0,repaintRaysCompleted:0,repaintRaysReused:0,repaintFailed:0};
 const recentSharpLightTargets=new Map();
 let sharpLightTargetScene=null;
 function sampledLightTransmission(start,end,blockers){
@@ -5307,10 +5308,70 @@ function sampledLightTransmission(start,end,blockers){
   if(recentSharpLightTargets.size>4096)recentSharpLightTargets.delete(recentSharpLightTargets.keys().next().value);
   const value=blockers===cache?.blockers?cache?.workerLight?.get(start.join(','))?.get(key):undefined;
   if(value!==undefined){fogWorkerStats.lightRaysReused++;return value}
+  if(cache&&blockers===cache.blockers&&lightingFrame&&!carry&&!drag){
+   const rayKey=start.join(',')+'>'+key;
+   const sampled=cache.repaintLight?.get(rayKey);
+   if(sampled!==undefined){fogWorkerStats.repaintRaysReused++;return sampled}
+   fogWorkerStats.repaintRayMisses++;
+   const pending=cache.missedLight??=new Map();
+   if(pending.size<4096&&!(repaintJob?.cache===cache&&repaintJob.rays.has(rayKey)))pending.set(rayKey,[start,end]);
+  }
  }
  return wallRayTransmission(start,end,blockers);
 }
 
+function serializeFogWorkerBlockers(blockers){
+ return blockers.map(bounds=>({
+   bounds:[bounds[0],bounds[1],bounds[2]],
+   prism:bounds.wallPrism?{
+    z:bounds.wallPrism.z,top:bounds.wallPrism.top,axes:bounds.wallPrism.axes,spans:bounds.wallPrism.spans,
+    sight:!!wallPassage(bounds.wallPrism).sight,light:wallPassage(bounds.wallPrism).light,
+    wall:{id:bounds.wallPrism.wall.id}
+   }:null,
+   terrain:bounds.terrain&&Object.hasOwn(types,bounds.terrain.type)?{
+    x:bounds.terrain.x,y:bounds.terrain.y,type:bounds.terrain.type,
+    terrainYaw:bounds.terrain.terrainYaw,size:dimensions(bounds.terrain).slice(0,2)
+   }:null
+  }));
+}
+let repaintWorker=null,repaintWorkerCache=null,repaintJob=null;
+function sendRepaintRays(){
+ const cache=fogSectorRayCache;
+ if(!fogWorkerEnabled||!cache?.missedLight?.size||repaintJob||carry||drag)return;
+ const rays=cache.missedLight;
+ cache.missedLight=new Map();
+ try{
+  if(!repaintWorker){
+   repaintWorker=new Worker('./studio-fog-worker.js?v=1554');
+   repaintWorker.onerror=()=>{
+    repaintWorker.terminate();
+    repaintWorker=null;repaintWorkerCache=null;repaintJob=null;
+    fogWorkerStats.repaintFailed++;
+   };
+   repaintWorker.onmessage=({data})=>{
+    const job=repaintJob;
+    repaintJob=null;
+    if(!job||job.cache!==fogSectorRayCache)return;
+    if(data.error||data.transmission?.length!==job.rays.size){fogWorkerStats.repaintFailed++;return}
+    const results=job.cache.repaintLight??=new Map();
+    let i=0;
+    for(const key of job.rays.keys()){
+     results.set(key,data.transmission[i++]);
+     if(results.size>24576)results.delete(results.keys().next().value);
+    }
+    fogWorkerStats.repaintRaysCompleted+=job.rays.size;
+   };
+  }
+  const blockers=repaintWorkerCache===cache?null:serializeFogWorkerBlockers(cache.blockers);
+  repaintJob={cache,rays};
+  repaintWorker.postMessage({blockers,repaintRays:[...rays.values()]});
+  repaintWorkerCache=cache;
+  fogWorkerStats.repaintRaysQueued+=rays.size;
+ }catch{
+  repaintJob=null;repaintWorkerCache=null;
+  fogWorkerStats.repaintFailed++;
+ }
+}
 function queueWorkerSightlines(destination,standee){
  const cache=fogSectorRayCache;
  if(!fogWorkerEnabled||!cache?.blockers||!playerFogEnabled()||!fogRecentSamplePoints.size)return;
@@ -5349,18 +5410,7 @@ function queueWorkerSightlines(destination,standee){
    pathWalls:sceneWallPaths().length,targets:lightPoints.length};
   fogWorkerStats.lightRaysQueued+=lightPoints.length;
   const id=++fogWorkerSerial;
-  const blockers=fogWorkerCache===cache?null:cache.blockers.map(bounds=>({
-   bounds:[bounds[0],bounds[1],bounds[2]],
-   prism:bounds.wallPrism?{
-    z:bounds.wallPrism.z,top:bounds.wallPrism.top,axes:bounds.wallPrism.axes,spans:bounds.wallPrism.spans,
-    sight:!!wallPassage(bounds.wallPrism).sight,light:wallPassage(bounds.wallPrism).light,
-    wall:{id:bounds.wallPrism.wall.id}
-   }:null,
-   terrain:bounds.terrain&&Object.hasOwn(types,bounds.terrain.type)?{
-    x:bounds.terrain.x,y:bounds.terrain.y,type:bounds.terrain.type,
-    terrainYaw:bounds.terrain.terrainYaw,size:dimensions(bounds.terrain).slice(0,2)
-   }:null
-  }));
+  const blockers=fogWorkerCache===cache?null:serializeFogWorkerBlockers(cache.blockers);
   fogWorkerJob={id,cache,eye,points,lightStart,lightPoints};
   fogRayWorker.postMessage({id,blockers,eye,points,lightStart,lightPoints});
   fogWorkerCache=cache;
@@ -6415,6 +6465,7 @@ function draw(action,reusePan=false){
  }finally{
   if(action==='Camera settled')lastCameraDraw=cameraReleasedAt=null;
   lightingFrame=null;performanceDraw=null;
+  if(!action?.startsWith?.('Test: '))sendRepaintRays();
  }
 }
 let movementRenderCache=null;
