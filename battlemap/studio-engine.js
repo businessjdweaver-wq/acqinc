@@ -5292,15 +5292,20 @@ let fogSectorRayCache=null;
 const fogWorkerEnabled=new URLSearchParams(location.search).get('fogWorker')==='1';
 let fogRayWorker=null,fogWorkerCache=null,fogWorkerJob=null,fogWorkerSerial=0;
 const fogWorkerStats={queued:0,completed:0,reused:0,failed:0,lastRayCount:0,lastWorkerMs:0,
- lightRaysCompleted:0,lightRaysReused:0};
+ lightRaysQueued:0,lightRaysCompleted:0,lightRaysReused:0,lastLightBatch:null};
 const recentSharpLightTargets=new Map();
+let sharpLightTargetScene=null;
 function sampledLightTransmission(start,end,blockers){
  const cache=fogSectorRayCache;
- if(fogWorkerEnabled&&blockers===cache?.blockers){
+ if(fogWorkerEnabled&&roomProfile?.gm===false){
+  if(sharpLightTargetScene!==currentSceneId){
+   recentSharpLightTargets.clear();
+   sharpLightTargetScene=currentSceneId;
+  }
   const key=end.join(',');
   recentSharpLightTargets.set(key,end);
   if(recentSharpLightTargets.size>4096)recentSharpLightTargets.delete(recentSharpLightTargets.keys().next().value);
-  const value=cache.workerLight?.get(start.join(','))?.get(key);
+  const value=blockers===cache?.blockers?cache?.workerLight?.get(start.join(','))?.get(key):undefined;
   if(value!==undefined){fogWorkerStats.lightRaysReused++;return value}
  }
  return wallRayTransmission(start,end,blockers);
@@ -5339,7 +5344,10 @@ function queueWorkerSightlines(destination,standee){
   const lightStart=standee.torch&&!standee.incognito&&sceneWallPaths().length
    ?lightRayStart({origin:[destination.x+(standee.size-1)/2,
      destination.y+(standee.size-1)/2,destination.z],lightElevation:.65}):null;
-  const lightPoints=lightStart?[...recentSharpLightTargets.values()]:[];
+  const lightPoints=lightStart&&sharpLightTargetScene===currentSceneId?[...recentSharpLightTargets.values()]:[];
+  fogWorkerStats.lastLightBatch={carryingTorch:!!standee.torch,incognito:!!standee.incognito,
+   pathWalls:sceneWallPaths().length,targets:lightPoints.length};
+  fogWorkerStats.lightRaysQueued+=lightPoints.length;
   const id=++fogWorkerSerial;
   const blockers=fogWorkerCache===cache?null:cache.blockers.map(bounds=>({
    bounds:[bounds[0],bounds[1],bounds[2]],
@@ -5965,7 +5973,6 @@ function startLightingFrame(){
  const raySignature=JSON.stringify([currentSceneId,terrainLightSignature,areas.filter(a=>a.shape==='opening').map(a=>[a.id,a.open,a.shaded,a.secret])]);
  if(fogSectorRayCache?.signature!==raySignature){
   fogSectorRayCache={signature:raySignature,sectors:new Map(),count:0,hits:0,misses:0};
-  recentSharpLightTargets.clear();
  }
  fogSectorRayCache.blockers=blockers;
  if(fogIlluminationCache?.signature!==terrainLightSignature)
