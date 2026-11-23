@@ -7223,7 +7223,6 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  const portalCenters=roomTopology?.portals?.map(p=>p.center).filter(p=>Array.isArray(p)&&p.length>=2)||[];
  const nearPortal=f=>portalCenters.some(p=>f.world.some(v=>Math.hypot(v[0]-p[0],v[1]-p[1])<2));
  const fogStartDetail=performance.now();
- if(stage)stage.fogDeadline=fogStartDetail+35;
  // Retain only the geometry of raised terrain caps for a possible outline.
  // This is not visibility evidence: a cap may be outlined only when one of
  // its own vertical faces survives the authoritative fog checks.
@@ -7289,7 +7288,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   const patchStart=performance.now(),basePatches=terrainFogPatches(f);
  if(fogDetail)fogDetail.patchGenerationMs+=performance.now()-patchStart;
  for(const basePatch of basePatches){
-  const refineStart=performance.now(),patches=f.p?[basePatch]:progressiveFogPatches(basePatch,stage);
+  const refineStart=performance.now(),patches=f.p?[basePatch]:refinedFogBoundaryPatches(basePatch);
   if(fogDetail){fogDetail.boundaryRefinementMs+=performance.now()-refineStart;fogDetail.refinedPatches+=patches.length}
   for(const patch of patches){
    if(fogDetail)fogDetail.patches++;
@@ -8230,25 +8229,12 @@ for(const type of ['pointerdown','wheel','keydown'])
 function progressiveViewKey(){
  return JSON.stringify([currentSceneId,roomState.sceneId,roomRevision,angle,tilt,zoom,panX,panY,topDown,W,H]);
 }
-function progressiveFogPatches(patch,job){
- if(!job)return refinedFogBoundaryPatches(patch);
- const key=patch.memoryKey+'|'+(patch.surfaceLightOffset?.join(',')??'');
- if(job.fogResults.has(key))return job.fogResults.get(key);
- if(job.phase==='medium'&&performance.now()>job.fogDeadline){
-  job.fogPending.set(key,patch);
-  return [];
- }
- const result=refinedFogBoundaryPatches(patch);
- job.fogResults.set(key,result);
- return result;
-}
 function progressiveLightFrame(action,eligible){
  if(!eligible||action?.startsWith?.('Test: '))return null;
  const key=progressiveViewKey(),signature=lightingFrame.signature;
  if(action==='Confirmed move · medium'){
   progressiveLight={key,signature,phase:'medium',patches:new Map(),faces:new Map(),cursor:0,
-   frame:lightingFrame,observer:tokens.find(ownsRoomStandee),
-   fogResults:new Map(),fogPending:new Map(),fogNeedsPaint:false};
+   frame:lightingFrame,observer:tokens.find(ownsRoomStandee)};
  }
  const job=progressiveLight;
  if(!job)return null;
@@ -8267,26 +8253,6 @@ function runProgressiveLightSlice(){
  if(!job)return;
  if(job.key!==progressiveViewKey()||preferences.graphicsQuality!==2){progressiveLight=null;return}
  if(document.hidden||carry||drag||roomMoving||moveConfirmPending||performance.now()-lastProgressiveInput<100){
-  scheduleProgressiveLightSlice();return;
- }
- if(job.fogPending.size){
-  const deadline=performance.now()+6;
-  lightingFrame=job.frame;
-  try{
-   for(const [key,patch] of job.fogPending){
-    if(performance.now()>=deadline)break;
-    job.fogResults.set(key,refinedFogBoundaryPatches(patch));
-    job.fogPending.delete(key);
-   }
-  }finally{lightingFrame=null}
-  job.fogNeedsPaint=true;
-  if(job.fogPending.size){scheduleProgressiveLightSlice();return}
- }
- if(job.fogNeedsPaint){
-  job.fogNeedsPaint=false;
-  job.phase='fog';
-  draw('Confirmed move · fog settled');
-  if(progressiveLight!==job)return;
   scheduleProgressiveLightSlice();return;
  }
  if(!job.queue){
@@ -8314,7 +8280,7 @@ function runProgressiveLightSlice(){
  if(job.cursor===job.queue.length){
   job.phase='sharp';
   draw('Confirmed move · Sharp settled');
- }else if((job.phase==='medium'||job.phase==='fog')&&job.cursor>=Math.ceil(job.queue.length*.35)){
+ }else if(job.phase==='medium'&&job.cursor>=Math.ceil(job.queue.length*.35)){
   job.phase='near';
   draw('Confirmed move · nearby Sharp');
  }
