@@ -6430,7 +6430,7 @@ function scheduleScenePreparation(){
  },0);
 }
 function battlefieldFadeGeometry(){
- return JSON.stringify(faces.filter(f=>!(f.standee||f.shadow)||!ownsRoomStandee(f.p))
+ return JSON.stringify(faces.filter(f=>!f.preview&&(!(f.standee||f.shadow)||!ownsRoomStandee(f.p)))
   .map(f=>[f.projected,f.rememberedFog,f.perimeterOnly,f.p?.roomId]));
 }
 function capturePreviousBattlefield(){
@@ -6438,6 +6438,13 @@ function capturePreviousBattlefield(){
  const image=document.createElement('canvas');
  image.width=canvas.width;image.height=canvas.height;
  image.getContext('2d').drawImage(canvas,0,0);
+ const outgoing=el('battlefieldFade');
+ if(outgoing){
+  const brush=image.getContext('2d');
+  brush.globalAlpha=Number(getComputedStyle(outgoing).opacity);
+  brush.drawImage(outgoing,0,0);
+  brush.globalAlpha=1;
+ }
  return {image,geometry:battlefieldFadeGeometry()};
 }
 function fadePreviousBattlefield(previous){
@@ -6452,7 +6459,6 @@ function fadePreviousBattlefield(previous){
  fade.onfinish=()=>image.remove();
 }
 function draw(action,reusePan=false){
- el('battlefieldFade')?.remove();
  scheduleScenePreparation();
  cancelPanSettle();
  cancelMovementPaint();
@@ -6500,13 +6506,14 @@ function draw(action,reusePan=false){
    // Retain the last visibility-checked frame when no movement overlay can
    // be reused. The route remains live and confirmation schedules a repaint.
    movingStandeeLayer=null;
-   paintPlayerStandees();
+   paintPlayerStandees(ghost);
    drawRoute();positionMoveActions();drawStandeeNames();
    if(performanceDraw)performanceDraw.movementRouteOnly=true;
   }else{
    movingStandeeLayer=null;
    el('movingStandeeOverlay').hidden=true;
   if(useSnapshot){
+   el('battlefieldFade')?.remove();
    movementRenderCache=null;
    S=Math.min(W/(gridLimit(0)+17),H/(gridLimit(1)+6))*zoom;
    keepBattlefieldVisible();
@@ -6553,6 +6560,7 @@ function draw(action,reusePan=false){
     lightingFrame=timeLighting(startLightingFrame);
     const previous=action?.startsWith?.('Confirmed move · ')&&!cameraPreview&&!zoomTransformActive
      ?capturePreviousBattlefield():null;
+    el('battlefieldFade')?.remove();
     drawBattlefield(simplified,action,cameraPreview,lightOrbit,reusePan?paintedCamera:null);
     if(previous)fadePreviousBattlefield(previous);
    }finally{
@@ -6838,14 +6846,14 @@ function projectedBounds(points){
  const x=points.map(p=>p[0]),y=points.map(p=>p[1]);
  return [Math.min(...x),Math.min(...y),Math.max(...x),Math.max(...y)];
 }
-function paintPlayerStandees(){
+function paintPlayerStandees(destination=null){
  const frame=playerStandeeFrame,view=standeeLayerViewKey();
  if(!frame||!frame.view.every((value,index)=>Object.is(value,view[index])))return;
  const layer=el('movingStandeeOverlay');
  if(layer.width!==canvas.width)layer.width=canvas.width;
  if(layer.height!==canvas.height)layer.height=canvas.height;
  const main=ctx,savedFaces=faces;
- const preview=playerStandeePreview?.scene===currentSceneId?playerStandeePreview:null;
+ const preview=destination?{token:destination}:playerStandeePreview?.scene===currentSceneId?playerStandeePreview:null;
  try{
   ctx=layer.getContext('2d');
   ctx.setTransform(layer.width/W,0,0,layer.height/H,0,0);
@@ -7604,9 +7612,9 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
     }
     forEachTerrainLightPatch(face,(points,projection)=>paintRoundLightPatch(
      points,projection,lightRanges,(target,projected)=>{
-      const tint=roomLighting(target,lightBlockers,false);
+      const tint=roomLighting(target,lightBlockers,true);
       if(tint)polygon(projected,tint,null);
-     },1,stage.mediumBudget,false,face.surfaceLightOffset,null));
+     },0,stage.mediumBudget,false,face.surfaceLightOffset,null));
     return;
    }
   }
