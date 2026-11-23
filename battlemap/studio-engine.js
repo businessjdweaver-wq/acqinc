@@ -6937,6 +6937,12 @@ function rememberPanPaint(frame){
  recentPanPaint={bitmap,panX:frame.panX,panY:frame.panY};
 }
 function reusePaintedPan(frame,ratio){
+ // A top-down player frame paints owned standees on a separate canvas.
+ // The terrain bitmap alone cannot supply those pixels after releasing pan.
+ if(topDown&&roomProfile?.gm===false){
+  clearPanPaint();
+  return null;
+ }
  if(!frame||frame.preview||frame.width!==W||frame.height!==H||frame.angle!==angle||frame.tilt!==tilt||
   frame.zoom!==zoom||frame.topDown!==topDown||!playing||carry||
   preferences.graphicsQuality!==2||ghost||floorEdit||cutter||windowPreview||preferencePreview||pingFrame!==null||
