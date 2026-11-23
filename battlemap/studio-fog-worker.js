@@ -97,8 +97,27 @@ function sightlineClear(eye,target,blockers){
  });
 }
 function wallPassage(solid){return solid}
+function wallRayTransmission(start,end,blockers){
+ let transmission=1;
+ const traversed=new Map();
+ for(const bounds of rayBlockerCandidates(blockers,start,end)){
+  if(bounds.wallPrism){
+   const solid=bounds.wallPrism;
+   if(!wallPrismInterval(solid,start,end))continue;
+   const amount=wallPassage(solid).light;
+   if(!amount)return 0;
+   if(amount<1)traversed.set(solid.wall.id,Math.min(amount,traversed.get(solid.wall.id)??1));
+  }else{
+   const path=bounds.terrain?turnTerrainPoints([start,end],bounds.terrain,-bounds.terrain.terrainYaw):[start,end];
+   if(movementInterval(...path,bounds))return 0;
+  }
+ }
+ for(const amount of traversed.values())transmission*=amount;
+ return transmission;
+}
+
 self.onmessage=({data})=>{
- const {id,eye,points}=data;
+ const {id,eye,points,lightStart,lightPoints=[]}=data;
  try{
   if(data.blockers){
    blockers=data.blockers.map(record=>Object.assign(record.bounds,{wallPrism:record.prism,terrain:record.terrain}));
@@ -106,6 +125,8 @@ self.onmessage=({data})=>{
   }
   const started=performance.now(),visible=new Uint8Array(points.length);
   for(let i=0;i<points.length;i++)visible[i]=sightlineClear(eye,points[i],blockers);
-  self.postMessage({id,visible,elapsedMs:performance.now()-started},[visible.buffer]);
+  const transmission=new Float64Array(lightPoints.length);
+  for(let i=0;i<lightPoints.length;i++)transmission[i]=wallRayTransmission(lightStart,lightPoints[i],blockers);
+  self.postMessage({id,visible,transmission,elapsedMs:performance.now()-started},[visible.buffer,transmission.buffer]);
  }catch{self.postMessage({id,error:true})}
 };

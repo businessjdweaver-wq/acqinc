@@ -1102,6 +1102,10 @@ function lightRangeCenter(light){
  const elevation=light.fixture==='chandelier'?fixtureElevation(light):light.spell==='dancing'?light.lightElevation??.65:.65;
  return [x+.5,y+.5,z+elevation-.65];
 }
+function lightRayStart(light,source=lightRangeCenter(light)){
+ return [source[0],source[1],(light.spell==='dancing'||light.fixture==='chandelier'
+  ?source[2]:source[2]+(light.lightElevation??.65)-.65)+.65];
+}
 function computeLightAt(target,blockers,carriedOnly,brightOnly,blend){
  const cache=lightingFrame?.lightResults,key=cache&&[...target,carriedOnly,brightOnly,blend].join(',');
  if(cache?.has(key))return cache.get(key);
@@ -1122,7 +1126,7 @@ function computeLightAt(target,blockers,carriedOnly,brightOnly,blend){
   if(blend&&strength<=(result?.strength??0))return false;
   const height=.65,pathWalls=sceneWallPaths().length;
   const scale=pathWalls?
-   wallRayTransmission([rayStart[0],rayStart[1],rayStart[2]+height],[target[0],target[1],target[2]+height],blockers):
+   sampledLightTransmission(lightRayStart(a,source),[target[0],target[1],target[2]+height],blockers):
    Number(visionRayClear(rayStart,target,blockers));
   if(!scale)return false;
   if(blend){
@@ -5287,9 +5291,22 @@ function sightlineClear(eye,target,blockers){
 let fogSectorRayCache=null;
 const fogWorkerEnabled=new URLSearchParams(location.search).get('fogWorker')==='1';
 let fogRayWorker=null,fogWorkerCache=null,fogWorkerJob=null,fogWorkerSerial=0;
-const fogWorkerStats={queued:0,completed:0,reused:0,failed:0,lastRayCount:0,lastWorkerMs:0};
+const fogWorkerStats={queued:0,completed:0,reused:0,failed:0,lastRayCount:0,lastWorkerMs:0,
+ lightRaysCompleted:0,lightRaysReused:0};
+const recentSharpLightTargets=new Map();
+function sampledLightTransmission(start,end,blockers){
+ const cache=fogSectorRayCache;
+ if(fogWorkerEnabled&&blockers===cache?.blockers){
+  const key=end.join(',');
+  recentSharpLightTargets.set(key,end);
+  if(recentSharpLightTargets.size>4096)recentSharpLightTargets.delete(recentSharpLightTargets.keys().next().value);
+  const value=cache.workerLight?.get(start.join(','))?.get(key);
+  if(value!==undefined){fogWorkerStats.lightRaysReused++;return value}
+ }
+ return wallRayTransmission(start,end,blockers);
+}
 
-function queueWorkerSightlines(destination){
+function queueWorkerSightlines(destination,standee){
  const cache=fogSectorRayCache;
  if(!fogWorkerEnabled||!cache?.blockers||!playerFogEnabled()||!fogRecentSamplePoints.size)return;
  try{
@@ -5307,6 +5324,11 @@ function queueWorkerSightlines(destination){
     if(job.cache!==fogSectorRayCache)return;
     if(data.error||data.visible?.length!==job.points.length){fogWorkerStats.failed++;return}
     job.cache.workerRays={eye:job.eye.join(','),points:new Map(job.points.map((point,i)=>[point.join(','),!!data.visible[i]]))};
+    if(job.lightStart&&data.transmission?.length===job.lightPoints.length){
+     job.cache.workerLight=new Map([[job.lightStart.join(','),new Map(job.lightPoints.map((point,i)=>
+      [point.join(','),data.transmission[i]]))]]);
+     fogWorkerStats.lightRaysCompleted+=job.lightPoints.length;
+    }
     fogWorkerStats.completed++;
     fogWorkerStats.lastRayCount=job.points.length;
     fogWorkerStats.lastWorkerMs=data.elapsedMs;
@@ -5314,20 +5336,25 @@ function queueWorkerSightlines(destination){
   }
   const eye=basePoint(destination);eye[2]+=.65;
   const points=[...fogRecentSamplePoints.values()].slice(-4096);
+  const lightStart=standee.torch&&!standee.incognito&&sceneWallPaths().length
+   ?lightRayStart({origin:[destination.x+(standee.size-1)/2,
+     destination.y+(standee.size-1)/2,destination.z],lightElevation:.65}):null;
+  const lightPoints=lightStart?[...recentSharpLightTargets.values()]:[];
   const id=++fogWorkerSerial;
   const blockers=fogWorkerCache===cache?null:cache.blockers.map(bounds=>({
    bounds:[bounds[0],bounds[1],bounds[2]],
    prism:bounds.wallPrism?{
     z:bounds.wallPrism.z,top:bounds.wallPrism.top,axes:bounds.wallPrism.axes,spans:bounds.wallPrism.spans,
-    sight:!!wallPassage(bounds.wallPrism).sight
+    sight:!!wallPassage(bounds.wallPrism).sight,light:wallPassage(bounds.wallPrism).light,
+    wall:{id:bounds.wallPrism.wall.id}
    }:null,
    terrain:bounds.terrain&&Object.hasOwn(types,bounds.terrain.type)?{
     x:bounds.terrain.x,y:bounds.terrain.y,type:bounds.terrain.type,
     terrainYaw:bounds.terrain.terrainYaw,size:dimensions(bounds.terrain).slice(0,2)
    }:null
   }));
-  fogWorkerJob={id,cache,eye,points};
-  fogRayWorker.postMessage({id,blockers,eye,points});
+  fogWorkerJob={id,cache,eye,points,lightStart,lightPoints};
+  fogRayWorker.postMessage({id,blockers,eye,points,lightStart,lightPoints});
   fogWorkerCache=cache;
   fogWorkerStats.queued++;
  }catch(error){
@@ -5936,7 +5963,10 @@ function startLightingFrame(){
  // A moving observer changes fogSignature but does not change static blockers.
  // Reuse only exact rays; lighting still gets evaluated independently.
  const raySignature=JSON.stringify([currentSceneId,terrainLightSignature,areas.filter(a=>a.shape==='opening').map(a=>[a.id,a.open,a.shaded,a.secret])]);
- if(fogSectorRayCache?.signature!==raySignature)fogSectorRayCache={signature:raySignature,sectors:new Map(),count:0,hits:0,misses:0};
+ if(fogSectorRayCache?.signature!==raySignature){
+  fogSectorRayCache={signature:raySignature,sectors:new Map(),count:0,hits:0,misses:0};
+  recentSharpLightTargets.clear();
+ }
  fogSectorRayCache.blockers=blockers;
  if(fogIlluminationCache?.signature!==terrainLightSignature)
   fogIlluminationCache={signature:terrainLightSignature,values:new Map()};
@@ -8065,7 +8095,7 @@ async function commitCarry(confirmedAt=performance.now()){
   try{
    if(carry.light)await customizeRoomObject(carry.light,'move_light',[ghost.x,ghost.y,ghost.z]);
    else{
-    queueWorkerSightlines(ghost);
+    queueWorkerSightlines(ghost,piece);
     await moveRoomStandee(piece,ghost);
     pendingStandeeInput={scene:currentSceneId,standee:piece.roomId,confirmedAt};
    }
