@@ -612,7 +612,7 @@ function applyRoomEvents(events,reset,fromRevision){
      }
      if(change.bucket==='areas'){
       const local=areas.find(area=>area.roomId===change.id);
-      if((change.item??prior)?.spellOwner&&(!local||canonicalSceneValue(local)===canonicalSceneValue(prior)))
+      if(((change.item??prior)?.spellOwner||(change.item??prior)?.shape==='player_note')&&(!local||canonicalSceneValue(local)===canonicalSceneValue(prior)))
        applySceneChange({areas},change);
       else mergeRoomOpeningState(local,prior,change.item);
      }

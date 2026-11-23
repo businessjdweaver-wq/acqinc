@@ -9334,6 +9334,10 @@ function openGroundContext(x,y,clientX,clientY){
   });
  }
  if(roomProfile?.gm===true&&!playerScenePaused())add('Bring everyone here',()=>groundMenuPing(pivot,pingSurfaceNormal(face),true));
+ if(roomProfile?.gm===false&&roomState.sceneId&&!playerScenePaused()){
+  const origin=[Math.floor(pivot[0]+1e-8)+.5,Math.floor(pivot[1]+1e-8)+.5,pivot[2]];
+  if(floorAcceptsDestination(origin[0],origin[1],0,0))add('Add scene note…',()=>openPlayerNote({origin}));
+ }
  if(canUseJournal())add('Place journal pin here',()=>editJournalPin({shape:'journal',size:1,angle:0,origin:areaAnchor(pivot),marker:'1'}));
  if(roomProfile?.gm!==false&&!playing&&!terrainLocked)add('Place component…',()=>{
   el('buildTools').querySelector('[data-build-category="0"]').click();

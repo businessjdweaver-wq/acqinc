@@ -1804,7 +1804,7 @@ function drawAreaTemplates(){
  areaCtx.setTransform(canvas.width/W,0,0,canvas.height/H,0,0);
  const masksByHeight=new Map();
  for(const item of areaPreview?[...areas,areaPreview]:areas){
-  if(['appearance','room','opening','light','journal'].includes(item.shape))continue;
+  if(['appearance','room','opening','light','journal','player_note'].includes(item.shape))continue;
   const area=(item===drag?.area||item===drag?.resizeTerrain?.area)&&drag.preview?drag.preview:item===editingArea?editedAreaPreview():effectiveArea(item);
   if(playerFogEnabled()&&!fogPointVisible(area.origin))continue;
   const height=area.origin[2];
@@ -2054,6 +2054,66 @@ const journalDialog=el('journalDialog');
 const journalSymbols=[...Array.from({length:21},(_,i)=>String(i)),
  '★','⚔','☠','👑','🚪','🔒','🔑','💎','📜','🧩','❓','!','👁','🕯','🔥','💧','🌿','🕸','🪤','🌀'];
 for(const symbol of journalSymbols)el('journalMarker').add(new Option(symbol,symbol));
+const playerNoteDialog=el('playerNoteDialog');
+for(const symbol of journalSymbols)el('playerNoteMarker').add(new Option(symbol,symbol));
+let playerNoteDraft=null;
+let showPlayerNotes=true;
+try{showPlayerNotes=localStorage.getItem('battlemap.showPlayerNotes')!=='false'}catch{}
+const playerNotesToggle=catalogButton('Player notes',()=>{
+ showPlayerNotes=!showPlayerNotes;
+ try{localStorage.setItem('battlemap.showPlayerNotes',String(showPlayerNotes))}catch{}
+ drawJournalPins();
+ tacticalMapRender();
+});
+playerNotesToggle.hidden=true;
+el('tacticalMapToggle').after(playerNotesToggle);
+function canEditPlayerNote(note){
+ return roomProfile?.gm===false&&!!roomState.sceneId&&!playerScenePaused()&&
+  (!note.roomId||note.areaOwner===roomProfile.name);
+}
+function visiblePlayerNotes(tactical=false){
+ if(roomProfile?.gm===true&&!showPlayerNotes)return [];
+ return areas.filter(note=>note.shape==='player_note'&&
+  (roomProfile?.gm!==false||tacticalKnownAt(note.origin)||!tactical&&
+   (note.areaOwner===roomProfile.name||fogPointVisible(note.origin))));
+}
+function openPlayerNote(note){
+ if(!note.roomId&&!canEditPlayerNote(note))return;
+ if(playerNoteDialog.open)return;
+ const editable=canEditPlayerNote(note);
+ playerNoteDraft={note,scene:roomState.sceneId,profile:roomProfile};
+ el('playerNoteHeading').textContent=note.areaOwner?'Scene note · '+note.areaOwner:'Scene note';
+ el('playerNoteMarker').value=note.marker||'1';
+ el('playerNoteMarker').disabled=!editable;
+ el('playerNoteTitle').value=note.title||'';
+ el('playerNoteTitle').readOnly=!editable;
+ el('playerNoteText').value=note.notes||'';
+ el('playerNoteText').readOnly=!editable;
+ el('playerNoteSave').hidden=!editable;
+ el('playerNoteDelete').hidden=!editable||!note.roomId;
+ el('playerNoteStatus').textContent='';
+ playerNoteDialog.showModal();
+}
+async function savePlayerNote(remove=false){
+ const draft=playerNoteDraft;
+ if(!draft||draft.scene!==roomState.sceneId||draft.profile!==roomProfile||!canEditPlayerNote(draft.note)||playerAreaBusy)return;
+ const {note}=draft,notes=el('playerNoteText').value.trim();
+ if(!remove&&!notes){el('playerNoteStatus').textContent='Enter a note.';return}
+ const value={...note,shape:'player_note',size:1,angle:0,roomId:note.roomId||crypto.randomUUID(),
+  marker:el('playerNoteMarker').value,title:el('playerNoteTitle').value.trim(),notes};
+ const save=el('playerNoteSave'),del=el('playerNoteDelete');
+ save.disabled=del.disabled=true;
+ try{
+  const saved=await changePlayerArea(remove?'area_delete':note.roomId?'area_update':'area_create',value);
+  if(playerNoteDraft!==draft)return;
+  if(saved){playerNoteDialog.close();drawJournalPins();tacticalMapRender()}
+  else el('playerNoteStatus').textContent='The note could not be saved. Your text is still here.';
+ }finally{save.disabled=del.disabled=false}
+}
+el('playerNoteForm').onsubmit=event=>{event.preventDefault();void savePlayerNote()};
+el('playerNoteDelete').onclick=()=>{if(confirm('Delete this scene note?'))void savePlayerNote(true)};
+el('playerNoteClose').onclick=()=>playerNoteDialog.close();
+playerNoteDialog.onclose=()=>{playerNoteDraft=null};
 function canUseJournal(){return roomProfile?.gm!==false}
 el('journalPlace').onclick=()=>{
  if(!canUseJournal())return;
@@ -2062,11 +2122,16 @@ el('journalPlace').onclick=()=>{
 function drawJournalPins(){
  const layer=el('journalPins');
  layer.replaceChildren();
- if(!canUseJournal())return;
- for(const pin of areas.filter(area=>area.shape==='journal')){
+ playerNotesToggle.hidden=roomProfile?.gm!==true;
+ playerNotesToggle.textContent=showPlayerNotes?'Player notes: On':'Player notes: Off';
+ playerNotesToggle.setAttribute('aria-pressed',String(showPlayerNotes));
+ const notes=visiblePlayerNotes();
+ const pins=canUseJournal()?areas.filter(area=>area.shape==='journal'):[];
+ for(const pin of [...pins,...notes]){
   const [x,y]=point(...pin.origin);
   if(x<0||y<0||x>W||y>H)continue;
-  const button=catalogButton(pin.marker||'•',()=>editJournalPin(pin));
+  const button=catalogButton(pin.marker||'•',()=>pin.shape==='player_note'?openPlayerNote(pin):editJournalPin(pin));
+  if(pin.shape==='player_note')button.classList.add('playerSceneNote');
   button.style.left=x+'px';button.style.top=y+'px';
   button.title=pin.title||'Journal pin';
   button.setAttribute('aria-label',button.title);

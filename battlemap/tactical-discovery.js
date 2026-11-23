@@ -224,16 +224,24 @@ function tacticalDrawCanvas(canvas,label){
  const owned=tokens.filter(t=>ownsRoomStandee(t)&&!t.incognito).map(t=>basePoint(t)).filter(p=>p.every(Number.isFinite));
  const floor=owned.length?Math.floor(owned[0][2]):cells.length?cells[0][2]:0;
  const visible=cells.filter(p=>p[2]===floor);
- const xs=[...visible.map(p=>p[0]),...owned.map(p=>p[0])],ys=[...visible.map(p=>p[1]),...owned.map(p=>p[1])];
+ const notes=visiblePlayerNotes(true).filter(note=>Math.floor(note.origin[2])===floor);
+ const xs=[...visible.map(p=>p[0]),...owned.map(p=>p[0]),...notes.map(n=>n.origin[0])];
+ const ys=[...visible.map(p=>p[1]),...owned.map(p=>p[1]),...notes.map(n=>n.origin[1])];
  const minX=xs.length?Math.min(...xs)-2:0,maxX=xs.length?Math.max(...xs)+3:20;
  const minY=ys.length?Math.min(...ys)-2:0,maxY=ys.length?Math.max(...ys)+3:20;
  const scale=Math.max(3,Math.min(35,(width-24)/(maxX-minX),(height-24)/(maxY-minY)));
  const ox=(width-(maxX-minX)*scale)/2,oy=(height-(maxY-minY)*scale)/2;
- tacticalMapViews.set(canvas,{ox,oy,minX,minY,scale,floor,scene:tacticalDiscoveryKey()});
+ const markers=notes.map(note=>({note,x:ox+(note.origin[0]-minX)*scale,y:oy+(note.origin[1]-minY)*scale}));
+ tacticalMapViews.set(canvas,{ox,oy,minX,minY,scale,floor,markers,scene:tacticalDiscoveryKey()});
  ctx.fillStyle='#526f68';
  for(const [x,y] of visible)ctx.fillRect(ox+(x-minX)*scale+.7,oy+(y-minY)*scale+.7,Math.max(1,scale-1.4),Math.max(1,scale-1.4));
  ctx.fillStyle='#f5d28d';
  for(const p of owned){if(Math.floor(p[2])!==floor)continue;ctx.beginPath();ctx.arc(ox+(p[0]-minX)*scale,oy+(p[1]-minY)*scale,Math.max(3,scale*.27),0,Math.PI*2);ctx.fill()}
+ ctx.font='bold 12px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';
+ for(const {note,x,y} of markers){
+  ctx.beginPath();ctx.arc(x,y,8,0,Math.PI*2);ctx.fillStyle='#213832';ctx.fill();
+  ctx.strokeStyle='#9bdac7';ctx.stroke();ctx.fillStyle='#e9fff8';ctx.fillText(note.marker||'•',x,y,14);
+ }
  if(label){const state=tacticalReadDiscovery();const key=tacticalDiscoveryKey();const mismatch=state.topology!==tacticalTopologyVersion();label.textContent=visible.length+' squares · stored '+state.cells.length+' · level '+floor+' · '+tacticalScanStatus+(mismatch?' · topology mismatch':'')+(tacticalStorageError?' · storage '+tacticalStorageError:'')+(tacticalLastRecorded?.key&&tacticalLastRecorded.key!==key?' · storage key changed':'');}
 }
 function tacticalMapCellAt(canvas,clientX,clientY){
@@ -243,14 +251,58 @@ function tacticalMapCellAt(canvas,clientX,clientY){
  const cell=[Math.floor((x-view.ox)/view.scale+view.minX),Math.floor((y-view.oy)/view.scale+view.minY),view.floor];
  return tacticalMapCells().includes(cell.join(','))?cell:null;
 }
+function tacticalNoteAt(canvas,clientX,clientY){
+ const view=tacticalMapViews.get(canvas),rect=canvas.getBoundingClientRect();
+ if(!view||!rect.width||!rect.height||view.scene!==tacticalDiscoveryKey())return null;
+ let nearest=null,best=16;
+ for(const {note,x,y} of view.markers){
+  const distance=Math.hypot(rect.left+x*rect.width/canvas.width-clientX,rect.top+y*rect.height/canvas.height-clientY);
+  if(distance<=best){best=distance;nearest=note}
+ }
+ return nearest;
+}
 function bindTacticalMapContext(canvas){
  const doc=canvas.ownerDocument,win=doc.defaultView;
  let menu=null;
+ const preview=doc.createElement('div');
+ preview.hidden=true;
+ preview.style.cssText='position:fixed;z-index:10001;pointer-events:none;max-width:280px;white-space:pre-wrap;overflow-wrap:anywhere;padding:8px;background:#213832;color:#e9fff8;border:1px solid #9bdac7;border-radius:6px';
+ doc.body.append(preview);
+ const hidePreview=()=>{preview.hidden=true;canvas.style.cursor=''};
+ canvas.addEventListener('pointermove',event=>{
+  const note=tacticalNoteAt(canvas,event.clientX,event.clientY);
+  if(!note||menu){hidePreview();return}
+  canvas.style.cursor='pointer';
+  const notes=note.notes||'';
+  preview.textContent=[(note.marker||'•')+' '+(note.title||'Scene note'),notes.length>220?notes.slice(0,220)+'…':notes].join('\n');
+  preview.hidden=false;
+  preview.style.left=Math.max(4,Math.min(event.clientX+14,win.innerWidth-preview.offsetWidth-4))+'px';
+  preview.style.top=Math.max(4,Math.min(event.clientY+14,win.innerHeight-preview.offsetHeight-4))+'px';
+ });
+ canvas.addEventListener('pointerleave',hidePreview);
+ canvas.addEventListener('click',event=>{
+  const note=tacticalNoteAt(canvas,event.clientX,event.clientY);
+  if(!note)return;
+  hidePreview();
+  if(doc===document){openPlayerNote(note);return}
+  const detail=doc.createElement('dialog');
+  detail.style.cssText='width:min(26rem,85vw);color:#e9fff8;background:#213832;border:1px solid #9bdac7;border-radius:6px';
+  const title=doc.createElement('h2'),body=doc.createElement('p'),button=doc.createElement('button');
+  title.textContent=(note.marker||'•')+' '+(note.title||'Scene note');
+  body.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere';
+  body.textContent=note.notes;
+  button.textContent='Close';button.onclick=()=>detail.close();
+  detail.append(title,body,button);
+  doc.body.append(detail);
+  detail.onclose=()=>detail.remove();
+  detail.showModal();
+ });
  const close=()=>{menu?.remove();menu=null};
  doc.addEventListener('pointerdown',event=>{if(menu&&!menu.contains(event.target))close()});
  doc.addEventListener('keydown',event=>{if(event.key==='Escape'&&menu){event.preventDefault();event.stopPropagation();close()}},true);
  canvas.addEventListener('contextmenu',event=>{
   event.preventDefault();
+  hidePreview();
   close();
   const caster=mapDimensionDoorCaster();
   const cell=tacticalMapCellAt(canvas,event.clientX,event.clientY);
