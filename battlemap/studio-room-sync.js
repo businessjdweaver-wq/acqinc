@@ -1059,7 +1059,7 @@ async function startRoomScene(operation,scene,{requireShared=false}={}){
  if(!roomProfile?.gm||startingRoomScene)return;
  if(operation==='open'&&currentSceneId!==scene?.id){
   if(roomPatchBusy||roomPatchPending){await flushRoomPatch();if(roomPatchBusy||roomPatchPending){message('Live edits are still synchronizing. Scene switch cancelled.');return}}
-  const saved=await flushSceneAutosave();
+  const saved=await flushOrPreserveDetachedDraft();
   if(!saved){message('Could not save the current scene; scene switch cancelled.');return}
  }
  if(!scene){el('sceneDialog').showModal();return}

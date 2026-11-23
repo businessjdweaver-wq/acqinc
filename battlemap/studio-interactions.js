@@ -1175,7 +1175,7 @@ function scheduleSceneAutosave(delay=1200){
 async function flushSceneAutosave(){
  clearTimeout(sceneAutosaveTimer);sceneAutosaveTimer=null;
  if(sceneAutosaveBusy){
-  for(let attempt=0;attempt<40&&sceneAutosaveBusy;attempt++)await new Promise(resolve=>setTimeout(resolve,100));
+  for(let attempt=0;attempt<200&&sceneAutosaveBusy;attempt++)await new Promise(resolve=>setTimeout(resolve,100));
   if(sceneAutosaveBusy)return false;
  }
  if(!roomProfile?.gm||!currentSceneId)return true;
@@ -1201,15 +1201,26 @@ async function flushSceneAutosave(){
   if(sceneAutosaveAgain){sceneAutosaveAgain=false;scheduleSceneAutosave(250)}
  }
 }
+async function preserveDetachedDraftBeforeSceneSwitch(){
+ if(!roomProfile?.gm||!roomState.active||roomState.sceneId!==currentSceneId||roomDraftAttached)return false;
+ const saved=await saveRecovery();
+ if(saved){message('Detached draft saved to this browser’s recovery before switching scenes. The active encounter was left untouched.');return true}
+ message('Scene switch cancelled: the detached draft could not be saved to browser recovery. Export the map before switching.');
+ return false;
+}
+async function flushOrPreserveDetachedDraft(){
+ if(await flushSceneAutosave())return true;
+ return preserveDetachedDraftBeforeSceneSwitch();
+}
 async function loadSavedScene(scene,resetInitiative=false){
  // Never substitute the catalog snapshot for an active encounter's server state.
  if(roomProfile?.gm&&roomState.active&&scene.id===roomState.sceneId){
-  if(currentSceneId!==scene.id&&!(await flushSceneAutosave())){message('Scene switch cancelled: changes could not be saved.');return}
+  if(currentSceneId!==scene.id&&!(await flushOrPreserveDetachedDraft())){message('Scene switch cancelled: changes could not be saved.');return}
   if(el('sceneDialog').open)el('sceneDialog').close();
   restoreActiveRoom=true;viewRoomScene(scene.id);void pollRoom();return;
  }
  if(currentSceneId!==scene.id){
-  const saved=await flushSceneAutosave();
+  const saved=await flushOrPreserveDetachedDraft();
   if(!saved){message('Scene switch cancelled: changes could not be saved.');return}
  }
  exitTool();remember(resetInitiative);
