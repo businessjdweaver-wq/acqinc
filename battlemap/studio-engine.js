@@ -6429,7 +6429,30 @@ function scheduleScenePreparation(){
   console.info('Battlemap scene geometry prepared',scenePreparation);
  },0);
 }
+function battlefieldFadeGeometry(){
+ return JSON.stringify(faces.filter(f=>!(f.standee||f.shadow)||!ownsRoomStandee(f.p))
+  .map(f=>[f.projected,f.rememberedFog,f.perimeterOnly,f.p?.roomId]));
+}
+function capturePreviousBattlefield(){
+ if(!playerStandeeFrame||!playerStandeeFrame.view.every((part,i)=>Object.is(part,standeeLayerViewKey()[i])))return null;
+ const image=document.createElement('canvas');
+ image.width=canvas.width;image.height=canvas.height;
+ image.getContext('2d').drawImage(canvas,0,0);
+ return {image,geometry:battlefieldFadeGeometry()};
+}
+function fadePreviousBattlefield(previous){
+ const {image,geometry}=previous;
+ if(!playerStandeeFrame||image.width!==canvas.width||image.height!==canvas.height||geometry!==battlefieldFadeGeometry())return;
+ image.id='battlefieldFade';
+ image.setAttribute('aria-hidden','true');
+ image.style.cssText='position:absolute;inset:0;pointer-events:none;z-index:0;background:transparent;border:0';
+ el('movingStandeeOverlay').before(image);
+ if(typeof image.animate!=='function'||matchMedia('(prefers-reduced-motion: reduce)').matches){image.remove();return}
+ const fade=image.animate([{opacity:1},{opacity:0}],{duration:180,easing:'ease-out'});
+ fade.onfinish=()=>image.remove();
+}
 function draw(action,reusePan=false){
+ el('battlefieldFade')?.remove();
  scheduleScenePreparation();
  cancelPanSettle();
  cancelMovementPaint();
@@ -6477,7 +6500,7 @@ function draw(action,reusePan=false){
    // Retain the last visibility-checked frame when no movement overlay can
    // be reused. The route remains live and confirmation schedules a repaint.
    movingStandeeLayer=null;
-   el('movingStandeeOverlay').hidden=true;
+   paintPlayerStandees();
    drawRoute();positionMoveActions();drawStandeeNames();
    if(performanceDraw)performanceDraw.movementRouteOnly=true;
   }else{
@@ -6501,6 +6524,9 @@ function draw(action,reusePan=false){
    showRecentPanPaint(snapshot,snapshotPan&&scale===1);
    canvas.style.transformOrigin='0 0';
    canvas.style.transform='translate('+x+'px,'+y+'px) scale('+scale+')';
+   const standeeLayer=el('movingStandeeOverlay');
+   standeeLayer.style.transformOrigin='0 0';standeeLayer.style.transform=canvas.style.transform;
+   if(playerStandeeFrame)standeeLayer.hidden=false;
    const routeLayer=el('routeOverlay');
    routeLayer.style.transformOrigin='0 0';
    routeLayer.style.transform=canvas.style.transform;
@@ -6512,6 +6538,7 @@ function draw(action,reusePan=false){
    if(recentPanPaint)recentPanPaint.bitmap.hidden=true;
    if(zoomTransformActive){
     canvas.style.transform='';
+    el('movingStandeeOverlay').style.transform='';
     el('routeOverlay').style.transform='';
     canvas.parentElement.style.background=zoomBackgroundBefore;
     zoomTransformActive=false;
@@ -6524,7 +6551,10 @@ function draw(action,reusePan=false){
      areas=areas.map(area=>area===preview.source?preview.window:area);
     }
     lightingFrame=timeLighting(startLightingFrame);
+    const previous=action?.startsWith?.('Confirmed move · ')&&!cameraPreview&&!zoomTransformActive
+     ?capturePreviousBattlefield():null;
     drawBattlefield(simplified,action,cameraPreview,lightOrbit,reusePan?paintedCamera:null);
+    if(previous)fadePreviousBattlefield(previous);
    }finally{
     pieces=savedPieces;areas=savedAreas;
    }
@@ -6803,7 +6833,46 @@ function paintBattlefieldStandee(f,showLighting,lightBlockers){
    paintDamageFlash(f.p);
    if(f.flat)paintFlatStandee(f);else if(f.dead&&!standeeObscured(f.p))paintDeadStandee(f);else{paintStandee(f);drawFacingArrow(f)}ctx.filter='none';return}
 }
-let movingStandeeLayer=null;
+let movingStandeeLayer=null,playerStandeePreview=null,playerStandeeFrame=null;
+function projectedBounds(points){
+ const x=points.map(p=>p[0]),y=points.map(p=>p[1]);
+ return [Math.min(...x),Math.min(...y),Math.max(...x),Math.max(...y)];
+}
+function paintPlayerStandees(){
+ const frame=playerStandeeFrame,view=standeeLayerViewKey();
+ if(!frame||!frame.view.every((value,index)=>Object.is(value,view[index])))return;
+ const layer=el('movingStandeeOverlay');
+ if(layer.width!==canvas.width)layer.width=canvas.width;
+ if(layer.height!==canvas.height)layer.height=canvas.height;
+ const main=ctx,savedFaces=faces;
+ const preview=playerStandeePreview?.scene===currentSceneId?playerStandeePreview:null;
+ try{
+  ctx=layer.getContext('2d');
+  ctx.setTransform(layer.width/W,0,0,layer.height/H,0,0);
+  ctx.clearRect(0,0,W,H);
+  let moved=[];
+  if(preview){faces=[];drawStandee(preview.token,false);moved=faces}
+  const paint=(face,index)=>{
+   ctx.save();
+   const standeeBounds=projectedBounds(face.projected);
+   for(const [order,terrain,box] of frame.cover){
+    if(index==null?terrain.depth<=face.depth:order<=index)continue;
+    if(box[2]<=standeeBounds[0]||box[0]>=standeeBounds[2]||box[3]<=standeeBounds[1]||box[1]>=standeeBounds[3])continue;
+    ctx.beginPath();ctx.rect(0,0,W,H);
+    terrain.projected.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
+    ctx.closePath();ctx.clip('evenodd');
+   }
+   paintBattlefieldStandee(face,index!=null&&frame.lighting,frame.blockers);
+   ctx.restore();
+  };
+  for(const [face,index] of frame.faces){
+   if(preview&&face.p.roomId===preview.token.roomId)continue;
+   paint(face,index);
+  }
+  for(const face of moved)paint(face,null);
+  layer.hidden=false;
+ }finally{ctx=main;faces=savedFaces}
+}
 function standeeLayerViewKey(){
  return [currentSceneId,roomProfile,canvas.clientWidth,canvas.clientHeight,zoom,panX,panY,angle,tilt,topDown,preferences.graphicsQuality];
 }
@@ -7489,6 +7558,8 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(fog)ctx.restore();
  }
  const lightBlockers=blockers;
+ const separatePlayerStandees=playing&&roomProfile?.gm===false&&!useStandeeLayer&&!cameraPreview&&!overlap;
+ const playerStandeeFaces=[];
  const sceneDark=showLighting;
  if(performanceDraw&&stage)performanceDraw.progressiveLighting=stage.phase;
  const lightEdgeDepth=simplified&&!carry||cameraPreview||lightOrbit||quality===0||quality===3?0:quality===4?1:quality===2?3:2;
@@ -7568,7 +7639,9 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  const tracedFloorRooms=wallRooms().filter(a=>a.floorFinish);
  const volumeGridPaths=new Map();
  let snapshot=cacheable&&!cached&&faces.every(f=>!f.preview||f.standee||f.shadow);
+ let playerFaceOrder=-1;
  for(const f of cached?.painted?faces.slice(cached.faces.length):faces){
+  playerFaceOrder++;
   if(!reachedFaces&&f.p){
    if(performanceDraw)finishPaintPass('groundMs');
    reachedFaces=true;
@@ -7631,7 +7704,11 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   }
   if(f.doorFace||f.fixtureFace){polygon(f.projected,f.fill,f.spellBubble?f.p.tint+'88':'#452c1c');if(f.doorFace&&!f.windowPane){if(!simplified&&f.doorDetailReverse!==undefined&&f.p.details)paintDoorDetails(f);shadeTerrain(f);}continue;}
   if(f.preview&&f.standee&&useStandeeLayer)continue;
-  if(f.shadow||f.standee){paintBattlefieldStandee(f,showLighting,lightBlockers);continue}
+  if(f.shadow||f.standee){
+   if(separatePlayerStandees&&ownsRoomStandee(f.p)&&!f.preview)playerStandeeFaces.push([f,playerFaceOrder]);
+   else paintBattlefieldStandee(f,showLighting,lightBlockers);
+   continue;
+  }
   const outline=(f.p&&(f.p===selected||group.has(f.p)))?'#9a511e':!f.p?(gridVisible()&&gridOpacity()>0?gridStrokeColor():null):f.z===null?'#4837255c':'#5847359c';
   if(f.sceneryArt){
    if(lightOrbit||!showTerrainTextures){polygon(f.projected,f.fill||'#746853',null);shadeTerrain(f);continue}
@@ -7748,6 +7825,13 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   movingStandeeLayer={carry,tokens,pieces,areas,view:standeeLayerViewKey(),lighting:lightingFrame,showLighting,blockers,stationary:faces.filter(face=>!face.preview)};
   paintMovingStandeeLayer(movingStandeeLayer);
  }
+ if(separatePlayerStandees){
+  const cover=faces.flatMap((face,index)=>face.p&&!face.standee&&!face.shadow&&!face.preview&&
+   !face.perimeterOnly&&face.projected?.length>=3&&(!face.pathWall||face.p.opacity===undefined||face.p.opacity>=1)
+   ?[[index,face,projectedBounds(face.projected)]]:[]);
+  playerStandeeFrame={view:standeeLayerViewKey(),faces:playerStandeeFaces,cover,lighting:showLighting,blockers};
+  paintPlayerStandees();
+ }else if(!useStandeeLayer)playerStandeeFrame=null;
  if(pinnedStatus)pinnedStatus=statusMarks.find(mark=>mark.token===pinnedStatus.token&&mark.id===pinnedStatus.id);
  statusTooltip(pinnedStatus);
  const standeeReadouts=drawStandeeNames();
@@ -8287,13 +8371,15 @@ function runProgressiveLightSlice(){
  scheduleProgressiveLightSlice();
 }
 let confirmedMovementRepaint=null;
-function scheduleConfirmedMovementRepaint(action){
+function scheduleConfirmedMovementRepaint(action,scene=currentSceneId){
  clearTimeout(confirmedMovementRepaint);
  confirmedMovementRepaint=setTimeout(()=>{
   confirmedMovementRepaint=null;
+  if(currentSceneId!==scene){playerStandeePreview=null;return}
   if(carry||drag||roomMoving||moveConfirmPending||performance.now()-lastProgressiveInput<75){
-   scheduleConfirmedMovementRepaint(action);return;
+   scheduleConfirmedMovementRepaint(action,scene);return;
   }
+  playerStandeePreview=null;
   refresh(action);
  },40);
 }
@@ -8319,19 +8405,14 @@ async function commitCarry(confirmedAt=performance.now()){
   try{
    if(carry.light)await customizeRoomObject(carry.light,'move_light',[ghost.x,ghost.y,ghost.z]);
    else{
+    playerStandeePreview={scene:currentSceneId,token:{...piece,x:ghost.x,y:ghost.y,z:ghost.z}};
+    paintPlayerStandees();
     queueWorkerSightlines(ghost,piece);
     await moveRoomStandee(piece,ghost);
     pendingStandeeInput={scene:currentSceneId,standee:piece.roomId,confirmedAt};
    }
    const serverMs=performance.now()-moveStart;
    if(!carry.light&&piece.type==='standee'&&route)rememberFogTravel(routeWithDetours([...route.points,basePoint(ghost)]),piece);
-   // The server accepted the destination. Keep the provisional standee
-   // overlay visible over the OLD visibility bitmap during synchronization.
-   // Never run a full fog/lighting draw with unconfirmed room state.
-   if(piece.type==='standee'&&!carry.light&&canReuseStandeeLayer()){
-    draw('Standee movement');
-    await new Promise(resolve=>requestAnimationFrame(resolve));
-   }
    const pollStart=performance.now();
    await pollRoom();
    const pollMs=performance.now()-pollStart;
@@ -8343,7 +8424,11 @@ async function commitCarry(confirmedAt=performance.now()){
    // synchronous draw; a worker/chunked renderer is still needed for that.
    scheduleConfirmedMovementRepaint(pendingStandeeInput?'Confirmed move · medium':undefined);
    if(performanceDraw)performanceDraw.movementCommit={serverMs:Math.round(serverMs),pollMs:Math.round(pollMs),totalMs:Math.round(performance.now()-moveStart)};
-  }catch(err){message(err.message);await pollRoom()}
+  }catch(err){
+   playerStandeePreview=null;
+   paintPlayerStandees();
+   message(err.message);await pollRoom();
+  }
   finally{roomMoving=false}
   return;
  }
