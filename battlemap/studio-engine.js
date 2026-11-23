@@ -1006,7 +1006,7 @@ function visionRayClear(from,to,blockers){
  const start=[from[0],from[1],from[2]+.65],end=[to[0],to[1],to[2]+.65];
  const min=start.map((v,i)=>Math.min(v,end[i])),max=start.map((v,i)=>Math.max(v,end[i]));
  return !rayBlockerCandidates(blockers,start,end).some(bounds=>{
-  if(bounds.wallPrism)return !wallPassage(bounds.wallPrism).sight&&wallPrismInterval(bounds.wallPrism,start,end);
+  if(bounds.wallPrism)return !wallPassage(bounds.wallPrism).sight&&wallSightInterval(bounds,start,end);
   if(bounds.terrain)return movementInterval(...turnTerrainPoints([start,end],bounds.terrain,-bounds.terrain.terrainYaw),bounds);
   return bounds.every(([lo,hi],i)=>max[i]>lo&&min[i]<hi)&&movementInterval(start,end,bounds);
  });
@@ -3090,6 +3090,14 @@ function wallPrismInterval(solid,start,end,half=0,height=0){
  });
  return movementInterval([...from,start[2]],[...to,end[2]],[...bounds,[solid.z-height,solid.top]]);
 }
+let wallBenchmarkBounds=false,wallBenchmarkProbes=null;
+function wallSightInterval(bounds,start,end){
+ if(!wallBenchmarkBounds)return wallPrismInterval(bounds.wallPrism,start,end);
+ const span=movementInterval(start,end,bounds);
+ if(wallBenchmarkProbes&&wallBenchmarkProbes.length<8)
+  wallBenchmarkProbes.push({bounds,start,end,span});
+ return span;
+}
 function wallStopsMovement(solid){
  return solid.opening?solid.opening.kind==='Window'||!solid.opening.open:solid.wall.blocks;
 }
@@ -3105,7 +3113,7 @@ function wallRayTransmission(start,end,blockers){
  for(const bounds of rayBlockerCandidates(blockers,start,end)){
   if(bounds.wallPrism){
    const solid=bounds.wallPrism;
-   if(!wallPrismInterval(solid,start,end))continue;
+   if(!wallSightInterval(bounds,start,end))continue;
    const amount=wallPassage(solid).light;
    if(!amount)return 0;
    if(amount<1)traversed.set(solid.wall.id,Math.min(amount,traversed.get(solid.wall.id)??1));
@@ -5277,7 +5285,7 @@ function playerFogEnabled(){
 function sightlineClear(eye,target,blockers){
  return !rayBlockerCandidates(blockers,eye,target).some(bounds=>{
   if(bounds.wallPrism){
-   const solid=bounds.wallPrism,span=!wallPassage(solid).sight&&wallPrismInterval(solid,eye,target);
+   const solid=bounds.wallPrism,span=!wallPassage(solid).sight&&wallSightInterval(bounds,eye,target);
    return span&&span[0]<.995;
   }
   const path=bounds.terrain?turnTerrainPoints([eye,target],bounds.terrain,-bounds.terrain.terrainYaw):[eye,target];
@@ -5970,6 +5978,7 @@ function startLightingFrame(){
  const stableBlockers=blockers.map(b=>[b[0],b[1],b[2],b.wallPrism?.poly,b.wallPrism?.spans,b.terrain?.terrainYaw]);
  const fogSignatureParts={
   scene:currentSceneId,
+  wallBenchmarkBounds,
   blockers:stableBlockers,
   lights:lights.filter(light=>!light.carried),
   rooms,
@@ -6122,7 +6131,7 @@ el('performanceReset').onclick=()=>{performanceSamples.length=0;standeeInputSamp
 el('performanceCopy').onclick=async()=>{
  const output=el('performanceStatus');
  try{
-  await navigator.clipboard.writeText(JSON.stringify({build:el('battlemapBuild').textContent.slice(1),samples:performanceSamples,standeeInput:standeeInputSamples,fogWorker:{enabled:fogWorkerEnabled,...fogWorkerStats},benchmark:renderingReport,railTravel:railTravelReport,textureTest:textureTestReport},null,2));
+  await navigator.clipboard.writeText(JSON.stringify({build:el('battlemapBuild').textContent.slice(1),samples:performanceSamples,standeeInput:standeeInputSamples,fogWorker:{enabled:fogWorkerEnabled,...fogWorkerStats},benchmark:renderingReport,railTravel:railTravelReport,wallBlockerComparison,textureTest:textureTestReport},null,2));
   output.textContent='Copied';
  }catch{output.textContent='Clipboard unavailable'}
 };
@@ -6182,18 +6191,30 @@ el('performanceTest').onclick=async()=>{
 };
 // Non-destructive rail traversal benchmark: samples the current scene without
 // changing standee positions or publishing movement to the shared room.
-let railTravelReport=null,railTravelRunning=false;
+let railTravelReport=null,railTravelRunning=false,wallBlockerComparison=null;
 const railButton=document.createElement('button');
 railButton.type='button';railButton.textContent='Rail traversal test';
 el('performanceTest').insertAdjacentElement('afterend',railButton);
-railButton.onclick=async()=>{
+const wallCompareButton=document.createElement('button');
+wallCompareButton.type='button';wallCompareButton.textContent='Compare wall blockers';
+railButton.insertAdjacentElement('afterend',wallCompareButton);
+railButton.onclick=()=>runRailTraversal(false);
+wallCompareButton.onclick=()=>runRailTraversal(true);
+async function runRailTraversal(compare){
  const status=el('performanceStatus');
  if(railTravelRunning||drag||carry||document.hidden||!W||!H){status.textContent='Keep the map visible and finish any movement before the rail test.';return}
- const token=tokens.find(t=>t.type==='standee'&&!standeeHidden(t)&&!standeeObscured(t)&&
-  (roomProfile?.gm!==false||ownsRoomStandee(t)));
+ const eligible=t=>t?.type==='standee'&&!standeeHidden(t)&&!standeeObscured(t)&&
+  (roomProfile?.gm!==false||ownsRoomStandee(t));
+ const token=compare?(eligible(selected)&&selected.torch?selected:tokens.find(t=>t.torch&&eligible(t))):tokens.find(eligible);
+ if(compare&&(roomProfile?.gm!==false||!sceneWallPaths().length||!token)){
+  status.textContent='Use Player view in a scene with path walls and a visible torch-bearing standee you control.';
+  return;
+ }
  if(!token){status.textContent='Place or select an accessible standee before testing.';return}
  const original={carry,ghost,route,angle,tilt,zoom,panX,panY,topDown,tokenX:token.x,tokenY:token.y,tokenZ:token.z,fogMemoryState,pendingFogTravel};
- const sceneId=currentSceneId,frames=120,results=[];
+ const sceneId=currentSceneId,frames=compare?24:120;
+ const phases=compare?['Exact prisms','Box blockers']:['Rail traversal'];
+ const comparisons=[];
  // Fixed route and fixed observer elevation make runs comparable even if
  // the standee was moved between benchmarks. The actual position is restored.
  const margin=Math.max(1,token.size/2);
@@ -6203,13 +6224,24 @@ railButton.onclick=async()=>{
  const nodes=corners.map(([x,y])=>[x,y,start[2]]);
  const lengths=nodes.slice(1).map((p,i)=>Math.hypot(p[0]-nodes[i][0],p[1]-nodes[i][1]));
  const total=lengths.reduce((a,b)=>a+b,0);
- railTravelRunning=true;railButton.disabled=true;
+ const controls=[railButton,wallCompareButton,...['performanceTest','performanceTextureTest','performanceReset'].map(el)];
+ railTravelRunning=true;
+ const disabled=controls.map(button=>button.disabled);
+ controls.forEach(button=>button.disabled=true);
+ if(compare)wallBlockerComparison=null;
  // Isolate fog exploration from persisted player history during the benchmark.
- if(fogMemoryState)fogMemoryState={...fogMemoryState,seen:new Set(fogMemoryState.seen),dirty:false,pending:false};
  try{
+ for(const phase of phases){
+  wallBenchmarkBounds=phase==='Box blockers';
+  ({angle,tilt,zoom,panX,panY,topDown}=original);
+  fogCache=null;fogSectorRayCache=null;
+  fogMemoryState=original.fogMemoryState?{...original.fogMemoryState,
+   seen:new Set(original.fogMemoryState.seen),shading:new Map(original.fogMemoryState.shading),dirty:false,pending:false}:null;
+  pendingFogTravel=null;
+  const results=[],audit={probes:0,changedHits:0,changedSightlineCutoff:0,byOpening:{}};
   for(let frame=0;frame<frames;frame++){
    const timestamp=await new Promise(resolve=>requestAnimationFrame(resolve));
-   if(document.hidden||currentSceneId!==sceneId||drag)throw Error('Rail test interrupted by scene change or user interaction.');
+   if(document.hidden||currentSceneId!==sceneId||!tokens.includes(token)||drag||carry)throw Error('Rail test interrupted by scene change or user interaction.');
    let distance=total*frame/(frames-1),segment=0;
    while(segment<lengths.length-1&&distance>lengths[segment])distance-=lengths[segment++];
    const t=lengths[segment]?Math.min(1,distance/lengths[segment]):0;
@@ -6219,25 +6251,52 @@ railButton.onclick=async()=>{
    // the player visibility pipeline and therefore cannot benchmark exploration.
    token.x=point[0]-token.size/2;token.y=point[1]-token.size/2;token.z=point[2];
    carry=null;ghost=null;route=null;
-   const action='Test: Rail traversal';
+   const action='Test: '+phase;
+   const queuedAt=performance.now();
+   const inputDelay=compare?new Promise(resolve=>setTimeout(()=>resolve(roundedMs(performance.now()-queuedAt)),0)):null;
+   wallBenchmarkProbes=wallBenchmarkBounds?[]:null;
    draw(action);
    const sample=performanceSamples.at(-1);
-   if(sample?.action===action)results.push({...sample,frame,position:point,timestamp});
-   if(frame%12===0)status.textContent='Rail traversal: '+Math.round(100*frame/(frames-1))+'%';
+   const probes=wallBenchmarkProbes;
+   wallBenchmarkProbes=null;
+   const queuedCallbackMs=compare?await inputDelay:null;
+   for(const {bounds,start,end,span} of probes??[]){
+    const exact=wallPrismInterval(bounds.wallPrism,start,end);
+    audit.probes++;
+    const category=bounds.wallPrism.opening?.kind??'Wall';
+    const group=audit.byOpening[category]??={probes:0,changedHits:0};
+    group.probes++;
+    if(Boolean(exact)!==Boolean(span)){audit.changedHits++;group.changedHits++}
+    if((!!exact&&exact[0]<.995)!==(!!span&&span[0]<.995))audit.changedSightlineCutoff++;
+   }
+   if(sample?.action===action)results.push({...sample,frame,position:point,timestamp,queuedCallbackMs});
+   if(frame%4===0)status.textContent=phase+' · '+Math.round(100*frame/(frames-1))+'%';
   }
   const ordered=results.map(s=>s.drawMs).sort((a,b)=>a-b);
   const pct=p=>ordered[Math.min(ordered.length-1,Math.ceil(ordered.length*p)-1)]??null;
-  railTravelReport={sceneId,role:roomProfile?.gm===false?'player':'gm',frames:results.length,
+  const report={sceneId,role:roomProfile?.gm===false?'player':'gm',frames:results.length,
    medianDrawMs:pct(.5),p95DrawMs:pct(.95),maxDrawMs:ordered.at(-1)??null,
    routeStart:start,routeNodes:nodes,routeDistance:total,observerSize:token.size,
    note:'Deterministic corner-to-corner route starting at map minimum at elevation zero; 120 frames. Route may cross walls. Standee and fog history restored; no room RPC.',samples:results};
-  status.textContent='Rail traversal complete · median '+railTravelReport.medianDrawMs+
+  if(compare){
+   const delays=results.map(s=>s.queuedCallbackMs).sort((a,b)=>a-b);
+   comparisons.push({...report,phase,probeAudit:audit,callbackP95Ms:delays[Math.ceil(delays.length*.95)-1],
+    note:'Synthetic callback queued immediately before each draw. Uses the same camera and local torch route in both phases.'});
+  }else railTravelReport=report;
+ }
+ if(compare){
+  wallBlockerComparison={sceneId,zoom:original.zoom,angle:original.angle,tilt:original.tilt,phases:comparisons};
+  status.textContent=comparisons.map(p=>p.phase+' · p95 '+p.p95DrawMs+' ms').join(' / ')+' · Copy log to share.';
+ }else status.textContent='Rail traversal complete · median '+railTravelReport.medianDrawMs+
    ' ms · p95 '+railTravelReport.p95DrawMs+' ms · Copy log to share.';
  }catch(error){status.textContent=error.message}
  finally{
   token.x=original.tokenX;token.y=original.tokenY;token.z=original.tokenZ;
   ({carry,ghost,route,angle,tilt,zoom,panX,panY,topDown,fogMemoryState,pendingFogTravel}=original);
-  railTravelRunning=false;railButton.disabled=false;draw('Test: restore');updatePerformanceReadout();
+  wallBenchmarkBounds=false;wallBenchmarkProbes=null;
+  fogCache=null;fogSectorRayCache=null;
+  railTravelRunning=false;controls.forEach((button,i)=>button.disabled=disabled[i]);
+  draw('Test: restore');updatePerformanceReadout();
  }
 };
 let textureTestEffect=null,textureTestReport=null;
