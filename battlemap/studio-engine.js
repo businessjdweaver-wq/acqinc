@@ -6212,16 +6212,25 @@ async function runRailTraversal(compare){
  }
  if(!token){status.textContent='Place or select an accessible standee before testing.';return}
  const original={carry,ghost,route,angle,tilt,zoom,panX,panY,topDown,tokenX:token.x,tokenY:token.y,tokenZ:token.z,fogMemoryState,pendingFogTravel};
- const sceneId=currentSceneId,frames=compare?24:120;
- const phases=compare?['Exact prisms','Box blockers']:['Rail traversal'];
+ const sceneId=currentSceneId,frames=compare?12:120;
+ // Each mode runs once as the first pass and once as the second pass.
+ const phases=compare?['Exact prisms','Box blockers','Box blockers','Exact prisms']:['Rail traversal'];
  const comparisons=[];
  // Fixed route and fixed observer elevation make runs comparable even if
  // the standee was moved between benchmarks. The actual position is restored.
  const margin=Math.max(1,token.size/2);
  const xmax=Math.max(margin,gridLimit(0)-margin),ymax=Math.max(margin,gridLimit(1)-margin);
- const start=[margin,margin,0];
+ const start=compare?basePoint(token):[margin,margin,0];
  const corners=[[margin,margin],[xmax,margin],[xmax,ymax],[margin,ymax],[margin,margin]];
- const nodes=corners.map(([x,y])=>[x,y,start[2]]);
+ const nearby=compare?[[1,0],[0,1],[-1,0],[0,-1]].map(([dx,dy])=>[
+  start[0]+dx,start[1]+dy,start[2]
+ ]).filter(p=>p[0]>=token.size/2&&p[0]<=gridLimit(0)-token.size/2&&
+  p[1]>=token.size/2&&p[1]<=gridLimit(1)-token.size/2&&!movementSegment(start,p,token).blocked):[];
+ if(compare&&!nearby.length){
+  status.textContent='Move the torch-bearing standee to a spot with at least one clear adjacent square, then run the comparison.';
+  return;
+ }
+ const nodes=compare?[start,...nearby.flatMap(p=>[p,start])]:corners.map(([x,y])=>[x,y,start[2]]);
  const lengths=nodes.slice(1).map((p,i)=>Math.hypot(p[0]-nodes[i][0],p[1]-nodes[i][1]));
  const total=lengths.reduce((a,b)=>a+b,0);
  const controls=[railButton,wallCompareButton,...['performanceTest','performanceTextureTest','performanceReset'].map(el)];
@@ -6231,8 +6240,7 @@ async function runRailTraversal(compare){
  if(compare)wallBlockerComparison=null;
  // Isolate fog exploration from persisted player history during the benchmark.
  try{
- for(const phase of phases){
-  wallBenchmarkBounds=phase==='Box blockers';
+ for(const [pass,phase] of phases.entries()){
   ({angle,tilt,zoom,panX,panY,topDown}=original);
   fogCache=null;fogSectorRayCache=null;
   fogMemoryState=original.fogMemoryState?{...original.fogMemoryState,
@@ -6254,11 +6262,12 @@ async function runRailTraversal(compare){
    const action='Test: '+phase;
    const queuedAt=performance.now();
    const inputDelay=compare?new Promise(resolve=>setTimeout(()=>resolve(roundedMs(performance.now()-queuedAt)),0)):null;
-   wallBenchmarkProbes=wallBenchmarkBounds?[]:null;
-   draw(action);
+   if(compare)({angle,tilt,zoom,panX,panY,topDown}=original);
+   const probes=phase==='Box blockers'?[]:null;
+   wallBenchmarkBounds=!!probes;
+   wallBenchmarkProbes=probes;
+   try{draw(action)}finally{wallBenchmarkBounds=false;wallBenchmarkProbes=null}
    const sample=performanceSamples.at(-1);
-   const probes=wallBenchmarkProbes;
-   wallBenchmarkProbes=null;
    const queuedCallbackMs=compare?await inputDelay:null;
    for(const {bounds,start,end,span} of probes??[]){
     const exact=wallPrismInterval(bounds.wallPrism,start,end);
@@ -6270,7 +6279,7 @@ async function runRailTraversal(compare){
     if((!!exact&&exact[0]<.995)!==(!!span&&span[0]<.995))audit.changedSightlineCutoff++;
    }
    if(sample?.action===action)results.push({...sample,frame,position:point,timestamp,queuedCallbackMs});
-   if(frame%4===0)status.textContent=phase+' · '+Math.round(100*frame/(frames-1))+'%';
+   if(frame%4===0)status.textContent=(compare?'Pass '+(pass+1)+' of '+phases.length+' · ':'')+phase+' · '+Math.round(100*frame/(frames-1))+'%';
   }
   const ordered=results.map(s=>s.drawMs).sort((a,b)=>a-b);
   const pct=p=>ordered[Math.min(ordered.length-1,Math.ceil(ordered.length*p)-1)]??null;
@@ -6280,13 +6289,13 @@ async function runRailTraversal(compare){
    note:'Deterministic corner-to-corner route starting at map minimum at elevation zero; 120 frames. Route may cross walls. Standee and fog history restored; no room RPC.',samples:results};
   if(compare){
    const delays=results.map(s=>s.queuedCallbackMs).sort((a,b)=>a-b);
-   comparisons.push({...report,phase,probeAudit:audit,callbackP95Ms:delays[Math.ceil(delays.length*.95)-1],
-    note:'Synthetic callback queued immediately before each draw. Uses the same camera and local torch route in both phases.'});
+   comparisons.push({...report,phase,pass:pass+1,orderInPair:pass%2+1,probeAudit:audit,callbackP95Ms:delays[Math.ceil(delays.length*.95)-1],
+    note:'Synthetic callback queued immediately before each draw. All passes use the same camera and one-square out-and-back steps from the torch bearer’s starting position.'});
   }else railTravelReport=report;
  }
  if(compare){
   wallBlockerComparison={sceneId,zoom:original.zoom,angle:original.angle,tilt:original.tilt,phases:comparisons};
-  status.textContent=comparisons.map(p=>p.phase+' · p95 '+p.p95DrawMs+' ms').join(' / ')+' · Copy log to share.';
+  status.textContent=comparisons.map(p=>p.phase+' '+p.p95DrawMs+' ms p95').join(' / ')+' · Copy log to share.';
  }else status.textContent='Rail traversal complete · median '+railTravelReport.medianDrawMs+
    ' ms · p95 '+railTravelReport.p95DrawMs+' ms · Copy log to share.';
  }catch(error){status.textContent=error.message}
