@@ -762,11 +762,11 @@ function standeeShadow(p,preview){
 // Hold E to inspect elevated walking surfaces in either camera projection.
 // This is a local, read-only overlay; it never changes scene geometry.
 let elevationKeyHeld=false;
-function drawFloorElevationLabels(){
+function drawFloorElevationLabels(visibilityChecked=false){
  if(!elevationKeyHeld)return;
  const best=new Map();
  for(const surface of faces){
-  if(!surface.p||surface.preview||surface.standee||surface.shadow||
+  if(!surface.p||surface.preview||surface.standee||surface.shadow||surface.rememberedFog||surface.perimeterOnly||
      !Number.isFinite(surface.z)||surface.z<=.001||!surface.world?.length||
      surface.world.some(v=>Math.abs(v[2]-surface.z)>.001))continue;
   // Only walking surfaces are elevations. Wall, pillar and prop tops
@@ -777,7 +777,7 @@ function drawFloorElevationLabels(){
   if(!projected?.length||!visibleProjection(projected,25))continue;
   const cx=surface.world.reduce((sum,v)=>sum+v[0],0)/surface.world.length;
   const cy=surface.world.reduce((sum,v)=>sum+v[1],0)/surface.world.length;
-  if(roomProfile?.gm===false&&playerFogEnabled()&&!fogPointVisible([cx,cy,surface.z],false))continue;
+  if(!visibilityChecked&&roomProfile?.gm===false&&playerFogEnabled()&&!fogPointVisible([cx,cy,surface.z],false))continue;
   const area=Math.abs(projected.reduce((sum,p,i)=>{const q=projected[(i+1)%projected.length];return sum+p[0]*q[1]-q[0]*p[1]},0));
   const prior=best.get(surface.p);
   if(!prior||area>prior.area)best.set(surface.p,{surface,area});
@@ -6968,6 +6968,10 @@ function movementCutawayKey(cutaway,terrain){
   [...cutaway.stairCells].map(([piece,cells])=>[terrain.indexOf(piece),cells])
  ]);
 }
+function isMovingStandeePreview(token){
+ return !!token&&(token===ghost&&carry?.piece?.type==='standee'&&!carry.light&&!carry.arcaneEye||
+  playerStandeePreview&&playerStandeePreview.scene===currentSceneId&&token===playerStandeePreview.token);
+}
 function paintBattlefieldStandee(f,showLighting,lightBlockers){
  if(!standeeObscured(f.p)&&(f.p.incognito||f.p.conditions?.includes('invisible')))ctx.globalAlpha*=.48;
   if(f.shadow){paintStandeeShadow(f);return}
@@ -6978,7 +6982,7 @@ function paintBattlefieldStandee(f,showLighting,lightBlockers){
     const highlighted=!f.dead&&!standeeObscured(f.p)&&standeeIsTargeted(f.p);
     ctx.filter=highlighted?'brightness(.75)':'grayscale(1) brightness(.75)';
    }
-   if(dimensionDoorHidden.has(f.p.roomId)){ctx.filter='none';return}
+   if(dimensionDoorHidden.has(f.p.roomId)&&!isMovingStandeePreview(f.p)){ctx.filter='none';return}
    paintDamageFlash(f.p);
    if(f.flat)paintFlatStandee(f);else if(f.dead&&!standeeObscured(f.p))paintDeadStandee(f);else{paintStandee(f);drawFacingArrow(f)}ctx.filter='none';return}
 }
@@ -7010,10 +7014,10 @@ function paintPlayerStandees(destination=null){
   ctx.setTransform(layer.width/W,0,0,layer.height/H,0,0);
   ctx.clearRect(0,0,W,H);
   let moved=[];
-  if(preview){faces=[];drawStandee(preview.token,false);moved=faces}
+  if(preview){faces=[];drawStandee(preview.token,destination===ghost);moved=faces}
   const paint=(face,index)=>{
    ctx.save();
-   const cover=topDown||isFocal(face.p)?[]:frame.cover;
+   const cover=topDown||isFocal(face.p)||isMovingStandeePreview(face.p)?[]:frame.cover;
    const standeeBounds=projectedBounds(face.projected);
    for(const [order,terrain,box] of cover){
     if(index==null?terrain.depth<=face.depth:order<=index)continue;
@@ -8105,6 +8109,12 @@ function movementTerrainBlock(p){
  if(isFurniture(p))return p.terrainShape.componentKind!=='rug'&&(p.terrainShape.furnMove??true);
  return ['terrace','stone','wall','volume','pillar','bridge','crate'].includes(p.type);
 }
+function movementPlatformSupports(piece,[x,y,z]){
+ return !piece.openingCut&&(!wallVolume(piece)||Math.min(...dimensions(piece).slice(0,2))>0.5)&&
+  (piece.groundSurface||piece.stairTread||['volume','terrace','stone','bridge'].includes(piece.type))&&
+  Math.abs(piece.z+dimensions(piece)[2]-z)<1e-7&&
+  carryPointInsideFloor([x,y],terrainFootprint(piece));
+}
 function movementSegment(start,end,mover,members=[]){
  const distance=5*Math.hypot(...end.map((v,i)=>v-start[i]));
  if(!mover||!distance)return {cost:distance,hazards:[],blocked:false};
@@ -8151,13 +8161,14 @@ function movementSegment(start,end,mover,members=[]){
    if(span&&(Math.abs(top-start[2])<1e-7&&span[0]<1e-7||Math.abs(top-end[2])<1e-7&&span[1]>1-1e-7||stairCrossings.some(t=>t.p.stairTread&&span[0]<=t.span[1]+1e-7&&span[1]>=t.span[0]-1e-7)))stairCrossings.push({p,span,top});
   }
   stairCrossings.sort((a,b)=>a.span[0]-b.span[0]);
+  const changingElevation=Math.abs(start[2]-end[2])>1e-7;
   let stairHeight=start[2];
   const walkableStairs=new Set();
   let lastStairSpan=null;
   for(const {p,top,span} of stairCrossings){
    if(p.z>Math.max(start[2],end[2])+height)continue;
    if(top>Math.max(start[2],end[2])+1e-7||top<Math.min(start[2],end[2])-1e-7)continue;
-   if(top-stairHeight>1+1e-7)return {cost:distance,hazards:[],blocked:true,blocker:p};
+   if(!changingElevation&&top-stairHeight>1+1e-7)return {cost:distance,hazards:[],blocked:true,blocker:p};
    if(stairHeight-top>1+1e-7)continue;
    walkableStairs.add(p);stairHeight=top;lastStairSpan=span;
   }
@@ -8166,6 +8177,8 @@ function movementSegment(start,end,mover,members=[]){
    const [w,d,h]=dimensions(p),top=p.z+h;
    if((mover.size>=3||carry?.light)&&h<=1&&!p.stairTread)continue;
    if(h<=0||p.z>=Math.max(start[2],end[2])+height)continue;
+   // A rising or descending path may intersect the riser of its own landing.
+   if(changingElevation&&(movementPlatformSupports(p,start)||movementPlatformSupports(p,end)))continue;
    if(p.terrainYaw){
     const path=turnTerrainPoints([start,end],p,-p.terrainYaw),margin=h>1?0:half;
     const span=movementInterval(...path,[[p.x-margin,p.x+w+margin],[p.y-margin,p.y+d+margin],[p.z-height,top]]);
@@ -8173,12 +8186,6 @@ function movementSegment(start,end,mover,members=[]){
     if(span)intervals.push(span);
     continue;
    }
-   if(!p.form&&['volume','terrace','stone','bridge'].includes(p.type)&&
-    Math.abs(top-start[2])<1e-7&&start[0]>=p.x&&start[0]<p.x+w&&start[1]>=p.y&&start[1]<p.y+d&&
-    end[2]<start[2]&&start[2]-end[2]<=1+1e-7)continue;
-   if(!p.form&&['volume','terrace','stone','bridge'].includes(p.type)&&
-    Math.abs(top-end[2])<1e-7&&end[0]>=p.x&&end[0]<p.x+w&&end[1]>=p.y&&end[1]<p.y+d&&
-    end[2]>start[2]&&end[2]-start[2]<=1+1e-7)continue;
    const margin=p.stairTread?0:half;
    const footprint=[[p.x-margin,p.x+w+margin],[p.y-margin,p.y+d+margin]];
    if(walkableStairs.has(p))continue;
@@ -8428,6 +8435,10 @@ function updateCarry(x,y,altKey=false){
  if(carry.piece?.familiarCaster&&!ghost.stairLanding){
   const offset=(1-carry.piece.size)/2;
   ghost.x+=offset;ghost.y+=offset;
+ }
+ if(roomProfile?.gm===false&&snap===false&&!carry.light){
+  ghost.x=Math.round(ghost.x*8)/8;
+  ghost.y=Math.round(ghost.y*8)/8;
  }
  delete ghost.stairLanding;
  route.end=basePoint(ghost);

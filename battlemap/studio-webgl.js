@@ -628,7 +628,7 @@ function drawStudioWebGLFrame(frame,ratio,destination=null,retainTerrain=false){
  const standees=faces.sort((a,b)=>a.depth-b.depth);
  faces=surfaceFaces.concat(standees).sort(front);
  const indexByFace=new Map(faces.map((face,index)=>[face,index]));
- const hideBehindTerrain=face=>face.p!==focalOverlay&&!showThroughTerrain&&!playerAllyCameraVisible(face.p);
+ const hideBehindTerrain=face=>face.p!==focalOverlay&&!isMovingStandeePreview(face.p)&&!showThroughTerrain&&!playerAllyCameraVisible(face.p);
  const cover=surfaceFaces.filter(f=>f.p&&!f.windowPane&&!cutaway.has(f.terrainIndex)).map(f=>[indexByFace.get(f),f,projectedBounds(f.projected)]);
  for(const f of standees){
   ctx.save();ctx.globalAlpha=f.preview?.72:1;
@@ -650,7 +650,7 @@ function drawStudioWebGLFrame(frame,ratio,destination=null,retainTerrain=false){
   if(aura)drawAreaVolume(aura);
  }
  drawAreaTemplates();drawRoute();positionMoveActions();
- drawStandeeMarks();drawFloorElevationLabels();updateStandeeTally();
+ drawStandeeMarks();drawFloorElevationLabels(true);updateStandeeTally();
  const readouts=drawStandeeNames();
  drawInitiativePing();drawBoardPings();updateMapHandleLayer(blockers,readouts);updateObjectHandleHover();
  drawArcaneEyes();drawJournalPins();positionCharacterPanel();updatePlayCombatStats();
