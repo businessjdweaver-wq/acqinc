@@ -14,7 +14,11 @@ function roomProblem(message,kind,transient=false){
  return Object.assign(Error(message),{kind,transient});
 }
 let requestedRoomScene=sessionStorage.getItem('battlemap.viewedScene')||null;
-const sceneActionNames=new Set(['manage','list','sync','publish','move','opening','customize','gm_eye','polymorph','ping']);
+const sceneActionNames=new Set(['manage','list','sync','publish','test_open','move','opening','customize','gm_eye','polymorph','ping']);
+const testPreviewPrefix='test-preview:';
+function isTestPreview(sceneId=roomState.sceneId){
+ return typeof sceneId==='string'&&sceneId.startsWith(testPreviewPrefix);
+}
 async function roomRpc(name,args,accessToken){
  const sceneAction=sceneActionNames.has(name);
  if(sceneAction&&!Object.hasOwn(args,'requested_scene')){
@@ -666,7 +670,7 @@ function pollRoom(){
  return roomPollTask;
 }
 async function syncRoomOnce(){
- const profileAtStart=roomProfile,sceneAtStart=requestedRoomScene;
+ const profileAtStart=roomProfile;let sceneAtStart=requestedRoomScene;
  // Routine background polling should not flicker the connection badge.
  if(!roomFailureCount&&!el('roomConnection').textContent.trim())roomConnection('Connecting');
  try{
@@ -682,6 +686,21 @@ async function syncRoomOnce(){
   }
   const initiativeVersionAtRead=initiativeWriteVersion;
   let update=await roomRpc('sync',{ticket:roomProfile.token,since_event:roomCursor});
+  if(profileAtStart!==roomProfile||sceneAtStart!==requestedRoomScene)return false;
+  // Older tester tabs may still be looking at the catalog preview directly.
+  // Give them a dedicated encounter ID before accepting any scene actions.
+  if(!roomProfile.gm&&requestedRoomScene&&update.canBrowseScenes&&update.active&&
+   update.sceneId===requestedRoomScene&&update.activeSceneId!==requestedRoomScene&&
+   !isTestPreview(requestedRoomScene)){
+   const preview=await roomRpc('test_open',{ticket:roomProfile.token,requested_scene:requestedRoomScene});
+   if(profileAtStart!==roomProfile||sceneAtStart!==requestedRoomScene)return false;
+   if(preview.testPreview&&preview.sceneId){
+    requestedRoomScene=preview.sceneId;sceneAtStart=requestedRoomScene;
+    sessionStorage.setItem('battlemap.viewedScene',requestedRoomScene);
+    roomCursor=-1;roomRevision=-1;
+    update=await roomRpc('sync',{ticket:roomProfile.token,requested_scene:requestedRoomScene,since_event:-1,snapshot:true});
+   }
+  }
   const sceneChanged=(update.sceneId||null)!==(roomState.sceneId||null);
   const missingRevision=(!roomProfile.gm||roomDraftAttached)&&!hasCompleteRoomDeltas(update,roomRevision);
   if(!roomProfile.gm&&update.active&&(sceneChanged||el('roomTurnState').hidden)){
@@ -697,6 +716,9 @@ async function syncRoomOnce(){
   }
   if(profileAtStart!==roomProfile||sceneAtStart!==requestedRoomScene)return false;
   const oldRevision=roomRevision,wasPaused=roomState.paused;
+  const fogSettings=()=>areas.find(area=>area.shape==='appearance')?.appearance;
+  const previousFog=fogSettings();
+  const wasFogEnabled=previousFog?.fogOfWar===true,previousFogRevision=previousFog?.fogRevision;
   if(sceneChanged){gmVisionArmed=false;gmVisionStandee=null;pendingAreaSpell=null;seenRoomPings.clear();carry=null;ghost=null;drag=null;route=null;selected=null;closeStandeeHud();}
   roomState={...roomState,sceneId:null,...update};
   if(playerScenePaused()&&(!wasPaused||sceneChanged)){
@@ -726,15 +748,17 @@ async function syncRoomOnce(){
    if((restoreActiveRoom||sceneChanged&&roomDraftAttached)&&update.scene){
     await workspaceLoad;
     const title=update.title||'Battlemap';
-    const previousTokens=currentSceneId===update.sceneId?tokens:[];
-    const savedScene=scenes.find(scene=>scene.id===update.sceneId)||scenes.find(scene=>scene.name===title);
+    const sameScene=currentSceneId===update.sceneId;
+    const previousTokens=sameScene?tokens:[];
+    const sourceId=isTestPreview(update.sceneId)?update.sceneId.slice(testPreviewPrefix.length):update.sceneId;
+    const savedScene=scenes.find(scene=>scene.id===sourceId);
     currentSceneId=update.sceneId||savedScene?.id||null;
-    const privatePins=(roomDraftTitle===title?areas:savedScene?.map.areas||[]).filter(area=>area.shape==='journal');
+    const privatePins=(sameScene&&roomDraftAttached?areas:savedScene?.map.areas||[]).filter(area=>area.shape==='journal');
     ({pieces,tokens,areas}=structuredClone(update.scene));
     areas=[...(areas||[]),...privatePins];
     inheritStandeeCombat(tokens,savedScene?.map.tokens||[]);
     inheritStandeeCombat(tokens,previousTokens);
-    privateCombatLoad=hydrateStandeeCombat(currentSceneId,tokens,true);
+    if(!isTestPreview(update.sceneId))privateCombatLoad=hydrateStandeeCombat(currentSceneId,tokens,true);
     roomDraftTitle=update.title||'Battlemap';
     roomBaseline=structuredClone(update.scene);
     roomDraftAttached=true;
@@ -804,9 +828,13 @@ async function syncRoomOnce(){
   const draftName=roomProfile.gm&&scenes.find(scene=>scene.id===currentSceneId)?.name;
   const editingDraft=draftName&&(!roomDraftAttached||roomState.sceneId!==currentSceneId);
   el('roomTurnState').textContent=editingDraft?draftName+' · Editing inactive scene':
-   ready?(update.title||draftName||'Battlemap')+' · Live encounter':'No scene selected';
+   ready?(update.title||draftName||'Battlemap')+' · '+(isTestPreview()?'Test preview':'Live encounter'):'No scene selected';
   
-  if(roomProfile.gm&&el('sceneDialog').open&&sceneChanged)renderScenes();
+  if(roomProfile.gm){
+   el('roomActivate').hidden=isTestPreview(currentSceneId);
+   el('roomPause').hidden=isTestPreview(currentSceneId);
+   if(el('sceneDialog').open&&sceneChanged)renderScenes();
+  }
   const now=Date.now(),pings=[];
   for(const [id,expires] of seenRoomPings)if(expires<now)seenRoomPings.delete(id);
   for(const ping of update.pings||[])if(!seenRoomPings.has(ping.id)){
@@ -819,8 +847,10 @@ async function syncRoomOnce(){
   const initiativeChanged=(!roomProfile.gm||(!initiativeWritesPending&&initiativeVersionAtRead===initiativeWriteVersion))&&applyRoomInitiative(update.initiative);
   if(!roomProfile.gm)for(const token of tokens)if(ownsRoomStandee(token)&&token.roomId===roomProfile.characterKey&&roomProfile.character)token.playerDisplayName=roomProfile.character;
   updateJoinSharedEncounter();
+  const fog=fogSettings();
+  const fogChanged=wasFogEnabled!==(fog?.fogOfWar===true)||previousFogRevision!==fog?.fogRevision;
   const localMoveRepaint=!roomProfile.gm&&playerStandeePreview?.scene===currentSceneId&&
-   !sceneChanged&&wasPaused===update.paused;
+   !sceneChanged&&!fogChanged&&wasPaused===update.paused;
   if((changed||initiativeChanged||update.scene||wasPaused!==update.paused)&&!localMoveRepaint)refresh();
   roomFailureCount=0;roomRetryAt=0;roomConnection(roomPatchPending&&roomPatchFailures?'Synchronizing':'Connected',!!(roomPatchPending&&roomPatchFailures));
   return true;
@@ -998,7 +1028,7 @@ function enterRoom(profile){
  el('roomActivate').hidden=el('roomPause').hidden=el('userAccounts').hidden=!profile.gm;
  el('roomTurnState').hidden=!profile.gm;
  if(profile.gm){
-  restoreActiveRoom=!recoveredDetachedDraft;recoveredDetachedDraft=false;
+  restoreActiveRoom=isTestPreview(requestedRoomScene)||!recoveredDetachedDraft;recoveredDetachedDraft=false;
   workspaceLoad=loadWorkspace(profile.token);
   if(!restoreActiveRoom&&currentSceneId)privateCombatLoad=hydrateStandeeCombat(currentSceneId,tokens);
   el('roomLobby').hidden=true;playing=false;refresh();
@@ -1057,7 +1087,9 @@ function viewRoomScene(sceneId){
 }
 async function startRoomScene(operation,scene,{requireShared=false}={}){
  if(!roomProfile?.gm||startingRoomScene)return;
- if(operation==='open'&&currentSceneId!==scene?.id){
+ if(operation==='test'&&roomDraftAttached&&currentSceneId===testPreviewPrefix+scene?.id)return;
+ const switchingScene=currentSceneId!==scene?.id;
+ if(operation==='test'||switchingScene&&(operation==='open'||operation==='activate'&&isTestPreview(currentSceneId))){
   if(roomPatchBusy||roomPatchPending){await flushRoomPatch();if(roomPatchBusy||roomPatchPending){message('Live edits are still synchronizing. Scene switch cancelled.');return}}
   const saved=await flushOrPreserveDetachedDraft();
   if(!saved){message('Could not save the current scene; scene switch cancelled.');return}
@@ -1069,6 +1101,17 @@ async function startRoomScene(operation,scene,{requireShared=false}={}){
   await flushRoomPatch();
   if(roomPatchBusy||roomPatchPending)throw Error('Wait for pending scene edits to synchronize.');
   if(roomPollTask)await roomPollTask;
+  if(operation==='test'){
+   const preview=await roomRpc('test_open',{ticket:roomProfile.token,requested_scene:scene.id});
+   if(!preview.testPreview)throw Error('This scene is active. Open its live encounter instead.');
+   if(roomPollTask)await roomPollTask;
+   viewRoomScene(preview.sceneId);
+   const opened=await pollRoom();
+   if(!opened||!roomDraftAttached||currentSceneId!==preview.sceneId)
+    throw Error('Could not join the test preview. Try again after reconnecting.');
+   if(el('sceneDialog').open)el('sceneDialog').close();
+   return;
+  }
   let initial_scene=null;
   if(operation==='open'||operation==='activate'){
    // scene_sync can return a saved-catalog preview with active=true even
@@ -1119,10 +1162,14 @@ async function openTesterScenePicker(){
   if(profile!==roomProfile)return;
   const list=el('testerSceneList'),dialog=el('testerSceneDialog');
   list.replaceChildren();
-  for(const scene of options)list.append(catalogButton(scene.title+' · '+scene.status,async()=>{
-   viewRoomScene(scene.id);
-   dialog.close();
-   await pollRoom();
+  for(const scene of options)list.append(catalogButton(scene.title+' · '+(scene.status==='Active'?'Live scene':'Test preview'),async()=>{
+   try{
+    const preview=await roomRpc('test_open',{ticket:profile.token,requested_scene:scene.id});
+    if(profile!==roomProfile)return;
+    viewRoomScene(preview.sceneId||scene.id);
+    dialog.close();
+    await pollRoom();
+   }catch(error){message(error.message)}
   }));
   if(!options.length)list.textContent='No saved scenes are available yet.';
   if(!dialog.open)dialog.showModal();

@@ -1066,6 +1066,7 @@ function restoreCard(data){
 }
 async function saveRecovery(){
  if(!roomProfile?.gm)return false;
+ if(isTestPreview(currentSceneId))return true;
  const pendingDraft=roomDraftAttached&&roomBaseline&&sceneDelta(roomBaseline,roomSnapshot()).length>0;
  const state={pieces,tokens,areas,currentSceneId,roomDraftTitle,roomDraftAttached,pendingDraft,playing,zoom,panX,panY,angle,tilt,initiative:[...initiativeEntries],activeInitiative,view:savePanelView(),chatOrder:'chronological',chat:[...el('rollsFeed').children].map(cardData)};
  const ok=await storeValue(recoveryKey,state);
@@ -1389,11 +1390,13 @@ function renderScenes(){
   heading.className='scene-heading';actions.className='scene-actions';
   const active=roomState.activeSceneId===scene.id;
   const viewing=roomState.sceneId===scene.id&&roomDraftAttached;
-  const status=combatText('span',(active?'Active':scene.published?'Published':'Unpublished')+(viewing?' · Viewing':''));
+  const testing=roomDraftAttached&&currentSceneId===testPreviewPrefix+scene.id;
+  const status=combatText('span',(active?'Active':scene.published?'Published':'Unpublished')+(testing?' · Test preview':viewing?' · Viewing':''));
   status.className='scene-publication';
   heading.append(name,status);
   actions.append(catalogButton('Open',()=>roomProfile?.gm?startRoomScene('open',scene):loadSavedScene(scene)));
   if(roomProfile?.gm){
+   if(!active&&!testing)actions.append(catalogButton('Test Preview',()=>startRoomScene('test',scene)));
    if(!nextSessionQueue.includes(scene.id))actions.append(catalogButton('Queue for next session',()=>toggleQueuedScene(scene.id)));
    if(!active)actions.append(catalogButton(scene.published?'Unpublish':'Publish',async()=>{
     if(savingScenes)return;

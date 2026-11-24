@@ -4720,24 +4720,29 @@ el('fogOfWar').onchange=()=>{
  remember();
  let area=areas.find(item=>item.shape==='appearance');
  if(!area){area={shape:'appearance',size:1,angle:0,origin:[0,0,0],appearance:{}};areas.push(area)}
- area.appearance.fogOfWar=enabled;
+ (area.appearance??={}).fogOfWar=enabled;
  if(appearanceDraft)appearanceDraft.fogOfWar=enabled;
  refresh();
+ if(roomProfile?.gm&&isTestPreview(currentSceneId))scheduleRoomPatch(0);
  el('fogStatus').textContent=enabled?'Fog of War enabled.':'Fog of War disabled.';
 };
 el('resetFogOfWar').onclick=async()=>{
  if(roomProfile?.gm===false)return;
  if(!roomProfile?.gm||!roomState?.active||!roomDraftAttached||
     currentSceneId!==roomState.sceneId||!roomBaseline){
-  el('fogStatus').textContent='Reset not sent: open the active live scene as GM first.';
+  el('fogStatus').textContent='Open the live encounter or Test Preview as GM to reset exploration.';
   return;
  }
- const scene=areas.find(area=>area.shape==='appearance')?.appearance;
- if(!scene){el('fogStatus').textContent='Reset not sent: scene appearance is not loaded.';return}
+ let area=areas.find(item=>item.shape==='appearance');
+ if(!area){
+  area={shape:'appearance',size:1,angle:0,origin:[0,0,0],appearance:{}};
+  areas.push(area);
+ }
+ const scene=area.appearance??={};
  const old=Number(scene.fogRevision)||0;
- scene.fogRevision=Math.max(old,Date.now());
+ scene.fogRevision=Math.max(old+1,Date.now());
  if(appearanceDraft)appearanceDraft.fogRevision=scene.fogRevision;
- el('fogStatus').textContent='Publishing exploration reset…';
+ el('fogStatus').textContent='Sending exploration reset…';
  // The reset is a room scene patch; do not report success until the server
  // acknowledges it. Players derive a fresh discovery key from fogRevision.
  await flushRoomPatch();
@@ -4750,7 +4755,7 @@ el('resetFogOfWar').onclick=async()=>{
  tacticalScanSignature='';
  tacticalPreviousCenters.clear();
  tacticalMapRender();
- el('fogStatus').textContent='Exploration reset published to the live scene. Player clients will update on sync.';
+ el('fogStatus').textContent=isTestPreview()?'Exploration reset sent to the test preview.':'Exploration reset sent to the live encounter.';
 };
 el('ambientColor').oninput=()=>{
  const hex=el('ambientColor').value;
@@ -6192,7 +6197,8 @@ function startLightingFrame(){
  const signature=JSON.stringify([roomProfile?.gm,gmIgnoreLighting,playing,terrainLightSignature,movingLightSignature,observers,familiarView,spellEyes(),preview&&[basePoint(preview),preview.darkvision,preview.blindsight,preview.conditions]]);
  const fogRevision=Number(areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision)||0;
  fogMemoryDrawAudit={visible:0,remembered:0,unseen:0,storedMatches:0};
- const memoryKey=JSON.stringify([roomProfile?.name,currentSceneId,fogRevision]);
+ const fogSceneId=roomProfile?.gm===false&&isTestPreview()?roomState.sceneId:currentSceneId;
+ const memoryKey=JSON.stringify([roomProfile?.name,fogSceneId,fogRevision]);
  if(!playerFogEnabled()||preferences.fogMemory===0){saveFogMemory();fogMemoryState=null}
  else if(fogMemoryState?.key!==memoryKey){
   saveFogMemory();
@@ -6204,14 +6210,14 @@ function startLightingFrame(){
     const key=localStorage.key(i);
     if(!key?.startsWith('battlemap.fog:'))continue;
     let identity;try{identity=JSON.parse(key.slice('battlemap.fog:'.length))}catch{continue}
-    if(Array.isArray(identity)&&identity.length===4&&identity[0]===roomProfile?.name&&identity[1]===currentSceneId&&Number(identity[3]||0)===fogRevision){
+    if(Array.isArray(identity)&&identity.length===4&&identity[0]===roomProfile?.name&&identity[1]===fogSceneId&&Number(identity[3]||0)===fogRevision){
      const prior=JSON.parse(localStorage.getItem(key)||'[]');
      if(Array.isArray(prior))seen.push(...prior);
     }
    }
   }catch{}
-  fogMemoryState={key:memoryKey,profile:roomProfile?.name,sceneId:currentSceneId,revision:fogRevision,seen:new Set(Array.isArray(seen)?seen:[]),shading:new Map(),dirty:false,pending:false,loaded:false,loading:false,saving:false,syncStatus:'not-loaded',loadError:null};
-  console.info('[Fog memory] local restoration',{sceneId:currentSceneId,revision:fogRevision,stored:fogMemoryState.seen.size,profile:roomProfile?.name});
+  fogMemoryState={key:memoryKey,profile:roomProfile?.name,sceneId:fogSceneId,revision:fogRevision,seen:new Set(Array.isArray(seen)?seen:[]),shading:new Map(),dirty:false,pending:false,loaded:false,loading:false,saving:false,syncStatus:'not-loaded',loadError:null};
+  console.info('[Fog memory] local restoration',{sceneId:fogSceneId,revision:fogRevision,stored:fogMemoryState.seen.size,profile:roomProfile?.name});
   if(fogMemoryState.seen.size){fogMemoryState.dirty=true;saveFogMemory()}
   void syncFogMemory(fogMemoryState);
  }
