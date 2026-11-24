@@ -54,7 +54,7 @@ let terrainLocked=false;
 try{terrainLocked=localStorage.getItem('battlemap.terrainLocked')==='true'}catch{}
 let group=new Set(), copiedTerrain=[], pointer=null;
 let movementSurfaces=[];
-let selected=null, tool=null, drag=null, ghost=null, faces=[], angle=-.64, tilt=.69, zoom=1.65, W,H,S,C,D;
+let selected=null, tool=null, toolForm=null, drag=null, ghost=null, faces=[], angle=-.64, tilt=.69, zoom=1.65, W,H,S,C,D;
 const defaultGrid={width:40,depth:40};
 function validSceneGrid(grid){
  return grid&&[grid.width,grid.depth].every(n=>Number.isInteger(n)&&n>=10&&n<=100);
@@ -70,7 +70,7 @@ function setSceneGrid(sceneAreas,grid){
  if(!appearance){appearance={shape:'appearance',origin:[0,0,0],angle:0,size:1,appearance:{}};sceneAreas.push(appearance)}
  appearance.grid=grid;
 }
-function furnitureHeight(v){const h=v.furnHeight??35;return ({tumbleweed:.2+h*.006,hitchingPost:.45+h*.01,feedTrough:.18+h*.005,waterTower:1.2+h*.025,splitRailFence:.35+h*.008}[v.componentKind]??(.15+h*.025))}
+function furnitureHeight(v){const h=v.furnHeight??35;return ({tumbleweed:.2+h*.006,hitchingPost:.45+h*.01,feedTrough:.18+h*.005,waterTower:1.2+h*.025,splitRailFence:.35+h*.008,ropeLadder:1.5+h*.065}[v.componentKind]??(.15+h*.025))}
 function dimensions(p){if(isFurniture(p)){const v=furnitureValues(p),kind=v.componentKind,[w,d]=furnitureFootprint(v),h=furnitureHeight(v),H=kind==='rug'?.024:kind==='chair'&&v.furnDetail>25?h*1.4:Math.max(h,.15);return p.r%2?[d,w,H]:[w,d,H]}if(p.type==='standee')return [p.size,p.size,1];const [,w,d,h]=types[p.type];const [width,depth,height]=p.type==='volume'?(p.extents??[w,d,h]):[w,d,h];return p.r%2?[depth,width,height]:[width,depth,height]}
 function sceneryPiece(p){return ['scatter','backdrop','ceilingArt'].includes(p.type)}
 function formationLanding(p,terrain,sceneAreas=areas){
@@ -101,6 +101,7 @@ function flatCenterSupportsStandee(p,terrain){
  const [w,d]=dimensions(p),cx=p.x+w/2,cy=p.y+d/2;
  return terrain.some(q=>{
   if(q.curvedStair)return Math.abs(q.z+dimensions(q)[2]-p.z)<1e-7&&pointInPolygon([cx,cy],terrainFootprint(q));
+  if(q.form==='polygon'||q.form==='cylinder')return q.z+dimensions(q)[2]===p.z&&pointInPolygon([cx,cy],terrainFootprint(q));
   if(q.form||!['volume','terrace','stone','bridge','crate','pillar','fountain'].includes(q.type))return false;
   const [a,b,c]=dimensions(q);
   return q.z+c===p.z&&cx>=q.x&&cx<q.x+a&&cy>=q.y&&cy<q.y+b;
@@ -111,7 +112,7 @@ function supported(p,terrain,sceneAreas=areas){
  const [w,d]=dimensions(p),cx=p.x+w/2,cy=p.y+d/2;
  const ordinarySupport=(x,y)=>terrain.some(q=>{
   if(q.type==='standee')return q!==p&&onStandeePlatform(q,p,[x,y,p.z]);
-  if(q.form==='polygon'||q.terrainYaw&&!q.form)return q.z+dimensions(q)[2]===p.z&&terrainFootprint(q).every(([a,b],i,outline)=>{
+  if(['polygon','cylinder'].includes(q.form)||q.terrainYaw&&!q.form)return q.z+dimensions(q)[2]===p.z&&terrainFootprint(q).every(([a,b],i,outline)=>{
    const [u,v]=outline[(i+1)%outline.length];
    return (u-a)*(y-b)-(v-b)*(x-a)>=-1e-8;
   });
@@ -180,7 +181,7 @@ function valid(p,others=[...pieces,...tokens],ignore=selected,sceneAreas=areas,a
    const cx=p.x+w/2,cy=p.y+d/2;
    if(cx<q.x||cx>=q.x+a||cy<q.y||cy>=q.y+b)return true;
   }
-  if(p.terrainYaw||q.terrainYaw||p.form==='polygon'||q.form==='polygon')return p.z+h<=q.z||q.z+c<=p.z||!footprintsOverlap(terrainFootprint(p),terrainFootprint(q));
+  if(p.terrainYaw||q.terrainYaw||['polygon','cylinder'].includes(p.form)||['polygon','cylinder'].includes(q.form))return p.z+h<=q.z||q.z+c<=p.z||!footprintsOverlap(terrainFootprint(p),terrainFootprint(q));
   if(p.type==='standee'&&(p.flying||p.size>=3||carry?.light&&p.roomId===carry.piece.roomId)&&
    movementTerrainBlock(q)&&!q.stairTread&&c<=1&&q.z+c<=p.z+1)return true;
   if(p.type==='standee'&&!q.form&&!q.stairTread&&
@@ -1609,6 +1610,17 @@ function drawFurniture(p,preview,fill,kind,settings){
   const postW=.13,postD=.13,postH=h;for(const x of [-w*.46,w*.46])box(x-postW/2,-postD/2,0,postW,postD,postH,c);
   const railCount=v.furnDetail>66?3:2;for(let i=0;i<railCount;i++){const z=h*(.24+i*.48/(railCount-1));box(-w*.48,-.045,z,w*.96,.09,.09,i%2?a:c)}
  }
+ else if(kind==='ropeLadder'){
+  const rail=.045,inner=Math.max(.12,d*.35),rungCount=Math.max(5,Math.round(h*2.5));
+  for(const x of [-w*.38,w*.38]){
+   box(x-rail/2,-rail/2,0,rail,rail,h,c);
+   if(v.furnDetail>48)for(let knot=0;knot<4;knot++)box(x-rail*.7,-rail*.7,h*(.12+knot*.24),rail*1.4,rail*1.4,.035,a);
+  }
+  for(let i=0;i<rungCount;i++){
+   const z=.12+(h-.24)*i/Math.max(1,rungCount-1),sag=Math.sin(Math.PI*i/Math.max(1,rungCount-1))*.035;
+   box(-w*.39,-inner/2+sag,z,w*.78,rail,rail,v.furnDetail>70&&i%2?a:c);
+  }
+ }
  else {slab(0,h,c);if(!topDown){box(-w/2,-d/2-.01,h*.2,w,.035,.06,a);box(-w/2,-d/2-.01,h*.75,w,.035,.06,a);if(kind==='cabinet')box(-.025,-d/2-.04,h*.5,.05,.05,.12,a)}}
 }
 function drawBiomeColumn(p,preview,fill,formation,settings,landingTerrain){
@@ -1651,7 +1663,7 @@ function drawBiomeColumn(p,preview,fill,formation,settings,landingTerrain){
  }else if(formation==='tree'){
   const scale=(id,max)=>Math.max(.25,Math.min(max,(Number(settings?.[id])||100)/100));
   const variation=dial('sceneTreeVariation');
-  const height=formationSize(dial('treeHeight'),.4,h*.82,9,.75)*scale('sceneTreeHeightScale',5)*(1+(rand()-.5)*variation*.8);
+  const height=formationSize(dial('treeHeight'),.4,h*1.35,16,.75)*scale('sceneTreeHeightScale',8)*(1+(rand()-.5)*variation*.8);
   const radius=formationSize(dial('treeThickness'),.055,.125,2,.45)*scale('sceneTreeWidthScale',16)*widthScale*(1+(rand()-.5)*variation*.8);
   const bulb=dial('treeBulb'),crannies=dial('treeCrannies');
   const finish=settings?.treeFinish||'clearcut',log=settings?.treeLog;
@@ -1678,6 +1690,14 @@ function drawBiomeColumn(p,preview,fill,formation,settings,landingTerrain){
   const trunk=bulb||crannies||baseRadius!==radius?[bottom,barkRing(p.z+height*.28,radius*(.95+bulb*.55)),barkRing(p.z+height*.62,radius*(.88+bulb*.22)),top]:[bottom,top];
   for(let l=1;l<trunk.length;l++)for(let i=0;i<n;i++){
    const j=(i+1)%n;emit([trunk[l-1][i],trunk[l-1][j],trunk[l][j],trunk[l][i]],bark[i%bark.length]);
+   const grain=dial('treeBark');
+   if(grain>.08){
+    const a=trunk[l-1][i],b=trunk[l-1][j],c=trunk[l][j],d=trunk[l][i];
+    const start=.25+rand()*.25,width=.025+grain*.055;
+    const at=(u,v)=>{const low=[a[0]+(b[0]-a[0])*u,a[1]+(b[1]-a[1])*u,a[2]+(b[2]-a[2])*u],high=[d[0]+(c[0]-d[0])*u,d[1]+(c[1]-d[1])*u,d[2]+(c[2]-d[2])*u];return low.map((value,k)=>value+(high[k]-value)*v)};
+    emit([at(start,.04),at(start+width,.04),at(start+width,.96),at(start,.96)],shadeTreeColor(bark[i%bark.length],.53));
+    if(grain>.55){const light=start+width*1.3;emit([at(light,.10),at(light+width*.22,.10),at(light+width*.22,.88),at(light,.88)],shadeTreeColor(bark[(i+1)%bark.length],1.35))}
+   }
   }
   if(finish==='clearcut'||log)emit(top,'#a2875b');
   else if(finish==='dryrot')for(let i=0;i<n;i++)emit([top[i],top[(i+1)%n],[cx,cy,p.z+height-Math.min(height*.3,radius+.1)]],i%2?'#967b51':'#705635');
@@ -1818,7 +1838,7 @@ function turnTerrainPoints(points,p,degrees=p?.terrainYaw){
  return points.map(([x,y,...rest])=>[cx+(x-cx)*c-(y-cy)*sin,cy+(x-cx)*sin+(y-cy)*c,...rest]);
 }
 function terrainFootprint(p){
- if(p.form==='polygon')return turnTerrainPoints(volumeRoof(p),p);
+ if(['polygon','cylinder'].includes(p.form))return turnTerrainPoints(volumeRoof(p),p);
  const [w,d]=dimensions(p);
  return turnTerrainPoints([[p.x,p.y],[p.x+w,p.y],[p.x+w,p.y+d],[p.x,p.y+d]],p);
 }
@@ -1851,6 +1871,10 @@ function hiddenByCutaway(p){
 }
 function volumeRoof(p){
  const [w,d,h]=dimensions(p);
+ if(p.form==='cylinder')return Array.from({length:24},(_,i)=>{
+  const a=i*2*Math.PI/24;
+  return [p.x+w*(.5+Math.cos(a)*.5),p.y+d*(.5+Math.sin(a)*.5),p.z+h];
+ });
  const local=p.form==='pyramid'?unitCorners.map(()=>[.5,.5,1]):
   p.form==='wedge'?unitCorners.map(([x,y])=>[x,y,x]):
   (p.form==='polygon'?p.vertices:p.corners||unitCorners).map(([x,y])=>[x,y,1]);
@@ -1861,20 +1885,20 @@ function volumeRoof(p){
 }
 function drawShapedVolume(p,preview,fill,side){
  const [w,d,h]=dimensions(p);
- let bottom=volumeRoof({...p,form:undefined,corners:undefined}).map(([x,y])=>[x,y,p.z]);
+ let bottom=p.form==='cylinder'?Array.from({length:24},(_,i)=>[p.x+w*(.5+Math.cos(i*2*Math.PI/24)*.5),p.y+d*(.5+Math.sin(i*2*Math.PI/24)*.5),p.z]):volumeRoof({...p,form:undefined,corners:undefined}).map(([x,y])=>[x,y,p.z]);
  const top=topDown&&p.form==='pyramid'?bottom.map(([x,y])=>[x,y,p.z+h]):volumeRoof(p);
- if(p.form==='polygon')bottom=top.map(([x,y])=>[x,y,p.z]);
+ if(['polygon','cylinder'].includes(p.form))bottom=top.map(([x,y])=>[x,y,p.z]);
  const emit=(poly,color,edge,z=null)=>{
   const projected=turnTerrainPoints(poly,p).map(v=>point(...v));
   const winding=projected.reduce((sum,[x,y],i)=>{const [u,v]=projected[(i+1)%poly.length];return sum+x*v-y*u},0);
   if(winding<=1e-5)return;
   face(poly,color,p,z,preview);Object.assign(faces.at(-1),{edge,shaped:true});
  };
- emit(top,fill,4,topDown||p.form==='corners'||p.form==='polygon'?p.z+h:null);
+ emit(top,fill,4,topDown||p.form==='corners'||['polygon','cylinder'].includes(p.form)?p.z+h:null);
  if(topDown)return;
  for(let i=0;i<top.length;i++){
   const j=(i+1)%top.length;
-  emit([bottom[i],bottom[j],top[j],top[i]],side,([2,1,3,0][(i+p.r)%4]));
+  emit([bottom[i],bottom[j],top[j],top[i]],p.form==='cylinder'?shadeTreeColor(side,.78+.18*Math.cos((i+.5)*2*Math.PI/top.length)):side,p.form==='cylinder'?i%4:([2,1,3,0][(i+p.r)%4]));
  }
 }
 function drawTerrainVolume(p,preview,fill,side){
@@ -2341,7 +2365,7 @@ function visiblePiece(p){
  if(theme==='forest'){
   const scene=areas.find(a=>a.shape==='appearance')?.appearance?.terrainShape;
   const settings={...terrainShapeDefaults,...scene,...treePreview,...(formationDraft?.piece===p?formationDraft.values:p.terrainShape)};
-  const height=formationSize(settings.treeHeight/100,.4,h*.82,9,.75)*Math.max(.25,Math.min(5,settings.sceneTreeHeightScale/100));
+  const height=formationSize(settings.treeHeight/100,.4,h*1.35,16,.75)*Math.max(.25,Math.min(8,settings.sceneTreeHeightScale/100));
   const radius=formationSize(settings.treeThickness/100,.055,.125,2,.45)*Math.max(.25,Math.min(16,settings.sceneTreeWidthScale/100))*(settings.formationScale??1);
   if(settings.treeLog)projectedCorners.push(point(p.x+.25+Math.cos(p.r*Math.PI/2)*height,p.y+.25+Math.sin(p.r*Math.PI/2)*height,p.z+radius));
   else projectedCorners.push(point(p.x+.25,p.y+.25,p.z+height*1.45));
@@ -4652,7 +4676,7 @@ function drawSceneBackdrop(config){
  ctx.drawImage(skyLayer,0,0);
 }
 const columnDefaults={columnHeight:30,columnDiameter:25,columnTaper:0,columnOrnament:0,columnWear:0,columnOxidation:0,columnBase:33,columnTop:33};
-const componentNames={tree:'Tree',light:'Light',boulder:'Boulder',cave:'Stalagmite',column:'Column',rug:'Rug',chair:'Chair / stool / bench',barrel:'Barrel',furnitureCrate:'Crate',rack:'Weapon rack',cabinet:'Armoire / cabinet',bed:'Bed',table:'Table / desk',tumbleweed:'Tumbleweed',hitchingPost:'Hitching post',feedTrough:'Feed trough',waterTower:'Water tower',splitRailFence:'Split-rail fence'};
+const componentNames={tree:'Tree',ropeLadder:'Rope ladder',light:'Light',boulder:'Boulder',cave:'Stalagmite',column:'Column',rug:'Rug',chair:'Chair / stool / bench',barrel:'Barrel',furnitureCrate:'Crate',rack:'Weapon rack',cabinet:'Armoire / cabinet',bed:'Bed',table:'Table / desk',tumbleweed:'Tumbleweed',hitchingPost:'Hitching post',feedTrough:'Feed trough',waterTower:'Water tower',splitRailFence:'Split-rail fence'};
 const componentKey='battlemap.componentTemplates.v1';
 let componentTemplates=[],componentPlacement=null;
 try{const saved=JSON.parse(localStorage.getItem(componentKey));if(Array.isArray(saved))componentTemplates=saved}catch{}
@@ -4697,10 +4721,11 @@ el('placeComponent').onclick=()=>{
  message('Click a surface to place '+(item?.name||componentNames[kind])+'. Arrow keys rotate 90°. Esc exits the tool.');refresh();
 };
 updateComponentOptions();
-const furnitureKinds=["rug","chair","barrel","furnitureCrate","rack","cabinet","bed","table","tumbleweed","hitchingPost","feedTrough","waterTower","splitRailFence"];
+const furnitureKinds=["rug","chair","barrel","furnitureCrate","rack","cabinet","bed","table","tumbleweed","hitchingPost","feedTrough","waterTower","splitRailFence","ropeLadder"];
 const isFurniture=p=>p?.type==='column'&&furnitureKinds.includes(p.terrainShape?.componentKind);
 const furnitureValues=p=>({...terrainShapeDefaults,...(formationDraft?.piece===p?formationDraft.values:p.terrainShape)});
 function furnitureFootprint(values){
+ if(values.componentKind==='ropeLadder')return [.25+values.furnWidth*.035,.2+values.furnDepth*.006];
  if(values.componentKind==='table'&&values.tableShape==='round'){
   const diameter=(values.tableDiameter??7.5)/5;
   return [diameter,diameter];
@@ -4708,11 +4733,11 @@ function furnitureFootprint(values){
  const width=.25+values.furnWidth*.035;
  return [width,['barrel','tumbleweed','waterTower'].includes(values.componentKind)?width:.25+values.furnDepth*.035];
 }
-const terrainShapeDefaults={...columnDefaults,furnWidth:35,furnDepth:35,furnHeight:35,furnDetail:50,"treeThickness":45,"treeBaseDiameter":50,"treeRoots":0,"treeRootTangle":35,"treeRootSpread":30,"treeFoliageWidth":50,"treeFoliageDrop":0,"treeRootThickness":40,"treeHeight":75,"treeBranches":0,"treeBranchAngle":50,"treeBranchThickness":45,"treeBulb":0,"treeCrannies":0,"sceneTreeHeightScale":100,"sceneTreeWidthScale":100,"sceneTreeVariation":0,"rockHeight":50,"rockDiameter":55,"rockBulb":55,"rockCrannies":55,"caveHeight":50,"caveTaper":50,"caveDiameter":45,"caveBulb":40,"caveCrannies":45};
+const terrainShapeDefaults={...columnDefaults,furnWidth:35,furnDepth:35,furnHeight:35,furnDetail:50,"treeThickness":45,"treeBaseDiameter":50,"treeRoots":45,"treeRootTangle":35,"treeRootSpread":45,"treeFoliageWidth":50,"treeFoliageDrop":0,"treeRootThickness":50,"treeHeight":88,"treeBark":65,"treeBranches":0,"treeBranchAngle":50,"treeBranchThickness":45,"treeBulb":0,"treeCrannies":0,"sceneTreeHeightScale":100,"sceneTreeWidthScale":100,"sceneTreeVariation":0,"rockHeight":50,"rockDiameter":55,"rockBulb":55,"rockCrannies":55,"caveHeight":50,"caveTaper":50,"caveDiameter":45,"caveBulb":40,"caveCrannies":45};
 const furnitureFields=[['furnWidth','Width'],['furnDepth','Depth'],['furnHeight','Height'],['furnDetail','Detail / variation']];
 const formationFields={...Object.fromEntries(furnitureKinds.map(k=>[k,furnitureFields])),
  column:[['columnHeight','Height'],['columnDiameter','Diameter'],['columnTaper','Taper'],['columnOrnament','Ornamentation'],['columnWear','Degradation'],['columnOxidation','Oxidation'],['columnBase','Base size'],['columnTop','Top size']],
- tree:[['treeThickness','Trunk thickness'],['treeHeight','Trunk height'],['treeBranches','Branch quantity'],['treeBranchAngle','Branch angle'],['treeBranchThickness','Branch thickness'],['treeBulb','Trunk bulbousness'],['treeCrannies','Trunk crannies'],["treeBaseDiameter","Base diameter"],["treeRoots","Exposed root count"],["treeRootTangle","Root tangledness"],["treeRootSpread","Root spread"],["treeFoliageWidth","Foliage width"],["treeFoliageDrop","Foliage drop"],["treeRootThickness","Root thickness"]],
+ tree:[['treeThickness','Trunk thickness'],['treeHeight','Trunk height'],['treeBark','Bark grooves'],['treeBranches','Branch quantity'],['treeBranchAngle','Branch angle'],['treeBranchThickness','Branch thickness'],['treeBulb','Trunk bulbousness'],['treeCrannies','Trunk crannies'],["treeBaseDiameter","Base diameter"],["treeRoots","Exposed root count"],["treeRootTangle","Root tangledness"],["treeRootSpread","Root spread"],["treeFoliageWidth","Foliage width"],["treeFoliageDrop","Foliage drop"],["treeRootThickness","Root thickness"]],
  boulder:[['rockDiameter','Diameter variation'],['rockHeight','Height'],['rockBulb','Bulbousness'],['rockCrannies','Crannies']],
  cave:[['caveHeight','Height'],['caveTaper','Taper'],['caveDiameter','Diameter variation'],['caveBulb','Bulbousness'],['caveCrannies','Crannies']]
 };
@@ -9269,7 +9294,7 @@ function refresh(action){
  el('redo').disabled=!redoHistory.length;
  el('terrainLock').checked=terrainLocked;
  el('terrainLock').closest('label').hidden=playing||roomProfile?.gm===false;
- for(const b of el('palette').children){b.disabled=terrainLocked;b.classList.toggle('active',b.dataset.type===tool)}
+ for(const b of el('palette').children){b.disabled=terrainLocked;b.classList.toggle('active',b.dataset.type===tool&&(b.dataset.form?b.dataset.form===toolForm:!toolForm))}
  for(const id of ['chamfer','fillet','square','stairsBrush','wash','eraseWash','opaquePaint','eraseOpaquePaint','paintTexture','eraseTexture','paintPattern','erasePattern','hideBasePattern','showBasePattern'])el(id).disabled=terrainLocked;
  refreshTexturePalette();
  draw(action);
@@ -9291,9 +9316,13 @@ for(const [type,[name,w,d,h,cap]] of Object.entries(types)){
  if(sceneryPiece({type}))continue;
  const b=document.createElement('button');b.dataset.type=type;
  b.innerHTML='<i class="swatch" style="background:'+cap+'"></i>'+name+'<span>'+w+' × '+d+' squares · '+(h?h*5+' ft high':'flush with surface')+'</span>';
- b.onclick=()=>{componentPlacement=null;measuring=false;route=null;panMode=false;el('pan').classList.toggle('active',false);brush=null;tokenTool=null;tool=tool===type?null:type;selected=null;group.clear();ghost=null;message(tool?'Click a surface to place '+name.toLowerCase()+'. Esc cancels.':'Drag terrain to move it. Drag open ground to pan. Middle-drag to rotate.');refresh()};
+ b.onclick=()=>{componentPlacement=null;measuring=false;route=null;panMode=false;el('pan').classList.toggle('active',false);brush=null;tokenTool=null;tool=tool===type?null:type;toolForm=null;selected=null;group.clear();ghost=null;message(tool?'Click a surface to place '+name.toLowerCase()+'. Esc cancels.':'Drag terrain to move it. Drag open ground to pan. Middle-drag to rotate.');refresh()};
  el('palette').append(b);
 }
+
+const cylinderButton=document.createElement('button');cylinderButton.dataset.type='volume';cylinderButton.dataset.form='cylinder';cylinderButton.innerHTML='<i class="swatch" style="background:#827562;border-radius:50%"></i>Cylindrical platform<span>3 × 3 squares · 2½ ft high</span>';
+cylinderButton.onclick=()=>{componentPlacement=null;measuring=false;route=null;panMode=false;el('pan').classList.remove('active');brush=null;tokenTool=null;tool=tool==='volume'&&toolForm==='cylinder'?null:'volume';toolForm=tool?'cylinder':null;selected=null;group.clear();ghost=null;message(tool?'Click a surface to place a cylindrical platform. Esc cancels.':'Drag terrain to move it. Drag open ground to pan. Middle-drag to rotate.');refresh()};el('palette').append(cylinderButton);
+
 function placeToken(token){
  if(playing)return;
  measuring=false;route=null;
@@ -9565,7 +9594,8 @@ el('sceneryFile').onchange=async e=>{
 let sceneryBrush=null;
 function newPiece(){
  if(tool==='column'&&componentPlacement&&componentPlacement.kind!=='light')
-  return {type:'column',r:componentPlacement.rotation??0,z:0,terrainShape:{...componentPlacement.settings,componentKind:componentPlacement.kind}};
+  return {type:'column',r:componentPlacement.rotation??0,z:0,terrainShape:{...(componentPlacement.kind==='ropeLadder'?{furnMove:false}:{}),...componentPlacement.settings,componentKind:componentPlacement.kind}};
+ if(tool==='volume'&&toolForm==='cylinder')return {type:'volume',r:0,z:0,form:'cylinder',extents:[3,3,.5],groundSurface:true};
  if(tool&&sceneryPiece({type:tool}))return {type:tool,r:0,z:tool==='ceilingArt'?3:0,art:sceneryBrush};
  const size=standeeSizes.find(size=>size.id===el('footprint').value)||standeeSizes[2];
  return tokenTool?{type:'standee',...tokenTool,size:size.footprint,sizeCategory:size.id,z:0}:{type:tool,r:0,z:0};
@@ -12904,7 +12934,7 @@ function exitTool(){
  playStandeeGroup.clear();
  areaMode=false;areaOrigin=null;areaPreview=null;
  linkingInitiative=null;
- measuring=false;route=null;carry=null;brush=null;tool=null;tokenTool=null;ghost=null;drag=null;panMode=false;
+ measuring=false;route=null;carry=null;brush=null;tool=null;toolForm=null;tokenTool=null;ghost=null;drag=null;panMode=false;
  el('pan').classList.toggle('active',false);
  message('Drag terrain to move it. Ctrl-drag to orbit. Middle-drag to rotate.');refresh();
 }
@@ -13125,9 +13155,9 @@ el('file').onchange=async e=>{
    if(wash!==undefined&&(!Array.isArray(wash)||wash.length!==5||wash.some(c=>c!==null&&(typeof c!=='string'||!/^#[0-9a-f]{6}$/i.test(c)))))throw Error('Invalid wash.');
    if(cuts!==undefined&&(!Array.isArray(cuts)||cuts.length!==4||cuts.some(c=>c!==null&&(!c||!['chamfer','fillet'].includes(c.kind)||![.125,.25,.375].includes(c.depth)))))throw Error('Invalid cuts.');
    if(sceneryPiece(p)&&!uploadedStandeeImage(p.art))throw Error('Invalid scenery artwork.');
-   if(p.form!==undefined&&(!['wedge','pyramid','corners','polygon'].includes(p.form)||type!=='volume'))throw Error('Invalid form.');
+   if(p.form!==undefined&&(!['wedge','pyramid','corners','polygon','cylinder'].includes(p.form)||type!=='volume'))throw Error('Invalid form.');
    if(p.corners!==undefined&&(!Array.isArray(p.corners)||p.corners.length!==4||p.corners.some(pair=>!Array.isArray(pair)||pair.length!==2||pair.some(v=>!Number.isFinite(v)||v<0||v>1))))throw Error('Invalid corners.');
-   incoming.push({type,x,y,z,r,...(Number.isFinite(p.terrainYaw)&&p.terrainYaw>=0&&p.terrainYaw<360?{terrainYaw:p.terrainYaw}:{}),...(p.floorAdjusted===true?{floorAdjusted:true}:{}),...(p.wallOverlap===true&&wallVolume(p)?{wallOverlap:true}:{}),...(type==='volume'&&p.openingCut===true?{openingCut:true}:{}),...(type==='volume'&&p.groundSurface===true?{groundSurface:true}:{}),stairTread:type==='volume'&&p.stairTread===true,curvedStair:p.curvedStair===true,stairGroup:typeof p.stairGroup==='string'?p.stairGroup:undefined,terrainShape:type==='column'&&p.terrainShape?cleanFormationSettings(p.terrainShape):undefined,form:p.form,vertices:p.form==='polygon'?p.vertices:undefined,corners:p.corners,extents:type==='volume'?p.extents:undefined,cut:cut&&{kind:cut.kind,depth:cut.depth},cuts,wash,opaquePaint,surfaceTextures,patterns:Array.isArray(p.patterns)?p.patterns.slice(0,5).map(value=>Array.isArray(value)?value.filter(layer=>layer&&typeof layer.kind==='string'&&Number.isFinite(layer.seed)).slice(0,12):typeof value==='string'?value:null):undefined,plainFaces:Array.isArray(p.plainFaces)?p.plainFaces.slice(0,5).map(Boolean):undefined,art:sceneryPiece(p)?p.art:undefined});
+   incoming.push({type,x,y,z,r,...(Number.isFinite(p.terrainYaw)&&p.terrainYaw>=0&&p.terrainYaw<360?{terrainYaw:p.terrainYaw}:{}),...(p.floorAdjusted===true?{floorAdjusted:true}:{}),...(p.wallOverlap===true&&wallVolume(p)?{wallOverlap:true}:{}),...(type==='volume'&&p.openingCut===true?{openingCut:true}:{}),...(type==='volume'&&(p.groundSurface===true||p.floorAdjusted===true&&p.z>0)?{groundSurface:true}:{}),stairTread:type==='volume'&&p.stairTread===true,curvedStair:p.curvedStair===true,stairGroup:typeof p.stairGroup==='string'?p.stairGroup:undefined,terrainShape:type==='column'&&p.terrainShape?cleanFormationSettings(p.terrainShape):undefined,form:p.form,vertices:p.form==='polygon'?p.vertices:undefined,corners:p.corners,extents:type==='volume'?p.extents:undefined,cut:cut&&{kind:cut.kind,depth:cut.depth},cuts,wash,opaquePaint,surfaceTextures,patterns:Array.isArray(p.patterns)?p.patterns.slice(0,5).map(value=>Array.isArray(value)?value.filter(layer=>layer&&typeof layer.kind==='string'&&Number.isFinite(layer.seed)).slice(0,12):typeof value==='string'?value:null):undefined,plainFaces:Array.isArray(p.plainFaces)?p.plainFaces.slice(0,5).map(Boolean):undefined,art:sceneryPiece(p)?p.art:undefined});
   }
   context='Standees';
   const importedTokens=[];
