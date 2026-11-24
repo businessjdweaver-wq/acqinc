@@ -2377,7 +2377,7 @@ function scenePattern(kind,seed){
  const g=tile.getContext('2d');
  let state=seed>>>0;
  const rand=()=>{state=(Math.imul(state,1664525)+1013904223)>>>0;return state/4294967296};
- const colors={vines:'#426144',grass:'#637044',soot:'#252329',blood:'#842d28',gravel:'#655949',seeded:'#73734e',dirt:'#6c5540',wagonRuts:'#594632',planks:'#493626',boardwalk:'#30251b',splitRail:'#3e2b1d'};
+ const colors={vines:'#426144',grass:'#637044',soot:'#252329',blood:'#842d28',gravel:'#655949',seeded:'#73734e',dirt:'#6c5540',wagonRuts:'#594632',planks:'#493626',boardwalk:'#30251b',splitRail:'#3e2b1d',mesa:'#67513d'};
  g.strokeStyle=colors[kind]||'#5d4933';g.fillStyle=g.strokeStyle;
  if(['wagonRuts','planks','boardwalk','splitRail'].includes(kind)){
   g.lineWidth=2;g.strokeStyle=kind==='wagonRuts'?'#40332988':'#24190e88';
@@ -2389,6 +2389,20 @@ function scenePattern(kind,seed){
    for(let i=0;i<=128;i+=step){if(kind==='splitRail'){g.lineWidth=4;g.beginPath();g.moveTo(0,i);g.lineTo(128,i+5);g.stroke();g.lineWidth=2}else{g.globalAlpha=.55;g.beginPath();if(horizontal){g.moveTo(0,i);g.lineTo(128,i)}else{g.moveTo(i,0);g.lineTo(i,128)}g.stroke();g.globalAlpha=1}}
    if(kind==='planks')for(let i=0;i<10;i++){const x=rand()*128,y=rand()*128;g.globalAlpha=.35;g.fillStyle='#24190e';g.beginPath();g.ellipse(x,y,2+rand()*4,1+rand()*2,rand(),0,Math.PI*2);g.fill()}
    if(kind==='boardwalk')for(let y=9;y<128;y+=16)for(let x=8;x<128;x+=20){g.fillStyle='#21170f99';g.fillRect(x,y,2,2);g.fillRect(x+10,y,2,2)}
+  }
+ }else if(kind==='mesa'){
+  // Broken horizontal strata and broad fractured plates, like an eroded
+  // sandstone escarpment viewed from the path edge.
+  const strata=Math.max(0,Math.min(1,(seed-1000)/100));
+  for(let y=-18;y<146;y+=(28-strata*15)*(.55+rand()*.45)){
+   const offset=(rand()-.5)*14,split=rand()>.52?rand()*58+25:0;
+   g.globalAlpha=.32+rand()*.28;g.lineWidth=1+rand()*2;g.strokeStyle=rand()>.48?'#241b15':'#c4a27c';
+   g.beginPath();g.moveTo(-8+offset,y+rand()*3);g.lineTo(split,y+rand()*2);g.lineTo(split+rand()*22,y-2+rand()*5);g.lineTo(136,y+rand()*5);g.stroke();
+   if(rand()>.45){g.globalAlpha=.16;g.fillStyle='#201914';g.fillRect(rand()*104,y+3,10+rand()*24,1+rand()*2)}
+  }
+  for(let i=0;i<30+Math.round(strata*110);i++){
+   const x=rand()*128,y=rand()*128,n=rand();g.globalAlpha=.08+n*.2;
+   g.fillStyle=i%3?'#2b2119':'#d6b58a';g.fillRect(x,y,1+n*3,1+n*2);
   }
  }else if(['roughRock','dirt','furrows','barn','ancient','moss'].includes(kind)){
   if(kind==='roughRock'||kind==='ancient'){
@@ -2899,7 +2913,8 @@ floorPreview.onpointermove=event=>{
 floorPreview.onlostpointercapture=()=>{floorCropDrag=null;floorRectDrag=null;updateFloorSceneDraft()};
 
 // Paths are stored in scene coordinates (one unit is five feet).
-const pathWallDefaults={height:2,thickness:.15,z:0,color:'#a68b72',texture:'plain',opacity:1,light:0,sight:false,blocks:true};
+const pathWallDefaults={height:2,thickness:.15,z:0,color:'#a68b72',texture:'plain',opacity:1,light:0,sight:false,blocks:true,
+ hideBack:false,mesaVariation:32,mesaJaggedness:48,mesaStrata:58};
 const pathWallCache=new WeakMap(),noWallPaths=[];
 const wallDistance=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
 const wallLerp=(a,b,t)=>a.map((value,i)=>value+(b[i]-value)*t);
@@ -2968,6 +2983,19 @@ function makeWallPrism(poly,z,top,wall,opening=null){
   poly.every(([x,y],i)=>{const next=poly[(i+1)%4];return x===next[0]||y===next[1]});
  return {poly,z,top,axes,spans,wall,opening,axisAlignedBox,type:'volume',name:opening?.kind||'Wall'};
 }
+function mesaHeightAt(wall,distance){
+ const spacing=1.2-(wall.mesaJaggedness??pathWallDefaults.mesaJaggedness)/100*.75;
+ const amount=(wall.mesaVariation??pathWallDefaults.mesaVariation)/100*.32;
+ const seed=String(wall.id||'mesa').split('').reduce((hash,char)=>Math.imul(hash^char.charCodeAt(0),16777619)>>>0,2166136261);
+ const noise=index=>{
+  let value=(seed^Math.imul(index+1,0x9e3779b1))>>>0;
+  value=Math.imul(value^(value>>>16),0x7feb352d);value=Math.imul(value^(value>>>15),0x846ca68b);value^=value>>>16;
+  return ((value>>>0)/4294967295)*2-1;
+ };
+ const point=distance/spacing,index=Math.floor(point),fraction=point-index;
+ const profile=noise(index)+(noise(index+1)-noise(index))*fraction;
+ return Math.min(12,wall.z+Math.max(wall.height*.48,wall.height*(1+profile*amount)));
+}
 function compileWallPath(wall){
  const cached=pathWallCache.get(wall);
  if(cached)return cached;
@@ -2985,16 +3013,31 @@ function compileWallPath(wall){
   const offset=[(a.p[1]-b.p[1])*half/length,(b.p[0]-a.p[0])*half/length];
   return {a:a.p,b:b.p,offset,distance:a.s,opening:inside((a.s+b.s)/2)?.opening};
  }).filter(section=>section.offset.every(Number.isFinite));
+ const renderSections=sections.flatMap(section=>{
+  if(wall.texture!=='mesa'||section.opening)return [section];
+  const step=1.2-(wall.mesaJaggedness??pathWallDefaults.mesaJaggedness)/100*.75;
+  const stops=[section.distance];
+  for(let mark=(Math.floor(section.distance/step)+1)*step;mark<section.distance+wallDistance(section.a,section.b)-1e-7;mark+=step)stops.push(mark);
+  stops.push(section.distance+wallDistance(section.a,section.b));
+  return stops.slice(1).map((distance,i)=>{
+   const start=stops[i],t0=(start-section.distance)/wallDistance(section.a,section.b),t1=(distance-section.distance)/wallDistance(section.a,section.b);
+   return {...section,a:wallLerp(section.a,section.b,t0),b:wallLerp(section.a,section.b,t1),distance:start,mesaProfile:true};
+  });
+ });
  const edge=(p,n,sign)=>[p[0]+sign*n[0],p[1]+sign*n[1]];
- const add=(poly,lo,hi,opening,ends,capPattern)=>{
-  if(hi-lo>1e-6)solids.push({...makeWallPrism(poly,wall.z+lo,wall.z+hi,wall,opening),ends,capPattern});
+ const add=(poly,lo,hi,opening,ends,capPattern,topProfile)=>{
+  if(hi-lo>1e-6){
+   const solid=makeWallPrism(poly,wall.z+lo,wall.z+hi,wall,opening);
+   if(topProfile){solid.topProfile=topProfile;solid.top=Math.max(...topProfile)}
+   solids.push({...solid,ends,capPattern});
+  }
  };
  const corner=p=>wall.nodes.some(node=>wallDistance(node.p,p)<1e-6&&(!node.in||!node.out));
- sections.forEach(({a,b,offset,distance,opening},i)=>{
+ renderSections.forEach(({a,b,offset,distance,opening,mesaProfile},i)=>{
   const length=wallDistance(a,b);
   const capPattern={origin:a,along:b.map((n,i)=>(n-a[i])/length),distance};
   const poly=[edge(a,offset,1),edge(b,offset,1),edge(b,offset,-1),edge(a,offset,-1)];
-  const ends=[!wall.closed&&i===0||corner(a),!wall.closed&&i===sections.length-1||corner(b)];
+  const ends=[!wall.closed&&i===0||corner(a),!wall.closed&&i===renderSections.length-1||corner(b)];
   if(opening){
    add(poly,0,opening.sill,null,ends,capPattern);
    add(poly,opening.sill+opening.height,wall.height,null,ends,capPattern);
@@ -3009,8 +3052,11 @@ function compileWallPath(wall){
      add(slice,inset,opening.sill+opening.height,null,null,capPattern);
     }
    }
+  }else if(mesaProfile){
+   const profile=[mesaHeightAt(wall,distance),mesaHeightAt(wall,distance+length),mesaHeightAt(wall,distance+length),mesaHeightAt(wall,distance)];
+   add(poly,0,Math.max(...profile)-wall.z,null,ends,capPattern,profile);
   }else add(poly,0,wall.height,null,ends,capPattern);
-  const next=sections[i+1]??(wall.closed?sections[0]:null);
+  const next=renderSections[i+1]??(wall.closed?renderSections[0]:null);
   if(!next||wallDistance(b,next.a)>1e-6)return;
   const turn=offset[0]*next.offset[1]-offset[1]*next.offset[0];
   if(Math.abs(turn)>1e-9){
@@ -3233,7 +3279,7 @@ function renderPathWall(solid){
  if(Math.abs(z)<=.15&&earlySectorInvisible(poly))return;
  const surface=wall;
  if(!surface.opacity)return;
- const bottom=poly.map(([x,y])=>[x,y,z]),upper=poly.map(([x,y])=>[x,y,top]);
+ const bottom=poly.map(([x,y])=>[x,y,z]),upper=poly.map(([x,y],i)=>[x,y,solid.topProfile?.[i]??top]);
  // Synthetic face owners stay out of legacy terrain editing and serialization.
  const owner={type:'volume',x:poly[0][0],y:poly[0][1],z,extents:[1,1,top-z],r:0};
  const push=(points,height,edges)=>{
@@ -3247,10 +3293,13 @@ function renderPathWall(solid){
  },0);
  const cap=upper;
  const ends=solid.ends;
- const rim=ends&&Math.abs(top-wall.z-wall.height)<1e-6;
+ const rim=!!solid.topProfile||ends&&Math.abs(top-wall.z-wall.height)<1e-6;
  push(cap,cap[0][2],rim?[true,ends[1],true,ends[0]]:null);
  Object.assign(faces.at(-1),{capPattern:solid.capPattern,surfaceLightOffset:[0,0,surfaceClearance]});
  if(!topDown)poly.forEach((_,i)=>{
+  // The path's left side is its front; the opposite long face is omitted
+  // when the wall is intentionally one-sided.
+  if(wall.hideBack&&i===2)return;
   // The short end faces at an ordinary join are buried inside the next
   // prism. Rendering them creates opaque/striped seams under cutaway fade.
   // Keep exposed path ends, intentional hard corners, and opening edges.
@@ -3305,15 +3354,16 @@ function renderPathOpening({poly,z,top,wall,opening}){
   };
   // Continuous sill across the wall thickness; it is not a flat pane
   // floating in the center of a thick opening.
-  emitReveal([world(0,-half,.015),world(width,-half,.015),
+  const rear=wall.hideBack?0:-half;
+  emitReveal([world(0,rear,.015),world(width,rear,.015),
    world(width,half,.015),world(0,half,.015)],sillColor);
   // Side jambs and header expose the depth of the window opening.
   for(const u of [0,width]){
-   emitReveal([world(u,-half,0),world(u,half,0),
-    world(u,half,height),world(u,-half,height)],sillColor);
+   emitReveal([world(u,rear,0),world(u,half,0),
+    world(u,half,height),world(u,rear,height)],sillColor);
   }
   if(!opening.windowTop||opening.windowTop==='flat')
-   emitReveal([world(0,-half,height),world(width,-half,height),
+   emitReveal([world(0,rear,height),world(width,rear,height),
     world(width,half,height),world(0,half,height)],sillColor);
   addWindowFaces({...opening,origin:[0,0,0],doorWidth:width,sillHeight:0,windowHeight:height},
    {world:(u,v,h)=>world(u,v+outer,h),owner,mark});
@@ -3341,22 +3391,26 @@ function renderPathOpening({poly,z,top,wall,opening}){
   const base=[[0,-1],[1,-1],[1,1],[0,1]].map(([u,v])=>opening.open?
    world(hinge+v*thickness/2,swing*u*leafWidth,0):world(hinge+sign*u*leafWidth,v*thickness/2,0));
   const upper=base.map(([x,y])=>[x,y,top]);
-  for(let i=0;i<4;i++){const j=(i+1)%4;emit([base[i],base[j],upper[j],upper[i]],i%2?edge:front,i%2?undefined:i===2)}
+  for(let i=0;i<4;i++){
+   if(wall.hideBack&&i===0)continue;
+   const j=(i+1)%4;emit([base[i],base[j],upper[j],upper[i]],i%2?edge:front,i%2?undefined:i===2);
+  }
   emit(upper,cap);
  }
  const trim=Math.min(.075,width/8,height/8),depth=halfWall+.02;
  for(const [left,right,bottom,head] of [[0,trim,0,height],[width-trim,width,0,height],[trim,width-trim,height-trim,height]]){
-  for(const side of [-1,1])emit([world(left,depth*side,bottom),world(right,depth*side,bottom),
+  for(const side of wall.hideBack?[1]:[-1,1])emit([world(left,depth*side,bottom),world(right,depth*side,bottom),
    world(right,depth*side,head),world(left,depth*side,head)],'#594531');
  }
  // Doorway returns: the exposed inner faces of a thick opening should
  // connect the two wall surfaces, rather than leaving a thin floating leaf.
  if(wall.thickness>.16){
   const jamb=wall.color??'#827c70';
+  const rear=wall.hideBack?0:-halfWall;
   for(const u of [0,width])
-   emit([world(u,-halfWall,0),world(u,halfWall,0),
-    world(u,halfWall,height),world(u,-halfWall,height)],jamb);
-  emit([world(0,-halfWall,height),world(width,-halfWall,height),
+   emit([world(u,rear,0),world(u,halfWall,0),
+    world(u,halfWall,height),world(u,rear,height)],jamb);
+  emit([world(0,rear,height),world(width,rear,height),
    world(width,halfWall,height),world(0,halfWall,height)],jamb);
  }
 }
@@ -3371,7 +3425,11 @@ function validSceneWallPaths(walls){
    !wall.nodes.every(node=>node&&xy(node.p)&&(!node.in||xy(node.in))&&(!node.out||xy(node.out)))||
    !number(wall.z,0,11)||!number(wall.height,.1,12)||wall.z+wall.height>12||
    !number(wall.thickness,.04,3)||!number(wall.opacity,0,1)||!number(wall.light,0,1)||
-   !/^#[a-f\d]{6}$/i.test(wall.color)||!['plain','brick','roughRock','planks'].includes(wall.texture)||
+   !/^#[a-f\d]{6}$/i.test(wall.color)||!['plain','brick','roughRock','planks','mesa'].includes(wall.texture)||
+   wall.hideBack!==undefined&&typeof wall.hideBack!=='boolean'||
+   !number(wall.mesaVariation??pathWallDefaults.mesaVariation,0,100)||
+   !number(wall.mesaJaggedness??pathWallDefaults.mesaJaggedness,0,100)||
+   !number(wall.mesaStrata??pathWallDefaults.mesaStrata,0,100)||
    !Array.isArray(wall.openings)||wall.openings.length>24||
    !wall.openings.every(o=>o&&['Door','Window'].includes(o.kind)&&number(o.at,0,1)&&
     number(o.width,.15,8)&&number(o.height,.1,12)&&number(o.sill,0,12)))return false;
@@ -3384,17 +3442,21 @@ function validSceneWallPaths(walls){
 
 let wallTool=null,wallDrag=null,wallPreview=null,wallOpeningIndex=-1;
 const wallSelection=new Set();
-const wallPatterns=['plain','brick','roughRock','planks'];
+const wallPatterns=['plain','brick','roughRock','planks','mesa'];
 const wallPropertyFields={
  height:{label:'Height (ft)',min:.5,max:60,step:.05,scale:5},
  thickness:{label:'Thickness (ft)',min:.2,max:15,step:.05,scale:5},
  z:{label:'Base elevation (ft)',min:0,max:55,step:.05,scale:5},
  color:{label:'Color',type:'color'},
  texture:{label:'Texture',options:wallPatterns},
+ mesaVariation:{label:'Mesa height variation (%)',min:0,max:100,step:1,scale:1,type:'range'},
+ mesaJaggedness:{label:'Mesa edge jaggedness (%)',min:0,max:100,step:1,scale:1,type:'range'},
+ mesaStrata:{label:'Mesa strata detail (%)',min:0,max:100,step:1,scale:1,type:'range'},
  opacity:{label:'Visual opacity (%)',min:0,max:100,step:1,scale:100,type:'range'},
  light:{label:'Light transmission (%)',min:0,max:100,step:1,scale:100,type:'range'},
  sight:{label:'Allow sight through wall',type:'checkbox'},
- blocks:{label:'Block movement',type:'checkbox'}
+ blocks:{label:'Block movement',type:'checkbox'},
+ hideBack:{label:'Hide back side (left side is the front)',type:'checkbox'}
 };
 const apertureFields={
  at:{label:'Position along wall (%)',min:0,max:100,step:'any',scale:100},
@@ -3423,9 +3485,10 @@ function wallDoorAppearance(){
 function wallNodeFields(spec,prefix){
  return Object.entries(spec).map(([key,field])=>{
   const input=field.options?'<select id="'+prefix+key+'">'+field.options.map(v=>'<option value="'+v+'">'+
-    ({plain:'Solid',brick:'Brick',roughRock:'Rough stone',planks:'Wood planks',flat:'Flat',semicircle:'Semicircular',pointed:'Pointed arch',single:'Single pane',split:'Two panes',grid:'Four panes',stained:'Geometric stained glass',shutter:'Wooden shutters',shade:'Roll-down shade',near:'Near end',far:'Far end',single:'Single leaf',double:'Double leaf · opposite hinges'}[v]||v)+'</option>').join('')+'</select>':
+    ({plain:'Solid',brick:'Brick',roughRock:'Rough stone',planks:'Wood planks',mesa:'Mesa rock',flat:'Flat',semicircle:'Semicircular',pointed:'Pointed arch',single:'Single pane',split:'Two panes',grid:'Four panes',stained:'Geometric stained glass',shutter:'Wooden shutters',shade:'Roll-down shade',near:'Near end',far:'Far end',single:'Single leaf',double:'Double leaf · opposite hinges'}[v]||v)+'</option>').join('')+'</select>':
    '<input id="'+prefix+key+'" type="'+(field.type||'number')+'" '+(field.min===undefined?'':'required min="'+field.min+'" max="'+field.max+'" step="'+field.step+'"')+'>';
-  return '<label>'+field.label+' '+input+'</label>';
+  const mesaOnly=['mesaVariation','mesaJaggedness','mesaStrata'].includes(key);
+  return '<label'+(mesaOnly?' class="mesa-wall-field" hidden':'')+'>'+field.label+' '+input+'</label>';
  }).join('');
 }
 function readWallFields(spec,prefix,previous){
@@ -3434,16 +3497,18 @@ function readWallFields(spec,prefix,previous){
   if(field.type==='checkbox')return [key,input.checked];
   if(!field.scale)return [key,input.value];
   // Keep the stored geometry when the displayed value was left alone.
-  const unchanged=previous&&input.valueAsNumber===wallFieldNumber(previous[key],field.scale);
-  return [key,unchanged?previous[key]:input.valueAsNumber/field.scale];
+  const prior=previous?.[key]??pathWallDefaults[key];
+  const unchanged=previous&&input.valueAsNumber===wallFieldNumber(prior,field.scale);
+  return [key,unchanged?prior:input.valueAsNumber/field.scale];
  }));
 }
 function wallFieldNumber(value,scale){return Number((value*scale).toFixed(4))}
 function writeWallFields(spec,prefix,value){
  for(const [key,field] of Object.entries(spec)){
   const input=el(prefix+key);
-  if(field.type==='checkbox')input.checked=!!value[key];
-  else input.value=field.scale?wallFieldNumber(value[key],field.scale):value[key];
+  const current=value[key]??pathWallDefaults[key];
+  if(field.type==='checkbox')input.checked=!!current;
+  else input.value=field.scale?wallFieldNumber(current,field.scale):current;
  }
 }
 const wallCanEdit=()=>!playing&&!terrainLocked&&roomProfile?.gm!==false;
@@ -3459,6 +3524,7 @@ function updateWallList(){
  const wall=sceneWallPaths().find(w=>w.id===previous);
  el('wallPlanOpacity').value=100*(areas.find(a=>a.shape==='appearance')?.floorImageOpacity??1);
  if(wall)writeWallFields(wallPropertyFields,'wp-',wall);
+ document.querySelectorAll('.mesa-wall-field').forEach(label=>{label.hidden=wall?.texture!=='mesa'});
  const openings=el('wallOpeningList');
  openings.replaceChildren(...(wall&&wallSelection.size===1?wall.openings:[]).map((o,i)=>
   new Option(o.kind+' '+(i+1)+(compileWallPath(wall).invalid.includes(o)?' · does not fit':''),i)));
@@ -4154,13 +4220,16 @@ function initializeWallPaths(){
   wallSelection.clear();for(const o of el('wallPathList').selectedOptions)wallSelection.add(o.value);
   wallOpeningIndex=-1;setWallTool('edit');
  };
+ el('wp-texture').onchange=()=>{
+  document.querySelectorAll('.mesa-wall-field').forEach(label=>{label.hidden=el('wp-texture').value!=='mesa'});
+ };
  el('wallOpeningList').onchange=()=>{wallOpeningIndex=el('wallOpeningList').selectedIndex;updateWallList();draw()};
  let copiedWallStyle=null;
- const wallStyleKeys=['height','thickness','z','color','texture','opacity','light','sight','blocks'];
+ const wallStyleKeys=['height','thickness','z','color','texture','opacity','light','sight','blocks','hideBack','mesaVariation','mesaJaggedness','mesaStrata'];
  el('wallCopyStyle').onclick=()=>{
   const source=sceneWallPaths().find(w=>wallSelection.has(w.id));
   if(!source){wallStatus('Select a wall to copy its style.');return}
-  copiedWallStyle=Object.fromEntries(wallStyleKeys.map(key=>[key,structuredClone(source[key])]));
+  copiedWallStyle=Object.fromEntries(wallStyleKeys.map(key=>[key,structuredClone(source[key]??pathWallDefaults[key])]));
   wallStatus('Copied wall style. Select target walls, or choose Paint all walls.');
  };
  function paintWallStyle(all){
@@ -4179,7 +4248,10 @@ function initializeWallPaths(){
   if(!selected)return;
   const inputs=readWallFields(wallPropertyFields,'wp-');
   // A batch edit changes only fields touched relative to the displayed wall.
-  const settings=Object.fromEntries(Object.entries(inputs).filter(([key,v])=>typeof v==='number'?Math.abs(v-selected[key])>1e-6:v!==selected[key]));
+  const settings=Object.fromEntries(Object.entries(inputs).filter(([key,v])=>{
+   const prior=selected[key]??pathWallDefaults[key];
+   return typeof v==='number'?Math.abs(v-prior)>1e-6:v!==prior;
+  }));
   if(!updateSceneWallPaths(sceneWallPaths().map(w=>wallSelection.has(w.id)?{...w,...settings}:w)))
    wallStatus('Check the height, elevation, and thickness limits.');
  };
@@ -7914,7 +7986,10 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    const cameraFade=playerCameraCutaway?.cutawayWallIds?.has(f.wallId);
    ctx.globalAlpha=f.pathWall.opacity*(cameraFade?.16:1);
    polygon(f.projected,f.fill,null);
-   if(showTerrainTextures&&f.pathWall.texture!=='plain'&&(f.projected.length===4||f.capPattern))paintTerrainPatterns(f.pathWall.texture,f);
+   if(showTerrainTextures&&f.pathWall.texture!=='plain'&&(f.projected.length===4||f.capPattern)){
+    const pattern=f.pathWall.texture==='mesa'?[{kind:'mesa',seed:1000+(f.pathWall.mesaStrata??pathWallDefaults.mesaStrata)}]:f.pathWall.texture;
+    paintTerrainPatterns(pattern,f);
+   }
    shadeTerrain(f);
    if(f.pathEdges){
     ctx.strokeStyle='#30251eaa';ctx.lineWidth=1.15;ctx.beginPath();

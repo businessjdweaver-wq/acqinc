@@ -67,7 +67,7 @@ function createStudioWebGL(onContextLost) {
   if(materialIndex>=0.){
    vec4 art=texture(terrainTextures,vec3(materialUV,materialIndex));
    if(materialCutout>.5&&art.a<.15)discard;
-   surface=mix(surface,art.rgb*(.45+.55*tint),art.a);
+   surface=mix(surface,art.rgb,art.a);
   }
   if(drawFloor>.5&&floorOpacity>0.&&all(greaterThanEqual(floorUV,vec2(0.)))&&all(lessThanEqual(floorUV,vec2(1.)))){
    vec4 art=texture(floorTexture,floorUV);
@@ -453,11 +453,31 @@ function studioWebGLPatternTile(...patterns){
  studioWebGLPatternTiles.set(key,tile);
  return tile;
 }
+function studioWebGLBaseColor(face,theme){
+ const {p}=face;
+ if(!p)return theme?.ground||face.fill||'#e2d4b5';
+ const paint=p.opaquePaint?.[face.edge??4]||p.wash?.[face.edge??4];
+ if(paint)return paint;
+ if(face.doorFace||face.fixtureFace||face.pathWall||face.sceneryArt)return face.fill;
+ if(face.flatColumn)return theme?.column||face.fill;
+ if(face.special){
+  const themedColumn=theme&&p.type==='column'&&!face.preview&&!face.biomeShape;
+  return themedColumn&&!face.columnTrim?theme.column:face.fill;
+ }
+ const themed=theme&&!face.preview&&!['stream','waterfall','fountain'].includes(p.type);
+ const groundTop=face.z!==null&&p.groundSurface&&!face.preview;
+ if(groundTop)return theme?.ground||'#e2d4b5';
+ if(themed){
+  const siding=theme.sidePattern==='barn'&&face.z===null&&barnWall(p);
+  return face.z===null?(siding?theme.wall:theme.side):theme.top;
+ }
+ return face.fill;
+}
 function studioWebGLMaterial(face,appearance,style,theme,floorRooms){
- if(preferences.graphicsQuality===3||face.rememberedFog)return null;
+ if(preferences.graphicsQuality===3||face.rememberedFog||face.flatColumn)return null;
  const {world,p,capPattern,sidePattern}=face,edge=face.edge??4;
  const flat=world.every(point=>Math.abs(point[2]-world[0][2])<1e-6);
- const groundTop=!p||flat&&p.groundSurface;
+ const groundTop=!p||face.z!==null&&p.groundSurface;
  const siding=theme?.sidePattern==='barn'&&p&&barnWall(p);
  const basePattern=groundTop?(appearance?.ground==='image'?null:appearance?.ground||theme?.groundPattern):
   flat?theme?.topPattern:theme?.sidePattern==='barn'&&!siding?'dirt':theme?.sidePattern;
@@ -466,7 +486,18 @@ function studioWebGLMaterial(face,appearance,style,theme,floorRooms){
   const art=getArt(face.sceneryArt);
   if(art.naturalWidth)image=art;
  }else if(face.pathWall){
-  image=studioWebGLPatternTile(face.pathWall.texture);
+  const pattern=face.pathWall.texture==='mesa'?[{kind:'mesa',seed:1000+(face.pathWall.mesaStrata??58)}]:face.pathWall.texture;
+  image=studioWebGLPatternTile(pattern);
+ }else if(face.special&&!face.doorFace&&!face.fixtureFace){
+  const themedColumn=theme&&p?.type==='column'&&!face.preview&&!face.biomeShape;
+  const textureId=p?.surfaceTextures?.[edge];
+  const src=style?.texturePack?.[textureId];
+  const imported=typeof src==='string'?getArt(src):null;
+  if(imported?.naturalWidth){
+   image=imported;
+   const repeat=Number(style.textureRepeat);
+   if(repeat>=.5&&repeat<=12)period=repeat;
+  }else if(themedColumn&&face.z===null&&theme.columnPattern)image=studioWebGLPatternTile(theme.columnPattern);
  }else if(!face.doorFace&&!face.fixtureFace&&!p?.opaquePaint?.[edge]){
   const textureId=p?.surfaceTextures?.[edge]??(groundTop&&appearance?.ground!=='image'?style?.groundTexture:null);
   const src=style?.texturePack?.[textureId];
@@ -494,9 +525,13 @@ function studioWebGLMaterial(face,appearance,style,theme,floorRooms){
  const [ax,ay]=basis?.along??[1,0],[ox,oy]=basis?.origin??[0,0];
  const phase=basis?basis.distance%period:0;
  const useY=!flat&&Math.abs(world[1][1]-world[0][1])>Math.abs(world[1][0]-world[0][0]);
+ const groundStamp=!p&&style?.groundStamps?.[groundStampKey(face)];
+ const mapGround=groundTop&&!p&&!groundStamp&&!style?.groundTexture&&appearance?.ground!=='image';
+ const groundPeriodX=mapGround?gridLimit(0)/8:period;
+ const groundPeriodY=mapGround?gridLimit(1)/8:period;
  return {image,uv:([x,y,z])=>basis?
   [((x-ox)*ax+(y-oy)*ay+phase)/period,(sidePattern?-z:-(x-ox)*ay+(y-oy)*ax)/period]:
-  [(useY?y:x)/period,(flat?y:-z)/period]};
+  [(useY?y/groundPeriodY:x/groundPeriodX),(flat?y/groundPeriodY:-z)/period]};
 }
 function studioWebGLMapsFloorImage(face){
  if(face.perimeterOnly||!face.world?.length)return false;
@@ -524,8 +559,7 @@ function uploadStudioWebGLFrame(blockers,showLighting,appearance,action){
  for(const [terrainIndex,face] of terrain.entries()){
   const f=face;
   f.terrainIndex=terrainIndex;
-  let base=f.p?.opaquePaint?.[f.edge??4]||f.p?.wash?.[f.edge??4]||f.leafColor||f.fill;
-  if(!f.p&&theme?.ground)base=theme.ground;
+  const base=studioWebGLBaseColor(f,theme)||f.leafColor||f.fill;
   const color=studioWebGLColor(base);
   const tint=f.rememberedFog?'#222936b0':showLighting&&f.world
    ?roomLighting(surfaceLightPoint(fogFaceCenter(f.world),f.surfaceLightOffset),blockers,true):null;
