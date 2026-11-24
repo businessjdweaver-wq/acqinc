@@ -269,7 +269,7 @@ function earlyForegroundWallInvisible(poly){
  // Camera cutaway must not depend on the room-topology culler:
  // unknown regions and elevated standees can disable that separate filter.
  const observers=fogPreparedObservers?.observers;
- if(!playerFogEnabled()||gmVisionObserver()||!observers?.length||topDown||!poly?.length)return false;
+ if(!playerFogEnabled()||playerFogOverview()||gmVisionObserver()||!observers?.length||topDown||!poly?.length)return false;
  // Never trim a wall intersecting the observer's depth plane.
  const observerDepths=observers.map(o=>point(o.distance[0],o.distance[1],0)[2]);
  const wallDepths=poly.map(p=>point(p[0],p[1],0)[2]);
@@ -3141,6 +3141,68 @@ function wallVisibilityTopology(){
 }
 // Read-only topology lookup and a stable wall-layout signature. A room
 // number is diagnostic; it is not a permission to reveal room geometry.
+// Detect enclosures from sight-blocking paths, including buildings with no
+// named Room. Door and window state affects sight, not the room footprint.
+const overviewPathRooms=new WeakMap();
+function overviewRoomFootprints(){
+ const paths=sceneWallPaths();
+ if(!overviewPathRooms.has(paths)){
+  const levels=new Map();
+  for(const wall of paths){
+   if(wall.sight!==false)continue;
+   if(!levels.has(wall.z))levels.set(wall.z,[]);
+   levels.get(wall.z).push(wall);
+  }
+  overviewPathRooms.set(paths,[...levels].flatMap(([z,walls])=>{
+   const top=z+Math.max(...walls.map(wall=>wall.height));
+   return wallRegions(walls).map(({polygon})=>overviewRoomBounds(polygon,z,top));
+  }));
+ }
+ const legacy=areas.filter(a=>a.shape==='room').map(room=>{
+  const [x,y,z]=room.origin,w=room.size,d=room.depth;
+  return overviewRoomBounds([[x,y],[x+w,y],[x+w,y+d],[x,y+d]],z,z+(room.height||2));
+ });
+ return [...overviewPathRooms.get(paths),...legacy];
+}
+function overviewRoomBounds(polygon,z,top){
+ const xs=polygon.map(p=>p[0]),ys=polygon.map(p=>p[1]);
+ return {polygon,z,top,left:Math.min(...xs),right:Math.max(...xs),back:Math.min(...ys),front:Math.max(...ys)};
+}
+function overviewTouchesRoom(points,rooms,ignoreElevation=false){
+ if(!rooms.length)return false;
+ const xs=points.map(p=>p[0]),ys=points.map(p=>p[1]),zs=points.map(p=>p[2]);
+ const left=Math.min(...xs),right=Math.max(...xs),back=Math.min(...ys),front=Math.max(...ys);
+ const low=Math.min(...zs),high=Math.max(...zs);
+ const side=(a,b,p)=>(b[0]-a[0])*(p[1]-a[1])-(b[1]-a[1])*(p[0]-a[0]);
+ return rooms.some(room=>{
+  if(!ignoreElevation&&(high<room.z-.001||low>=room.top-.001))return false;
+  if(right<=room.left||left>=room.right||front<=room.back||back>=room.front)return false;
+  const {polygon}=room;
+  const center=fogFaceCenter(points);
+  if(wallContainsPoint(polygon,center[0],center[1])||
+   points.some(([x,y])=>wallContainsPoint(polygon,x,y))||
+   polygon.some(([x,y])=>wallContainsPoint(points,x,y)))return true;
+  // Crossings catch a narrow or concave room slicing through a floor tile.
+  return points.some((a,i)=>{
+   const b=points[(i+1)%points.length];
+   return polygon.some((c,j)=>{
+    const d=polygon[(j+1)%polygon.length];
+    return side(a,b,c)*side(a,b,d)<0&&side(c,d,a)*side(c,d,b)<0;
+   });
+  });
+ });
+}
+function overviewPatchIsIndoors(face,world,rooms){
+ if(!face.pathWall||!face.pathSolid)return overviewTouchesRoom(world,rooms);
+ // Probe at wall base height so high caps on interior partitions cannot
+ // give away the floor plan. Keep the cap when a long edge faces outdoors.
+ const {poly,z}=face.pathSolid;
+ const atBase=([x,y])=>[x,y,z+.01];
+ if(face.z!==null&&poly.length===4){
+  return [[poly[0],poly[1]],[poly[2],poly[3]]].every(edge=>overviewTouchesRoom(edge.map(atBase),rooms));
+ }
+ return overviewTouchesRoom(world.map(atBase),rooms);
+}
 function tacticalTopologyVersion(){
  return JSON.stringify(sceneWallPaths().map(w=>[w.id,w.nodes,w.closed,w.z,w.height,w.thickness,w.sight]));
 }
@@ -4714,17 +4776,32 @@ function updateAmbientLabel(){
  el('ambientLabel').textContent=ambientNames[Math.round(Number(el('ambientLevel').value))];
 }
 el('ambientLevel').oninput=updateAmbientLabel;
-el('fogOfWar').onchange=()=>{
+function syncFogControls(){
+ const appearance=areas.find(area=>area.shape==='appearance')?.appearance;
+ const enabled=appearance?.fogOfWar===true;
+ el('fogOfWar').checked=enabled;
+ el('fogPresentation').disabled=!enabled;
+ el('fogPresentation').value=appearance?.fogPresentation==='overview'?'overview':'classic';
+}
+function updateSceneFog(key,value,status){
  if(roomProfile?.gm===false)return;
- const enabled=el('fogOfWar').checked;
  remember();
  let area=areas.find(item=>item.shape==='appearance');
  if(!area){area={shape:'appearance',size:1,angle:0,origin:[0,0,0],appearance:{}};areas.push(area)}
- (area.appearance??={}).fogOfWar=enabled;
- if(appearanceDraft)appearanceDraft.fogOfWar=enabled;
+ (area.appearance??={})[key]=value;
+ if(appearanceDraft)appearanceDraft[key]=value;
+ syncFogControls();
  refresh();
- if(roomProfile?.gm&&isTestPreview(currentSceneId))scheduleRoomPatch(0);
- el('fogStatus').textContent=enabled?'Fog of War enabled.':'Fog of War disabled.';
+ if(roomProfile?.gm)scheduleRoomPatch(0);
+ el('fogStatus').textContent=status;
+}
+el('fogOfWar').onchange=()=>{
+ const enabled=el('fogOfWar').checked;
+ updateSceneFog('fogOfWar',enabled,enabled?'Fog of War enabled.':'Fog of War disabled.');
+};
+el('fogPresentation').onchange=()=>{
+ const mode=el('fogPresentation').value;
+ updateSceneFog('fogPresentation',mode,mode==='overview'?'Outdoor overview enabled.':'Classic fog enabled.');
 };
 el('resetFogOfWar').onclick=async()=>{
  if(roomProfile?.gm===false)return;
@@ -5417,6 +5494,12 @@ function fogRemember(key,visible){
  const remembered=preferences.fogMemory===1&&fogMemoryState?.seen.has(key);
  if(remembered&&audit)audit.remembered++;
  return remembered?2:0;
+}
+const fogOverviewBackground='#30353b',fogOverviewInterior='#50565e';
+function playerFogOverview(){
+ if(roomProfile?.gm!==false)return false;
+ const appearance=areas.find(a=>a.shape==='appearance')?.appearance;
+ return appearance?.fogOfWar===true&&appearance.fogPresentation==='overview';
 }
 function playerFogEnabled(){
  return roomProfile?.gm===false&&(preferences.fogMemory===0||areas.some(a=>a.shape==='appearance'&&a.appearance?.fogOfWar===true));
@@ -6984,7 +7067,7 @@ function paintFocusCutaway(face){
  if(mode==='fade'&&face.z!==null&&openingWall(face.p))return false;
  if(mode==='fade'){
   ctx.save();ctx.globalAlpha*=.2;
-  polygon(face.projected,face.fogRemembered?'#777':face.fill,'#887860');
+  polygon(face.projected,face.fogOverview?'#777':face.fogRemembered?'#777':face.fill,face.fogOverview?'#767a7e':'#887860');
   ctx.restore();
  }
  return true;
@@ -7237,14 +7320,15 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  const showLighting=(roomProfile?.gm===false||playing&&(!gmIgnoreLighting||!!gmVisionObserver()))&&(wallRooms().some(a=>a.dark)||areas.some(a=>a.shape==='room'&&a.dark)||!!appearance?.ambient?.enabled||tokens.some(t=>t.torch&&!t.incognito));
  const blockers=showLighting||roomProfile?.gm===false?visionBlockers():[];
  const stage=progressiveLightFrame(action,!studioWebGLCapture&&showLighting&&!cameraPreview&&!simplified&&!carry&&quality===2);
- const interiorVision=roomInteriorVisibility(blockers);
+ const overviewFog=playerFogOverview();
+ const interiorVision=overviewFog?null:roomInteriorVisibility(blockers);
  const sampleWallSurfaces=showLighting||mapFogEnabled();
  playerCameraCutaway=studioWebGLCapture?null:buildPlayerCameraCutaway();
  const cacheable=!studioWebGLCapture&&!floorSceneEditing&&(action==='Standee movement'||action==='Test: Standee cached')&&moving.length===1&&
   moving[0]?.type==='standee'&&!moving[0].flying&&!moving[0].carriedFixture&&!carry.light&&!carry.arcaneEye&&
   !gmVisionObserver()&&!resizing&&!repeatPreview.length;
  const cutaway=cacheable?movementCutawayKey(playerCameraCutaway,pieces):null;
- const cacheKey=cacheable?[W,H,gridLimit(0),gridLimit(1),ratio,zoom,angle,tilt,panX,panY,topDown,simplified,lightOrbit,paintTerrainTextures,paintVolumeGrids,quality,showThroughTerrain,playerShowAllies,moving[0],roomProfile?.name,lightingFrame?.signature,playerFogEnabled(),preferences.fogMemory,fogCache?.signature,focusCutaway,cutaway]:null;
+ const cacheKey=cacheable?[W,H,gridLimit(0),gridLimit(1),ratio,zoom,angle,tilt,panX,panY,topDown,simplified,lightOrbit,paintTerrainTextures,paintVolumeGrids,quality,showThroughTerrain,playerShowAllies,moving[0],roomProfile?.name,lightingFrame?.signature,playerFogEnabled(),overviewFog,preferences.fogMemory,fogCache?.signature,focusCutaway,cutaway]:null;
  if(!cacheKey||!movementRenderCache?.key.every((value,i)=>value===cacheKey[i]))movementRenderCache=null;
  const cached=movementRenderCache;
  const useStandeeLayer=!topDown&&action==='Standee movement'&&cacheable&&!cameraPreview&&!areaPreview&&!editingArea&&
@@ -7257,7 +7341,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  earlyForegroundWallCullCount=0;
  earlyWallPreselected=0;
  earlyStairGroupCulled=0;
- earlyRoomCull=playerFogEnabled()&&!floorSceneEditing&&!gmVisionObserver()
+ earlyRoomCull=!overviewFog&&playerFogEnabled()&&!floorSceneEditing&&!gmVisionObserver()
   ?nearbyObserverRooms(wallVisibilityTopology(),fogPreparedObservers||(fogPreparedObservers=prepareFogObservers()))
   :null;
  recordGeometryStage('visibilitySetupMs');
@@ -7503,6 +7587,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   .sort((a,b)=>a.depth-b.depth):[];
  recordGeometryStage('cullingMs');
  if(mapFogEnabled()){
+ const overviewRooms=overviewFog?overviewRoomFootprints():null;
  const fogDetail=performanceDraw?{faces:0,patches:0,refinedPatches:0,patchGenerationMs:0,boundaryRefinementMs:0,visibilityMs:0,travelMemoryMs:0,memoryMs:0,projectionMs:0,otherMs:0}:null;
  // Sector-level fast path: only prune when the entire scene is explicitly
  // dark, has no active emitters, and the sector lies beyond every observer's
@@ -7526,7 +7611,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    const dy=Math.max(sy*8-o.distance[1],0,o.distance[1]-(sy+1)*8);
    return dx*dx+dy*dy>(o.range+1)*(o.range+1);
   });
-  const safe=dark&&far&&!fogPrepared.preview&&!gmVisionObserver()&&!fogMemoryState;
+  const safe=!overviewFog&&dark&&far&&!fogPrepared.preview&&!gmVisionObserver()&&!fogMemoryState;
   fogSectorCache.set(key,safe);return safe;
  };
  // v1.525: conservative distance-first exclusion. Unlike the old sector
@@ -7535,7 +7620,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  // shortcut when global ambient light is explicitly zero.
  const ambientSetting=areas.find(a=>a.shape==='appearance')?.appearance?.ambient;
  const noAmbient=ambientSetting?.enabled===true&&Number(ambientSetting.level)===0;
- const distancePruneEnabled=roomProfile?.gm===false&&!fogPrepared.preview&&noAmbient&&fogPrepared.observers.length>0;
+ const distancePruneEnabled=!overviewFog&&roomProfile?.gm===false&&!fogPrepared.preview&&noAmbient&&fogPrepared.observers.length>0;
  const distanceBoundsFar=(bounds,p,r)=>{
   const dx=Math.max(bounds.minX-p[0],0,p[0]-bounds.maxX);
   const dy=Math.max(bounds.minY-p[1],0,p[1]-bounds.maxY);
@@ -7554,7 +7639,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   distanceExcludedFaces++;return true;
  };
  const roomTopology=wallVisibilityTopology();
- const roomCandidates=roomTopology?wallVisibilityCandidates(roomTopology,fogPrepared):null;
+ const roomCandidates=!overviewFog&&roomTopology?wallVisibilityCandidates(roomTopology,fogPrepared):null;
  // Apply the same portal eligibility used by point visibility
  // before generating terrain patches. Connectivity alone is not visibility.
  const eligibleRoomIds=new Set();
@@ -7598,7 +7683,10 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  if(fogDetail)fogDetail.faces++;
   const preview=gmVisionObserver();
   if(f.standee||f.shadow)return (preview?f.p===preview:ownsRoomStandee(f.p))||standeeVisibleToObserver(f.p,blockers)?[f]:[];
-  if(f.canopy!==undefined)return fogPointVisible(f.lightSample)?[f]:[];
+  if(f.canopy!==undefined){
+   if(fogPointVisible(f.lightSample))return [f];
+   return overviewFog&&!overviewTouchesRoom([f.lightSample],overviewRooms)?[{...f,fogOverview:'exterior'}]:[];
+  }
   // The fixture anchor was already checked once, before emitting its mesh.
   if((f.staticFixture&&fogMemoryState)||f.spellMote)return [f];
   if(!f.world)return f.p?.origin&&fogObjectVisible(f.p)?[f]:[];
@@ -7630,7 +7718,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
     const portal=nearPortal(f);
     if(elevated)roomCounts.elevationGuarded++;
     if(portal)roomCounts.portalGuarded++;
-    if(roomEligibilityReliable&&!elevated&&!portal&&!platformSide&&!lowerPlatformFloor&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture){
+    if(!overviewFog&&roomEligibilityReliable&&!elevated&&!portal&&!platformSide&&!lowerPlatformFloor&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture){
      roomCounts.culledFaces++;
      return [];
     }
@@ -7667,7 +7755,17 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    // that the patch is still visible. Reusing it unconditionally leaves
    // old torch/fog squares behind as a player moves or extinguishes light.
    const visibilityStart=performance.now();
-   const currentlyVisible=platformSide||lowerPlatformFloor&&platformLowerFloorVisible(patch.world,occupiedPlatforms)||forceTerrainVisible()||terrainFogPatchVisible(f.p?{...patch,ownerPiece:f.p}:patch);
+   const indoor=overviewFog&&overviewPatchIsIndoors(f,patch.world,overviewRooms);
+   let currentlyVisible=platformSide||lowerPlatformFloor&&platformLowerFloorVisible(patch.world,occupiedPlatforms)||
+    forceTerrainVisible()||terrainFogPatchVisible(f.p?{...patch,ownerPiece:f.p}:patch);
+   if(indoor&&currentlyVisible&&!f.doorFace&&!f.pathWall&&!f.preview){
+    // A visible corner cannot disclose art from the rest of a tile that
+    // overlaps an interior. Sample inset vertices and the center.
+    const center=fogFaceCenter(patch.world);
+    const samples=[center,...patch.world.map(p=>p.map((v,i)=>v*.94+center[i]*.06))];
+    currentlyVisible=samples.some(p=>overviewTouchesRoom([p],overviewRooms))&&
+     samples.every(p=>fogPointVisible(surfaceLightPoint(p,patch.surfaceLightOffset)));
+   }
    if(fogDetail)fogDetail.visibilityMs+=performance.now()-visibilityStart;
    const travelStart=performance.now();
    if(rememberTerrain&&roomProfile?.gm!==false&&!currentlyVisible&&!fogMemoryState.seen.has(patch.memoryKey)&&fogSeenDuringTravel(patch,blockers)){
@@ -7677,13 +7775,23 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    const memoryStart=performance.now();
     const state=fogRemember(patch.memoryKey,currentlyVisible);
    if(fogDetail)fogDetail.memoryMs+=performance.now()-memoryStart;
-   if(!state||state===2&&!rememberTerrain)continue;
-   const memory=rememberTerrain?{paintKey,rememberedFog:state===2}:null;
+   let overview;
+   if(overviewFog&&!currentlyVisible){
+    if(f.preview||f.doorFace||f.fixtureFace||f.spellMote||f.staticFixture)continue;
+    if(!indoor)overview='exterior';
+    else if(!f.p||f.p.groundSurface&&f.z!==null)overview='interior';
+    else continue;
+   }
+   if(!overview&&(!state||state===2&&!rememberTerrain))continue;
+   const usesFloorArt=!f.p||f.p.groundSurface&&f.z!==null;
+   const fogOverviewNoArt=overview==='exterior'&&usesFloorArt&&appearance?.ground==='image'&&
+    overviewTouchesRoom(patch.world,overviewRooms,true);
+   const memory=overview?{fogOverview:overview,fogOverviewNoArt}:rememberTerrain?{paintKey,rememberedFog:state===2}:null;
    // v1.489: remembered walls are a floor-plan footprint, not a full-height
    // 3D wall. Keep the original wall solids in the occlusion system; only
    // the rendered historical representation changes. The top cap supplies
    // the footprint and side faces are omitted from remembered fog.
-   if(state===2&&f.pathWall){
+   if(!overview&&state===2&&f.pathWall){
     if(f.z===null||f.z===undefined)continue;
     const baseZ=Number(f.p?.z);
     if(!Number.isFinite(baseZ))continue;
@@ -7822,7 +7930,8 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   ctx.setTransform(1,0,0,1,0,0);
   ctx.drawImage(cached.painted,0,0);
   ctx.restore();
- }else drawSceneBackdrop(showTerrainTextures||appearance?.backdrop==='image'?appearance:{outsideColor:appearance?.outsideColor});
+ }else if(overviewFog)drawSceneBackdrop({outsideColor:fogOverviewBackground});
+ else drawSceneBackdrop(showTerrainTextures||appearance?.backdrop==='image'?appearance:{outsideColor:appearance?.outsideColor});
  const groundArt=appearance?.ground==='image'&&appearance.groundImage&&!sceneStyle?.floorImageHidden?getArt(appearance.groundImage):null;
  const floorImage=!cached?.painted&&groundArt?.naturalWidth&&appearance.floorImage?prepareFloorImage(groundArt,appearance.floorImage):null;
  let paintedGround=false;
@@ -7830,7 +7939,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(fog){
    ctx.save();ctx.beginPath();
    for(const face of faces){
-    if(face.p||face.fogRemembered)continue;
+    if(face.p||face.fogRemembered||face.fogOverview)continue;
     face.projected.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
     ctx.closePath();
    }
@@ -7861,6 +7970,20 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    paintedGround=drawImportedTexture(sceneStyle.groundTexture,sceneStyle,{world,projected},flatTerrainTextures)||paintedGround;
   }
   if(fog)ctx.restore();
+ }
+ let paintedOverviewGround=false;
+ if(!cached?.painted&&overviewFog&&(showTerrainTextures||groundArt)){
+  ctx.save();ctx.beginPath();
+  for(const face of faces){
+   if(face.p||face.fogOverview!=='exterior'||face.fogOverviewNoArt)continue;
+   face.projected.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
+   ctx.closePath();
+  }
+  ctx.clip();
+  ctx.filter='grayscale(1) contrast(.58) brightness(.87)';
+  const overviewGround=sceneStyle?.floorImageHidden&&appearance?.ground==='image'?{...appearance,ground:''}:appearance;
+  paintedOverviewGround=drawSceneGround(overviewGround,flatTerrainTextures,floorImage);
+  ctx.restore();
  }
  const lightBlockers=blockers;
  const separatePlayerStandees=playing&&roomProfile?.gm===false&&!useStandeeLayer&&!cameraPreview&&!overlap;
@@ -7969,6 +8092,21 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    continue;
   }
   if(paintFocusCutaway(f))continue;
+  if(f.fogOverview){
+   ctx.save();ctx.globalAlpha=1;
+   if(f.fogOverview==='interior')polygon(f.projected,fogOverviewInterior,null);
+   else{
+    ctx.filter='grayscale(1) contrast(.58) brightness(.87)';
+    if(f.canopy!==undefined&&showTerrainTextures)mapImage(foliageTexture(f.canopy,f.leafColor),f.projected);
+    else{
+     const groundPainted=!f.p&&paintedOverviewGround&&!f.fogOverviewNoArt;
+     polygon(f.projected,groundPainted?'#0000':studioWebGLBaseColor(f,theme)||f.leafColor||f.fill,
+      f.p?'#52575b77':gridVisible()&&gridOpacity()>0?gridStrokeColor():null);
+     if(f.p?.groundSurface&&f.z!==null&&!f.fogOverviewNoArt)paintFloorImageOnFace(floorImage,f);
+    }
+   }
+   ctx.restore();continue;
+  }
   if(!f.p){
    ctx.globalAlpha=1;
    if(!lowGrid)polygon(f.projected,paintedGround?'#0000':f.fill,gridVisible()&&gridOpacity()>0?gridStrokeColor():null);
@@ -8164,7 +8302,7 @@ function hit(x,y,exclude=null,surfaceOnly=false,accept=null,includeDoors=false,s
  for(let index=source.length-1;index>=0;index--){
   const f=source[index];
   if(playerCameraCutaway?.terrain.get(f.p)==='hide'||(f.doorFace||f.fixtureFace)&&!includeDoors||accept&&!accept(f))continue;
-  if(f.fogRemembered||f.preview||f.pathWall&&(!includeDoors||!f.pathOpening)||f.canopy!==undefined||(exclude instanceof Set?exclude.has(f.p):exclude&&f.p===exclude)||(surfaceOnly&&(f.z===null||f.p?.type==='column'&&!f.landing)))continue;
+  if(f.fogRemembered||f.fogOverview==='interior'||f.preview||f.pathWall&&(!includeDoors||!f.pathOpening)||f.canopy!==undefined||(exclude instanceof Set?exclude.has(f.p):exclude&&f.p===exclude)||(surfaceOnly&&(f.z===null||f.p?.type==='column'&&!f.landing)))continue;
   if(f.flatColumn){
    const [a,,c]=f.projected;
    if(((2*x-a[0]-c[0])/(c[0]-a[0]))**2+((2*y-a[1]-c[1])/(c[1]-a[1]))**2<=1)return f;

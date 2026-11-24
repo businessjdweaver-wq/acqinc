@@ -719,6 +719,7 @@ async function syncRoomOnce(){
   const fogSettings=()=>areas.find(area=>area.shape==='appearance')?.appearance;
   const previousFog=fogSettings();
   const wasFogEnabled=previousFog?.fogOfWar===true,previousFogRevision=previousFog?.fogRevision;
+  const previousFogPresentation=previousFog?.fogPresentation;
   if(sceneChanged){gmVisionArmed=false;gmVisionStandee=null;pendingAreaSpell=null;seenRoomPings.clear();carry=null;ghost=null;drag=null;route=null;selected=null;closeStandeeHud();}
   roomState={...roomState,sceneId:null,...update};
   if(playerScenePaused()&&(!wasPaused||sceneChanged)){
@@ -848,7 +849,7 @@ async function syncRoomOnce(){
   if(!roomProfile.gm)for(const token of tokens)if(ownsRoomStandee(token)&&token.roomId===roomProfile.characterKey&&roomProfile.character)token.playerDisplayName=roomProfile.character;
   updateJoinSharedEncounter();
   const fog=fogSettings();
-  const fogChanged=wasFogEnabled!==(fog?.fogOfWar===true)||previousFogRevision!==fog?.fogRevision;
+  const fogChanged=wasFogEnabled!==(fog?.fogOfWar===true)||previousFogRevision!==fog?.fogRevision||previousFogPresentation!==fog?.fogPresentation;
   const localMoveRepaint=!roomProfile.gm&&playerStandeePreview?.scene===currentSceneId&&
    !sceneChanged&&!fogChanged&&wasPaused===update.paused;
   if((changed||initiativeChanged||update.scene||wasPaused!==update.paused)&&!localMoveRepaint)refresh();

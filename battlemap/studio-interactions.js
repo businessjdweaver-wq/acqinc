@@ -2055,7 +2055,7 @@ for(const button of el('buildTools').querySelectorAll('[data-build-category]')){
    content.hidden=content.dataset.buildContent!==button.dataset.buildCategory;
    if(!content.hidden)for(const details of content.querySelectorAll('details'))details.open=true;
   }
-  el('fogOfWar').checked=areas.some(area=>area.shape==='appearance'&&area.appearance?.fogOfWar===true);
+  syncFogControls();
   el('fogStatus').textContent='';
   if(!buildCategory.open)buildCategory.show();
   keepBuildCategoryVisible();

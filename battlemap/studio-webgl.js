@@ -22,6 +22,7 @@ function createStudioWebGL(onContextLost) {
  layout(location=3) in float grid;
  layout(location=4) in float floorSurface;
  layout(location=5) in vec4 material;
+ layout(location=6) in float overview;
  uniform mat3 floorMapping;
  uniform mat4 camera;
  uniform float transition;
@@ -32,6 +33,7 @@ function createStudioWebGL(onContextLost) {
  flat out float materialIndex;
  flat out float materialCutout;
  flat out float drawFloor;
+ flat out float ghostTerrain;
  flat out float drawGrid;
  void main(){
   gl_Position=camera*vec4(position,1.);
@@ -39,6 +41,7 @@ function createStudioWebGL(onContextLost) {
   tile=position.xy;
   drawGrid=grid;
   drawFloor=floorSurface;
+  ghostTerrain=overview;
   floorUV=(floorMapping*vec3(position.xy,1.)).xy;
   materialUV=material.xy;
   materialIndex=material.z;
@@ -53,6 +56,7 @@ function createStudioWebGL(onContextLost) {
  flat in float materialIndex;
  flat in float materialCutout;
  flat in float drawFloor;
+ flat in float ghostTerrain;
  uniform sampler2D floorTexture;
  uniform float floorOpacity;
  uniform vec3 floorBase;
@@ -72,6 +76,10 @@ function createStudioWebGL(onContextLost) {
   if(drawFloor>.5&&floorOpacity>0.&&all(greaterThanEqual(floorUV,vec2(0.)))&&all(lessThanEqual(floorUV,vec2(1.)))){
    vec4 art=texture(floorTexture,floorUV);
    surface=mix(surface,art.rgb*clamp(tint/max(floorBase,vec3(.05)),vec3(0.),vec3(1.5)),art.a*floorOpacity);
+  }
+  if(ghostTerrain>.5){
+   float gray=dot(surface,vec3(.2126,.7152,.0722));
+   surface=vec3((gray*.58+.21)*.87);
   }
   pixel=vec4(surface*(1.-line*.27),terrainOpacity);
  }`);
@@ -130,9 +138,9 @@ function createStudioWebGL(onContextLost) {
  gl.enableVertexAttribArray(0);
  gl.vertexAttribPointer(0,3,gl.FLOAT,false,12,0);
  gl.bindBuffer(gl.ARRAY_BUFFER,styleBuffer);
- for(const [index,size,offset] of [[1,3,0],[2,3,12],[3,1,24],[4,1,28],[5,4,32]]){
+ for(const [index,size,offset] of [[1,3,0],[2,3,12],[3,1,24],[4,1,28],[5,4,32],[6,1,48]]){
   gl.enableVertexAttribArray(index);
-  gl.vertexAttribPointer(index,size,gl.FLOAT,false,48,offset);
+  gl.vertexAttribPointer(index,size,gl.FLOAT,false,52,offset);
  }
  gl.enable(gl.DEPTH_TEST);
  gl.depthFunc(gl.LEQUAL);
@@ -201,7 +209,7 @@ function createStudioWebGL(onContextLost) {
   const needed=new Set(surfaces.map(surface=>surface.material?.image).filter(image=>image&&!tiles.has(image)));
   if(needed.size&&tiles.size+needed.size>maxTiles)tiles.clear();
   ranges=[];
-  for(const {world,color,grid,key,floorSurface=false,material,face} of surfaces){
+  for(const {world,color,grid,key,floorSurface=false,material,face,ghostTerrain=false} of surfaces){
    const old=blend&&colors.get(key);
    const previous=old?old.color.map((value,i)=>old.previous[i]+(value-old.previous[i])*weight):color;
    if(key)nextColors.set(key,{color,previous});
@@ -215,12 +223,12 @@ function createStudioWebGL(onContextLost) {
    }
    nextKeys.push(positionKey);
    triangles.push(mesh);
-   ranges.push({start:styles.length/12,count:mesh.length,face});
+   ranges.push({start:styles.length/13,count:mesh.length,face});
    const slot=tileIndex(material?.image);
    if(slot>=0&&mesh.length)texturedFaces++;
    for(const point of mesh){
     const [u,v]=slot>=0?material.uv(point):[0,0];
-    styles.push(...color,...previous,grid,Number(floorSurface),u,v,slot,Number(!!material?.cutout));
+    styles.push(...color,...previous,grid,Number(floorSurface),u,v,slot,Number(!!material?.cutout),Number(ghostTerrain));
    }
   }
   const positionsReused=nextKeys.length===positionKeys.length&&nextKeys.every((key,i)=>key===positionKeys[i]);
@@ -233,7 +241,7 @@ function createStudioWebGL(onContextLost) {
   }
   gl.bindBuffer(gl.ARRAY_BUFFER,styleBuffer);
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(styles),gl.DYNAMIC_DRAW);
-  count=styles.length/12;
+  count=styles.length/13;
   cutawayKey=null;
   colors=nextColors;
   blendAt=blend?null:-Infinity;
@@ -380,7 +388,7 @@ function studioWebGLUnavailableReason(){
 function studioWebGLKey(){
  // A camera-only draw can reuse only the last authoritative scene inputs.
  return [currentSceneId,roomProfile,roomRevision,pieces,areas,tokens,gmVisionObserver(),
-  gmIgnoreLighting,preferences.fogMemory,showThroughTerrain,playerShowAllies,focusCutaway,cutawayHeight,preferences.graphicsQuality];
+  gmIgnoreLighting,playerFogOverview(),preferences.fogMemory,showThroughTerrain,playerShowAllies,focusCutaway,cutawayHeight,preferences.graphicsQuality];
 }
 function studioWebGLColor(value){
  if(studioWebGLColors.has(value))return studioWebGLColors.get(value);
@@ -408,7 +416,7 @@ function studioWebGLDrawTerrain(appearance,{origin,axes}){
  for(const [x,y,d] of axes)matrix.push(2*x/W,-2*y/H,-d/512,0);
  matrix.push(2*origin[0]/W-1,1-2*origin[1]/H,-origin[2]/512,1);
  studioWebGL.draw({matrix:new Float32Array(matrix),width:canvas.width,height:canvas.height,
-  background:studioWebGLColor(mapFogEnabled()?'#23272a':appearance?.outsideColor||'#c4b99f').slice(0,3)});
+  background:studioWebGLColor(playerFogOverview()?fogOverviewBackground:mapFogEnabled()?'#23272a':appearance?.outsideColor||'#c4b99f').slice(0,3)});
  canvas.classList.add('studioWebGLActive');
 }
 let studioWebGLFloorSource=null;
@@ -534,7 +542,7 @@ function studioWebGLMaterial(face,appearance,style,theme,floorRooms){
   [(useY?y/groundPeriodY:x/groundPeriodX),(flat?y/groundPeriodY:-z)/period]};
 }
 function studioWebGLMapsFloorImage(face){
- if(face.perimeterOnly||!face.world?.length)return false;
+ if(face.perimeterOnly||face.fogOverview==='interior'||face.fogOverviewNoArt||!face.world?.length)return false;
  if(!face.p)return !face.rememberedFog;
  return !!face.p.groundSurface&&face.z!==null&&
   face.world.every(vertex=>Math.abs(vertex[2]-face.world[0][2])<1e-7);
@@ -559,16 +567,17 @@ function uploadStudioWebGLFrame(blockers,showLighting,appearance,action){
  for(const [terrainIndex,face] of terrain.entries()){
   const f=face;
   f.terrainIndex=terrainIndex;
-  const base=studioWebGLBaseColor(f,theme)||f.leafColor||f.fill;
+  const ghostTerrain=f.fogOverview==='exterior';
+  const base=f.fogOverview==='interior'?fogOverviewInterior:studioWebGLBaseColor(f,theme)||f.leafColor||f.fill;
   const color=studioWebGLColor(base);
-  const tint=f.rememberedFog?'#222936b0':showLighting&&f.world
+  const tint=f.rememberedFog?'#222936b0':!f.fogOverview&&showLighting&&f.world
    ?roomLighting(surfaceLightPoint(fogFaceCenter(f.world),f.surfaceLightOffset),blockers,true):null;
   const shaded=tint?blendStudioWebGLColor(color,studioWebGLColor(tint)):color.slice(0,3);
-  const grid=gridVisible()&&(!f.p||f.volumeTop&&!f.p.terrainYaw)?gridOpacity():0;
+  const grid=f.fogOverview!=='interior'&&gridVisible()&&(!f.p||f.volumeTop&&!f.p.terrainYaw)?gridOpacity():0;
   if(f.world){
-   const material=studioWebGLMaterial(f,appearance,style,theme,floorRooms);
+   const material=f.fogOverview?null:studioWebGLMaterial(f,appearance,style,theme,floorRooms);
    surfaces.push({world:f.world,color:shaded,grid,material,face:f,
-    floorSurface:studioWebGLMapsFloorImage(f),key:JSON.stringify([!!f.rememberedFog,f.world])});
+    floorSurface:studioWebGLMapsFloorImage(f),ghostTerrain,key:JSON.stringify([!!f.rememberedFog,f.fogOverview,f.world])});
   }else{
    // Use crossed, world-space silhouettes for the legacy tree billboards.
    const [x,y,z]=f.lightSample;
@@ -578,7 +587,7 @@ function uploadStudioWebGLFrame(blockers,showLighting,appearance,action){
     const world=[[x-dx,y-dy,z],[x,y,z+height],[x+dx,y+dy,z],[x,y,z-height]];
     const material=preferences.graphicsQuality!==3?{image:foliageTexture(f.canopy,f.leafColor),cutout:true,
      uv:([u,v,w])=>[(dx?(u-x)/dx:(v-y)/dy)*.5+.5,1-(w-z)/height]}:null;
-    surfaces.push({world,material,face:f,color:studioWebGLColor(f.leafColor||'#52683a').slice(0,3),grid:0,key:null});
+    surfaces.push({world,material,face:f,color:studioWebGLColor(f.leafColor||'#52683a').slice(0,3),grid:0,ghostTerrain,key:null});
    }
   }
  }
