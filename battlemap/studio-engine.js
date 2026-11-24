@@ -4429,9 +4429,9 @@ el('placeComponent').onclick=()=>{
  const item=kind==='light'&&id==='builtin-chandelier'?
   {name:'Chandelier',settings:{fixture:'chandelier',bright:20,radius:40,tint:'#ffd696'}}:
   componentTemplates.find(t=>t.id===id);
- exitTool();componentPlacement={kind,settings:structuredClone(item?.settings??{})};
+ exitTool();componentPlacement={kind,settings:structuredClone(item?.settings??{}),rotation:0};
  if(kind==='light')visionTool='light';else tool='column';
- message('Click a surface to place '+(item?.name||componentNames[kind])+'. Esc cancels.');refresh();
+ message('Click a surface to place '+(item?.name||componentNames[kind])+'. Arrow keys rotate 90°. Esc exits the tool.');refresh();
 };
 updateComponentOptions();
 const furnitureKinds=["rug","chair","barrel","furnitureCrate","rack","cabinet","bed","table","tumbleweed","hitchingPost","feedTrough","waterTower","splitRailFence"];
@@ -9231,7 +9231,7 @@ el('sceneryFile').onchange=async e=>{
 let sceneryBrush=null;
 function newPiece(){
  if(tool==='column'&&componentPlacement&&componentPlacement.kind!=='light')
-  return {type:'column',r:0,z:0,terrainShape:{...componentPlacement.settings,componentKind:componentPlacement.kind}};
+  return {type:'column',r:componentPlacement.rotation??0,z:0,terrainShape:{...componentPlacement.settings,componentKind:componentPlacement.kind}};
  if(tool&&sceneryPiece({type:tool}))return {type:tool,r:0,z:tool==='ceilingArt'?3:0,art:sceneryBrush};
  const size=standeeSizes.find(size=>size.id===el('footprint').value)||standeeSizes[2];
  return tokenTool?{type:'standee',...tokenTool,size:size.footprint,sizeCategory:size.id,z:0}:{type:tool,r:0,z:0};
@@ -12676,6 +12676,15 @@ window.addEventListener('keydown',e=>{
   return;
  }
  if(e.key==='Escape')gmVisionArmed=false;
+ if(componentPlacement&&!editing&&!e.target?.closest?.('[contenteditable]')&&
+    ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)&&!e.repeat){
+  e.preventDefault();
+  const turn=e.key==='ArrowRight'||e.key==='ArrowDown'?1:-1;
+  componentPlacement.rotation=((componentPlacement.rotation??0)+turn+4)%4;
+  if(ghost&&tool==='column')ghost={...ghost,r:componentPlacement.rotation};
+  draw();return;
+ }
+ if(e.key==='Escape'&&componentPlacement){e.preventDefault();exitTool();return}
  if(!editing&&!e.target?.closest?.('[contenteditable]')&&
     e.key.toLowerCase()==='t'&&!e.repeat&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!carry&&!drag&&
     !measuring&&!areaMode&&!visionTool&&!pendingPolymorph&&!spellPlacement&&
