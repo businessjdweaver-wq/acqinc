@@ -3288,7 +3288,10 @@ function overviewFloorPatches(patch,rooms,nearby,depth=0){
  // A mixed leaf stays covered until both its center and its room-side
  // samples are visible. Never expose a sliver of art past the wall.
  const revealed=visible&&(!inside||!mixedRoom&&!mixedSight||samples.every(sees));
- return [{...patch,overviewLit:revealed,fogOverview:revealed?undefined:inside?(local?'interior':'covered'):'alley'}];
+ // Keep concealed building interiors on one stable gray at every distance.
+ // Distance only controls which alley surfaces receive the overview treatment;
+ // it must not change an interior from gray to the terrain's base color.
+ return [{...patch,overviewLit:revealed,fogOverview:revealed?undefined:inside?'interior':'alley'}];
 }
 function overviewFogFaces(currentFaces,blockers){
  const rooms=overviewRoomFootprints();
