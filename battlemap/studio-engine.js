@@ -13,6 +13,7 @@ const types={
  backdrop:['Backdrop panel',3,1,3,'#b2a588','#756c57'],
  ceilingArt:['Ceiling panel',3,3,0,'#b2a588','#756c57'],
  bridge:['Wood deck',3,1,1,'#b18552','#765032'],
+ ropeBridge:['Rope-and-timber bridge',1,1,.08,'#a77b4c','#513b2b'],
  crate:['Crate',1,1,1,'#b28a5d','#725337'],
  fountain:['Fountain',1,1,1,'#398ba2','#82796a'],
  stream:['Stream',3,1,0,'#347f98','#315f73'],
@@ -23,7 +24,7 @@ window.addEventListener('error',event=>{
  el('startup').hidden=false;
  el('startup').querySelector('strong').textContent='Battlemap Studio encountered an error: '+(event.message||'unknown');
 });
-const maxHeight=12,canvas=el('map');
+const maxHeight=60,canvas=el('map');
 let ctx=canvas.getContext('2d');
 let pieces=[
  {type:'terrace',x:2,y:3,z:0,r:0},{type:'terrace',x:2,y:5,z:0,r:0},
@@ -70,8 +71,8 @@ function setSceneGrid(sceneAreas,grid){
  if(!appearance){appearance={shape:'appearance',origin:[0,0,0],angle:0,size:1,appearance:{}};sceneAreas.push(appearance)}
  appearance.grid=grid;
 }
-function furnitureHeight(v){const h=v.furnHeight??35;return ({tumbleweed:.2+h*.006,hitchingPost:.45+h*.01,feedTrough:.18+h*.005,waterTower:1.2+h*.025,splitRailFence:.35+h*.008,ropeLadder:1.5+h*.065}[v.componentKind]??(.15+h*.025))}
-function dimensions(p){if(isFurniture(p)){const v=furnitureValues(p),kind=v.componentKind,[w,d]=furnitureFootprint(v),h=furnitureHeight(v),H=kind==='rug'?.024:kind==='chair'&&v.furnDetail>25?h*1.4:Math.max(h,.15);return p.r%2?[d,w,H]:[w,d,H]}if(p.type==='standee')return [p.size,p.size,1];const [,w,d,h]=types[p.type];const [width,depth,height]=p.type==='volume'?(p.extents??[w,d,h]):[w,d,h];return p.r%2?[depth,width,height]:[width,depth,height]}
+function furnitureHeight(v){const h=v.furnHeight??35;return ({tumbleweed:.2+h*.006,hitchingPost:.45+h*.01,feedTrough:.18+h*.005,waterTower:1.2+h*.025,splitRailFence:.35+h*.008,ropeLadder:2+h*.38}[v.componentKind]??(.15+h*.025))}
+function dimensions(p){if(p.type==='ropeBridge'&&Array.isArray(p.start)&&Array.isArray(p.end)){const margin=(p.width??1)/2;return [Math.max(.25,Math.abs(p.end[0]-p.start[0])+2*margin),Math.max(.25,Math.abs(p.end[1]-p.start[1])+2*margin),.08]}if(isFurniture(p)){const v=furnitureValues(p),kind=v.componentKind,[w,d]=furnitureFootprint(v),h=furnitureHeight(v),H=kind==='rug'?.024:kind==='chair'&&v.furnDetail>25?h*1.4:Math.max(h,.15);if(kind==='ropeLadder'&&v.ladderBottom&&v.ladderTop)return [Math.abs(v.ladderTop[0]-v.ladderBottom[0])+w,Math.abs(v.ladderTop[1]-v.ladderBottom[1])+d,Math.max(.15,Math.max(v.ladderTop[2],v.ladderBottom[2])-p.z)];return p.r%2?[d,w,H]:[w,d,H]}if(p.type==='standee')return [p.size,p.size,1];const [,w,d,h]=types[p.type];const [width,depth,height]=p.type==='volume'?(p.extents??[w,d,h]):[w,d,h];return p.r%2?[depth,width,height]:[width,depth,height]}
 function sceneryPiece(p){return ['scatter','backdrop','ceilingArt'].includes(p.type)}
 function formationLanding(p,terrain,sceneAreas=areas){
  const appearance=sceneAreas.find(a=>a.shape==='appearance')?.appearance;
@@ -107,10 +108,19 @@ function flatCenterSupportsStandee(p,terrain){
   return q.z+c===p.z&&cx>=q.x&&cx<q.x+a&&cy>=q.y&&cy<q.y+b;
  });
 }
+function bridgeSurfaceHeight(piece,x,y){
+ const a=piece.start,b=piece.end;if(!a||!b)return null;
+ const dx=b[0]-a[0],dy=b[1]-a[1],length2=dx*dx+dy*dy;
+ const t=Math.max(0,Math.min(1,length2?((x-a[0])*dx+(y-a[1])*dy)/length2:0));
+ const sag=Math.max(0,piece.sag??0),profile=a[2]+(b[2]-a[2])*t-4*sag*t*(1-t);
+ const cross=Math.abs(dx*(y-a[1])-dy*(x-a[0]))/Math.max(.001,Math.sqrt(length2));
+ return cross<=(piece.width??1)/2?profile:null;
+}
 function supported(p,terrain,sceneAreas=areas){
  if(p.type!=='standee'||p.z===0||p.flying)return true;
  const [w,d]=dimensions(p),cx=p.x+w/2,cy=p.y+d/2;
  const ordinarySupport=(x,y)=>terrain.some(q=>{
+  if(q.type==='ropeBridge')return Math.abs((bridgeSurfaceHeight(q,x,y)??Infinity)-p.z)<.2;
   if(q.type==='standee')return q!==p&&onStandeePlatform(q,p,[x,y,p.z]);
   if(['polygon','cylinder'].includes(q.form)||q.terrainYaw&&!q.form)return q.z+dimensions(q)[2]===p.z&&terrainFootprint(q).every(([a,b],i,outline)=>{
    const [u,v]=outline[(i+1)%outline.length];
@@ -168,13 +178,13 @@ function valid(p,others=[...pieces,...tokens],ignore=selected,sceneAreas=areas,a
   const center=[p.x+w/2,p.y+d/2,p.z];
   if(pathWallSolids(sceneAreas).some(solid=>wallStopsMovement(solid)&&wallPrismInterval(solid,center,center,0,h)))return false;
  }
- const onMap=(p.terrainYaw?terrainFootprint(p):[[p.x,p.y],[p.x+w,p.y+d]]).every(([x,y])=>x>=-1e-8&&y>=-1e-8&&x<=sceneGrid(sceneAreas).width+1e-8&&y<=sceneGrid(sceneAreas).depth+1e-8);
+ const onMap=(p.terrainYaw?terrainFootprint(p):terrainFootprint(p)).every(([x,y])=>x>=-1e-8&&y>=-1e-8&&x<=sceneGrid(sceneAreas).width+1e-8&&y<=sceneGrid(sceneAreas).depth+1e-8);
  const source=ignore?.type==='standee'?ignore:carry?.members?.find(t=>t.roomId===p.roomId)||carry?.piece;
  const centerLanding=onStair||p.type==='standee'&&!p.flying&&source?.type==='standee'&&p.z!==source.z&&Math.abs(p.z-source.z)<=1+1e-7&&flatCenterSupportsStandee(p,others);
  return onMap&&p.z>=0&&p.z+h<=maxHeight&&(gmMovementOverride||(centerLanding||supported(p,others,sceneAreas))&&((allowFurnitureOverlap&&isFurniture(p))||others.every(q=>{
   if(p.type==='standee'&&q.type==='standee'&&(q.conditions?.includes('dead')||p.conditions?.includes('dead')))return true;
   if(wallOverlap&&(p.wallOverlap===true&&canOverlapWall(p,q)||q.wallOverlap===true&&canOverlapWall(q,p)))return true;
-  if(q===ignore||sceneryPiece(p)||sceneryPiece(q)||p.type==='standee'&&isFurniture(q)&&!movementTerrainBlock(q))return true;
+  if(q===ignore||p.type==='ropeBridge'||q.type==='ropeBridge'||(isFurniture(p)&&p.terrainShape.componentKind==='ropeLadder'||isFurniture(q)&&q.terrainShape.componentKind==='ropeLadder')&&['volume','terrace','stone','bridge'].includes(p.type==='column'?q.type:p.type)||sceneryPiece(p)||sceneryPiece(q)||p.type==='standee'&&isFurniture(q)&&!movementTerrainBlock(q))return true;
   if(p.type==='standee'&&q.type==='column'&&formationLanding(q,others,sceneAreas)?.z===p.z)return true;
   const [a,b,c]=dimensions(q);
   if(centerLanding&&q.type!=='standee'&&!q.form&&movementTerrainBlock(q)){
@@ -1611,15 +1621,11 @@ function drawFurniture(p,preview,fill,kind,settings){
   const railCount=v.furnDetail>66?3:2;for(let i=0;i<railCount;i++){const z=h*(.24+i*.48/(railCount-1));box(-w*.48,-.045,z,w*.96,.09,.09,i%2?a:c)}
  }
  else if(kind==='ropeLadder'){
-  const rail=.045,inner=Math.max(.12,d*.35),rungCount=Math.max(5,Math.round(h*2.5));
-  for(const x of [-w*.38,w*.38]){
-   box(x-rail/2,-rail/2,0,rail,rail,h,c);
-   if(v.furnDetail>48)for(let knot=0;knot<4;knot++)box(x-rail*.7,-rail*.7,h*(.12+knot*.24),rail*1.4,rail*1.4,.035,a);
-  }
-  for(let i=0;i<rungCount;i++){
-   const z=.12+(h-.24)*i/Math.max(1,rungCount-1),sag=Math.sin(Math.PI*i/Math.max(1,rungCount-1))*.035;
-   box(-w*.39,-inner/2+sag,z,w*.78,rail,rail,v.furnDetail>70&&i%2?a:c);
-  }
+  const bottom=v.ladderBottom??[p.x+w/2,p.y+d/2,p.z],top=v.ladderTop??[bottom[0],bottom[1],bottom[2]+h],dx=top[0]-bottom[0],dy=top[1]-bottom[1],dz=top[2]-bottom[2],len=Math.hypot(dx,dy,dz),rail=v.ropeThickness??.045,spacing=v.rungSpacing??.5,nxy=Math.hypot(dx,dy),nx=nxy>.001?-dy/nxy:1,ny=nxy>.001?dx/nxy:0,width=Math.max(.35,w*.78),rungs=Math.max(2,Math.min(200,Math.floor(len/spacing)+1));
+  const ladderFace=(points,color)=>{face(points,color,p,null,preview);faces.at(-1).special=true};
+  for(const side of [-1,1]){const x0=bottom[0]+nx*side*width/2,y0=bottom[1]+ny*side*width/2,x1=top[0]+nx*side*width/2,y1=top[1]+ny*side*width/2;ladderFace([[x0,y0,bottom[2]],[x1,y1,top[2]],[x1+rail,y1,top[2]],[x0+rail,y0,bottom[2]]],v.ropeColor??c)}
+  for(let i=0;i<rungs;i++){const t=i/Math.max(1,rungs-1),x=bottom[0]+dx*t,y=bottom[1]+dy*t,z=bottom[2]+dz*t;ladderFace([[x-nx*width/2,y-ny*width/2,z],[x+nx*width/2,y+ny*width/2,z],[x+nx*width/2,y+ny*width/2,z-rail],[x-nx*width/2,y-ny*width/2,z-rail]],v.timberColor??c)}
+  if(v.furnDetail>70)for(const t of [.2,.4,.6,.8]){const x=bottom[0]+dx*t,y=bottom[1]+dy*t,z=bottom[2]+dz*t;ladderFace([[x-nx*width/2,y-ny*width/2,z],[x-nx*width/2+rail,y-ny*width/2,z],[x-nx*width/2+rail,y-ny*width/2,z+.04],[x-nx*width/2,y-ny*width/2,z+.04]],a)}
  }
  else {slab(0,h,c);if(!topDown){box(-w/2,-d/2-.01,h*.2,w,.035,.06,a);box(-w/2,-d/2-.01,h*.75,w,.035,.06,a);if(kind==='cabinet')box(-.025,-d/2-.04,h*.5,.05,.05,.12,a)}}
 }
@@ -1838,9 +1844,44 @@ function turnTerrainPoints(points,p,degrees=p?.terrainYaw){
  return points.map(([x,y,...rest])=>[cx+(x-cx)*c-(y-cy)*sin,cy+(x-cx)*sin+(y-cy)*c,...rest]);
 }
 function terrainFootprint(p){
+ if(p.type==='ropeBridge'&&p.start&&p.end){const dx=p.end[0]-p.start[0],dy=p.end[1]-p.start[1],len=Math.max(.001,Math.hypot(dx,dy)),nx=-dy/len*(p.width??1)/2,ny=dx/len*(p.width??1)/2;return [[p.start[0]+nx,p.start[1]+ny],[p.end[0]+nx,p.end[1]+ny],[p.end[0]-nx,p.end[1]-ny],[p.start[0]-nx,p.start[1]-ny]]}
  if(['polygon','cylinder'].includes(p.form))return turnTerrainPoints(volumeRoof(p),p);
  const [w,d]=dimensions(p);
  return turnTerrainPoints([[p.x,p.y],[p.x+w,p.y],[p.x+w,p.y+d],[p.x,p.y+d]],p);
+}
+function drawRopeBridge(p,preview,fill){
+ const a=p.start,b=p.end,dx=b[0]-a[0],dy=b[1]-a[1],length=Math.hypot(dx,dy);if(!a||!b||length<.2)return;
+ const ux=dx/length,uy=dy/length,nx=-uy,ny=ux,width=p.width??1,sag=p.sag??.25,spacing=p.plankSpacing??.2,thick=p.plankThickness??.07,rope=p.ropeThickness??.035;
+ const timber=preview?fill:(p.timberColor||'#a77b4c'),cord=preview?fill:(p.ropeColor||'#513b2b');
+ const emit=pts=>{face(pts,timber,p,null,preview);faces.at(-1).special=true;faces.at(-1).ropeBridge=true};
+ const zAt=t=>a[2]+(b[2]-a[2])*t-4*sag*t*(1-t);
+ const desired=Math.ceil(length/Math.max(.08,spacing)),pixelBudget=Math.max(8,Math.floor(length*Math.min(4,Math.max(.15,S*.12)))),count=Math.max(2,Math.min(240,desired,pixelBudget));
+ for(let i=0;i<count;i++){
+  const t=(i+.5)/count,half=Math.min(length/count*.46,.24),cx=a[0]+dx*t,cy=a[1]+dy*t,z=zAt(t);
+  const pts=[[cx-ux*half+nx*width/2,cy-uy*half+ny*width/2,z],[cx+ux*half+nx*width/2,cy+uy*half+ny*width/2,z],[cx+ux*half-nx*width/2,cy+uy*half-ny*width/2,z],[cx-ux*half-nx*width/2,cy-uy*half-ny*width/2,z]];
+  emit(pts);if(!topDown)for(let e=0;e<4;e++){const q=pts[e],r=pts[(e+1)%4];face([[q[0],q[1],q[2]-thick],[r[0],r[1],r[2]-thick],[r[0],r[1],r[2]],[q[0],q[1],q[2]]],timber,p,null,preview);faces.at(-1).special=true;faces.at(-1).ropeBridge=true}
+ }
+ const railHeight=p.railHeight??.38,rails=p.handrails!==false;
+ for(const side of [-1,1]){
+  const lift=rails?railHeight:.06,segments=Math.max(4,Math.min(80,Math.ceil(length*2)));
+  for(let i=0;i<segments;i++){
+   const t0=i/segments,t1=(i+1)/segments,x0=a[0]+dx*t0+nx*side*width*.46,y0=a[1]+dy*t0+ny*side*width*.46,x1=a[0]+dx*t1+nx*side*width*.46,y1=a[1]+dy*t1+ny*side*width*.46,z0=zAt(t0)+lift,z1=zAt(t1)+lift;
+   face([[x0,y0,z0],[x1,y1,z1],[x1,y1,z1+rope*2],[x0,y0,z0+rope*2]],cord,p,null,preview);Object.assign(faces.at(-1),{special:true,ropeBridge:true,ropeNonOpaque:true});
+   if(rails){for(const t of [t0]){const x=a[0]+dx*t+nx*side*width*.46,y=a[1]+dy*t+ny*side*width*.46,z=zAt(t);face([[x,y,z],[x,y,z+lift],[x+nx*rope,y+ny*rope,z+lift],[x+nx*rope,y+ny*rope,z]],cord,p,null,preview);Object.assign(faces.at(-1),{special:true,ropeBridge:true,ropeNonOpaque:true})}}
+  }
+ }
+}
+function ropeBridgeConfigured(piece,values){
+ const width=.4+(values.bridgeWidth??23)/100*2.6,sag=Math.min((values.bridgeSag??13)/100*2,Math.min(piece.start[2],piece.end[2])),configured={...piece,width,sag,plankSpacing:.08+(values.bridgeSpacing??29)/100*.42,plankThickness:.02+(values.bridgePlank??31)/100*.16,ropeThickness:.01+(values.bridgeRope??28)/100*.09,handrails:values.handrails??true,timberColor:values.timberColor??'#a77b4c',ropeColor:values.ropeColor??'#513b2b'};
+ configured.x=Math.round((Math.min(piece.start[0],piece.end[0])-width/2)*4)/4;configured.y=Math.round((Math.min(piece.start[1],piece.end[1])-width/2)*4)/4;configured.z=Math.round(Math.max(0,Math.min(piece.start[2],piece.end[2])-sag)*4)/4;return configured;
+}
+function makeRopeBridge(a,b,settings={}){
+ const width=settings.width??(.4+(settings.bridgeWidth??23)/100*2.6),sag=Math.min(settings.sag??((settings.bridgeSag??13)/100*2),Math.min(a[2],b[2])),margin=width/2;
+ return {type:'ropeBridge',r:0,start:a,end:b,x:Math.round((Math.min(a[0],b[0])-margin)*4)/4,y:Math.round((Math.min(a[1],b[1])-margin)*4)/4,z:Math.round(Math.max(0,Math.min(a[2],b[2])-sag)*4)/4,width,sag,plankSpacing:settings.plankSpacing??(.08+(settings.bridgeSpacing??29)/100*.42),plankThickness:settings.plankThickness??(.02+(settings.bridgePlank??31)/100*.16),ropeThickness:settings.ropeThickness??(.01+(settings.bridgeRope??28)/100*.09),handrails:settings.handrails!==false,railHeight:settings.railHeight??.38,timberColor:settings.timberColor??'#a77b4c',ropeColor:settings.ropeColor??'#513b2b'};
+}
+function makeRopeLadder(bottom,top,settings={}){
+ const width=.25+(settings.furnWidth??35)*.035;
+ return {type:'column',x:Math.round((Math.min(bottom[0],top[0])-width/2)*4)/4,y:Math.round((Math.min(bottom[1],top[1])-(.2+(settings.furnDepth??35)*.006)/2)*4)/4,z:Math.floor(Math.min(bottom[2],top[2])),r:0,terrainShape:{furnMove:false,...settings,componentKind:'ropeLadder',ladderBottom:bottom,ladderTop:top}};
 }
 function footprintsOverlap(a,b){
  return ![a,b].some(outline=>outline.some(([x,y],i)=>{
@@ -1859,7 +1900,7 @@ function validPolygon(vertices){
  });
 }
 let cutawayHeight=Infinity;
-for(let level=1;level<=12;level++)el('floorCutaway').add(new Option('Below '+level*5+' ft',level));
+for(let level=1;level<=maxHeight;level++)el('floorCutaway').add(new Option('Below '+level*5+' ft',level));
 el('floorCutaway').onchange=()=>{
  cutawayHeight=el('floorCutaway').value===''?Infinity:Number(el('floorCutaway').value);
  movementRenderCache=null;draw();
@@ -2271,6 +2312,7 @@ function drawPiece(p,preview=false){
   }
  }
  if(p.type==='standee'){drawStandee(p,preview);return}
+ if(p.type==='ropeBridge'){drawRopeBridge(formationDraft?.piece===p?ropeBridgeConfigured(p,formationDraft.values):p,preview,preview?'#a4b76a':types.ropeBridge[4]);return}
  const [w,d,h]=dimensions(p),[,,,,cap,side]=types[p.type];
  const {x,y,z}=p;
  const fill=preview?(valid(p)?'#a4b76a':'#b65d54'):cap;
@@ -2360,6 +2402,10 @@ function visiblePiece(p){
  const [w,d,h]=dimensions(p),corners=[];
  for(const x of [p.x,p.x+w])for(const y of [p.y,p.y+d])for(const z of [p.z,p.z+h])corners.push([x,y,z]);
  const projectedCorners=turnTerrainPoints(corners,p).map(v=>point(...v));
+ if(p.type==='ropeBridge'){
+  projectedCorners.length=0;const dx=p.end[0]-p.start[0],dy=p.end[1]-p.start[1],len=Math.max(.001,Math.hypot(dx,dy)),nx=-dy/len*(p.width??1)/2,ny=dx/len*(p.width??1)/2;
+  for(const endpoint of [p.start,p.end])for(const side of [-1,1])for(const z of [endpoint[2]-(p.sag??0),endpoint[2]+(p.railHeight??.38)])projectedCorners.push(point(endpoint[0]+nx*side,endpoint[1]+ny*side,z));
+ }
  const theme=p.type==='column'?areas.find(a=>a.shape==='appearance')?.appearance?.terrainTheme:null;
  let treePadding=theme&&terrainThemes[theme]?.formation?S*2*(p.terrainShape?.formationScale??1):0;
  if(theme==='forest'){
@@ -4676,7 +4722,7 @@ function drawSceneBackdrop(config){
  ctx.drawImage(skyLayer,0,0);
 }
 const columnDefaults={columnHeight:30,columnDiameter:25,columnTaper:0,columnOrnament:0,columnWear:0,columnOxidation:0,columnBase:33,columnTop:33};
-const componentNames={tree:'Tree',ropeLadder:'Rope ladder',light:'Light',boulder:'Boulder',cave:'Stalagmite',column:'Column',rug:'Rug',chair:'Chair / stool / bench',barrel:'Barrel',furnitureCrate:'Crate',rack:'Weapon rack',cabinet:'Armoire / cabinet',bed:'Bed',table:'Table / desk',tumbleweed:'Tumbleweed',hitchingPost:'Hitching post',feedTrough:'Feed trough',waterTower:'Water tower',splitRailFence:'Split-rail fence'};
+const componentNames={tree:'Tree',ropeLadder:'Rope ladder',ropeBridge:'Rope-and-timber bridge',light:'Light',boulder:'Boulder',cave:'Stalagmite',column:'Column',rug:'Rug',chair:'Chair / stool / bench',barrel:'Barrel',furnitureCrate:'Crate',rack:'Weapon rack',cabinet:'Armoire / cabinet',bed:'Bed',table:'Table / desk',tumbleweed:'Tumbleweed',hitchingPost:'Hitching post',feedTrough:'Feed trough',waterTower:'Water tower',splitRailFence:'Split-rail fence'};
 const componentKey='battlemap.componentTemplates.v1';
 let componentTemplates=[],componentPlacement=null;
 try{const saved=JSON.parse(localStorage.getItem(componentKey));if(Array.isArray(saved))componentTemplates=saved}catch{}
@@ -4717,8 +4763,8 @@ el('placeComponent').onclick=()=>{
   {name:'Chandelier',settings:{fixture:'chandelier',bright:20,radius:40,tint:'#ffd696'}}:
   componentTemplates.find(t=>t.id===id);
  exitTool();componentPlacement={kind,settings:structuredClone(item?.settings??{}),rotation:0};
- if(kind==='light')visionTool='light';else tool='column';
- message('Click a surface to place '+(item?.name||componentNames[kind])+'. Arrow keys rotate 90°. Esc exits the tool.');refresh();
+ if(kind==='light')visionTool='light';else tool=kind==='ropeBridge'?'ropeBridge':'column';
+ message(kind==='ropeBridge'?'Click the bridge start, then its end point (up to 150 ft). Esc exits the tool.':kind==='ropeLadder'?'Click the ladder lower attachment, then the upper attachment (up to 200 ft). Esc exits the tool.':'Click a surface to place '+(item?.name||componentNames[kind])+'. Arrow keys rotate 90°. Esc exits the tool.');refresh();
 };
 updateComponentOptions();
 const furnitureKinds=["rug","chair","barrel","furnitureCrate","rack","cabinet","bed","table","tumbleweed","hitchingPost","feedTrough","waterTower","splitRailFence","ropeLadder"];
@@ -4735,7 +4781,7 @@ function furnitureFootprint(values){
 }
 const terrainShapeDefaults={...columnDefaults,furnWidth:35,furnDepth:35,furnHeight:35,furnDetail:50,"treeThickness":45,"treeBaseDiameter":50,"treeRoots":45,"treeRootTangle":35,"treeRootSpread":45,"treeFoliageWidth":50,"treeFoliageDrop":0,"treeRootThickness":50,"treeHeight":88,"treeBark":65,"treeBranches":0,"treeBranchAngle":50,"treeBranchThickness":45,"treeBulb":0,"treeCrannies":0,"sceneTreeHeightScale":100,"sceneTreeWidthScale":100,"sceneTreeVariation":0,"rockHeight":50,"rockDiameter":55,"rockBulb":55,"rockCrannies":55,"caveHeight":50,"caveTaper":50,"caveDiameter":45,"caveBulb":40,"caveCrannies":45};
 const furnitureFields=[['furnWidth','Width'],['furnDepth','Depth'],['furnHeight','Height'],['furnDetail','Detail / variation']];
-const formationFields={...Object.fromEntries(furnitureKinds.map(k=>[k,furnitureFields])),
+const formationFields={...Object.fromEntries(furnitureKinds.map(k=>[k,furnitureFields])),ropeBridge:[['bridgeWidth','Width'],['bridgeSag','Sag'],['bridgeSpacing','Plank spacing'],['bridgePlank','Timber thickness'],['bridgeRope','Rope thickness']],
  column:[['columnHeight','Height'],['columnDiameter','Diameter'],['columnTaper','Taper'],['columnOrnament','Ornamentation'],['columnWear','Degradation'],['columnOxidation','Oxidation'],['columnBase','Base size'],['columnTop','Top size']],
  tree:[['treeThickness','Trunk thickness'],['treeHeight','Trunk height'],['treeBark','Bark grooves'],['treeBranches','Branch quantity'],['treeBranchAngle','Branch angle'],['treeBranchThickness','Branch thickness'],['treeBulb','Trunk bulbousness'],['treeCrannies','Trunk crannies'],["treeBaseDiameter","Base diameter"],["treeRoots","Exposed root count"],["treeRootTangle","Root tangledness"],["treeRootSpread","Root spread"],["treeFoliageWidth","Foliage width"],["treeFoliageDrop","Foliage drop"],["treeRootThickness","Root thickness"]],
  boulder:[['rockDiameter','Diameter variation'],['rockHeight','Height'],['rockBulb','Bulbousness'],['rockCrannies','Crannies']],
@@ -4746,7 +4792,10 @@ function cleanFormationSettings(values){
  const clean=Object.fromEntries(Object.keys(terrainShapeDefaults).filter(id=>!id.startsWith('sceneTree')&&Number.isFinite(values[id])&&values[id]>=0&&values[id]<=100).map(id=>[id,values[id]]));
  if(Number.isFinite(values.formationScale)&&values.formationScale>0&&values.formationScale<10000)clean.formationScale=values.formationScale;
  for(const key of ['treeFoliage','treeLog','lichen','furnMove','furnVision','caveHanging'])if(typeof values[key]==='boolean')clean[key]=values[key];
- if(['tree','boulder','cave','column',...furnitureKinds].includes(values.componentKind))clean.componentKind=values.componentKind;
+ if(['tree','boulder','cave','column','ropeBridge',...furnitureKinds].includes(values.componentKind))clean.componentKind=values.componentKind;
+ if(values.componentKind==='ropeBridge')for(const key of ['bridgeWidth','bridgeSag','bridgeSpacing','bridgePlank','bridgeRope'])if(Number.isFinite(values[key])&&values[key]>=0&&values[key]<=100)clean[key]=values[key];
+ if(values.componentKind==='ropeBridge'){if(typeof values.handrails==='boolean')clean.handrails=values.handrails;for(const key of ['timberColor','ropeColor'])if(/^#[0-9a-f]{6}$/i.test(values[key]||''))clean[key]=values[key]}
+ if(values.componentKind==='ropeLadder'){for(const key of ['ladderBottom','ladderTop'])if(Array.isArray(values[key])&&values[key].length===3&&values[key].every(v=>Number.isFinite(v)&&Number.isInteger(v*4)))clean[key]=values[key];if(Number.isFinite(values.rungSpacing)&&values.rungSpacing>=.25&&values.rungSpacing<=2)clean.rungSpacing=values.rungSpacing;if(Number.isFinite(values.ropeThickness)&&values.ropeThickness>=.01&&values.ropeThickness<=.1)clean.ropeThickness=values.ropeThickness;for(const key of ['timberColor','ropeColor'])if(/^#[0-9a-f]{6}$/i.test(values[key]||''))clean[key]=values[key]}
  for(const key of ['columnBaseShape','columnTopShape'])if(['round','square','octagonal'].includes(values[key]))clean[key]=values[key];
  if(values.componentKind==='rug'){
   if(['plain','stripes','checker','medallion'].includes(values.rugPattern))clean.rugPattern=values.rugPattern;
@@ -4763,9 +4812,9 @@ function cleanFormationSettings(values){
 }
 function openFormationEditor(piece){
  const appearance=areas.find(a=>a.shape==='appearance')?.appearance;
- const theme=appearance?.terrainTheme,formation=piece.terrainShape?.componentKind??terrainThemes[theme]?.formation??'column';
+ const theme=appearance?.terrainTheme,formation=piece.type==='ropeBridge'?'ropeBridge':piece.terrainShape?.componentKind??terrainThemes[theme]?.formation??'column';
  const scene={...terrainShapeDefaults,...appearance?.terrainShape};
- formationDraft={piece,scene,values:{...piece.terrainShape}};
+ formationDraft={piece,scene,values:piece.type==='ropeBridge'?{bridgeWidth:Math.max(0,Math.min(100,((piece.width??1)-.4)/2.6*100)),bridgeSag:Math.max(0,Math.min(100,(piece.sag??.25)/2*100)),bridgeSpacing:Math.max(0,Math.min(100,((piece.plankSpacing??.2)-.08)/.42*100)),bridgePlank:Math.max(0,Math.min(100,((piece.plankThickness??.07)-.02)/.16*100)),bridgeRope:Math.max(0,Math.min(100,((piece.ropeThickness??.035)-.01)/.09*100)),handrails:piece.handrails!==false,timberColor:piece.timberColor??'#a77b4c',ropeColor:piece.ropeColor??'#513b2b'}:{...piece.terrainShape}};
  el('formationTitle').textContent=(formation==='cave'&&!piece.terrainShape?.componentKind&&Number.isFinite(caveCeiling(piece))?'Stalactite':componentNames[formation])+' ↔';
  renderFormationSliders(formation);
  const dialog=el('formationDialog');
@@ -4800,7 +4849,7 @@ function renderFormationSliders(formation){
   label.append(name,value,input);
   input.type='range';input.min=0;input.max=100;
   input.value=formationDraft.values[id]??formationDraft.scene[id];
-  const readout=()=>formation==='rug'&&['furnWidth','furnDepth'].includes(id)?
+  const readout=()=>formation==='ropeBridge'?({bridgeWidth:((Number(input.value)/100)*2.6+.4).toFixed(2)+' squares',bridgeSag:((Number(input.value)/100)*2).toFixed(2)+' squares',bridgeSpacing:((Number(input.value)/100)*.42+.08).toFixed(2)+' squares',bridgePlank:((Number(input.value)/100)*.16+.02).toFixed(2)+' squares',bridgeRope:((Number(input.value)/100)*.09+.01).toFixed(2)+' squares'}[id]||input.value+'%'):formation==='rug'&&['furnWidth','furnDepth'].includes(id)?
    ((.25+Number(input.value)*.035)*5).toFixed(2)+' ft':input.value+'%';
   value.textContent=readout();
   input.oninput=()=>{formationDraft.values[id]=Number(input.value);value.textContent=readout();draw()};
@@ -4824,6 +4873,11 @@ function renderFormationSliders(formation){
  if(furnitureKinds.includes(formation)){
   for(const [key,title,defaultValue] of [['furnColor','Material color','#79563b'],['furnAccent','Accent color','#a79b75'],['furnMove','Blocks movement',formation!=='rug']]){const label=document.createElement('label'),input=document.createElement('input');input.type=typeof defaultValue==='boolean'?'checkbox':'color';if(input.type==='checkbox')input.checked=formationDraft.values[key]??defaultValue;else input.value=formationDraft.values[key]??defaultValue;input.oninput=()=>{formationDraft.values[key]=input.type==='checkbox'?input.checked:input.value;draw()};label.append(title,input);panel.append(label)}
  }
+ if(formation==='ropeLadder'){
+  for(const [key,title,min,max,step,fallback] of [['rungSpacing','Rung spacing',.25,2,.05,.5],['ropeThickness','Rope thickness',.01,.1,.005,.045]]){const row=document.createElement('label'),input=document.createElement('input'),read=document.createElement('output');input.type='range';input.min=min;input.max=max;input.step=step;input.value=formationDraft.values[key]??fallback;read.value=Number(input.value).toFixed(2);input.oninput=()=>{formationDraft.values[key]=Number(input.value);read.value=Number(input.value).toFixed(2);draw()};row.append(title,read,input);panel.append(row)}
+  for(const [key,title,fallback] of [['timberColor','Timber color','#79563b'],['ropeColor','Rope color','#513b2b']]){const row=document.createElement('label'),input=document.createElement('input');input.type='color';input.value=formationDraft.values[key]??fallback;input.oninput=()=>{formationDraft.values[key]=input.value;draw()};row.append(title,input);panel.append(row)}
+ }
+ if(formation==='ropeBridge')for(const [key,label,defaultValue] of [['handrails','Rope handrails (movement barrier, transparent to sight)',true],['timberColor','Timber color','#a77b4c'],['ropeColor','Rope color','#513b2b']]){const row=document.createElement('label'),input=document.createElement('input');input.type=typeof defaultValue==='boolean'?'checkbox':'color';if(input.type==='checkbox')input.checked=formationDraft.values[key]??defaultValue;else input.value=formationDraft.values[key]??defaultValue;input.oninput=()=>{formationDraft.values[key]=input.type==='checkbox'?input.checked:input.value;draw()};row.append(label,input);panel.append(row)}
  if(formation==='cave'){const label=document.createElement('label'),input=document.createElement('input');input.type='checkbox';input.checked=formationDraft.values.caveHanging??false;input.oninput=()=>{formationDraft.values.caveHanging=input.checked;draw()};label.append('Hang from overhead surface',input);panel.append(label)}
  if(formation==='column'){
   for(const [key,title] of [['columnBaseShape','Base shape'],['columnTopShape','Top shape'],['columnColor','Column color']]){
@@ -4902,7 +4956,9 @@ el('formationForm').onsubmit=e=>{
  if(!formationDraft||playing||terrainLocked||!pieces.includes(formationDraft.piece))return;
  const {piece,values}=formationDraft;
  remember();
- if(Object.keys(values).length)piece.terrainShape=values;else delete piece.terrainShape;
+ if(piece.type==='ropeBridge'){
+  Object.assign(piece,ropeBridgeConfigured(piece,values));
+ }else if(Object.keys(values).length)piece.terrainShape=values;else delete piece.terrainShape;
  formationDraft=null;el('formationDialog').close();refresh();
 };
 function updateSkyControls(){
@@ -8514,6 +8570,7 @@ function movementTerrainBlock(p){
  return ['terrace','stone','wall','volume','pillar','bridge','crate'].includes(p.type);
 }
 function movementPlatformSupports(piece,[x,y,z]){
+ if(piece.type==='ropeBridge')return Math.abs((bridgeSurfaceHeight(piece,x,y)??Infinity)-z)<.2;
  return !piece.openingCut&&(!wallVolume(piece)||Math.min(...dimensions(piece).slice(0,2))>0.5)&&
   (piece.groundSurface||piece.stairTread||['volume','terrace','stone','bridge'].includes(piece.type))&&
   Math.abs(piece.z+dimensions(piece)[2]-z)<1e-7&&
@@ -8522,6 +8579,12 @@ function movementPlatformSupports(piece,[x,y,z]){
 function movementSegment(start,end,mover,members=[]){
  const distance=5*Math.hypot(...end.map((v,i)=>v-start[i]));
  if(!mover||!distance)return {cost:distance,hazards:[],blocked:false};
+ for(const bridge of carry?.gmMovementOverride?[]:pieces.filter(p=>p.type==='ropeBridge'&&p.handrails!==false)){
+  const dx=bridge.end[0]-bridge.start[0],dy=bridge.end[1]-bridge.start[1],len2=dx*dx+dy*dy;if(!len2)continue;
+  const lateral=point=>((dx*(point[1]-bridge.start[1])-dy*(point[0]-bridge.start[0]))/Math.sqrt(len2)),along=point=>((point[0]-bridge.start[0])*dx+(point[1]-bridge.start[1])*dy)/len2;
+  const la=lateral(start),lb=lateral(end),ta=along(start),tb=along(end),edge=(bridge.width??1)/2;
+  const insideA=Math.abs(la)<=edge,insideB=Math.abs(lb)<=edge;if(insideA!==insideB||la*lb<0){const side=la>0||lb>0?1:-1,boundary=side*edge,t=(boundary-la)/(lb-la),alongAt=ta+(tb-ta)*t,zAt=start[2]+(end[2]-start[2])*t;if(t>=0&&t<=1&&alongAt>.02&&alongAt<.98&&Math.abs(zAt-(bridgeSurfaceHeight(bridge,bridge.start[0]+dx*alongAt,bridge.start[1]+dy*alongAt)??Infinity))<.3)return {cost:distance,hazards:[],blocked:true,blocker:bridge}}
+ }
  const half=mover.size/2, height=dimensions(mover)[2],intervals=[];
  const wall=pathWallSolids().find(solid=>wallStopsMovement(solid)&&wallPrismInterval(solid,start,end,0,height));
  if(wall)return {cost:distance,hazards:[],blocked:true,blocker:wall};
@@ -8566,6 +8629,11 @@ function movementSegment(start,end,mover,members=[]){
   }
   stairCrossings.sort((a,b)=>a.span[0]-b.span[0]);
   const changingElevation=Math.abs(start[2]-end[2])>1e-7;
+  if(Math.abs(start[2]-end[2])>1&&!stairCrossings.length&&!carry?.gmMovementOverride){
+   const onBridge=pieces.some(p=>p.type==='ropeBridge'&&Math.abs((bridgeSurfaceHeight(p,start[0],start[1])??Infinity)-start[2])<.3&&Math.abs((bridgeSurfaceHeight(p,end[0],end[1])??Infinity)-end[2])<.3);
+   const onLadder=pieces.some(p=>isFurniture(p)&&p.terrainShape.componentKind==='ropeLadder'&&p.terrainShape.ladderBottom&&p.terrainShape.ladderTop&&(()=>{const a=p.terrainShape.ladderBottom,b=p.terrainShape.ladderTop,dist=q=>{const v=b.map((n,i)=>n-a[i]),l2=v.reduce((sum,n)=>sum+n*n,0),t=Math.max(0,Math.min(1,q.reduce((sum,n,i)=>sum+(n-a[i])*v[i],0)/Math.max(1e-8,l2)));return Math.hypot(...q.map((n,i)=>n-(a[i]+v[i]*t)))};return dist(start)<1.1&&dist(end)<1.1})());
+   if(!onLadder&&!onBridge)return {cost:distance,hazards:[],blocked:true,blocker:{name:'A rope ladder is required for this climb'}};
+  }
   let stairHeight=start[2];
   const walkableStairs=new Set();
   let lastStairSpan=null;
@@ -9117,9 +9185,18 @@ function expandBattlemapLayout(layout){
  }
  return {version:2,grid:layout.grid,pieces,tokens:[],areas:[{shape:'appearance',size:1,angle:0,origin:[0,0,0],appearance:{terrainTheme},groundStamps}]};
 }
+function translateTerrainPiece(piece,dx,dy,dz){
+ const next={...piece,x:piece.x+dx,y:piece.y+dy,z:piece.z+dz};
+ if(piece.type==='ropeBridge'){
+  next.start=piece.start.map((v,i)=>v+[dx,dy,dz][i]);next.end=piece.end.map((v,i)=>v+[dx,dy,dz][i]);next.x=Math.round((Math.min(next.start[0],next.end[0])-piece.width/2)*4)/4;next.y=Math.round((Math.min(next.start[1],next.end[1])-piece.width/2)*4)/4;next.z=Math.round(Math.max(0,Math.min(next.start[2],next.end[2])-piece.sag)*4)/4;
+ }else if(piece.type==='column'&&piece.terrainShape?.componentKind==='ropeLadder'&&piece.terrainShape.ladderBottom&&piece.terrainShape.ladderTop){
+  next.terrainShape={...piece.terrainShape,ladderBottom:piece.terrainShape.ladderBottom.map((v,i)=>v+[dx,dy,dz][i]),ladderTop:piece.terrainShape.ladderTop.map((v,i)=>v+[dx,dy,dz][i])};next.z=Math.floor(Math.min(next.terrainShape.ladderBottom[2],next.terrainShape.ladderTop[2]));
+ }
+ return next;
+}
 function terrainGroupPositions(drag,destination){
  const {piece,members}=drag,dx=destination.x-piece.x,dy=destination.y-piece.y,dz=destination.z-piece.z;
- return members.map(p=>({...p,x:p.x+dx,y:p.y+dy,z:p.z+dz}));
+ return members.map(p=>translateTerrainPiece(p,dx,dy,dz));
 }
 function furniturePlacementSurface(x,y,exclude){
  const f=hit(x,y,exclude,false,face=>face.z!=null||(
@@ -9133,7 +9210,7 @@ function draggedTerrainPosition(x,y,alt){
  // Alt-drag must project onto the block's ORIGINAL elevation, not onto
  // whichever raised surface happens to be under the cursor.
  const [u,v]=inverse(x,y,piece.z),[a,b]=inverse(drag.x,drag.y,piece.z);
- const moved={...piece,x:Math.round((piece.x+u-a)*4)/4,y:Math.round((piece.y+v-b)*4)/4};
+ const xNext=Math.round((piece.x+u-a)*4)/4,yNext=Math.round((piece.y+v-b)*4)/4,moved=translateTerrainPiece(piece,xNext-piece.x,yNext-piece.y,0);
  if(piece.type!=='volume'||piece.stairTread)return moved;
  const dims=dimensions(moved),epsilon=1e-6;
  // Snap the nearest adjacent face, never overlapping the neighbor.
@@ -9174,9 +9251,9 @@ function candidate(x,y,p,dx=0,dy=0,snap=null,alt=false){
    }
    if(alt&&isFurniture(p)){
    const [w,d]=dimensions(p),grab=drag?.piece===p?drag.freeFurnitureGrab:null;
-   return {...p,x:a-(grab?.[0]??w/2),y:b-(grab?.[1]??d/2),z};
+   const xNext=a-(grab?.[0]??w/2),yNext=b-(grab?.[1]??d/2);return p.terrainShape?.componentKind==='ropeLadder'?translateTerrainPiece(p,xNext-p.x,yNext-p.y,z-p.z):{...p,x:xNext,y:yNext,z};
   }
-  return {...p,x:Math.floor(a)-dx+offset,y:Math.floor(b)-dy+offset,z};
+  const xNext=Math.floor(a)-dx+offset,yNext=Math.floor(b)-dy+offset;return p.terrainShape?.componentKind==='ropeLadder'?translateTerrainPiece(p,xNext-p.x,yNext-p.y,z-p.z):{...p,x:xNext,y:yNext,z};
  }
  if(carry?.gmMovementOverride&&carry.piece===p){
   const surface=furniturePlacementSurface(x,y,excluded);
@@ -9209,6 +9286,7 @@ function candidate(x,y,p,dx=0,dy=0,snap=null,alt=false){
  }
  if(snap===true)return {...p,x:Math.floor(a)-Math.round(dx),y:Math.floor(b)-Math.round(dy),z};
  if(snap===false)return {...p,x:a-dx-.5,y:b-dy-.5,z};
+ if(p.type==='ropeBridge'){const xNext=Math.round((a-dx)*4)/4,yNext=Math.round((b-dy)*4)/4;return translateTerrainPiece(p,xNext-p.x,yNext-p.y,z-p.z)}
  if(p.type==='standee'&&!ground&&!p.flying&&(f?.landing||f?.p?.stairTread))
   return {...p,x:Math.round((a-p.size/2)*4)/4,y:Math.round((b-p.size/2)*4)/4,z};
  return {...p,x:Math.floor(a)-dx,y:Math.floor(b)-dy,z};
@@ -9593,6 +9671,7 @@ el('sceneryFile').onchange=async e=>{
 };
 let sceneryBrush=null;
 function newPiece(){
+ if(tool==='ropeBridge'&&componentPlacement){const q=componentPlacement.start??[0,0,0];return makeRopeBridge(q,q,componentPlacement.settings)}
  if(tool==='column'&&componentPlacement&&componentPlacement.kind!=='light')
   return {type:'column',r:componentPlacement.rotation??0,z:0,terrainShape:{...(componentPlacement.kind==='ropeLadder'?{furnMove:false}:{}),...componentPlacement.settings,componentKind:componentPlacement.kind}};
  if(tool==='volume'&&toolForm==='cylinder')return {type:'volume',r:0,z:0,form:'cylinder',extents:[3,3,.5],groundSurface:true};
@@ -9768,7 +9847,7 @@ function openTerrainContext(piece,x,y){
  }
  if(piece.curvedStair&&piece.stairGroup&&!playing&&!terrainLocked)
   menu.append(catalogButton('Transform staircase footprint / height…',()=>{close();editCurvedStairFootprint(piece)}));
- if(piece.type==='column')menu.append(catalogButton('Edit component',()=>{close();openFormationEditor(piece)}));
+ if(piece.type==='column'||piece.type==='ropeBridge')menu.append(catalogButton('Edit component',()=>{close();openFormationEditor(piece)}));
  if(piece.type==='volume'&&!playing&&!terrainLocked)menu.append(catalogButton('Set base elevation… ('+Number((piece.z*5).toFixed(2))+' ft)',()=>{
   close();
   const answer=prompt('Set the bottom elevation of this block in feet (0–'+Number(((maxHeight-dimensions(piece)[2])*5).toFixed(2))+').',String(Number((piece.z*5).toFixed(2))));
@@ -10309,6 +10388,14 @@ canvas.onpointermove=e=>{
  if(areaMode&&areaOrigin){areaPreview=makeArea(x,y);draw();return}
  if(measuring&&route&&!route.done){route.end=rulerPoint(x,y,e.altKey);draw();return}
  if(drag?.paint){paintEdge(x,y);return}
+ if(tool==='ropeBridge'&&componentPlacement&&!panMode){
+  const face=hit(x,y,null,true),z=face?.z??0,[gx,gy]=inverse(x,y,z),point=[Math.round(gx*4)/4,Math.round(gy*4)/4,Math.round(z*4)/4];
+  ghost=componentPlacement.start?makeRopeBridge(componentPlacement.start,point,componentPlacement.settings):null;draw();return;
+ }
+ if(componentPlacement?.kind==='ropeLadder'&&tool==='column'&&!panMode){
+  const face=hit(x,y,null,true),z=face?.z??0,[gx,gy]=inverse(x,y,z),point=[Math.round(gx*4)/4,Math.round(gy*4)/4,Math.round(z*4)/4];
+  ghost=componentPlacement.start?makeRopeLadder(componentPlacement.start,point,componentPlacement.settings):null;draw();return;
+ }
  if((tool||tokenTool)&&!panMode){ghost=candidate(x,y,newPiece(),0,0,null,e.altKey);draw();return}
  if(!drag)return;
  if(drag.didPing)return;
@@ -10430,6 +10517,23 @@ canvas.onpointerup=e=>{
   drag=null;refresh();return;
  }
  if(drag.place&&(tool||tokenTool)&&Math.hypot(x-drag.x,y-drag.y)<8){
+  if(tool==='ropeBridge'&&componentPlacement){
+   const face=hit(x,y,null,true),z=face?.z??0,[gx,gy]=inverse(x,y,z),point=[Math.round(gx*4)/4,Math.round(gy*4)/4,Math.round(z*4)/4];
+   if(!componentPlacement.start){componentPlacement.start=point;message('Bridge start set. Click the end point; use a surface at another height to connect elevations.');}
+   else{
+    const bridge=makeRopeBridge(componentPlacement.start,point,componentPlacement.settings),length=5*Math.hypot(point[0]-bridge.start[0],point[1]-bridge.start[1],point[2]-bridge.start[2]);
+    if(length<2.5||length>150)message('Bridge length must be 5 to 150 feet.');
+    else if(valid(bridge,undefined,null,areas,true)){remember();pieces.push(bridge);componentPlacement.start=null;message('Bridge placed. Click to place another or Esc to exit.');}
+    else message('The bridge endpoints must fit within the map and its elevation range.');
+   }
+   ghost=null;drag=null;refresh();return;
+  }
+  if(componentPlacement?.kind==='ropeLadder'&&tool==='column'){
+   const face=hit(x,y,null,true),z=face?.z??0,[gx,gy]=inverse(x,y,z),point=[Math.round(gx*4)/4,Math.round(gy*4)/4,Math.round(z*4)/4];
+   if(!componentPlacement.start){componentPlacement.start=point;message('Ladder lower attachment set. Click the upper attachment point (maximum 200 ft).');}
+   else{const ladder=makeRopeLadder(componentPlacement.start,point,componentPlacement.settings),height=5*Math.hypot(point[0]-componentPlacement.start[0],point[1]-componentPlacement.start[1],point[2]-componentPlacement.start[2]);if(height<1.25||height>200)message('Ladder height must be 1.25 to 200 feet.');else if(valid(ladder,undefined,null,areas,true)){remember();pieces.push(ladder);componentPlacement.start=null;message('Rope ladder placed. Click to place another or Esc to exit.');}else message('The ladder attachment points exceed the scene bounds.');}
+   ghost=null;drag=null;refresh();return;
+  }
   const p=candidate(x,y,newPiece(),0,0,null,e.altKey);
   if(tokenTool?.folderMembers){
    const members=folderStandeePositions(p,tokenTool.folderMembers);
@@ -11075,7 +11179,7 @@ function copyTerrain(cut=false){
  }
  const min=key=>Math.min(...selection.map(p=>p[key]));
  const x=min('x'),y=min('y'),z=min('z');
- copiedTerrain=selection.map(p=>({...structuredClone(p),x:p.x-x,y:p.y-y,z:p.z-z}));
+ copiedTerrain=selection.map(p=>translateTerrainPiece(p,-x,-y,-z));
  if(cut){remember();pieces=remaining;group.clear();selected=null;refresh()}
  message(selection.length+' terrain piece(s) '+(cut?'cut':'copied')+'. Point at the map and paste.');
 }
@@ -11084,7 +11188,7 @@ function pasteTerrain(){
  if(!copiedTerrain.length)return;
  if(!pointer){message('Point at the map to paste terrain.');return}
  const [x,y,z]=measurePoint(...pointer);
- const pending=copiedTerrain.map(p=>({...structuredClone(p),roomId:crypto.randomUUID(),x:p.x+Math.floor(x+1e-8),y:p.y+Math.floor(y+1e-8),z:p.z+Math.round(z)}));
+ const pending=copiedTerrain.map(p=>({...translateTerrainPiece(p,Math.floor(x+1e-8),Math.floor(y+1e-8),Math.round(z)),roomId:crypto.randomUUID()}));
  const occupied=[...pieces,...tokens];
  const previous=selected;selected=null;
  for(const p of pending){
@@ -13141,9 +13245,11 @@ el('file').onchange=async e=>{
   if(![1,2].includes(data.version)||!Array.isArray(data.pieces)||data.pieces.length>width*depth*maxHeight)throw Error('Expected version 1 or 2 and a pieces array within the scene capacity.');
   for(const [i,p] of data.pieces.entries()){
    context='Terrain #'+(i+1)+' ('+(p?.type??'unknown')+' at '+[p?.x,p?.y,p?.z].join(', ')+')';
+   if(p?.type==='column'&&p.terrainShape?.componentKind==='ropeLadder'){const q=p.terrainShape;if(!Array.isArray(q.ladderBottom)||!Array.isArray(q.ladderTop)||q.ladderBottom.length!==3||q.ladderTop.length!==3||![...q.ladderBottom,...q.ladderTop].every(v=>Number.isFinite(v)&&Number.isInteger(v*4))||q.ladderBottom.some((v,i)=>i<2?(v<0||v>(i===0?width:depth)):(v<0||v>maxHeight))||q.ladderTop.some((v,i)=>i<2?(v<0||v>(i===0?width:depth)):(v<0||v>maxHeight))||5*Math.hypot(q.ladderTop[0]-q.ladderBottom[0],q.ladderTop[1]-q.ladderBottom[1],q.ladderTop[2]-q.ladderBottom[2])<1.25||5*Math.hypot(q.ladderTop[0]-q.ladderBottom[0],q.ladderTop[1]-q.ladderBottom[1],q.ladderTop[2]-q.ladderBottom[2])>200||q.rungSpacing!==undefined&&(q.rungSpacing<.25||q.rungSpacing>2)||q.ropeThickness!==undefined&&(q.ropeThickness<.01||q.ropeThickness>.1))throw Error('Invalid rope ladder: ladderBottom and ladderTop are quarter-unit XYZ arrays; height is at most 200 ft, rungSpacing .25–2 squares and ropeThickness .01–.1.');}
+   if(p?.type==='ropeBridge'&&(!Array.isArray(p.start)||!Array.isArray(p.end)||p.start.length!==3||p.end.length!==3||![...p.start,...p.end].every(v=>Number.isFinite(v)&&Number.isInteger(v*4))||p.start.some((v,i)=>i<2?(v<0||v>(i===0?width:depth)):(v<0||v>maxHeight))||p.end.some((v,i)=>i<2?(v<0||v>(i===0?width:depth)):(v<0||v>maxHeight))||5*Math.hypot(p.end[0]-p.start[0],p.end[1]-p.start[1],p.end[2]-p.start[2])<5||5*Math.hypot(p.end[0]-p.start[0],p.end[1]-p.start[1],p.end[2]-p.start[2])>150||!Number.isFinite(p.width)||p.width<.4||p.width>3||!Number.isFinite(p.sag)||p.sag<0||p.sag>2||p.sag>Math.min(p.start[2],p.end[2])||!Number.isFinite(p.plankSpacing)||p.plankSpacing<.08||p.plankSpacing>.5||!Number.isFinite(p.plankThickness)||p.plankThickness<.02||p.plankThickness>.18||!Number.isFinite(p.ropeThickness)||p.ropeThickness<.01||p.ropeThickness>.1||p.railHeight!==undefined&&(!Number.isFinite(p.railHeight)||p.railHeight<.1||p.railHeight>1)||p.handrails!==undefined&&typeof p.handrails!=='boolean'||['timberColor','ropeColor'].some(k=>p[k]!==undefined&&!/^#[0-9a-f]{6}$/i.test(p[k]))))throw Error('Invalid rope bridge: endpoints use quarter-unit coordinates, length is 5–150 ft, width .4–3 squares, sag 0–2 squares, plank spacing .08–.5, plank thickness .02–.18, rope thickness .01–.1.');
    if(p?.type==='volume'&&p.extents!==undefined&&(!Array.isArray(p.extents)||p.extents.length!==3||p.extents.some(n=>(!p.curvedStair&&!Number.isInteger(n*4))||n<.001||n>100)))throw Error('extents '+JSON.stringify(p.extents)+' must contain three dimensions, each a multiple of 0.25 from 0.25 to 100.');
    if(!p||!Object.prototype.hasOwnProperty.call(types,p.type))throw Error('Unknown terrain type.');
-   if(!(p.type==='column'?(p.freePlacement===true?[p.x,p.y].every(Number.isFinite):[p.x,p.y].every(v=>Number.isFinite(v)&&Number.isInteger(v-.25)))&&Number.isInteger(p.floorAdjusted===true?p.z*4:p.z):(p.type==='volume'?[p.x*4,p.y*4,p.z*4]:[p.x,p.y,p.floorAdjusted===true?p.z*4:p.z]).every(p.curvedStair?Number.isFinite:Number.isInteger))||![p.x,p.y,p.z].every(Number.isFinite))throw Error('Invalid coordinates: volumes use quarter units, columns use integer + 0.25 for x/y and integer z, other terrain uses integers.');
+   if(!(p.type==='column'?(p.freePlacement===true?[p.x,p.y].every(Number.isFinite):[p.x,p.y].every(v=>Number.isFinite(v)&&Number.isInteger(v-.25)))&&Number.isInteger(p.floorAdjusted===true?p.z*4:p.z):p.type==='ropeBridge'?[p.x*4,p.y*4,p.z*4].every(Number.isInteger):(p.type==='volume'?[p.x*4,p.y*4,p.z*4]:[p.x,p.y,p.floorAdjusted===true?p.z*4:p.z]).every(p.curvedStair?Number.isFinite:Number.isInteger))||![p.x,p.y,p.z].every(Number.isFinite))throw Error('Invalid coordinates: volumes use quarter units, columns use integer + 0.25 for x/y and integer z, other terrain uses integers.');
    if(![0,1,2,3].includes(p.r))throw Error('Rotation r must be 0, 1, 2 or 3.');
    if(!valid(p,incoming,null,incomingAreas,false,floorAdjusted,true))throw Error('Placement is out of bounds, unsupported or overlaps earlier terrain.');
    if(p.form==='polygon'&&!validPolygon(p.vertices))throw Error('Invalid polygon vertices.');
@@ -13157,7 +13263,7 @@ el('file').onchange=async e=>{
    if(sceneryPiece(p)&&!uploadedStandeeImage(p.art))throw Error('Invalid scenery artwork.');
    if(p.form!==undefined&&(!['wedge','pyramid','corners','polygon','cylinder'].includes(p.form)||type!=='volume'))throw Error('Invalid form.');
    if(p.corners!==undefined&&(!Array.isArray(p.corners)||p.corners.length!==4||p.corners.some(pair=>!Array.isArray(pair)||pair.length!==2||pair.some(v=>!Number.isFinite(v)||v<0||v>1))))throw Error('Invalid corners.');
-   incoming.push({type,x,y,z,r,...(Number.isFinite(p.terrainYaw)&&p.terrainYaw>=0&&p.terrainYaw<360?{terrainYaw:p.terrainYaw}:{}),...(p.floorAdjusted===true?{floorAdjusted:true}:{}),...(p.wallOverlap===true&&wallVolume(p)?{wallOverlap:true}:{}),...(type==='volume'&&p.openingCut===true?{openingCut:true}:{}),...(type==='volume'&&(p.groundSurface===true||p.floorAdjusted===true&&p.z>0)?{groundSurface:true}:{}),stairTread:type==='volume'&&p.stairTread===true,curvedStair:p.curvedStair===true,stairGroup:typeof p.stairGroup==='string'?p.stairGroup:undefined,terrainShape:type==='column'&&p.terrainShape?cleanFormationSettings(p.terrainShape):undefined,form:p.form,vertices:p.form==='polygon'?p.vertices:undefined,corners:p.corners,extents:type==='volume'?p.extents:undefined,cut:cut&&{kind:cut.kind,depth:cut.depth},cuts,wash,opaquePaint,surfaceTextures,patterns:Array.isArray(p.patterns)?p.patterns.slice(0,5).map(value=>Array.isArray(value)?value.filter(layer=>layer&&typeof layer.kind==='string'&&Number.isFinite(layer.seed)).slice(0,12):typeof value==='string'?value:null):undefined,plainFaces:Array.isArray(p.plainFaces)?p.plainFaces.slice(0,5).map(Boolean):undefined,art:sceneryPiece(p)?p.art:undefined});
+   incoming.push({type,x,y,z,r,...(type==='ropeBridge'?{start:p.start,end:p.end,width:p.width,sag:p.sag,plankSpacing:p.plankSpacing,plankThickness:p.plankThickness,ropeThickness:p.ropeThickness,handrails:p.handrails!==false,railHeight:p.railHeight??.38,timberColor:p.timberColor??'#a77b4c',ropeColor:p.ropeColor??'#513b2b'}:{}),...(Number.isFinite(p.terrainYaw)&&p.terrainYaw>=0&&p.terrainYaw<360?{terrainYaw:p.terrainYaw}:{}),...(p.floorAdjusted===true?{floorAdjusted:true}:{}),...(p.wallOverlap===true&&wallVolume(p)?{wallOverlap:true}:{}),...(type==='volume'&&p.openingCut===true?{openingCut:true}:{}),...(type==='volume'&&(p.groundSurface===true||p.floorAdjusted===true&&p.z>0)?{groundSurface:true}:{}),stairTread:type==='volume'&&p.stairTread===true,curvedStair:p.curvedStair===true,stairGroup:typeof p.stairGroup==='string'?p.stairGroup:undefined,terrainShape:type==='column'&&p.terrainShape?cleanFormationSettings(p.terrainShape):undefined,form:p.form,vertices:p.form==='polygon'?p.vertices:undefined,corners:p.corners,extents:type==='volume'?p.extents:undefined,cut:cut&&{kind:cut.kind,depth:cut.depth},cuts,wash,opaquePaint,surfaceTextures,patterns:Array.isArray(p.patterns)?p.patterns.slice(0,5).map(value=>Array.isArray(value)?value.filter(layer=>layer&&typeof layer.kind==='string'&&Number.isFinite(layer.seed)).slice(0,12):typeof value==='string'?value:null):undefined,plainFaces:Array.isArray(p.plainFaces)?p.plainFaces.slice(0,5).map(Boolean):undefined,art:sceneryPiece(p)?p.art:undefined});
   }
   context='Standees';
   const importedTokens=[];
@@ -13553,7 +13659,7 @@ function openStandeeArt(token){
  updateStandeeSize();
  el('standeeClearTarget').disabled=!token.targetId;
  el('standeeFlying').checked=!!token.flying;
- el('standeeAltitude').value=token.z*5;
+ el('standeeAltitude').max=String(maxHeight*5-5);el('standeeAltitude').value=token.z*5;
  updateStandeeAltitude();
  el('standeeSquad').value=token.squad||'';
  el('standeeIncognito').checked=!!token.incognito;
