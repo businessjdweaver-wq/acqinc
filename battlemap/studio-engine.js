@@ -3168,14 +3168,14 @@ function overviewRoomBounds(polygon,z,top){
  const xs=polygon.map(p=>p[0]),ys=polygon.map(p=>p[1]);
  return {polygon,z,top,left:Math.min(...xs),right:Math.max(...xs),back:Math.min(...ys),front:Math.max(...ys)};
 }
-function overviewTouchesRoom(points,rooms,ignoreElevation=false){
+function overviewTouchesRoom(points,rooms){
  if(!rooms.length)return false;
  const xs=points.map(p=>p[0]),ys=points.map(p=>p[1]),zs=points.map(p=>p[2]);
  const left=Math.min(...xs),right=Math.max(...xs),back=Math.min(...ys),front=Math.max(...ys);
  const low=Math.min(...zs),high=Math.max(...zs);
  const side=(a,b,p)=>(b[0]-a[0])*(p[1]-a[1])-(b[1]-a[1])*(p[0]-a[0]);
  return rooms.some(room=>{
-  if(!ignoreElevation&&(high<room.z-.001||low>=room.top-.001))return false;
+  if(high<room.z-.001||low>=room.top-.001)return false;
   if(right<=room.left||left>=room.right||front<=room.back||back>=room.front)return false;
   const {polygon}=room;
   const center=fogFaceCenter(points);
@@ -3202,6 +3202,80 @@ function overviewPatchIsIndoors(face,world,rooms){
   return [[poly[0],poly[1]],[poly[2],poly[3]]].every(edge=>overviewTouchesRoom(edge.map(atBase),rooms));
  }
  return overviewTouchesRoom(world.map(atBase),rooms);
+}
+const overviewFogRange=120/5;
+const overviewAlleyWidth=20/5;
+const overviewAlleyDirections=[[1,0],[0,1],[Math.SQRT1_2,Math.SQRT1_2],[Math.SQRT1_2,-Math.SQRT1_2]];
+function overviewAlleyAt([x,y,z],rooms){
+ const nearby=rooms.filter(room=>z>=room.z-.001&&z<room.top&&
+  x>=room.left-overviewAlleyWidth&&x<=room.right+overviewAlleyWidth&&
+  y>=room.back-overviewAlleyWidth&&y<=room.front+overviewAlleyWidth);
+ if(nearby.length<2)return false;
+ // Look across the passage for walls of two different buildings.
+ return overviewAlleyDirections.some(([dx,dy])=>{
+  let front=overviewAlleyWidth,back=overviewAlleyWidth,frontRoom,backRoom;
+  for(const room of nearby)for(let i=0;i<room.polygon.length;i++){
+   const [ax,ay]=room.polygon[i], [bx,by]=room.polygon[(i+1)%room.polygon.length];
+   const ex=bx-ax,ey=by-ay,det=dx*ey-dy*ex;
+   if(Math.abs(det)<1e-8)continue;
+   const u=((ax-x)*dy-(ay-y)*dx)/det;
+   if(u<0||u>1)continue;
+   const t=((ax-x)*ey-(ay-y)*ex)/det;
+   if(t>0&&t<front){front=t;frontRoom=room}
+   if(t<0&&-t<back){back=-t;backRoom=room}
+  }
+  return frontRoom&&backRoom&&frontRoom!==backRoom&&front+back<=overviewAlleyWidth;
+ });
+}
+function overviewFogFaces(currentFaces,blockers){
+ const rooms=overviewRoomFootprints();
+ const centers=tokens.filter(t=>!t.familiarCaster&&ownsRoomStandee(t)&&!t.incognito&&
+  !t.conditions?.includes('dead')).map(basePoint);
+ const nearby=([x,y])=>centers.some(([u,v])=>(x-u)**2+(y-v)**2<=overviewFogRange**2);
+ return currentFaces.flatMap(face=>{
+  if(face.standee||face.shadow)return ownsRoomStandee(face.p)||standeeVisibleToObserver(face.p,blockers)?[face]:[];
+  if(face.preview||face.spellMote||face.pathWall?.texture==='mesa')return [face];
+  if(!face.world?.length){
+   const anchor=face.lightSample??face.p?.origin;
+   if(!anchor||!overviewTouchesRoom([anchor],rooms))return [face];
+   return nearby(anchor)&&fogPointVisible(anchor)?[face]:[];
+  }
+  const isFloor=!face.p||face.p.groundSurface&&face.z!==null;
+  // Skip all subdivision and vision rays on the terrain backdrop.
+  const indoor=overviewPatchIsIndoors(face,face.world,rooms);
+  if(!indoor&&!isFloor)return [face];
+  const patches=indoor&&isFloor?terrainFogPatches(face):[{world:face.world,wholeFace:true,surfaceLightOffset:face.surfaceLightOffset}];
+  return patches.flatMap(patch=>{
+   const center=fogFaceCenter(patch.world);
+   const inside=indoor&&overviewPatchIsIndoors(face,patch.world,rooms);
+   const local=nearby(center);
+   const alley=!inside&&isFloor&&local&&overviewAlleyAt(center,rooms);
+   if(!inside&&!alley)return [overviewSurface(face,patch)];
+   let visible=false;
+   if(local){
+    if(inside&&isFloor){
+     // Test both a point inside the room and the rest of the patch before
+     // showing underlying printed floor art across a wall boundary.
+     const samples=[center,...patch.world.map(p=>p.map((v,i)=>v*.94+center[i]*.06))];
+     visible=samples.some(p=>overviewTouchesRoom([p],rooms))&&
+      samples.every(p=>fogPointVisible(surfaceLightPoint(p,patch.surfaceLightOffset)));
+    }else visible=fogPointVisible(surfaceLightPoint(center,patch.surfaceLightOffset));
+   }
+   if(visible)return [{...overviewSurface(face,patch),overviewLit:true}];
+   if(alley)return [{...overviewSurface(face,patch),fogOverview:'alley'}];
+   if(isFloor)return [{...overviewSurface(face,patch),fogOverview:local?'interior':'covered'}];
+   if(local&&face.pathWall)return [{...overviewSurface(face,patch),fogOverview:'interior'}];
+   return [];
+  });
+ });
+}
+function overviewSurface(face,patch){
+ if(patch.wholeFace)return face;
+ const world=patch.world,projected=world.map(vertex=>point(...vertex));
+ return {...face,world,projected,depth:projected.reduce((sum,vertex)=>sum+vertex[2],0)/projected.length};
+}
+function overviewMasksFloor(face){
+ return face.fogOverview==='interior'||face.fogOverview==='covered';
 }
 function tacticalTopologyVersion(){
  return JSON.stringify(sceneWallPaths().map(w=>[w.id,w.nodes,w.closed,w.z,w.height,w.thickness,w.sight]));
@@ -4783,17 +4857,31 @@ function syncFogControls(){
  el('fogPresentation').disabled=!enabled;
  el('fogPresentation').value=appearance?.fogPresentation==='overview'?'overview':'classic';
 }
+function editableFogAppearance(){
+ let area=areas.find(item=>item.shape==='appearance');
+ if(!area){
+  area={shape:'appearance',size:1,angle:0,origin:[0,0,0],appearance:{}};
+  areas.push(area);
+ }
+ return area.appearance??={};
+}
 function updateSceneFog(key,value,status){
  if(roomProfile?.gm===false)return;
  remember();
- let area=areas.find(item=>item.shape==='appearance');
- if(!area){area={shape:'appearance',size:1,angle:0,origin:[0,0,0],appearance:{}};areas.push(area)}
- (area.appearance??={})[key]=value;
+ const appearance=editableFogAppearance();
+ appearance[key]=value;
  if(appearanceDraft)appearanceDraft[key]=value;
+ const source=testableWorkingScene();
+ if(source){
+  const pending=pendingPreviewFog.get(source.id)??{};
+  pending[key]=value;
+  if(key==='fogPresentation')pending.fogOfWar=appearance.fogOfWar===true;
+  pendingPreviewFog.set(source.id,pending);
+ }
  syncFogControls();
  refresh();
  if(roomProfile?.gm)scheduleRoomPatch(0);
- el('fogStatus').textContent=status;
+ el('fogStatus').textContent=source?status+' Join Test Preview to share this change.':status;
 }
 el('fogOfWar').onchange=()=>{
  const enabled=el('fogOfWar').checked;
@@ -4810,12 +4898,7 @@ el('resetFogOfWar').onclick=async()=>{
   el('fogStatus').textContent='Open the live encounter or Test Preview as GM to reset exploration.';
   return;
  }
- let area=areas.find(item=>item.shape==='appearance');
- if(!area){
-  area={shape:'appearance',size:1,angle:0,origin:[0,0,0],appearance:{}};
-  areas.push(area);
- }
- const scene=area.appearance??={};
+ const scene=editableFogAppearance();
  const old=Number(scene.fogRevision)||0;
  scene.fogRevision=Math.max(old+1,Date.now());
  if(appearanceDraft)appearanceDraft.fogRevision=scene.fogRevision;
@@ -5383,6 +5466,7 @@ let lightingFrame=null,performanceDraw=null,lightingCache=null;
 let fogCache=null,fogMemoryState=null;
 let pendingFogTravel=null;
 function rememberFogTravel(points,token){
+ if(playerFogOverview())return;
  if(!playerFogEnabled()||preferences.fogMemory===0||!ownsRoomStandee(token)||points.length<2)return;
  const samples=[];
  for(let i=1;i<points.length;i++){
@@ -5495,7 +5579,7 @@ function fogRemember(key,visible){
  if(remembered&&audit)audit.remembered++;
  return remembered?2:0;
 }
-const fogOverviewBackground='#30353b',fogOverviewInterior='#50565e';
+const fogOverviewInterior='#50565e';
 function playerFogOverview(){
  if(roomProfile?.gm!==false)return false;
  const appearance=areas.find(a=>a.shape==='appearance')?.appearance;
@@ -5612,6 +5696,7 @@ function sendRepaintRays(){
  }
 }
 function queueWorkerSightlines(destination,standee){
+ if(playerFogOverview())return null;
  const cache=fogSectorRayCache;
  if(!useFogRayWorker()||!cache?.blockers||!playerFogEnabled()||!fogRecentSamplePoints.size)return null;
  let job;
@@ -7319,8 +7404,8 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  const appearance=floorSceneEditing&&appearanceDraft?{...savedAppearance,...appearanceDraft,ground:'image',floorImage:readFloorImageSettings()}:savedAppearance;
  const showLighting=(roomProfile?.gm===false||playing&&(!gmIgnoreLighting||!!gmVisionObserver()))&&(wallRooms().some(a=>a.dark)||areas.some(a=>a.shape==='room'&&a.dark)||!!appearance?.ambient?.enabled||tokens.some(t=>t.torch&&!t.incognito));
  const blockers=showLighting||roomProfile?.gm===false?visionBlockers():[];
- const stage=progressiveLightFrame(action,!studioWebGLCapture&&showLighting&&!cameraPreview&&!simplified&&!carry&&quality===2);
  const overviewFog=playerFogOverview();
+ const stage=progressiveLightFrame(action,!overviewFog&&!studioWebGLCapture&&showLighting&&!cameraPreview&&!simplified&&!carry&&quality===2);
  const interiorVision=overviewFog?null:roomInteriorVisibility(blockers);
  const sampleWallSurfaces=showLighting||mapFogEnabled();
  playerCameraCutaway=studioWebGLCapture?null:buildPlayerCameraCutaway();
@@ -7586,8 +7671,8 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  movementSurfaces=mapFogEnabled()?faces.filter(f=>(f.p?.stairTread||f.volumeTop||f.landing)&&Number.isFinite(f.z)&&!f.preview)
   .sort((a,b)=>a.depth-b.depth):[];
  recordGeometryStage('cullingMs');
- if(mapFogEnabled()){
- const overviewRooms=overviewFog?overviewRoomFootprints():null;
+ if(overviewFog)faces=overviewFogFaces(faces,blockers);
+ else if(mapFogEnabled()){
  const fogDetail=performanceDraw?{faces:0,patches:0,refinedPatches:0,patchGenerationMs:0,boundaryRefinementMs:0,visibilityMs:0,travelMemoryMs:0,memoryMs:0,projectionMs:0,otherMs:0}:null;
  // Sector-level fast path: only prune when the entire scene is explicitly
  // dark, has no active emitters, and the sector lies beyond every observer's
@@ -7611,7 +7696,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    const dy=Math.max(sy*8-o.distance[1],0,o.distance[1]-(sy+1)*8);
    return dx*dx+dy*dy>(o.range+1)*(o.range+1);
   });
-  const safe=!overviewFog&&dark&&far&&!fogPrepared.preview&&!gmVisionObserver()&&!fogMemoryState;
+  const safe=dark&&far&&!fogPrepared.preview&&!gmVisionObserver()&&!fogMemoryState;
   fogSectorCache.set(key,safe);return safe;
  };
  // v1.525: conservative distance-first exclusion. Unlike the old sector
@@ -7620,7 +7705,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  // shortcut when global ambient light is explicitly zero.
  const ambientSetting=areas.find(a=>a.shape==='appearance')?.appearance?.ambient;
  const noAmbient=ambientSetting?.enabled===true&&Number(ambientSetting.level)===0;
- const distancePruneEnabled=!overviewFog&&roomProfile?.gm===false&&!fogPrepared.preview&&noAmbient&&fogPrepared.observers.length>0;
+ const distancePruneEnabled=roomProfile?.gm===false&&!fogPrepared.preview&&noAmbient&&fogPrepared.observers.length>0;
  const distanceBoundsFar=(bounds,p,r)=>{
   const dx=Math.max(bounds.minX-p[0],0,p[0]-bounds.maxX);
   const dy=Math.max(bounds.minY-p[1],0,p[1]-bounds.maxY);
@@ -7639,7 +7724,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   distanceExcludedFaces++;return true;
  };
  const roomTopology=wallVisibilityTopology();
- const roomCandidates=!overviewFog&&roomTopology?wallVisibilityCandidates(roomTopology,fogPrepared):null;
+ const roomCandidates=roomTopology?wallVisibilityCandidates(roomTopology,fogPrepared):null;
  // Apply the same portal eligibility used by point visibility
  // before generating terrain patches. Connectivity alone is not visibility.
  const eligibleRoomIds=new Set();
@@ -7683,10 +7768,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  if(fogDetail)fogDetail.faces++;
   const preview=gmVisionObserver();
   if(f.standee||f.shadow)return (preview?f.p===preview:ownsRoomStandee(f.p))||standeeVisibleToObserver(f.p,blockers)?[f]:[];
-  if(f.canopy!==undefined){
-   if(fogPointVisible(f.lightSample))return [f];
-   return overviewFog&&!overviewTouchesRoom([f.lightSample],overviewRooms)?[{...f,fogOverview:'exterior'}]:[];
-  }
+  if(f.canopy!==undefined)return fogPointVisible(f.lightSample)?[f]:[];
   // The fixture anchor was already checked once, before emitting its mesh.
   if((f.staticFixture&&fogMemoryState)||f.spellMote)return [f];
   if(!f.world)return f.p?.origin&&fogObjectVisible(f.p)?[f]:[];
@@ -7718,7 +7800,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
     const portal=nearPortal(f);
     if(elevated)roomCounts.elevationGuarded++;
     if(portal)roomCounts.portalGuarded++;
-    if(!overviewFog&&roomEligibilityReliable&&!elevated&&!portal&&!platformSide&&!lowerPlatformFloor&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture){
+    if(roomEligibilityReliable&&!elevated&&!portal&&!platformSide&&!lowerPlatformFloor&&!f.doorFace&&!f.fixtureFace&&!f.preview&&!f.spellMote&&!f.staticFixture){
      roomCounts.culledFaces++;
      return [];
     }
@@ -7755,17 +7837,8 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    // that the patch is still visible. Reusing it unconditionally leaves
    // old torch/fog squares behind as a player moves or extinguishes light.
    const visibilityStart=performance.now();
-   const indoor=overviewFog&&overviewPatchIsIndoors(f,patch.world,overviewRooms);
-   let currentlyVisible=platformSide||lowerPlatformFloor&&platformLowerFloorVisible(patch.world,occupiedPlatforms)||
+   const currentlyVisible=platformSide||lowerPlatformFloor&&platformLowerFloorVisible(patch.world,occupiedPlatforms)||
     forceTerrainVisible()||terrainFogPatchVisible(f.p?{...patch,ownerPiece:f.p}:patch);
-   if(indoor&&currentlyVisible&&!f.doorFace&&!f.pathWall&&!f.preview){
-    // A visible corner cannot disclose art from the rest of a tile that
-    // overlaps an interior. Sample inset vertices and the center.
-    const center=fogFaceCenter(patch.world);
-    const samples=[center,...patch.world.map(p=>p.map((v,i)=>v*.94+center[i]*.06))];
-    currentlyVisible=samples.some(p=>overviewTouchesRoom([p],overviewRooms))&&
-     samples.every(p=>fogPointVisible(surfaceLightPoint(p,patch.surfaceLightOffset)));
-   }
    if(fogDetail)fogDetail.visibilityMs+=performance.now()-visibilityStart;
    const travelStart=performance.now();
    if(rememberTerrain&&roomProfile?.gm!==false&&!currentlyVisible&&!fogMemoryState.seen.has(patch.memoryKey)&&fogSeenDuringTravel(patch,blockers)){
@@ -7775,23 +7848,13 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
    const memoryStart=performance.now();
     const state=fogRemember(patch.memoryKey,currentlyVisible);
    if(fogDetail)fogDetail.memoryMs+=performance.now()-memoryStart;
-   let overview;
-   if(overviewFog&&!currentlyVisible){
-    if(f.preview||f.doorFace||f.fixtureFace||f.spellMote||f.staticFixture)continue;
-    if(!indoor)overview='exterior';
-    else if(!f.p||f.p.groundSurface&&f.z!==null)overview='interior';
-    else continue;
-   }
-   if(!overview&&(!state||state===2&&!rememberTerrain))continue;
-   const usesFloorArt=!f.p||f.p.groundSurface&&f.z!==null;
-   const fogOverviewNoArt=overview==='exterior'&&usesFloorArt&&appearance?.ground==='image'&&
-    overviewTouchesRoom(patch.world,overviewRooms,true);
-   const memory=overview?{fogOverview:overview,fogOverviewNoArt}:rememberTerrain?{paintKey,rememberedFog:state===2}:null;
+   if(!state||state===2&&!rememberTerrain)continue;
+   const memory=rememberTerrain?{paintKey,rememberedFog:state===2}:null;
    // v1.489: remembered walls are a floor-plan footprint, not a full-height
    // 3D wall. Keep the original wall solids in the occlusion system; only
    // the rendered historical representation changes. The top cap supplies
    // the footprint and side faces are omitted from remembered fog.
-   if(!overview&&state===2&&f.pathWall){
+   if(state===2&&f.pathWall){
     if(f.z===null||f.z===undefined)continue;
     const baseZ=Number(f.p?.z);
     if(!Number.isFinite(baseZ))continue;
@@ -7930,8 +7993,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   ctx.setTransform(1,0,0,1,0,0);
   ctx.drawImage(cached.painted,0,0);
   ctx.restore();
- }else if(overviewFog)drawSceneBackdrop({outsideColor:fogOverviewBackground});
- else drawSceneBackdrop(showTerrainTextures||appearance?.backdrop==='image'?appearance:{outsideColor:appearance?.outsideColor});
+ }else drawSceneBackdrop(showTerrainTextures||appearance?.backdrop==='image'?appearance:{outsideColor:appearance?.outsideColor});
  const groundArt=appearance?.ground==='image'&&appearance.groundImage&&!sceneStyle?.floorImageHidden?getArt(appearance.groundImage):null;
  const floorImage=!cached?.painted&&groundArt?.naturalWidth&&appearance.floorImage?prepareFloorImage(groundArt,appearance.floorImage):null;
  let paintedGround=false;
@@ -7975,7 +8037,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  if(!cached?.painted&&overviewFog&&(showTerrainTextures||groundArt)){
   ctx.save();ctx.beginPath();
   for(const face of faces){
-   if(face.p||face.fogOverview!=='exterior'||face.fogOverviewNoArt)continue;
+   if(face.p||face.fogOverview!=='alley')continue;
    face.projected.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
    ctx.closePath();
   }
@@ -8009,11 +8071,15 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(tint)polygon(projection,tint,null);
  };
  function shadeTerrain(face){
-  if(face.preview||!face.world?.length||insideOverlap(face.projected))return;
+  if(face.preview||!face.world?.length||insideOverlap(face.projected)||overviewFog&&!face.overviewLit)return;
   // Remembered terrain is not currently visible: do not replay cached
   // light polygons or recalculate torchlight onto unseen tiles. Use a
   // consistent desaturated memory tint regardless of former light position.
   if(face.rememberedFog){polygon(face.projected,'#222936b0',null);return;}
+  if(overviewFog){
+   if(sceneDark)tintLightPatch(surfaceLightPoint(fogFaceCenter(face.world),face.surfaceLightOffset),face.projected);
+   return;
+  }
   if(face.cachedShade){
    for(const [points,tint] of face.cachedShade)if(tint)polygon(points.map(vertex=>point(...vertex)),tint,null);
    return;
@@ -8094,15 +8160,17 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(paintFocusCutaway(f))continue;
   if(f.fogOverview){
    ctx.save();ctx.globalAlpha=1;
-   if(f.fogOverview==='interior')polygon(f.projected,fogOverviewInterior,null);
-   else{
+   if(overviewMasksFloor(f)){
+    const color=f.fogOverview==='interior'?fogOverviewInterior:studioWebGLBaseColor(f,theme);
+    polygon(f.projected,color,null);
+   }else{
     ctx.filter='grayscale(1) contrast(.58) brightness(.87)';
     if(f.canopy!==undefined&&showTerrainTextures)mapImage(foliageTexture(f.canopy,f.leafColor),f.projected);
     else{
-     const groundPainted=!f.p&&paintedOverviewGround&&!f.fogOverviewNoArt;
+     const groundPainted=!f.p&&paintedOverviewGround;
      polygon(f.projected,groundPainted?'#0000':studioWebGLBaseColor(f,theme)||f.leafColor||f.fill,
       f.p?'#52575b77':gridVisible()&&gridOpacity()>0?gridStrokeColor():null);
-     if(f.p?.groundSurface&&f.z!==null&&!f.fogOverviewNoArt)paintFloorImageOnFace(floorImage,f);
+     if(f.p?.groundSurface&&f.z!==null)paintFloorImageOnFace(floorImage,f);
     }
    }
    ctx.restore();continue;
@@ -8163,7 +8231,7 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   if(f.canopy!==undefined){
    if(lightOrbit)continue;
    ctx.save();
-   if(textureTestEffect!=='foliageFilters'&&showLighting&&!f.preview){
+   if(!overviewFog&&textureTestEffect!=='foliageFilters'&&showLighting&&!f.preview){
     const ambient=ambientAt(f.lightSample,lightBlockers);
     const level=ambient?.level??0;
     const bright=level<3&&lightAt(f.lightSample,lightBlockers,false,true);
@@ -8302,7 +8370,7 @@ function hit(x,y,exclude=null,surfaceOnly=false,accept=null,includeDoors=false,s
  for(let index=source.length-1;index>=0;index--){
   const f=source[index];
   if(playerCameraCutaway?.terrain.get(f.p)==='hide'||(f.doorFace||f.fixtureFace)&&!includeDoors||accept&&!accept(f))continue;
-  if(f.fogRemembered||f.fogOverview==='interior'||f.preview||f.pathWall&&(!includeDoors||!f.pathOpening)||f.canopy!==undefined||(exclude instanceof Set?exclude.has(f.p):exclude&&f.p===exclude)||(surfaceOnly&&(f.z===null||f.p?.type==='column'&&!f.landing)))continue;
+  if(f.fogRemembered||overviewMasksFloor(f)||f.preview||f.pathWall&&(!includeDoors||!f.pathOpening)||f.canopy!==undefined||(exclude instanceof Set?exclude.has(f.p):exclude&&f.p===exclude)||(surfaceOnly&&(f.z===null||f.p?.type==='column'&&!f.landing)))continue;
   if(f.flatColumn){
    const [a,,c]=f.projected;
    if(((2*x-a[0]-c[0])/(c[0]-a[0]))**2+((2*y-a[1]-c[1])/(c[1]-a[1]))**2<=1)return f;

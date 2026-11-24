@@ -416,7 +416,7 @@ function studioWebGLDrawTerrain(appearance,{origin,axes}){
  for(const [x,y,d] of axes)matrix.push(2*x/W,-2*y/H,-d/512,0);
  matrix.push(2*origin[0]/W-1,1-2*origin[1]/H,-origin[2]/512,1);
  studioWebGL.draw({matrix:new Float32Array(matrix),width:canvas.width,height:canvas.height,
-  background:studioWebGLColor(playerFogOverview()?fogOverviewBackground:mapFogEnabled()?'#23272a':appearance?.outsideColor||'#c4b99f').slice(0,3)});
+  background:studioWebGLColor(mapFogEnabled()&&!playerFogOverview()?'#23272a':appearance?.outsideColor||'#c4b99f').slice(0,3)});
  canvas.classList.add('studioWebGLActive');
 }
 let studioWebGLFloorSource=null;
@@ -542,7 +542,7 @@ function studioWebGLMaterial(face,appearance,style,theme,floorRooms){
   [(useY?y/groundPeriodY:x/groundPeriodX),(flat?y/groundPeriodY:-z)/period]};
 }
 function studioWebGLMapsFloorImage(face){
- if(face.perimeterOnly||face.fogOverview==='interior'||face.fogOverviewNoArt||!face.world?.length)return false;
+ if(face.perimeterOnly||overviewMasksFloor(face)||!face.world?.length)return false;
  if(!face.p)return !face.rememberedFog;
  return !!face.p.groundSurface&&face.z!==null&&
   face.world.every(vertex=>Math.abs(vertex[2]-face.world[0][2])<1e-7);
@@ -564,16 +564,17 @@ function uploadStudioWebGLFrame(blockers,showLighting,appearance,action){
  studioWebGL.setFloor(mapping?{layer:floor.layer,mapping,opacity:style.floorImageOpacity??1,
   base:studioWebGLColor(theme?.ground||'#e2d4b5').slice(0,3)}:null);
  const surfaces=[];
+ const overviewFog=playerFogOverview();
  for(const [terrainIndex,face] of terrain.entries()){
   const f=face;
   f.terrainIndex=terrainIndex;
-  const ghostTerrain=f.fogOverview==='exterior';
+  const ghostTerrain=f.fogOverview==='alley';
   const base=f.fogOverview==='interior'?fogOverviewInterior:studioWebGLBaseColor(f,theme)||f.leafColor||f.fill;
   const color=studioWebGLColor(base);
-  const tint=f.rememberedFog?'#222936b0':!f.fogOverview&&showLighting&&f.world
+  const tint=f.rememberedFog?'#222936b0':!f.fogOverview&&showLighting&&f.world&&(!overviewFog||f.overviewLit)
    ?roomLighting(surfaceLightPoint(fogFaceCenter(f.world),f.surfaceLightOffset),blockers,true):null;
   const shaded=tint?blendStudioWebGLColor(color,studioWebGLColor(tint)):color.slice(0,3);
-  const grid=f.fogOverview!=='interior'&&gridVisible()&&(!f.p||f.volumeTop&&!f.p.terrainYaw)?gridOpacity():0;
+  const grid=!overviewMasksFloor(f)&&gridVisible()&&(!f.p||f.volumeTop&&!f.p.terrainYaw)?gridOpacity():0;
   if(f.world){
    const material=f.fogOverview?null:studioWebGLMaterial(f,appearance,style,theme,floorRooms);
    surfaces.push({world:f.world,color:shaded,grid,material,face:f,

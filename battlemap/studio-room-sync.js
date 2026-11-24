@@ -406,6 +406,15 @@ function mergeRoomPathDoorState(local,prior,remote){
 function mergeRoomOpeningState(local,prior,remote){
  if(remote?.shape==='appearance'){
   mergeRoomPathDoorState(local,prior,remote);
+  if(isTestPreview()&&local&&prior){
+   // Honor a newer shared fog setting unless this GM has a local edit.
+   const settings=local.appearance??={};
+   for(const key of ['fogOfWar','fogPresentation','fogRevision']){
+    if(settings[key]!==prior.appearance?.[key])continue;
+    if(Object.hasOwn(remote.appearance??{},key))settings[key]=remote.appearance[key];
+    else delete settings[key];
+   }
+  }
   return;
  }
  if(!local||!prior||!remote||!['opening','light'].includes(remote.shape))return;
@@ -850,6 +859,7 @@ async function syncRoomOnce(){
   updateJoinSharedEncounter();
   const fog=fogSettings();
   const fogChanged=wasFogEnabled!==(fog?.fogOfWar===true)||previousFogRevision!==fog?.fogRevision||previousFogPresentation!==fog?.fogPresentation;
+  if(roomProfile.gm&&(fogChanged||sceneChanged))syncFogControls();
   const localMoveRepaint=!roomProfile.gm&&playerStandeePreview?.scene===currentSceneId&&
    !sceneChanged&&!fogChanged&&wasPaused===update.paused;
   if((changed||initiativeChanged||update.scene||wasPaused!==update.paused)&&!localMoveRepaint)refresh();
@@ -1078,6 +1088,12 @@ async function leaveRoom(idleNotice){
 }
 el('roomLeave').onclick=el('roomBack').onclick=()=>leaveRoom();
 let startingRoomScene=false;
+const pendingPreviewFog=new Map();
+function testableWorkingScene(){
+ if(!roomProfile?.gm||!currentSceneId||isTestPreview(currentSceneId)||
+  roomState.activeSceneId===currentSceneId)return null;
+ return scenes.find(scene=>scene.id===currentSceneId)??null;
+}
 function viewRoomScene(sceneId){
  requestedRoomScene=sceneId;
  if(sceneId)sessionStorage.setItem('battlemap.viewedScene',sceneId);
@@ -1092,7 +1108,10 @@ async function startRoomScene(operation,scene,{requireShared=false}={}){
  const switchingScene=currentSceneId!==scene?.id;
  if(operation==='test'||switchingScene&&(operation==='open'||operation==='activate'&&isTestPreview(currentSceneId))){
   if(roomPatchBusy||roomPatchPending){await flushRoomPatch();if(roomPatchBusy||roomPatchPending){message('Live edits are still synchronizing. Scene switch cancelled.');return}}
-  const saved=await flushOrPreserveDetachedDraft();
+  // A preview uses the saved scene on the server. Back up an inactive
+  // draft locally if a catalog write fails, then allow the GM to join.
+  const canBackUp=operation==='test'&&!!testableWorkingScene();
+  const saved=await flushOrPreserveDetachedDraft()||canBackUp&&await saveRecovery();
   if(!saved){message('Could not save the current scene; scene switch cancelled.');return}
  }
  if(!scene){el('sceneDialog').showModal();return}
@@ -1111,6 +1130,16 @@ async function startRoomScene(operation,scene,{requireShared=false}={}){
    if(!opened||!roomDraftAttached||currentSceneId!==preview.sceneId)
     throw Error('Could not join the test preview. Try again after reconnecting.');
    if(el('sceneDialog').open)el('sceneDialog').close();
+   const pendingFog=pendingPreviewFog.get(scene.id);
+   if(pendingFog){
+    Object.assign(editableFogAppearance(),pendingFog);
+    if(appearanceDraft)Object.assign(appearanceDraft,pendingFog);
+    pendingPreviewFog.delete(scene.id);
+    refresh();
+    await flushRoomPatch();
+   }
+   syncFogControls();
+   el('fogStatus').textContent=roomPatchPending?'Fog changes are waiting to sync.':'Editing the shared Test Preview.';
    return;
   }
   let initial_scene=null;
@@ -1144,15 +1173,15 @@ async function startRoomScene(operation,scene,{requireShared=false}={}){
 }
 el('roomActivate').onclick=()=>startRoomScene('activate',scenes.find(scene=>scene.id===currentSceneId));
 function updateJoinSharedEncounter(){
- // A saved scene and its active encounter are no longer separate GM destinations.
- el('joinSharedEncounter').hidden=true;
+ const canJoin=!!testableWorkingScene();
+ const button=el('joinSharedEncounter');
+ button.textContent='Join Test Preview';
+ button.hidden=!canJoin;
+ el('fogJoinPreview').hidden=!canJoin;
 }
-el('joinSharedEncounter').onclick=()=>{
- if(!roomProfile?.gm||roomDraftAttached)return;
- const scene=scenes.find(item=>item.id===currentSceneId);
- if(!scene){message('Save this draft before joining a shared encounter.');return}
- if(confirm('Join the shared encounter for '+scene.name+'? Save your local draft first if you want to keep its changes.'))
-  void startRoomScene('open',scene,{requireShared:true});
+el('joinSharedEncounter').onclick=el('fogJoinPreview').onclick=()=>{
+ const scene=testableWorkingScene();
+ if(scene)void startRoomScene('test',scene);
 };
 el('roomPause').onclick=()=>startRoomScene(roomState.paused?'resume':'pause',scenes.find(scene=>scene.id===roomState.sceneId));
 let testerPickerTicket=null;
