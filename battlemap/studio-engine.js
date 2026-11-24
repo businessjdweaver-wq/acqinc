@@ -3227,6 +3227,69 @@ function overviewAlleyAt([x,y,z],rooms){
   return frontRoom&&backRoom&&frontRoom!==backRoom&&front+back<=overviewAlleyWidth;
  });
 }
+function splitOverviewFloor(points,axis,cut,keepLow){
+ const result=[];
+ const inside=point=>keepLow?point[axis]<=cut:point[axis]>=cut;
+ for(let i=0;i<points.length;i++){
+  const a=points[i],b=points[(i+1)%points.length],inA=inside(a),inB=inside(b);
+  if(inA)result.push(a);
+  if(inA!==inB){
+   const t=(cut-a[axis])/(b[axis]-a[axis]);
+   if(t>1e-8&&t<1-1e-8)result.push(a.map((v,j)=>v+(b[j]-v)*t));
+  }
+ }
+ return result;
+}
+function overviewFloorPatches(patch,rooms,nearby,depth=0){
+ const {world}=patch,center=fogFaceCenter(world);
+ const inside=overviewTouchesRoom(world,rooms);
+ const local=nearby(center);
+ const samples=inside?world.map(p=>p.map((v,i)=>v*.96+center[i]*.04)):[];
+ const mixedRoom=inside&&samples.some(p=>!overviewTouchesRoom([p],rooms));
+ const alley=!inside&&local&&overviewAlleyAt(center,rooms);
+ if(!inside&&!alley)return [patch];
+ const sees=p=>{
+  const target=surfaceLightPoint(p,patch.surfaceLightOffset);
+  // Probe just above the floor to avoid hitting its own surface.
+  return fogPointVisible([target[0],target[1],Math.max(target[2],p[2]+.02)]);
+ };
+ const visible=local&&(!inside||overviewTouchesRoom([center],rooms))&&sees(center);
+ const mixedSight=inside&&local&&!mixedRoom&&samples.some(p=>sees(p)!==visible);
+ if(depth<2&&(mixedRoom||mixedSight)){
+  const bounds=[0,1].map(axis=>{
+   const values=world.map(p=>p[axis]);
+   return [Math.min(...values),Math.max(...values)];
+  });
+  if(mixedRoom){
+   for(const room of rooms){
+    if(center[2]<room.z-.001||center[2]>=room.top-.001)continue;
+    for(let i=0;i<room.polygon.length;i++){
+     const a=room.polygon[i],b=room.polygon[(i+1)%room.polygon.length];
+     const axis=Math.abs(a[0]-b[0])<1e-6?0:Math.abs(a[1]-b[1])<1e-6?1:-1;
+     if(axis<0)continue;
+     const [lo,hi]=bounds[axis],cut=a[axis],other=1-axis;
+     if(cut<=lo+1e-6||cut>=hi-1e-6||Math.min(a[other],b[other])>bounds[other][0]||
+      Math.max(a[other],b[other])<bounds[other][1])continue;
+     return [true,false].flatMap(low=>{
+      const part=splitOverviewFloor(world,axis,cut,low);
+      return part.length<3?[]:overviewFloorPatches({...patch,world:part,wholeFace:false},rooms,nearby,depth+1);
+     });
+    }
+   }
+  }
+  const cuts=bounds.map(([lo,hi])=>(lo+hi)/2);
+  const result=[];
+  for(const lowX of [true,false])for(const lowY of [true,false]){
+   const part=splitOverviewFloor(splitOverviewFloor(world,0,cuts[0],lowX),1,cuts[1],lowY);
+   if(part.length>=3)result.push(...overviewFloorPatches({...patch,world:part,wholeFace:false},rooms,nearby,depth+1));
+  }
+  if(result.length)return result;
+ }
+ // A mixed leaf stays covered until both its center and its room-side
+ // samples are visible. Never expose a sliver of art past the wall.
+ const revealed=visible&&(!inside||!mixedRoom&&!mixedSight||samples.every(sees));
+ return [{...patch,overviewLit:revealed,fogOverview:revealed?undefined:inside?(local?'interior':'covered'):'alley'}];
+}
 function overviewFogFaces(currentFaces,blockers){
  const rooms=overviewRoomFootprints();
  const centers=tokens.filter(t=>!t.familiarCaster&&ownsRoomStandee(t)&&!t.incognito&&
@@ -3244,29 +3307,17 @@ function overviewFogFaces(currentFaces,blockers){
   // Skip all subdivision and vision rays on the terrain backdrop.
   const indoor=overviewPatchIsIndoors(face,face.world,rooms);
   if(!indoor&&!isFloor)return [face];
-  const patches=indoor&&isFloor?terrainFogPatches(face):[{world:face.world,wholeFace:true,surfaceLightOffset:face.surfaceLightOffset}];
-  return patches.flatMap(patch=>{
-   const center=fogFaceCenter(patch.world);
-   const inside=indoor&&overviewPatchIsIndoors(face,patch.world,rooms);
-   const local=nearby(center);
-   const alley=!inside&&isFloor&&local&&overviewAlleyAt(center,rooms);
-   if(!inside&&!alley)return [overviewSurface(face,patch)];
-   let visible=false;
-   if(local){
-    if(inside&&isFloor){
-     // Test both a point inside the room and the rest of the patch before
-     // showing underlying printed floor art across a wall boundary.
-     const samples=[center,...patch.world.map(p=>p.map((v,i)=>v*.94+center[i]*.06))];
-     visible=samples.some(p=>overviewTouchesRoom([p],rooms))&&
-      samples.every(p=>fogPointVisible(surfaceLightPoint(p,patch.surfaceLightOffset)));
-    }else visible=fogPointVisible(surfaceLightPoint(center,patch.surfaceLightOffset));
-   }
-   if(visible)return [{...overviewSurface(face,patch),overviewLit:true}];
-   if(alley)return [{...overviewSurface(face,patch),fogOverview:'alley'}];
-   if(isFloor)return [{...overviewSurface(face,patch),fogOverview:local?'interior':'covered'}];
-   if(local&&face.pathWall)return [{...overviewSurface(face,patch),fogOverview:'interior'}];
-   return [];
-  });
+  if(isFloor){
+   const patches=indoor?terrainFogPatches(face):[{world:face.world,wholeFace:true,surfaceLightOffset:face.surfaceLightOffset}];
+   return patches.flatMap(patch=>overviewFloorPatches(patch,rooms,nearby).map(part=>{
+    const surface=overviewSurface(face,part);
+    return part.overviewLit||part.fogOverview?{...surface,overviewLit:part.overviewLit,fogOverview:part.fogOverview}:surface;
+   }));
+  }
+  const center=fogFaceCenter(face.world);
+  if(!nearby(center))return [];
+  if(fogPointVisible(surfaceLightPoint(center,face.surfaceLightOffset)))return [{...face,overviewLit:true}];
+  return face.pathWall?[{...face,fogOverview:'interior'}]:[];
  });
 }
 function overviewSurface(face,patch){
@@ -4225,10 +4276,10 @@ function togglePathOpening(wall,opening,key){
  remember();areas.find(a=>a.shape==='appearance').wallPaths=sceneWallPaths().map(w=>w===wall?next:w);
  movementRenderCache=null;refresh('Wall opening toggled');
 }
-function loadWallTest(){
+async function loadWallTest(){
  if(!wallCanEdit())return;
  if(roomPatchBusy||roomPatchPending){wallStatus('Wait for the current scene to finish syncing.');return}
- if(!confirm('Open the curved corridor as a new draft? Save any changes you want to keep first.'))return;
+ if(!confirm('Open the curved corridor as a new scene?'))return;
  const make=(nodes,properties)=>({...pathWallDefaults,id:crypto.randomUUID(),nodes,closed:false,openings:[],...properties});
  const testWalls=[
   make([{p:[13,16]},{p:[19,16]},{p:[25,16],out:[29,16]},{p:[30,23],in:[30,19]}],{
@@ -4246,10 +4297,11 @@ function loadWallTest(){
    {shape:'light',size:1,origin:[20,14,0],angle:0,on:true,bright:30,radius:45,tint:'#ffcf85',lightElevation:1.15}],
   view:{...savePanelView(),topDown:true}
  }};
- loadSavedScene(example,true);
- currentSceneId=null;roomDraftAttached=false;wallSelection.clear();wallOpeningIndex=-1;
- el('sceneSource').value='current';el('sceneSource').onchange();el('sceneName').value=example.name;
- setWallTool('edit');wallStatus('Test draft. Switch to Play and right-click an opening to test the door or shutter.');
+ if(roomProfile?.gm){
+  if(!await changeScenes([...scenes,example])||!await startRoomScene('open',example))return;
+ }else await loadSavedScene(example,true);
+ wallSelection.clear();wallOpeningIndex=-1;
+ setWallTool('edit');wallStatus('Switch to Play and right-click an opening to test the door or shutter.');
 }
 function showWallTab(id){
  const panel=el('wallPathPanel');
@@ -4871,17 +4923,10 @@ function updateSceneFog(key,value,status){
  const appearance=editableFogAppearance();
  appearance[key]=value;
  if(appearanceDraft)appearanceDraft[key]=value;
- const source=testableWorkingScene();
- if(source){
-  const pending=pendingPreviewFog.get(source.id)??{};
-  pending[key]=value;
-  if(key==='fogPresentation')pending.fogOfWar=appearance.fogOfWar===true;
-  pendingPreviewFog.set(source.id,pending);
- }
  syncFogControls();
  refresh();
  if(roomProfile?.gm)scheduleRoomPatch(0);
- el('fogStatus').textContent=source?status+' Join Test Preview to share this change.':status;
+ el('fogStatus').textContent=status;
 }
 el('fogOfWar').onchange=()=>{
  const enabled=el('fogOfWar').checked;
@@ -4895,7 +4940,7 @@ el('resetFogOfWar').onclick=async()=>{
  if(roomProfile?.gm===false)return;
  if(!roomProfile?.gm||!roomState?.active||!roomDraftAttached||
     currentSceneId!==roomState.sceneId||!roomBaseline){
-  el('fogStatus').textContent='Open the live encounter or Test Preview as GM to reset exploration.';
+  el('fogStatus').textContent='Open a shared scene as GM to reset exploration.';
   return;
  }
  const scene=editableFogAppearance();
@@ -4915,7 +4960,7 @@ el('resetFogOfWar').onclick=async()=>{
  tacticalScanSignature='';
  tacticalPreviousCenters.clear();
  tacticalMapRender();
- el('fogStatus').textContent=isTestPreview()?'Exploration reset sent to the test preview.':'Exploration reset sent to the live encounter.';
+ el('fogStatus').textContent='Exploration reset sent to the shared scene.';
 };
 el('ambientColor').oninput=()=>{
  const hex=el('ambientColor').value;
@@ -5961,7 +6006,7 @@ function fogRegionKey(target){
 let proximityRoomGate={frame:null,topology:null,observers:null,allowed:null};
 let proximityRoomGateSkips=0;
 function roomProximityReject(target,prepared){
- if(prepared.preview||!prepared.observers.length||Math.abs(target[2])>.15||
+ if(playerFogOverview()||prepared.preview||!prepared.observers.length||Math.abs(target[2])>.15||
     prepared.observers.some(o=>Math.abs(o.distance[2])>.15))return false;
  const frame=fogCache;
  if(proximityRoomGate.frame!==frame||proximityRoomGate.observers!==prepared){
@@ -6365,7 +6410,7 @@ function startLightingFrame(){
  const signature=JSON.stringify([roomProfile?.gm,gmIgnoreLighting,playing,terrainLightSignature,movingLightSignature,observers,familiarView,spellEyes(),preview&&[basePoint(preview),preview.darkvision,preview.blindsight,preview.conditions]]);
  const fogRevision=Number(areas.find(a=>a.shape==='appearance')?.appearance?.fogRevision)||0;
  fogMemoryDrawAudit={visible:0,remembered:0,unseen:0,storedMatches:0};
- const fogSceneId=roomProfile?.gm===false&&isTestPreview()?roomState.sceneId:currentSceneId;
+ const fogSceneId=roomProfile?.gm===false?roomState.sceneId:currentSceneId;
  const memoryKey=JSON.stringify([roomProfile?.name,fogSceneId,fogRevision]);
  if(!playerFogEnabled()||preferences.fogMemory===0){saveFogMemory();fogMemoryState=null}
  else if(fogMemoryState?.key!==memoryKey){
@@ -9160,7 +9205,6 @@ function refresh(action){
   wallMenu.hidden=playing||roomProfile?.gm===false;
   if(wallMenu.hidden&&wallTool){wallTool=null;wallDrag=null;wallPreview=null;el('wallPathPanel').hidden=true}
  }
- updateJoinSharedEncounter();
  renderImagePush();
  const {width,depth}=sceneGrid();
  el('sceneGridLabel').textContent=width+' × '+depth+' squares · '+width*5+' × '+depth*5+' ft';
@@ -13115,11 +13159,19 @@ el('file').onchange=async e=>{
   if(invalidArea>=0)throw Error('Area #'+(invalidArea+1)+' ('+(incomingAreas[invalidArea]?.shape??'unknown')+'): invalid shape, size, origin, angle, width or pitch.');
   context='Applying scene';
   if(roomPatchBusy||roomPatchPending){await flushRoomPatch();if(roomPatchBusy||roomPatchPending)throw Error('Previous scene has unsynchronized edits. Finish synchronization before importing.');}
-  clearTimeout(roomPatchTimer);gmAmbientPending=null;roomBaseline=null;
-  exitTool();remember();currentSceneId=null;areas=incomingAreas;pieces=incoming;tokens=importedTokens;selected=null;group.clear();tool=null;tokenTool=null;ghost=null;roomDraftAttached=false;restoreActiveRoom=false;restorePanelView(data.view);refresh();
-  el('sceneSource').value='current';el('sceneSource').onchange();
-  el('sceneName').value=file.name.replace(/\.json$/i,'').slice(0,80);
-  message('Map imported. Use Scenes → Save draft as scene to keep a named copy.');
+  const importName=file.name.replace(/\.json$/i,'').slice(0,80);
+  if(roomProfile?.gm){
+   const scene={id:crypto.randomUUID(),name:importName,folder:'',published:false,
+    map:{areas:incomingAreas,pieces:incoming,tokens:importedTokens,view:data.view}};
+   if(!await changeScenes([...scenes,scene]))throw Error('Could not save the imported scene.');
+   if(!await startRoomScene('open',scene))throw Error('The imported scene is saved but could not be opened.');
+   restorePanelView(data.view);refresh();message('Imported shared scene '+importName+'.');
+  }else{
+   clearTimeout(roomPatchTimer);gmAmbientPending=null;roomBaseline=null;
+   exitTool();remember();currentSceneId=null;areas=incomingAreas;pieces=incoming;tokens=importedTokens;selected=null;group.clear();tool=null;tokenTool=null;ghost=null;roomDraftAttached=false;restoreActiveRoom=false;restorePanelView(data.view);refresh();
+   el('sceneSource').value='current';el('sceneSource').onchange();el('sceneName').value=importName;
+   message('Map imported. Use Scenes to save it.');
+  }
   queueRecovery();
  }catch(error){const detail='Import failed — '+context+': '+(error?.message||'Invalid data.');message(detail);el('mapImportErrorText').textContent=detail;if(!el('mapImportErrorDialog').open)el('mapImportErrorDialog').showModal();}
 };

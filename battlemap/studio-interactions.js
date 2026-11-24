@@ -1066,19 +1066,16 @@ function restoreCard(data){
 }
 async function saveRecovery(){
  if(!roomProfile?.gm)return false;
- if(isTestPreview(currentSceneId))return true;
  const pendingDraft=roomDraftAttached&&roomBaseline&&sceneDelta(roomBaseline,roomSnapshot()).length>0;
  const state={pieces,tokens,areas,currentSceneId,roomDraftTitle,roomDraftAttached,pendingDraft,playing,zoom,panX,panY,angle,tilt,initiative:[...initiativeEntries],activeInitiative,view:savePanelView(),chatOrder:'chronological',chat:[...el('rollsFeed').children].map(cardData)};
  const ok=await storeValue(recoveryKey,state);
  if(!ok&&!el('sceneDialog').open)message('Could not save session recovery. Export the map to keep a backup.');
  return ok;
 }
-let recoveredDetachedDraft=false;
 async function recoverSession(){
  const state=await savedValue(recoveryKey,null);
  if(!state||!Array.isArray(state.pieces)||!Array.isArray(state.tokens))return;
  currentSceneId=scenes.some(scene=>scene.id===state.currentSceneId)?state.currentSceneId:null;
- recoveredDetachedDraft=state.roomDraftAttached===false||state.pendingDraft===true;
  if(typeof state.roomDraftTitle==='string')roomDraftTitle=state.roomDraftTitle;
  pieces=state.pieces;tokens=state.tokens;areas=Array.isArray(state.areas)?state.areas:[];
  playing=state.playing===true;
@@ -1162,14 +1159,13 @@ async function ensureNamedWorkingScene(){
   const date=new Date(),label='New scene '+date.toLocaleDateString()+' '+date.toLocaleTimeString();
   const scene={id:crypto.randomUUID(),name:label,folder:'',published:false,map:structuredClone({pieces,tokens,areas,view:savePanelView()})};
   if(await changeScenes([...scenes,scene])){
-   currentSceneId=scene.id;roomDraftTitle=scene.name;queueRecovery();
-   message('Created and autosaved '+label+'. Rename it from Scenes when ready.');
+   if(await startRoomScene('open',scene))message('Created shared scene '+label+'. Rename it from Scenes when ready.');
   }
  }finally{creatingWorkingScene=false}
 }
 
 function scheduleSceneAutosave(delay=1200){
- if(!recoveryReady||!roomProfile?.gm||!currentSceneId)return;
+ if(!recoveryReady||!roomProfile?.gm||!currentSceneId||!roomDraftAttached)return;
  clearTimeout(sceneAutosaveTimer);
  sceneAutosaveTimer=setTimeout(()=>{void flushSceneAutosave()},delay);
 }
@@ -1179,7 +1175,7 @@ async function flushSceneAutosave(){
   for(let attempt=0;attempt<200&&sceneAutosaveBusy;attempt++)await new Promise(resolve=>setTimeout(resolve,100));
   if(sceneAutosaveBusy)return false;
  }
- if(!roomProfile?.gm||!currentSceneId)return true;
+ if(!roomProfile?.gm||!currentSceneId||!roomDraftAttached)return true;
  const id=currentSceneId,scene=scenes.find(item=>item.id===id);
  if(!scene)return true;
  // Do not persist an out-of-date detached copy of the active encounter.
@@ -1214,6 +1210,7 @@ async function flushOrPreserveDetachedDraft(){
  return preserveDetachedDraftBeforeSceneSwitch();
 }
 async function loadSavedScene(scene,resetInitiative=false){
+ if(roomProfile?.gm&&scenes.some(item=>item.id===scene.id))return startRoomScene('open',scene);
  // Never substitute the catalog snapshot for an active encounter's server state.
  if(roomProfile?.gm&&roomState.active&&scene.id===roomState.sceneId){
   if(currentSceneId!==scene.id&&!(await flushOrPreserveDetachedDraft())){message('Scene switch cancelled: changes could not be saved.');return}
@@ -1390,13 +1387,11 @@ function renderScenes(){
   heading.className='scene-heading';actions.className='scene-actions';
   const active=roomState.activeSceneId===scene.id;
   const viewing=roomState.sceneId===scene.id&&roomDraftAttached;
-  const testing=roomDraftAttached&&currentSceneId===testPreviewPrefix+scene.id;
-  const status=combatText('span',(active?'Active':scene.published?'Published':'Unpublished')+(testing?' · Test preview':viewing?' · Viewing':''));
+  const status=combatText('span',(active?'Active':scene.published?'Published':'Unpublished')+(viewing?' · Viewing':''));
   status.className='scene-publication';
   heading.append(name,status);
   actions.append(catalogButton('Open',()=>roomProfile?.gm?startRoomScene('open',scene):loadSavedScene(scene)));
   if(roomProfile?.gm){
-   if(!active&&!testing)actions.append(catalogButton('Test Preview',()=>startRoomScene('test',scene)));
    if(!nextSessionQueue.includes(scene.id))actions.append(catalogButton('Queue for next session',()=>toggleQueuedScene(scene.id)));
    if(!active)actions.append(catalogButton(scene.published?'Unpublish':'Publish',async()=>{
     if(savingScenes)return;
@@ -1527,11 +1522,18 @@ el('sceneForm').onsubmit=async e=>{
   newSceneMap(el('newSceneTheme').value,source==='random');
  const scene={id:existing?.id||crypto.randomUUID(),name,folder,map};
  if(!await changeScenes([...scenes.filter(item=>item!==existing),scene]))return;
- if(source==='current'){
-  currentSceneId=scene.id;roomDraftTitle=scene.name;el('sceneSource').onchange();renderScenes();queueRecovery();scheduleSceneAutosave();
-  storeValue(accountCatalogKey,[...accountCatalog.values()]);
- }
- else await loadSavedScene(scene,true);
+ if(roomProfile?.gm){
+  if(!await startRoomScene('open',scene))return;
+  if(existing){
+   // Replacing a map is an edit to the shared encounter, too.
+   ({pieces,tokens,areas}=structuredClone(map));
+   restorePanelView(map.view);
+   selected=null;group.clear();
+   refresh();
+   await flushRoomPatch();
+  }
+ }else await loadSavedScene(scene,true);
+ if(source==='current')void storeValue(accountCatalogKey,[...accountCatalog.values()]);
 };
 async function changeStandeeLibrary(next){
  if(savingLibrary)return;
