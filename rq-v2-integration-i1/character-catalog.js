@@ -72,7 +72,7 @@ const characters=[
   ['Vigilant Counterspell',2,9,'Create one persistent Watcher tile that counters the first enemy power activation each enemy turn.','aster-watcher',{cost:[9,8,7,6]}]
  ]});
  characters.push({name:'Vega · Circle of Stars Druid',rosterTitle:'Circle of Stars Druid',cardTitle:'Circle of Stars Druid',icon:'🌟',background:'Hermit',starTier:2,max:102,powers:[
-  ['Dragon Constellation',3,8,'Create seven stars that weaken enemy special tiles on launch and once each enemy round while stars remain.','vega-dragon',{costs:[8,8,7,7],weaken:[1,1,2,2],pattern:[[7,2],[8,2],[6,3],[8,3],[5,4],[3,5],[4,5]]}],
+  ['Dragon Constellation',3,8,'Create seven stars that weaken enemy special tiles on launch and once each enemy round while stars remain.','vega-dragon',{costs:[8,8,7,7],weaken:[1,2,2,3],pattern:[[7,2],[8,2],[6,3],[8,3],[5,4],[3,5],[4,5]]}],
   ['Chalice Constellation',6,7,'Create seven stars that heal living allies on launch and once each enemy round while stars remain.','vega-chalice',{costs:[7,7,6,6],heal:[3,4,5,6],pattern:[[4,2],[8,2],[5,3],[6,3],[7,3],[6,4],[6,5]]}],
   ['Archer Constellation',0,7,'Create seven stars that strike one chosen enemy on launch and once each enemy round while stars remain.','vega-archer',{costs:[7,7,6,6],damage:[4,5,6,7],pattern:[[3,2],[4,2],[5,2],[6,3],[6,4],[4,5],[5,5]]}]
  ]});
