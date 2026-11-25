@@ -13,3 +13,12 @@ These rules apply to all edits, fixes, deployments, and testing builds in this r
 7. These rules are part of the repository's durable development contract. Read this file at the start of work in any new chat thread.
 
 User requirement (2026-11-04/05): clearly increment the version number every time an update is pushed.
+
+## Development queue and integration
+
+- Use the RQV2 development issue form to record acceptance criteria, expected files, dependencies, priority, effort, verification, and approval requirements. Start with ready issues whose dependencies and approvals are satisfied.
+- Designate one integration owner per batch. The owner assigns bounded issues, confirms file ownership, reviews all worker changes, resolves overlaps, and runs verification on the integrated diff.
+- Use separate branches or worktrees for concurrent edits. Claim shared files such as `combat49.html` and `character-catalog.js` before editing, and assign one owner if a change spans both. Tell the integration owner before expanding the file scope.
+- Delegate only when authorized. Run at most two workers concurrently and give each a self-contained brief with the issue, scoped files, acceptance criteria, verification steps, and expected handoff. Use low reasoning for bounded tasks where supported and authorized. Avoid repeated full-repository scans and automatic premium retries. Stop and report unexpected complexity or a reached budget. Obtain authorization before escalating reasoning effort.
+- Workers report changed files, checks, and blockers to the integration owner. The integration owner updates from the target branch as needed, runs the Node suites and version check, checks any affected feature in the browser, and coordinates the next unique visible version before pushing an application update. The static build-marker check supplements the browser verification above.
+- Keep PRs within their approved scope. Obtain separate authorization for production data changes, deployments, and changes to write-enabled workflow behavior unless the task already authorizes that action.
