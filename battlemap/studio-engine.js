@@ -233,14 +233,22 @@ function activeGridCalibration(){
  const c=floorSceneEditing&&floorGridCalibrationDraft!==undefined?floorGridCalibrationDraft:areas.find(a=>a.shape==='appearance')?.gridCalibration;
  return c&&[c.ox,c.oy,c.xx,c.xy,c.yx,c.yy].every(Number.isFinite)&&Math.abs(c.xx*c.yy-c.xy*c.yx)>.0001?c:null;
 }
-function gridToWorld(x,y){
- const c=activeGridCalibration();
+function gridToWorld(x,y,c=activeGridCalibration()){
  return c?[c.ox+c.xx*x+c.yx*y,c.oy+c.xy*x+c.yy*y]:[x,y];
 }
-function worldToGrid(x,y){
- const c=activeGridCalibration();if(!c)return [x,y];
+function worldToGrid(x,y,c=activeGridCalibration()){
+ if(!c)return [x,y];
  const det=c.xx*c.yy-c.xy*c.yx,dx=x-c.ox,dy=y-c.oy;
  return [(dx*c.yy-dy*c.yx)/det,(dy*c.xx-dx*c.xy)/det];
+}
+function standeeGridOffset(p,x,y){
+ const size=Math.max(1,Math.round(p.size||1)),[gx,gy]=worldToGrid(x,y),[px,py]=worldToGrid(p.x+p.size/2,p.y+p.size/2);
+ return [Math.max(0,Math.min(size-1,Math.floor(gx)-Math.round(px-size/2))),Math.max(0,Math.min(size-1,Math.floor(gy)-Math.round(py-size/2)))];
+}
+function snapStandeeToGrid(p,x,y,dx=0,dy=0){
+ const left=Math.floor(worldToGrid(x,y)[0])-dx,top=Math.floor(worldToGrid(x,y)[1])-dy;
+ const [cx,cy]=gridToWorld(left+p.size/2,top+p.size/2);
+ return {x:cx-p.size/2,y:cy-p.size/2};
 }
 function rawPoint(x,y,z){
  x-=gridProjectionCenter(0);y-=gridProjectionCenter(1);
@@ -5319,7 +5327,16 @@ el('sceneAppearanceForm').onsubmit=e=>{
  if(existing)existing.appearance=appearance;
  else areas.push({shape:'appearance',size:1,angle:0,origin:[0,0,0],appearance});
  if(appliedFloorGrid)setSceneGrid(areas,appliedFloorGrid);
- if(appliedCalibration!==undefined){const record=areas.find(a=>a.shape==='appearance');if(appliedCalibration)record.gridCalibration={...appliedCalibration};else delete record.gridCalibration}
+ if(appliedCalibration!==undefined){
+  const record=areas.find(a=>a.shape==='appearance');
+  if(appliedCalibration)record.gridCalibration={...appliedCalibration};else delete record.gridCalibration;
+  const calibration=appliedCalibration||null;
+  for(const token of tokens){
+   const size=Math.max(1,Math.round(token.size||1)),[gx,gy]=worldToGrid(token.x+token.size/2,token.y+token.size/2,calibration);
+   const [cx,cy]=gridToWorld(Math.floor(gx/size)*size+size/2,Math.floor(gy/size)*size+size/2,calibration);
+   token.x=cx-token.size/2;token.y=cy-token.size/2;
+  }
+ }
  movementRenderCache=null;
  movementRenderCache=null;
  el('sceneAppearanceDialog').close();appearanceDraft=null;refresh('Scene appearance applied');
@@ -9372,6 +9389,9 @@ function candidate(x,y,p,dx=0,dy=0,snap=null,alt=false){
   return {...p,x:treadCenter(a,tread.x,w)-p.size/2,
    y:treadCenter(b,tread.y,d)-p.size/2,z,...(carry?.piece===p?{stairLanding:true}:{})};
  }
+ if(p.type==='standee'&&snap!==false){
+  return {...p,...snapStandeeToGrid(p,a,b,dx,dy),z};
+ }
  if(snap===true)return {...p,x:Math.floor(a)-Math.round(dx),y:Math.floor(b)-Math.round(dy),z};
  if(snap===false)return {...p,x:a-dx-.5,y:b-dy-.5,z};
  if(p.type==='ropeBridge'){const xNext=Math.round((a-dx)*4)/4,yNext=Math.round((b-dy)*4)/4;return translateTerrainPiece(p,xNext-p.x,yNext-p.y,z-p.z)}
@@ -10209,7 +10229,8 @@ canvas.onpointerdown=e=>{
  if(selected){
   const [w,d,h]=dimensions(selected),grabPlane=f?.shadow?f.shadowLevel:selected.z;
   const [a,b]=inverse(x,y,selected.type==='standee'?grabPlane:selected.z+h);
-  drag={piece:selected,members:group.has(selected)&&group.size>1?[...group]:null,x,y,grabPlane,dx:Math.max(0,Math.min(w-1,Math.floor(a)-selected.x)),dy:Math.max(0,Math.min(d-1,Math.floor(b)-selected.y))};
+  const [dx,dy]=selected.type==='standee'?standeeGridOffset(selected,a,b):[Math.max(0,Math.min(w-1,Math.floor(a)-selected.x)),Math.max(0,Math.min(d-1,Math.floor(b)-selected.y))];
+  drag={piece:selected,members:group.has(selected)&&group.size>1?[...group]:null,x,y,grabPlane,dx,dy};
   if(isFurniture(selected))drag.freeFurnitureGrab=[a-selected.x,b-selected.y];
  }else if(!phoneLayout.matches)drag={x,y,angle,tilt,pivot:measurePoint(x,y)};
  refresh();
@@ -10453,7 +10474,8 @@ canvas.onpointermove=e=>{
   const {standee,grabPlane}=drag;
   if(!tokens.includes(standee)){drag=null;return}
   const [u,v]=inverse(drag.x,drag.y,grabPlane);
-  carry={piece:standee,grabPlane,previousRoute:route?.done?route:null,dx:Math.max(0,Math.min(standee.size-1,Math.floor(u)-standee.x)),dy:Math.max(0,Math.min(standee.size-1,Math.floor(v)-standee.y))};
+  const [dx,dy]=standeeGridOffset(standee,u,v);
+  carry={piece:standee,grabPlane,previousRoute:route?.done?route:null,dx,dy};
   if((!roomProfile||roomProfile.gm)&&playStandeeGroup.has(standee))carry.members=selectedStandees();
   route={points:[basePoint(standee)],end:null};
   updateObjectHandleHover();
