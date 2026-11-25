@@ -16,7 +16,10 @@
     "./studio-room-sync.js"
   ];
   Promise.all(parts.map(async path => {
-    const response = await fetch(path, { cache: "no-cache" });
+    const build = document.getElementById("battlemapBuild")?.textContent.trim() || "unknown";
+    const url = new URL(path, document.baseURI);
+    url.searchParams.set("build", build);
+    const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) throw new Error(path + " returned HTTP " + response.status);
     return response.text();
   })).then(sources => {
