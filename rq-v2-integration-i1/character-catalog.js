@@ -95,7 +95,7 @@ const characterColorStrength=(archetype,level,color,isNatural,powerLevel=0)=>{
  const twoStar=Number(archetype)>=6;
  const base=isNatural?(twoStar?15:10):(twoStar?4:2);
  const mastery=isNatural&&powerLevel>0?[1,1.08,1.18,1.35][Math.max(0,Math.min(3,powerLevel-1))]:1;
- return Math.round(base*mastery*characterDamageMultiplier(archetype,level));
+ return base*mastery*characterDamageMultiplier(archetype,level);
 };
 const characterMaxHp=(character,archetype,level)=>Math.round(character.max*(1+characterLevelProgress(archetype,level)*0.0025));
 const tileColors=['#d94d57','#d8ad3c','#388bdc','#8b5fc8','#35a579','#748095','#f0e6ca'];
