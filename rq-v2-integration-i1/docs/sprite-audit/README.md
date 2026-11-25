@@ -4,6 +4,15 @@ Reviewed main at `18cea9fe5294a9e5b88b224fd30cbdba7f87f0fd` (application build `
 
 The three style references are Alda, Pip, and Tor. They establish compact three-quarter poses, large readable heads, planted boots, warm broken outlines, and selective texture on cloth, leather, and metal. They differ in canvas size, so the audit compares apparent pixel density at display scale. All three original PNGs were retrieved and inspected. Their Git blob SHAs match the pinned tree.
 
+## Standing sprite detail standard
+
+Use the [approved side-by-side reference](detail-standard.png) for all future character sprite work. Compare at equal visible height and match the row for the character's tier.
+
+- **One-star background characters** use the top row as their detail target. Mira, Tobin, Nessa, and Sable show larger, crisp pixel clusters, fewer highlights, and clear class props with restrained ornament.
+- **Two-star subclass characters** use the bottom row as their detail target. Aster, Kestrel, Vega, and Rusk can have richer material shading, more elaborate subclass gear, and selective effects at the level shown.
+
+The difference in detail between the rows is intentional. This approves the detail standard. Runtime sprite replacement still follows the visual approval and release procedure below.
+
 ## Contact sheets
 
 Each sheet repeats the three references. Sprites are cropped for display using the alpha ≥80 silhouette and scaled with nearest-neighbor sampling to the same 157-pixel height, aligned at the baseline. Hair, headgear, and equipment that extend the silhouette remain in view. This is a visual comparison proxy for body height, especially for raised equipment. The pilot comparison uses the same method at 180 pixels.
