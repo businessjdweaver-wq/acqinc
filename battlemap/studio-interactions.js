@@ -1126,21 +1126,25 @@ function editCatalogEntry(entry,save){
  return save({...entry,name,folder:folderPath(folder.slice(0,100))});
 }
 async function changeScenes(next,{throwOnError=false}={}){
- if(savingScenes)return false;
+ if(savingScenes){
+  if(!throwOnError)return false;
+  while(savingScenes)await new Promise(resolve=>setTimeout(resolve,25));
+ }
  savingScenes=true;
  const button=el('saveSceneButton'),status=el('sceneStatus');
  button.disabled=true;status.textContent='Saving scenes…';
  try{
+  const nextScenes=typeof next==='function'?next(scenes):next;
   if(roomProfile?.gm){
-   const saved=await saveWorkspaceItem(scenesKey,next,true);
+   const saved=await saveWorkspaceItem(scenesKey,nextScenes,true);
    if(!saved)throw Error('The shared workspace is unavailable. Reopen Scenes and try again.');
-   scenes=next;renderScenes();
-   const localSaved=await storeValue(scenesKey,next,{skipWorkspace:true});
+   scenes=nextScenes;renderScenes();
+   const localSaved=await storeValue(scenesKey,nextScenes,{skipWorkspace:true});
    status.textContent=localSaved?'Scenes saved to the shared workspace.':
     'Scenes saved to the shared workspace. This browser could not update its backup.';
   }else{
-   if(!await storeValue(scenesKey,next))throw Error('Browser storage is full or unavailable.');
-   scenes=next;renderScenes();status.textContent='Scenes saved in this browser.';
+   if(!await storeValue(scenesKey,nextScenes))throw Error('Browser storage is full or unavailable.');
+   scenes=nextScenes;renderScenes();status.textContent='Scenes saved in this browser.';
   }
   return true;
  }catch(error){status.textContent='Could not save scenes. '+error.message;if(throwOnError)throw error;return false}
