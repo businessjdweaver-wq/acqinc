@@ -677,6 +677,8 @@ function drawStudioWebGLFrame(frame,ratio,destination=null,retainTerrain=false){
  if(preview&&visiblePiece(preview))drawStandee(preview,!confirmed);
  const standees=faces.sort((a,b)=>a.depth-b.depth);
  faces=surfaceFaces.concat(standees).sort(front);
+ // Apply Canvas2D's point-by-point depth ordering to the WebGL overlay too.
+ faces=orderOccludingFaces(faces);
  const indexByFace=new Map(faces.map((face,index)=>[face,index]));
  const hideBehindTerrain=face=>face.p!==focalOverlay&&!isMovingStandeePreview(face.p)&&!showThroughTerrain&&!playerAllyCameraVisible(face.p);
  const cover=surfaceFaces.filter(f=>f.p&&!f.windowPane&&!cutaway.has(f.terrainIndex)).map(f=>[indexByFace.get(f),f,projectedBounds(f.projected)]);
