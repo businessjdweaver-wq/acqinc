@@ -136,6 +136,16 @@ function bridgeSurfaceHeight(piece,x,y){
  const cross=Math.abs(dx*(y-a[1])-dy*(x-a[0]))/Math.max(.001,Math.sqrt(length2));
  return cross<=(piece.width??1)/2?profile:null;
 }
+function ropeBridgeGridPoint(bridge,x,y,snap=true){
+ const a=bridge?.start,b=bridge?.end;if(!a||!b)return null;
+ const dx=b[0]-a[0],dy=b[1]-a[1],length=Math.hypot(dx,dy),length2=length*length;
+ if(!length2)return null;
+ let t=Math.max(0,Math.min(1,((x-a[0])*dx+(y-a[1])*dy)/length2));
+ if(snap){const along=Math.min(length,Math.round(t*length));t=along/length}
+ const centerX=Math.round((a[0]+dx*t)*4)/4,centerY=Math.round((a[1]+dy*t)*4)/4;
+ const height=bridgeSurfaceHeight(bridge,centerX,centerY);
+ return height===null?null:[centerX,centerY,Math.round(height*4)/4];
+}
 function supported(p,terrain,sceneAreas=areas){
  if(p.type!=='standee'||p.z===0||p.flying)return true;
  const [w,d]=dimensions(p),cx=p.x+w/2,cy=p.y+d/2;
@@ -8662,6 +8672,7 @@ function rulerPoint(x,y,free=false){
  const face=hit(x,y);
  if(!free&&(face?.standee||face?.shadow))return basePoint(face.p);
  const [u,v,z]=measurePoint(x,y,free&&(face?.standee||face?.shadow)?hit(x,y,null,true):face);
+ if(face?.p?.type==='ropeBridge')return ropeBridgeGridPoint(face.p,u,v,!free)??[u,v,z];
  return free?[u,v,z]:[Math.floor(u+1e-8)+.5,Math.floor(v+1e-8)+.5,z];
 }
 function basePoint(p){return [p.x+p.size/2,p.y+p.size/2,p.z]}
@@ -9441,25 +9452,8 @@ function candidate(x,y,p,dx=0,dy=0,snap=null,alt=false){
    y:treadCenter(b,tread.y,d)-p.size/2,z,...(carry?.piece===p?{stairLanding:true}:{})};
  }
  if(p.type==='standee'&&snap!==false&&!ground&&!p.flying&&f?.p?.type==='ropeBridge'){
-  const bridge=f.p,dxBridge=bridge.end[0]-bridge.start[0],dyBridge=bridge.end[1]-bridge.start[1];
-  const length=Math.hypot(dxBridge,dyBridge),length2=dxBridge*dxBridge+dyBridge*dyBridge;
-  if(length2){
-   const along=(x,y)=>((x-bridge.start[0])*dxBridge+(y-bridge.start[1])*dyBridge)/length2;
-   const deckHeight=(x,y)=>{
-    const t=along(x,y);
-    return t>=-1e-7&&t<=1+1e-7?bridgeSurfaceHeight(bridge,x,y):null;
-   };
-   const aligned=snapStandeeToGrid(p,a,b,dx,dy),alignedX=aligned.x+p.size/2,alignedY=aligned.y+p.size/2;
-   let centerX=alignedX,centerY=alignedY,height=deckHeight(alignedX,alignedY);
-   if(height===null||Math.abs(height-z)>=.25){
-    const t=Math.max(0,Math.min(1,along(a,b))),step=Math.min(1,length);
-    const snappedT=Math.max(0,Math.min(1,Math.round(t*length/step)*step/length));
-    centerX=Math.round((bridge.start[0]+dxBridge*snappedT)*4)/4;
-    centerY=Math.round((bridge.start[1]+dyBridge*snappedT)*4)/4;
-    height=deckHeight(centerX,centerY);
-   }
-   if(height!==null)return {...p,x:centerX-p.size/2,y:centerY-p.size/2,z:Math.round(height*4)/4};
-  }
+  const center=ropeBridgeGridPoint(f.p,a,b,true);
+  if(center)return {...p,x:center[0]-p.size/2,y:center[1]-p.size/2,z:center[2]};
  }
  if(p.type==='standee'&&snap!==false){
   return {...p,...snapStandeeToGrid(p,a,b,dx,dy),z};
