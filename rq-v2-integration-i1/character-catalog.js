@@ -71,8 +71,23 @@ const characters=[
   ['Aura of the Sentinel',1,7,'Create or refresh a countdown aura that gives each newly refilled ordinary tile a chance to become blue.','aster-aura',{chance:[10,15,20,25],duration:[3,3,4,5]}],
   ['Vigilant Counterspell',2,9,'Create one persistent Watcher tile that counters the first enemy power activation each enemy turn.','aster-watcher',{cost:[9,8,7,6]}]
  ]});
+ characters.push({name:'Vega · Circle of Stars Druid',rosterTitle:'Circle of Stars Druid',cardTitle:'Circle of Stars Druid',icon:'🌟',background:'Hermit',starTier:2,max:102,powers:[
+  ['Dragon Constellation',3,8,'Launch the seven-star Dragon pattern. Weaken enemy special tiles.','vega-dragon',{costs:[8,8,7,7],weaken:[1,2,3,4],pattern:[[7,2],[8,2],[6,3],[8,3],[5,4],[3,5],[4,5]]}],
+  ['Chalice Constellation',6,7,'Launch the seven-star Chalice pattern. Heal every living ally.','vega-chalice',{costs:[7,7,6,6],heal:[8,12,16,20],pattern:[[4,2],[8,2],[5,3],[6,3],[7,3],[6,4],[6,5]]}],
+  ['Archer Constellation',0,7,'Launch the seven-star Archer pattern. Strike one chosen enemy.','vega-archer',{costs:[7,7,6,6],damage:[18,24,30,36],pattern:[[3,2],[4,2],[5,2],[6,3],[6,4],[4,5],[5,5]]}]
+ ]});
+ characters.push({name:'Rusk · Beast Master Ranger',rosterTitle:'Beast Master Ranger',cardTitle:'Beast Master Ranger',icon:'🐊',background:'Outlander',starTier:2,max:106,powers:[
+  ['Marsh Guide',6,6,'Swap any two tiles within the mastery range.','rusk-guide',{costs:[6,6,5,5],distance:[2,3,4,5]}],
+  ['Chowmp!!!',4,8,'Chomp attacks, then destroys green tiles to increase the strike.','rusk-chowmp',{costs:[8,8,7,7],damage:[12,16,20,24],greenTiles:[1,2,3,4],bonusPerTile:.25}],
+  ['Venom Dart',1,7,'Stun one enemy; mastery expands target rank and duration.','rusk-venom',{costs:[7,7,6,6],targetRanks:[1,2,3,3],stunRounds:[1,1,1,2]}]
+ ]});
+ characters.push({name:'Kestrel · Soulknife Rogue',rosterTitle:'Soulknife Rogue',cardTitle:'Soulknife Rogue',icon:'🗡️',background:'Criminal',starTier:2,max:98,powers:[
+  ['Energy Thief',2,8,'Steal enemy resources and transfer them to the party.','kestrel-thief',{costs:[8,8,7,7],colors:[2,6,3],stealPerColor:[2,2,2,3],colorCount:[1,2,3,3]}],
+  ['Psychic Blade',3,9,'Cut all enemies; feedback may destroy a horizontal slash of basic tiles without cascades.','kestrel-blade',{costs:[9,9,8,8],damage:[8,12,16,20],feedbackChance:[50,40,30,20]}],
+  ['Fleet Foot',6,0,'PASSIVE: when white energy meets the mastery threshold, Kestrel stays in the rear rank.','kestrel-fleet',{threshold:[10,8,6,4]}]
+ ]});
 }
-const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock','Whispers Bard','Wild Magic Sorcerer','Oath of the Watchers Paladin'];characters.forEach((c,i)=>{c.rosterTitle=c.rosterTitle||(i===13?'Shroomkeeper':cardTitles[i]);c.cardTitle=c.cardTitle||cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
+const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock','Whispers Bard','Wild Magic Sorcerer','Oath of the Watchers Paladin','Circle of Stars Druid','Beast Master Ranger','Soulknife Rogue'];characters.forEach((c,i)=>{c.rosterTitle=c.rosterTitle||(i===13?'Shroomkeeper':cardTitles[i]);c.cardTitle=c.cardTitle||cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);}); // Excess-card character levels: tier baselines are 1 and 100, respectively.
 const characterLevelProgress=(archetype,level)=>{const base=Number(archetype)>=6?100:1;const cap=base+99;return Math.max(0,Math.min(99,Math.floor(Number(level)||base)-base));};
 // Rank sets the baseline; card mastery and character progression are independent.
 const characterDamageMultiplier=(archetype,level)=>1+characterLevelProgress(archetype,level)*(Number(archetype)>=6?0.005:0.002);
