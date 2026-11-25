@@ -113,7 +113,7 @@ function stairSupportsStandee(p,terrain){
   if(!q.stairTread||q.form&&!q.curvedStair)return false;
   if(q.curvedStair)return Math.abs(q.z+dimensions(q)[2]-p.z)<1e-7&&pointInPolygon([cx,cy],terrainFootprint(q));
   const [a,b,c]=dimensions(q);
-  return q.z+c===p.z&&cx>=q.x&&cx<q.x+a&&cy>=q.y&&cy<q.y+b;
+  return Math.abs(q.z+c-p.z)<1e-7&&cx>=q.x&&cx<q.x+a&&cy>=q.y&&cy<q.y+b;
  });
 }
 function flatCenterSupportsStandee(p,terrain){
@@ -121,8 +121,8 @@ function flatCenterSupportsStandee(p,terrain){
  const [w,d]=dimensions(p),cx=p.x+w/2,cy=p.y+d/2;
  return terrain.some(q=>{
   if(q.curvedStair)return Math.abs(q.z+dimensions(q)[2]-p.z)<1e-7&&pointInPolygon([cx,cy],terrainFootprint(q));
-  if(q.form==='cylinder')return q.z+dimensions(q)[2]===p.z&&cylinderContainsPoint(q,cx,cy);
-  if(q.form==='polygon')return q.z+dimensions(q)[2]===p.z&&pointInPolygon([cx,cy],terrainFootprint(q));
+  if(q.form==='cylinder')return Math.abs(q.z+dimensions(q)[2]-p.z)<1e-7&&cylinderContainsPoint(q,cx,cy);
+  if(q.form==='polygon')return Math.abs(q.z+dimensions(q)[2]-p.z)<1e-7&&pointInPolygon([cx,cy],terrainFootprint(q));
   if(q.form||!['volume','terrace','stone','bridge','crate','pillar','fountain'].includes(q.type))return false;
   const [a,b,c]=dimensions(q);
   return q.z+c===p.z&&cx>=q.x&&cx<q.x+a&&cy>=q.y&&cy<q.y+b;
@@ -9478,7 +9478,26 @@ function candidate(x,y,p,dx=0,dy=0,snap=null,alt=false){
   if(center)return {...p,x:center[0]-p.size/2,y:center[1]-p.size/2,z:center[2]};
  }
  if(p.type==='standee'&&snap!==false){
-  return {...p,...snapStandeeToGrid(p,a,b,dx,dy),z};
+  const snapped={...p,...snapStandeeToGrid(p,a,b,dx,dy),z};
+  const platform=f?.p;
+  if(!ground&&!p.flying&&z>0&&platform?.type==='volume'&&!platform.stairTread){
+   const top=platform.z+dimensions(platform)[2];
+   const supports=trial=>flatCenterSupportsStandee({...trial,z:top},[platform]);
+   if(Math.abs(top-z)<.25){
+    snapped.z=top;
+    if(supports(snapped))return snapped;
+    const [gx,gy]=worldToGrid(a,b);
+    let best=null,bestDistance=Infinity;
+    for(let ix=-2;ix<=2;ix++)for(let iy=-2;iy<=2;iy++){
+     const [cx,cy]=gridToWorld(Math.floor(gx)-dx+p.size/2+ix,Math.floor(gy)-dy+p.size/2+iy);
+     const trial={...snapped,x:cx-p.size/2,y:cy-p.size/2};
+     const distance=Math.hypot(cx-a,cy-b);
+     if(distance<bestDistance&&supports(trial)){best=trial;bestDistance=distance}
+    }
+    if(best)return best;
+   }
+  }
+  return snapped;
  }
  if(snap===true)return {...p,x:Math.floor(a)-Math.round(dx),y:Math.floor(b)-Math.round(dy),z};
  if(snap===false)return {...p,x:a-dx-.5,y:b-dy-.5,z};
