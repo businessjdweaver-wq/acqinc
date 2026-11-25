@@ -8877,8 +8877,17 @@ function validCarryDestination(){
   });
   // Elevated walking surfaces are independent of the ground artwork bounds.
   const onElevatedSurface=p.type==='standee'&&!p.flying&&p.z>0&&flatCenterSupportsStandee(p,pieces);
-  return Number.isFinite(p.z)&&p.z>=-1e-7&&(onBridge||onElevatedSurface||floorAcceptsDestination(p.x,p.y,w,d,image));
+  const floorOK=floorAcceptsDestination(p.x,p.y,w,d,image);
+  const ok=Number.isFinite(p.z)&&p.z>=-1e-7&&(onBridge||onElevatedSurface||floorOK);
+  if(!ok)carry.destinationDiagnostic={mode:roomProfile?.gm?'GM':'player',testing:roomState.testing,origin:[member.x,member.y,member.z],destination:[p.x,p.y,p.z],ghost:[ghost.x,ghost.y,ghost.z],size:p.size,grid:sceneGrid(),image,bridge:onBridge,elevated:onElevatedSurface,floor:floorOK,layer:el(playing?'playLayer':'layer')?.value,focus:cameraFocusElevation,surfaces:movementSurfaces.length};
+  return ok;
  });
+}
+function reportCarryDestinationFailure(){
+ const detail=JSON.stringify(carry?.destinationDiagnostic??{ghost:ghost&&[ghost.x,ghost.y,ghost.z],carry:!!carry});
+ console.warn('Movement destination rejected',detail);
+ message('Destination rejected: '+detail);
+ window.prompt('Movement diagnostics — copy this text for troubleshooting',detail);
 }
 function carrySegment(start,end){
  // Standee moves must be checked against path-wall solids, just like other movement.
@@ -9102,7 +9111,7 @@ function positionMoveActions(){
 function pauseMove(){
  const blocker=movementBlocked();
  if(blocker){message(carryBlockerLabel(blocker)+' blocks this route. Choose a waypoint around it.');draw();return}
- if(!validCarryDestination()){message('That destination is outside the playable floor. Choose another destination.');draw();return}
+ if(!validCarryDestination()){reportCarryDestinationFailure();draw();return}
  carry.paused=true;
  message('Tap '+pathLabel()+' to continue, or hold '+pathLabel()+' and click to add waypoints. Use × or ✓ to finish.');
  positionMoveActions();
@@ -9249,7 +9258,7 @@ function scheduleConfirmedMovementRepaint(action,scene=currentSceneId,preview=nu
 async function commitCarry(confirmedAt=performance.now()){
  const blocker=movementBlocked();
  if(blocker){message(carryBlockerLabel(blocker)+' blocks this route. Choose a waypoint around it.');draw();return}
- if(!validCarryDestination()){message('That destination is outside the playable floor. Choose another destination.');draw();return}
+ if(!validCarryDestination()){reportCarryDestinationFailure();draw();return}
  const piece=carry.piece;
  if(carry.arcaneEye){
   if(roomMoving||playerScenePaused())return;
