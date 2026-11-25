@@ -446,8 +446,7 @@ function studioWebGLFloorMapping([origin,right,,bottom]){
  const determinant=ux*vy-uy*vx;
  if(Math.abs(determinant)<1e-9)return null;
  const uv=(x,y)=>{
-  const [wx,wy]=gridToWorld(x,y);
-  const dx=wx-origin[0],dy=wy-origin[1];
+  const dx=x-origin[0],dy=y-origin[1];
   return [(dx*vy-dy*vx)/determinant,(ux*dy-uy*dx)/determinant];
  };
  const p=uv(0,0),q=uv(1,0),r=uv(0,1);
