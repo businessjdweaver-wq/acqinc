@@ -663,12 +663,15 @@ function spawnShopkeeperFee(){
 function enemyResourceReadout(){
  return '<div class="enemy-energy-readout" aria-label="Enemy team energy buckets"><div class="enemy-energy-row">'+labels.map((label,i)=>'<div class="enemy-energy-bucket" title="'+label+' enemy energy"><span style="color:'+C[i]+'">'+G[i]+'</span><small>'+label+'</small><b>'+Math.max(0,enemyEnergy[i]||0)+'</b></div>').join('')+'</div></div>';
 }
-function showEnemyResources(enemyIndex){
+let enemyEnergyInvoker=null,enemyEnergyPointerActivation=false;
+function showEnemyResources(enemyIndex,invoker=null,pointerActivation=false){
  const enemy=enemies[enemyIndex];if(!enemy)return;
+ enemyEnergyInvoker=invoker;enemyEnergyPointerActivation=pointerActivation;
  $('enemyEnergySource').textContent='Opened from '+enemy.name+' · shared energy available to the opposing team.';
  $('enemyEnergyBuckets').innerHTML=enemyResourceReadout();
  const dialog=$('enemyEnergyDialog');if(!dialog.open)dialog.showModal();
 }
+$('enemyEnergyDialog').addEventListener('close',()=>{const invoker=enemyEnergyInvoker,clearPointerFocus=enemyEnergyPointerActivation;enemyEnergyInvoker=null;enemyEnergyPointerActivation=false;if(clearPointerFocus)setTimeout(()=>{if(invoker?.isConnected&&document.activeElement===invoker)invoker.blur();},0);});
 
 const ASTRAL_ARMS_FIX_BUILD='I1.15.66';
 function openHeroPowerLauncher(i){
@@ -1740,8 +1743,8 @@ function markCombatSprites(){
   el.classList.toggle('combat-status-stunned',status==='stunned');
   if(enemy){
    el.setAttribute('role','button');el.setAttribute('tabindex','0');el.setAttribute('aria-label',(enemies[index]?.name||'Enemy')+' · show enemy team resource buckets');el.title=(enemies[index]?.name||'Enemy')+' · click to show enemy team resources';
-   el.onclick=event=>{event.stopPropagation();showEnemyResources(index);};
-   el.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();showEnemyResources(index);}};
+   el.onclick=event=>{event.stopPropagation();showEnemyResources(index,el,event.detail>0);};
+   el.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();showEnemyResources(index,el,false);}};
   }
   if(!status)continue;
   const label=document.createElement('span');
@@ -2531,14 +2534,11 @@ function onCombatEvent(name,handler){if(!combatListeners.has(name))combatListene
 function emitCombatEvent(name,payload){for(const handler of combatListeners.get(name)||[])handler(payload);}
 let phantomWard=null;
 function fortifiedCount(){return tiles.filter(t=>t&&(t.effectFortified||t.loreFortified)).length;}
-function animateEnergyTheft(color,amount){
- const enemyIndex=frontEnemy(),heroIndex=party.findIndex(p=>p.name?.startsWith('Sable'));const source=document.querySelector('#combatArtStage .combat-art-unit[data-art-enemy="'+enemyIndex+'"]')||document.querySelector('#combatArtStage .combat-art-unit[data-art-enemy]')||document.querySelector('[data-enemy="'+enemyIndex+'"]');const target=document.querySelector('#combatArtStage .combat-art-unit[data-art-hero="'+heroIndex+'"]')||document.querySelector('[data-member="'+heroIndex+'"]')||document.querySelector('#combatArtStage .combat-art-unit[data-art-hero]');
- if(!source||!target)return;
- const a=source.getBoundingClientRect(),b=target.getBoundingClientRect(),spark=document.createElement('div');
- spark.className='theft-spark';spark.textContent=G[color]+' '+amount;spark.style.color=C[color];
- spark.style.left=(a.left+a.width/2)+'px';spark.style.top=(a.top+a.height/2)+'px';document.body.appendChild(spark);
- requestAnimationFrame(()=>{spark.style.transform='translate('+(b.left+b.width/2-a.left-a.width/2)+'px,'+(b.top+b.height/2-a.top-a.height/2)+'px)';spark.style.opacity='0';});
- setTimeout(()=>spark.remove(),1100);
+async function animateEnergyTheft(color,amount,enemyIndex=frontEnemy(),heroIndex=party.findIndex(p=>p.name?.startsWith('Sable'))){
+ const source=combatSpriteTarget('enemy',enemyIndex),destination=combatSpriteTarget('hero',heroIndex);
+ if(!source||!destination)return;
+ flyCombatEffect(source,destination,G[color]+(amount>1?' '+amount:''),C[color]);
+ await wait(780);
 }
 onCombatEvent('tile-unlocked',({count})=>{
  const i=party.findIndex(p=>p.name.startsWith('Sable'));if(i<0)return;
@@ -3212,7 +3212,7 @@ async function usePower(i,j,enemyIndex=null){let p=party[i].powers[j];
    const rounds=p[5].stunRounds[lv-1];druidStuns.set(enemyIndex,Math.max(druidStuns.get(enemyIndex)||0,rounds));showStunnedCallout(enemyIndex);say('Venom Dart stuns '+enemies[enemyIndex].name+' for '+rounds+' round(s).');
   }else if(type==='kestrel-thief'){
    const colors=enemyEnergy.map((amount,color)=>({amount,color})).filter(x=>x.amount>0).sort((a,b)=>b.amount-a.amount).slice(0,p[5].colorCount[lv-1]);let stolen=0;const details=[];
-   for(const item of colors){const amount=Math.min(item.amount,p[5].stealPerColor[lv-1]);enemyEnergy[item.color]-=amount;energy[item.color]+=amount;stolen+=amount;details.push(amount+' '+labels[item.color]);}
+   for(const item of colors){const amount=Math.min(item.amount,p[5].stealPerColor[lv-1]);if(amount<=0)continue;enemyEnergy[item.color]-=amount;render();await animateEnergyTheft(item.color,amount,frontEnemy(),i);energy[item.color]+=amount;stolen+=amount;details.push(amount+' '+labels[item.color]);render();for(const button of document.querySelectorAll('[data-p]')){const [hero,power]=button.dataset.p.split('-').map(Number);if(party[hero]?.powers[power]?.[1]===item.color){button.classList.add('pulse');setTimeout(()=>button.classList.remove('pulse'),700);}}}
    say('Energy Thief steals '+details.join(', ')+' from the enemy and transfers '+stolen+' energy to the party.');
   }else{
    const raw=p[5].damage[lv-1],damage=Math.round(raw*RQCharacterCatalog.characterDamageMultiplier(party[i].archetype,party[i].level));let hits=0;
