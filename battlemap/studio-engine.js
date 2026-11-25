@@ -2643,7 +2643,7 @@ function paintFloorImageOnFace(image,face){
  if(!image||!face.world)return;
  const z=face.world[0][2];
  if(!face.world.every(p=>Math.abs(p[2]-z)<1e-7))return;
- if(image.bounds.some(([lo,hi],axis)=>face.world.every(p=>{const world=gridToWorld(p[0],p[1]);return world[axis]<=lo})||face.world.every(p=>{const world=gridToWorld(p[0],p[1]);return world[axis]>=hi})))return;
+ if(image.bounds.some(([lo,hi],axis)=>face.world.every(p=>p[axis]<=lo)||face.world.every(p=>p[axis]>=hi)))return;
  paintFloorImage(image,face.projected,z);
 }
 function readFloorImageSettings(){
@@ -8829,9 +8829,9 @@ function floorAcceptsDestination(x,y,width,depth,image=importedFloorFootprint())
  const floor=[[left,top],[left+grid.width,top],[left+grid.width,top+grid.depth],[left,top+grid.depth]];
  // The imported artwork can extend beyond the original battlefield. Accept
  // partial squares by their center, while keeping the normal footprint rule.
- if(image&&carryPointInsideFloor(gridToWorld(x+width/2,y+depth/2),image))return true;
+ if(image&&carryPointInsideFloor([x+width/2,y+depth/2],image))return true;
  return [[x,y],[x+width,y],[x+width,y+depth],[x,y+depth]]
-  .every(([u,v])=>carryPointInsideFloor(gridToWorld(u,v),floor));
+  .every(point=>carryPointInsideFloor(point,floor));
 }
 function validCarryDestination(){
  if(!ghost||!carry)return false;
