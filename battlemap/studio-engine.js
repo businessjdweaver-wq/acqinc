@@ -8871,9 +8871,13 @@ function validCarryDestination(){
    const dx=bridge.end[0]-bridge.start[0],dy=bridge.end[1]-bridge.start[1],length2=dx*dx+dy*dy;
    const x=p.x+p.size/2,y=p.y+p.size/2;
    const t=length2?((x-bridge.start[0])*dx+(y-bridge.start[1])*dy)/length2:-1;
-   return t>=-1e-7&&t<=1+1e-7&&Math.abs((bridgeSurfaceHeight(bridge,x,y)??Infinity)-p.z)<.25;
+   // Quarter-square snapping can shift either coordinate by up to .125.
+   const endpointTolerance=Math.SQRT2*.125/Math.sqrt(length2);
+   return length2>0&&t>=-endpointTolerance-1e-7&&t<=1+endpointTolerance+1e-7&&Math.abs((bridgeSurfaceHeight(bridge,x,y)??Infinity)-p.z)<.25;
   });
-  return Number.isFinite(p.z)&&p.z>=-1e-7&&(onBridge||floorAcceptsDestination(p.x,p.y,w,d,image));
+  // Elevated walking surfaces are independent of the ground artwork bounds.
+  const onElevatedSurface=p.type==='standee'&&!p.flying&&p.z>0&&flatCenterSupportsStandee(p,pieces);
+  return Number.isFinite(p.z)&&p.z>=-1e-7&&(onBridge||onElevatedSurface||floorAcceptsDestination(p.x,p.y,w,d,image));
  });
 }
 function carrySegment(start,end){
