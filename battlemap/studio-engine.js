@@ -5423,7 +5423,9 @@ function drawVisibleGround(){
    }
    if(poly.length<3)continue;
   }
-  // These clipped grid cells are already in calibrated world coordinates.\n  // Project them directly; applying gridPoint here would calibrate them twice.\n  face(poly.map(([wx,wy])=>[wx,wy,0]),'#e2d4b5',null,0,false);
+  // These clipped grid cells are already in calibrated world coordinates.
+  // Project them directly; applying gridPoint here would calibrate them twice.
+  face(poly.map(([wx,wy])=>[wx,wy,0]),'#e2d4b5',null,0,false);
  }
 }
 function savedGridDisplay(){return areas.find(a=>a.shape==='appearance')?.appearance?.gridDisplay||{}}
