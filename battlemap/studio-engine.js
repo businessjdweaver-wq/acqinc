@@ -13336,7 +13336,7 @@ el('file').onchange=async e=>{
   if(roomProfile?.gm){
    const scene={id:crypto.randomUUID(),name:importName,folder:'',published:false,
     map:{areas:incomingAreas,pieces:incoming,tokens:importedTokens,view:data.view}};
-   if(!await changeScenes([...scenes,scene]))throw Error('Could not save the imported scene.');
+   if(!await changeScenes([...scenes,scene],{throwOnError:true}))throw Error('Could not save the imported scene.');
    if(!await startRoomScene('open',scene))throw Error('The imported scene is saved but could not be opened.');
    restorePanelView(data.view);refresh();message('Imported shared scene '+importName+'.');
   }else{
