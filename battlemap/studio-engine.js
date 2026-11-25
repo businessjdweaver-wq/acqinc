@@ -7917,8 +7917,8 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
   for(const f of faces){const type=geometryFaceType(f);geometryAudit.fogInputByType[type]=(geometryAudit.fogInputByType[type]||0)+1}
   for(const f of faces)indexSectorFace(f);
  }
- movementSurfaces=mapFogEnabled()?faces.filter(f=>(f.p?.stairTread||f.volumeTop||f.landing)&&Number.isFinite(f.z)&&!f.preview)
-  .sort((a,b)=>a.depth-b.depth):[];
+ movementSurfaces=faces.filter(f=>Number.isFinite(f.z)&&!f.preview&&!f.standee&&!f.pathWall&&!f.doorFace&&!f.fixtureFace&&(!f.p||f.p.type==='ropeBridge'||f.p.stairTread||f.volumeTop||f.landing||f.p.type==='volume'))
+  .sort((a,b)=>a.depth-b.depth);
  recordGeometryStage('cullingMs');
  if(overviewFog)faces=overviewFogFaces(faces,blockers);
  else if(mapFogEnabled()){
@@ -8615,11 +8615,11 @@ function drawBattlefield(simplified,action,cameraPreview,lightOrbit,panFrame=nul
  if(performanceDraw)performanceDraw.paintMs=Number(Math.max(0,performance.now()-paintStart-(performanceDraw.lightingMs-paintLighting)).toFixed(2));
  }finally{if(overlap)ctx.restore()}
 }
-function hit(x,y,exclude=null,surfaceOnly=false,accept=null,includeDoors=false,source=faces){
+function hit(x,y,exclude=null,surfaceOnly=false,accept=null,includeDoors=false,source=faces,physical=false){
  for(let index=source.length-1;index>=0;index--){
   const f=source[index];
-  if(playerCameraCutaway?.terrain.get(f.p)==='hide'||(f.doorFace||f.fixtureFace)&&!includeDoors||accept&&!accept(f))continue;
-  if(f.fogRemembered||overviewMasksFloor(f)||f.preview||f.pathWall&&(!includeDoors||!f.pathOpening)||f.canopy!==undefined||(exclude instanceof Set?exclude.has(f.p):exclude&&f.p===exclude)||(surfaceOnly&&(f.z===null||f.p?.type==='column'&&!f.landing)))continue;
+  if(!physical&&playerCameraCutaway?.terrain.get(f.p)==='hide'||(f.doorFace||f.fixtureFace)&&!includeDoors||accept&&!accept(f))continue;
+  if(!physical&&(f.fogRemembered||overviewMasksFloor(f))||f.preview||f.pathWall&&(!includeDoors||!f.pathOpening)||f.canopy!==undefined||(exclude instanceof Set?exclude.has(f.p):exclude&&f.p===exclude)||(surfaceOnly&&(f.z===null||f.p?.type==='column'&&!f.landing)))continue;
   if(f.flatColumn){
    const [a,,c]=f.projected;
    if(((2*x-a[0]-c[0])/(c[0]-a[0]))**2+((2*y-a[1]-c[1])/(c[1]-a[1]))**2<=1)return f;
@@ -9411,10 +9411,10 @@ function candidate(x,y,p,dx=0,dy=0,snap=null,alt=false){
  const excluded=drag?.members?new Set(drag.members):carry?.piece||drag?.piece||(visionTool==='moveTerrain'?visionSelection:null);
  let f=hit(x,y,excluded,p.type==='standee'||!!drag?.members);
  if(p.type==='standee'&&!p.flying&&carry&&!carry.light&&!carry.arcaneEye&&
-  (p===carry.piece||carry.members?.includes(p))&&(!f?.p||f.p.stairTread)){
+  (p===carry.piece||carry.members?.includes(p))&&(!f?.p||f.p.stairTread||roomProfile?.gm===false)){
   // Fog can remove the lower floor or a tread from render hit testing.
   // Physical surfaces still determine where a walking standee lands.
-  f=hit(x,y,excluded,true,null,false,movementSurfaces)??f;
+  f=hit(x,y,excluded,true,null,false,movementSurfaces,true)??f;
  }
  if(p.type==='column'||sceneryPiece(p)){
   const surface=alt&&isFurniture(p)?furniturePlacementSurface(x,y,excluded):hit(x,y,excluded,true),z=p.type==='ceilingArt'?p.z:surface?.z??0;
@@ -9440,7 +9440,7 @@ function candidate(x,y,p,dx=0,dy=0,snap=null,alt=false){
  const ground=p.type==='standee'&&el(playing?'playLayer':'layer').value==='ground';
  if(p.type==='standee'&&!ground&&!p.flying&&!carry?.light&&!carry?.arcaneEye){
   // Select the bridge face even when a trunk or other foreground geometry covers it.
-  const bridgeFace=hit(x,y,excluded,false,face=>face.p?.type==='ropeBridge');
+  const bridgeFace=hit(x,y,excluded,true,face=>face.p?.type==='ropeBridge',false,movementSurfaces,true);
   if(bridgeFace)f=bridgeFace;
  }
  if(p.type==='standee'&&!ground&&!p.flying&&!carry?.light&&!carry?.arcaneEye){
