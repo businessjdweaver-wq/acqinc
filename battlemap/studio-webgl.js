@@ -23,6 +23,7 @@ function createStudioWebGL(onContextLost) {
  layout(location=4) in float floorSurface;
  layout(location=5) in vec4 material;
  layout(location=6) in float overview;
+ layout(location=7) in vec2 gridPosition;
  uniform mat3 floorMapping;
  uniform mat4 camera;
  uniform float transition;
@@ -38,7 +39,7 @@ function createStudioWebGL(onContextLost) {
  void main(){
   gl_Position=camera*vec4(position,1.);
   tint=mix(previousColor,color,transition);
-  tile=position.xy;
+  tile=gridPosition;
   drawGrid=grid;
   drawFloor=floorSurface;
   ghostTerrain=overview;
@@ -62,6 +63,7 @@ function createStudioWebGL(onContextLost) {
  uniform vec3 floorBase;
  uniform highp sampler2DArray terrainTextures;
  uniform float terrainOpacity;
+ uniform vec3 gridColor;
  flat in float drawGrid;
  out vec4 pixel;
  void main(){
@@ -81,7 +83,8 @@ function createStudioWebGL(onContextLost) {
    float gray=dot(surface,vec3(.2126,.7152,.0722));
    surface=vec3((gray*.58+.21)*.87);
   }
-  pixel=vec4(surface*(1.-line*.27),terrainOpacity);
+  surface=mix(surface,gridColor,clamp(line,0.,1.));
+  pixel=vec4(surface,terrainOpacity);
  }`);
  gl.attachShader(program,vertex);
  gl.attachShader(program,fragment);
@@ -94,6 +97,7 @@ function createStudioWebGL(onContextLost) {
  const floorOpacity=gl.getUniformLocation(program,'floorOpacity');
  const floorBase=gl.getUniformLocation(program,'floorBase');
  const terrainOpacity=gl.getUniformLocation(program,'terrainOpacity');
+ const gridColor=gl.getUniformLocation(program,'gridColor');
  const floorTexture=gl.createTexture();
  gl.bindTexture(gl.TEXTURE_2D,floorTexture);
  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
@@ -138,9 +142,9 @@ function createStudioWebGL(onContextLost) {
  gl.enableVertexAttribArray(0);
  gl.vertexAttribPointer(0,3,gl.FLOAT,false,12,0);
  gl.bindBuffer(gl.ARRAY_BUFFER,styleBuffer);
- for(const [index,size,offset] of [[1,3,0],[2,3,12],[3,1,24],[4,1,28],[5,4,32],[6,1,48]]){
+ for(const [index,size,offset] of [[1,3,0],[2,3,12],[3,1,24],[4,1,28],[5,4,32],[6,1,48],[7,2,52]]){
   gl.enableVertexAttribArray(index);
-  gl.vertexAttribPointer(index,size,gl.FLOAT,false,52,offset);
+  gl.vertexAttribPointer(index,size,gl.FLOAT,false,60,offset);
  }
  gl.enable(gl.DEPTH_TEST);
  gl.depthFunc(gl.LEQUAL);
@@ -151,7 +155,7 @@ function createStudioWebGL(onContextLost) {
  function render(now){
   frame=0;
   if(layer.hidden||!lastView)return;
-  const {matrix,background}=lastView;
+  const {matrix,background,gridColor:lineColor}=lastView;
   const weight=blendWeight(now);
   gl.viewport(0,0,layer.width,layer.height);
   gl.clearColor(...background,1);
@@ -165,6 +169,7 @@ function createStudioWebGL(onContextLost) {
    gl.uniform3fv(floorBase,floor.base);
   }
   gl.uniform1f(terrainOpacity,1);
+  gl.uniform3fv(gridColor,lineColor||[.3,.3,.3]);
   if(cutawayKey){
    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,cutawayBuffer);
    gl.drawElements(gl.TRIANGLES,opaqueCount,gl.UNSIGNED_INT,0);
@@ -223,12 +228,13 @@ function createStudioWebGL(onContextLost) {
    }
    nextKeys.push(positionKey);
    triangles.push(mesh);
-   ranges.push({start:styles.length/13,count:mesh.length,face});
+   ranges.push({start:styles.length/15,count:mesh.length,face});
    const slot=tileIndex(material?.image);
    if(slot>=0&&mesh.length)texturedFaces++;
    for(const point of mesh){
     const [u,v]=slot>=0?material.uv(point):[0,0];
-    styles.push(...color,...previous,grid,Number(floorSurface),u,v,slot,Number(!!material?.cutout),Number(ghostTerrain));
+    const gridCoordinates=face&&!face.p?worldToGrid(point[0],point[1]):point;
+    styles.push(...color,...previous,grid,Number(floorSurface),u,v,slot,Number(!!material?.cutout),Number(ghostTerrain),gridCoordinates[0],gridCoordinates[1]);
    }
   }
   const positionsReused=nextKeys.length===positionKeys.length&&nextKeys.every((key,i)=>key===positionKeys[i]);
@@ -241,7 +247,7 @@ function createStudioWebGL(onContextLost) {
   }
   gl.bindBuffer(gl.ARRAY_BUFFER,styleBuffer);
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(styles),gl.DYNAMIC_DRAW);
-  count=styles.length/13;
+  count=styles.length/15;
   cutawayKey=null;
   colors=nextColors;
   blendAt=blend?null:-Infinity;
@@ -416,7 +422,8 @@ function studioWebGLDrawTerrain(appearance,{origin,axes}){
  for(const [x,y,d] of axes)matrix.push(2*x/W,-2*y/H,-d/512,0);
  matrix.push(2*origin[0]/W-1,1-2*origin[1]/H,-origin[2]/512,1);
  studioWebGL.draw({matrix:new Float32Array(matrix),width:canvas.width,height:canvas.height,
-  background:studioWebGLColor(mapFogEnabled()&&!playerFogOverview()?'#23272a':appearance?.outsideColor||'#c4b99f').slice(0,3)});
+  background:studioWebGLColor(mapFogEnabled()&&!playerFogOverview()?'#23272a':appearance?.outsideColor||'#c4b99f').slice(0,3),
+  gridColor:studioWebGLColor(gridColor()).slice(0,3)});
  canvas.classList.add('studioWebGLActive');
 }
 let studioWebGLFloorSource=null;
