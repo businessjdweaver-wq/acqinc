@@ -8890,12 +8890,45 @@ function standeeDetour(start,end,blocker){
  }
  return best;
 }
+function ropeBridgeRoute(start,end,bridge){
+ if(carry?.piece?.type!=='standee'||!bridge.start||!bridge.end)return null;
+ const endpoints=[bridge.start,bridge.end].map(point=>[point[0],point[1],bridgeSurfaceHeight(bridge,point[0],point[1])??point[2]]);
+ const choices=[[endpoints[0],endpoints[1]],[endpoints[1],endpoints[0]],[endpoints[0]],[endpoints[1]]];
+ let best=null,bestCost=Infinity;
+ for(const waypoints of choices){
+  const compact=waypoints.filter((point,index,list)=>
+   (!index||point.some((value,axis)=>Math.abs(value-list[index-1][axis])>1e-7))&&
+   point.some((value,axis)=>Math.abs(value-start[axis])>1e-7)&&point.some((value,axis)=>Math.abs(value-end[axis])>1e-7));
+  const points=[start,...compact,end],segments=points.slice(1).map((point,index)=>carrySegment(points[index],point));
+  if(segments.some(segment=>segment.blocked))continue;
+  const cost=segments.reduce((sum,segment)=>sum+segment.cost,0);
+  if(cost<bestCost){best=compact;bestCost=cost}
+ }
+ return best;
+}
+function bestRopeBridgeRoute(start,end,bridges){
+ let best=null,bestCost=Infinity;
+ for(const bridge of bridges){
+  const waypoints=ropeBridgeRoute(start,end,bridge);if(!waypoints)continue;
+  const points=[start,...waypoints,end],segments=points.slice(1).map((point,index)=>carrySegment(points[index],point));
+  if(segments.some(segment=>segment.blocked))continue;
+  const cost=segments.reduce((sum,segment)=>sum+segment.cost,0);
+  if(cost<bestCost){best=waypoints;bestCost=cost}
+ }
+ return best;
+}
 function routeWithDetours(points){
  return points.flatMap((end,i)=>{
   if(!i||carriedMembers().length!==1)return [end];
   const start=points[i-1],direct=carrySegment(start,end);
   if(!direct.blocked)return [end];
   if(direct.blocker.type==='standee')return [...standeeDetour(start,end,direct.blocker),end];
+  const climbsByRopeBridge=direct.blocker.name==='A rope ladder is required for this climb';
+  if(direct.blocker.type==='ropeBridge'||climbsByRopeBridge){
+   const bridges=pieces.filter(piece=>piece.type==='ropeBridge');
+   const waypoints=bestRopeBridgeRoute(start,end,direct.blocker.type==='ropeBridge'?[direct.blocker]:bridges);
+   if(waypoints)return [...waypoints,end];
+  }
   if(!movementTerrainBlock(direct.blocker))return [end];
   let best=[],bestCost=Infinity;
   for(const door of visionObjects()){
