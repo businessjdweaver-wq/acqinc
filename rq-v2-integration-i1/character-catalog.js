@@ -66,8 +66,13 @@ const characters=[
  ['Destructive Wild Magic',0,7,'Random damage or destructive tile effect. Level 4 rolls twice and chooses.','merrix-overchannel'],
  ['Reality Distortion',3,5,'Random transformation or board movement. Level 4 rolls twice and chooses.','merrix-bend']
  ]});
+ characters.push({name:'Aster · Oath of the Watchers Paladin',rosterTitle:'Oath of the Watchers Paladin',cardTitle:'Oath of the Watchers Paladin',icon:'👁️',background:'Acolyte',starTier:2,max:110,powers:[
+  ['Divine Smite',0,7,'Deal radiant damage to the frontmost enemy, bypassing Defense tiles.','aster-smite',{damage:[25,32,40,50]}],
+  ['Aura of the Sentinel',1,7,'Create or refresh a countdown aura that gives each newly refilled ordinary tile a chance to become blue.','aster-aura',{chance:[10,15,20,25],duration:[3,3,4,5]}],
+  ['Vigilant Counterspell',2,9,'Create one persistent Watcher tile that counters the first enemy power activation each enemy turn.','aster-watcher',{cost:[9,8,7,6]}]
+ ]});
 }
-const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock','Whispers Bard','Wild Magic Sorcerer'];characters.forEach((c,i)=>{c.rosterTitle=c.rosterTitle||(i===13?'Shroomkeeper':cardTitles[i]);c.cardTitle=c.cardTitle||cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
+const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock','Whispers Bard','Wild Magic Sorcerer','Oath of the Watchers Paladin'];characters.forEach((c,i)=>{c.rosterTitle=c.rosterTitle||(i===13?'Shroomkeeper':cardTitles[i]);c.cardTitle=c.cardTitle||cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);});// Excess-card character levels: tier baselines are 1 and 100, respectively.
 const characterLevelProgress=(archetype,level)=>{const base=Number(archetype)>=6?100:1;const cap=base+99;return Math.max(0,Math.min(99,Math.floor(Number(level)||base)-base));};
 // Rank sets the baseline; card mastery and character progression are independent.
 const characterDamageMultiplier=(archetype,level)=>1+characterLevelProgress(archetype,level)*(Number(archetype)>=6?0.005:0.002);

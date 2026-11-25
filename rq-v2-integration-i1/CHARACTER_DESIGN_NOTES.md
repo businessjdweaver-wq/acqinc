@@ -20,3 +20,6 @@ A future three-star trap specialist could choose trap locations, unlike Iris's t
 
 ---
 Updated for I1.16.120.
+## Future two-star mechanic backlog
+
+- Special Energy tile powers: Lark's Traveling Lute is currently the only catalog power that creates Energy tiles. Future designs may create colored Energy tiles, amplify existing Energy tiles, or consume them for alternative effects. Aster's Aura of the Sentinel creates ordinary blue tiles and does not use Energy tiles.
