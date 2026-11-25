@@ -8671,8 +8671,12 @@ function cameraOrbitPoint(x,y){
 function rulerPoint(x,y,free=false){
  const face=hit(x,y);
  if(!free&&(face?.standee||face?.shadow))return basePoint(face.p);
- const [u,v,z]=measurePoint(x,y,free&&(face?.standee||face?.shadow)?hit(x,y,null,true):face);
- if(face?.p?.type==='ropeBridge')return ropeBridgeGridPoint(face.p,u,v,!free)??[u,v,z];
+ // Prefer a bridge face beneath foreground geometry so ruler points share the
+ // same centerline and elevation model as standee placement.
+ const bridgeFace=hit(x,y,null,false,candidate=>candidate.p?.type==='ropeBridge');
+ const target=bridgeFace??face;
+ const [u,v,z]=measurePoint(x,y,free&&(target?.standee||target?.shadow)?hit(x,y,null,true):target);
+ if(target?.p?.type==='ropeBridge')return ropeBridgeGridPoint(target.p,u,v,!free)??[u,v,z];
  return free?[u,v,z]:[Math.floor(u+1e-8)+.5,Math.floor(v+1e-8)+.5,z];
 }
 function basePoint(p){return [p.x+p.size/2,p.y+p.size/2,p.z]}
@@ -9430,6 +9434,11 @@ function candidate(x,y,p,dx=0,dy=0,snap=null,alt=false){
   }
  }
  const ground=p.type==='standee'&&el(playing?'playLayer':'layer').value==='ground';
+ if(p.type==='standee'&&!ground&&!p.flying&&!carry?.light&&!carry?.arcaneEye){
+  // Select the bridge face even when a trunk or other foreground geometry covers it.
+  const bridgeFace=hit(x,y,excluded,false,face=>face.p?.type==='ropeBridge');
+  if(bridgeFace)f=bridgeFace;
+ }
  if(p.type==='standee'&&!ground&&!p.flying&&!carry?.light&&!carry?.arcaneEye){
   const surface=hit(x,y,excluded,false);
   const platform=surface?.standee?surface.p:null;
