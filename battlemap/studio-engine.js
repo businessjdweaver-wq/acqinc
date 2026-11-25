@@ -51,6 +51,8 @@ function playerAllyCameraVisible(token){
 let topDown=false;
 try{topDown=localStorage.getItem('battlemap.topDown')==='true'}catch{}
 const viewCameras=[null,null];
+let cameraFocusElevation=0,cameraZoneStorageIdentity=null;
+const cameraZoneViews=new Map();
 let terrainLocked=false;
 try{terrainLocked=localStorage.getItem('battlemap.terrainLocked')==='true'}catch{}
 let group=new Set(), copiedTerrain=[], pointer=null;
@@ -5531,8 +5533,9 @@ function orderOccludingFaces(list){
   if(!rugs.has(face.p))rugs.set(face.p,[]);
   rugs.get(face.p).push(index);
  }
- // Procedural tree trunks and other raised biome meshes are emitted as column faces.
- // Use local face depth for their overlap instead of sorting by average depth alone.
+ // Procedural tree trunks (and other raised biome meshes) are emitted as
+ // column faces. Treat them like volumes so standee overlap uses local face
+ // depth rather than whichever way the average face depth happens to sort.
  const occluders=list.flatMap((f,i)=>f.p?.type==='volume'||f.doorFace||
   f.p?.type==='column'&&f.biomeShape?[i]:[]);
  if(!occluders.length&&!rugs.size)return list;
@@ -10335,9 +10338,11 @@ function hasCubePreferredAngle(){
 function centerCubeStandee(){
  C=Math.cos(angle);D=Math.sin(angle);
  if(selected?.type!=='standee'||standeeHidden(selected)){
+  setCameraFocusLevelState(0);
   panX=0;panY=-H*.05;
   return;
  }
+ setCameraFocusLevelState(selected.z);
  const [x,y]=point(...basePoint(selected));
  panX+=W/2-x;panY+=H/2-(y-standeeArtHeight(selected)/2);
  setFocusCutaway(selected);
@@ -10370,6 +10375,7 @@ function focusMapObject(object){
 function focusMapTarget(pivot,standee=null,{deferDraw=false,avoidStandees=false,preferFront=false,preserveAngle=false}={}){
  if(standee)currentMoveReadouts().delete(moveReadoutKey(standee));
  if(standee&&standeeHidden(standee))return;
+ setCameraFocusLevelState(pivot[2]??0);
  if(!topDown&&!hasCubePreferredAngle()&&!preserveAngle&&!cameraFocusHeld){
   const blockers=visionBlockers();
   const aim=standee?[pivot[0],pivot[1],pivot[2]+standee.size*.65]:pivot;
@@ -11533,17 +11539,70 @@ el('lowAngle').onclick=()=>{
 };
 el('topDown').onclick=()=>{
  if(drag)return;
- viewCameras[Number(topDown)]={zoom,panX,panY};
+ saveCameraZoneView();
+ viewCameras[Number(topDown)]={zoom,panX,panY,focusElevation:cameraFocusElevation};
  topDown=!topDown;queueWorkspacePreferences();
  ({zoom,panX,panY}=viewCameras[Number(topDown)]||{zoom:1,panX:0,panY:0});
+ const saved=viewCameras[Number(topDown)];if(Number.isFinite(saved?.focusElevation))cameraFocusElevation=saved.focusElevation;
+ syncCameraFocusElevation();
  try{localStorage.setItem('battlemap.topDown',String(topDown))}catch{}
  refresh();
 };
 function captureHomeView(){
- return {angle,tilt,zoom,topDown,panX:panX/Math.max(W,1),panY:panY/Math.max(H,1)};
+ return {angle,tilt,zoom,topDown,focusElevation:cameraFocusElevation,panX:panX/Math.max(W,1),panY:panY/Math.max(H,1)};
 }
 function homeStorageKey(){return 'battlemap.homeView:'+JSON.stringify([roomProfile?.name||'local',currentSceneId])}
 function sessionViewKey(){return 'battlemap.lastView:'+JSON.stringify([roomProfile?.name||'local',currentSceneId])}
+function cameraZoneViewsKey(){return 'battlemap.cameraZones:'+JSON.stringify([roomProfile?.name||'local',currentSceneId])}
+function loadCameraZoneViews(){
+ const identity=cameraZoneViewsKey();if(identity===cameraZoneStorageIdentity)return;
+ cameraZoneStorageIdentity=identity;cameraZoneViews.clear();
+ try{
+  const saved=JSON.parse(localStorage.getItem(identity)||'{}');
+  for(const [level,view] of Object.entries(saved))if(Number.isFinite(Number(level))&&view&&[view.x,view.y,view.angle,view.tilt,view.zoom].every(Number.isFinite))cameraZoneViews.set(Number(level),view);
+ }catch{}
+}
+function cameraZonePose(){
+ const [x,y]=inverse(W/2,H/2,cameraFocusElevation);
+ return {x,y,angle,tilt,zoom,topDown};
+}
+function saveCameraZoneView(){
+ if(!W||!H)return;
+ loadCameraZoneViews();cameraZoneViews.set(Math.round(cameraFocusElevation*100)/100,cameraZonePose());
+ try{localStorage.setItem(cameraZoneViewsKey(),JSON.stringify(Object.fromEntries(cameraZoneViews)))}catch{}
+}
+function syncCameraFocusElevation(){
+ const slider=el('cameraFocusElevation');if(!slider)return;
+ const feet=cameraFocusElevation*5;
+ slider.value=String(Math.max(0,Math.min(300,Math.round(feet/5)*5)));
+ el('cameraFocusElevationValue').textContent=(Number.isInteger(feet)?feet:feet.toFixed(1))+' ft';
+}
+function setCameraFocusLevelState(z){
+ z=Math.max(0,Math.min(maxHeight,Number(z)||0));
+ if(Math.abs(z-cameraFocusElevation)<1e-7)return;
+ saveCameraZoneView();cameraFocusElevation=z;syncCameraFocusElevation();
+}
+function focusCameraElevation(z){
+ if(drag||carry)return;
+ z=Math.max(0,Math.min(maxHeight,Math.round(Number(z)*4)/4));
+ if(Math.abs(z-cameraFocusElevation)<1e-7)return;
+ saveCameraZoneView();
+ const oldLevel=cameraFocusElevation,[x,y]=inverse(W/2,H/2,oldLevel);
+ cameraFocusElevation=z;syncCameraFocusElevation();
+ loadCameraZoneViews();
+ const saved=cameraZoneViews.get(Math.round(z*100)/100);
+ if(saved){
+  ({angle,tilt,zoom,topDown}=saved);C=Math.cos(angle);D=Math.sin(angle);
+  S=Math.min(W/(gridLimit(0)+17),H/(gridLimit(1)+6))*zoom;
+  const [px,py]=point(saved.x,saved.y,z);panX=W/2-px;panY=H/2-py;
+ }else{
+  const [px,py]=point(x,y,z);panX+=W/2-px;panY+=H/2-py;
+ }
+ setFocusCutaway(null);draw('Camera elevation focus');
+ saveCameraZoneView();
+}
+el('cameraFocusElevation').oninput=e=>{el('cameraFocusElevationValue').textContent=Number(e.target.value)+' ft'};
+el('cameraFocusElevation').onchange=e=>focusCameraElevation(Number(e.target.value)/5);
 function chosenSessionView(){
  try{return JSON.parse(localStorage.getItem(sessionViewKey()))}catch{return null}
 }
@@ -11553,11 +11612,12 @@ function scheduleSessionViewSave(){
  clearTimeout(sessionViewSaveTimer);
  sessionViewSaveTimer=setTimeout(()=>{
   try{localStorage.setItem(sessionViewKey(),JSON.stringify(captureHomeView()))}catch{}
+  saveCameraZoneView();
  },300);
 }
 window.addEventListener('pagehide',()=>{
  clearTimeout(sessionViewSaveTimer);
- if(currentSceneId&&W&&H)try{localStorage.setItem(sessionViewKey(),JSON.stringify(captureHomeView()))}catch{}
+ if(currentSceneId&&W&&H){try{localStorage.setItem(sessionViewKey(),JSON.stringify(captureHomeView()))}catch{}saveCameraZoneView()}
 });
 function chosenHomeView(){
  try{const saved=JSON.parse(localStorage.getItem(homeStorageKey()));if(saved)return saved}catch{}
@@ -11566,10 +11626,13 @@ function chosenHomeView(){
 function applyHomeView(view){
  cubePreferredAngle=null;
  const valid=view&&['angle','tilt','zoom','panX','panY'].every(key=>Number.isFinite(view[key]))&&view.zoom>0&&view.zoom<=40;
+ loadCameraZoneViews();
  setFocusCutaway(null);
  angle=valid?view.angle:-.64;tilt=valid?Math.max(.10,Math.min(1.5,view.tilt)):.69;
  zoom=valid?view.zoom:1;panX=valid?view.panX*W:0;panY=valid?view.panY*H:0;
  topDown=valid?!!view.topDown:topDown;
+ cameraFocusElevation=valid&&Number.isFinite(view.focusElevation)?Math.max(0,Math.min(maxHeight,view.focusElevation)):0;
+ syncCameraFocusElevation();
 }
 el('home').textContent='Home View';
 el('home').title='Home View';
@@ -11605,6 +11668,7 @@ function frameCompassView(action){
  panX=0;panY=0;
  const target=compassFocusStandee();
  if(target){
+  setCameraFocusLevelState(target.z);
   const [x,y]=point(...basePoint(target));
   panX+=W/2-x;
   panY+=H/2-(y-standeeArtHeight(target)/2);
@@ -14068,6 +14132,7 @@ function focusStandee(token,action='Focus standee',partyRoster=false,{preserveZo
  if(!preferencePreview)currentMoveReadouts().delete(moveReadoutKey(token));
  if(!preferencePreview){focusedTitle=token;focusedTitleFade=null}
  const target=carry?.piece===token&&ghost?ghost:token;
+ setCameraFocusLevelState(target.z);
  if(!preserveZoom)zoom=preferences.focusZoom/100;
  S=Math.min(W/(gridLimit(0)+17),H/(gridLimit(1)+6))*zoom;
  const [x,y]=point(...basePoint(target));

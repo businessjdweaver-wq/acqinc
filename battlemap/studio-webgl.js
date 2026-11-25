@@ -346,7 +346,7 @@ function studioWebGLCaptureMargin(){return Math.ceil(Math.min(W,H)*.2)}
 function studioWebGLView(){
  return {angle,tilt,zoom,panX,panY,width:canvas.clientWidth,height:canvas.clientHeight};
 }
-const studioWebGLCameraAction=/^(Camera (pan|rotation|zoom|settled|focus)|Compass rotation|Test: (Orbit|Pan|Zoom)( .*)?)$/;
+const studioWebGLCameraAction=/^(Camera (pan|rotation|zoom|settled|focus|elevation focus)|Compass rotation|Test: (Orbit|Pan|Zoom)( .*)?)$/;
 const studioWebGLColors=new Map();
 let studioWebGLColorContext;
 function prepareStudioWebGL(){
