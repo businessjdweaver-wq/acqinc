@@ -72,9 +72,9 @@ const characters=[
   ['Vigilant Counterspell',2,9,'Create one persistent Watcher tile that counters the first enemy power activation each enemy turn.','aster-watcher',{cost:[9,8,7,6]}]
  ]});
  characters.push({name:'Vega · Circle of Stars Druid',rosterTitle:'Circle of Stars Druid',cardTitle:'Circle of Stars Druid',icon:'🌟',background:'Hermit',starTier:2,max:102,powers:[
-  ['Dragon Constellation',3,8,'Launch the seven-star Dragon pattern. Weaken enemy special tiles.','vega-dragon',{costs:[8,8,7,7],weaken:[1,2,3,4],pattern:[[7,2],[8,2],[6,3],[8,3],[5,4],[3,5],[4,5]]}],
-  ['Chalice Constellation',6,7,'Launch the seven-star Chalice pattern. Heal every living ally.','vega-chalice',{costs:[7,7,6,6],heal:[8,12,16,20],pattern:[[4,2],[8,2],[5,3],[6,3],[7,3],[6,4],[6,5]]}],
-  ['Archer Constellation',0,7,'Launch the seven-star Archer pattern. Strike one chosen enemy.','vega-archer',{costs:[7,7,6,6],damage:[18,24,30,36],pattern:[[3,2],[4,2],[5,2],[6,3],[6,4],[4,5],[5,5]]}]
+  ['Dragon Constellation',3,8,'Create seven stars that weaken enemy special tiles on launch and once each enemy round while stars remain.','vega-dragon',{costs:[8,8,7,7],weaken:[1,2,2,3],pattern:[[7,2],[8,2],[6,3],[8,3],[5,4],[3,5],[4,5]]}],
+  ['Chalice Constellation',6,7,'Create seven stars that heal living allies on launch and once each enemy round while stars remain.','vega-chalice',{costs:[7,7,6,6],heal:[3,4,5,6],pattern:[[4,2],[8,2],[5,3],[6,3],[7,3],[6,4],[6,5]]}],
+  ['Archer Constellation',0,7,'Create seven stars that strike one chosen enemy on launch and once each enemy round while stars remain.','vega-archer',{costs:[7,7,6,6],damage:[4,5,6,7],pattern:[[3,2],[4,2],[5,2],[6,3],[6,4],[4,5],[5,5]]}]
  ]});
  characters.push({name:'Rusk · Beast Master Ranger',rosterTitle:'Beast Master Ranger',cardTitle:'Beast Master Ranger',icon:'🐊',background:'Outlander',starTier:2,max:106,powers:[
   ['Marsh Guide',6,6,'Swap any two tiles within the mastery range.','rusk-guide',{costs:[6,6,5,5],distance:[2,3,4,5]}],
