@@ -5531,7 +5531,10 @@ function orderOccludingFaces(list){
   if(!rugs.has(face.p))rugs.set(face.p,[]);
   rugs.get(face.p).push(index);
  }
- const occluders=list.flatMap((f,i)=>f.p?.type==='volume'||f.doorFace?[i]:[]);
+ // Procedural tree trunks and other raised biome meshes are emitted as column faces.
+ // Use local face depth for their overlap instead of sorting by average depth alone.
+ const occluders=list.flatMap((f,i)=>f.p?.type==='volume'||f.doorFace||
+  f.p?.type==='column'&&f.biomeShape?[i]:[]);
  if(!occluders.length&&!rugs.size)return list;
  const bounds=list.map(f=>{
   if(f.z===0&&!f.standee)return null;
