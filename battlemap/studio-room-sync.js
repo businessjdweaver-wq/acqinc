@@ -26,7 +26,7 @@ async function roomRpc(name,args,accessToken){
  const rpcBase=sceneAction?roomApi.replace(/room_$/,'scene_'):roomApi;
  let response;
  try{
-  response=await fetch(rpcBase+name,{method:'POST',headers:{apikey:roomKey,'Content-Type':'application/json',...(accessToken?{Authorization:'Bearer '+accessToken}:{})},body:JSON.stringify(args),signal:AbortSignal.timeout(12000)});
+  response=await fetch(rpcBase+name,{method:'POST',headers:{apikey:roomKey,'Content-Type':'application/json',...(accessToken?{Authorization:'Bearer '+accessToken}:{})},body:JSON.stringify(args),signal:AbortSignal.timeout(name==='workspace'?20000:12000)});
  }catch(error){
   if(error.name==='TimeoutError'||error.name==='AbortError')throw roomProblem('The session request timed out.','timeout',true);
   throw roomProblem('Could not reach the session server. Check your connection.','network',true);

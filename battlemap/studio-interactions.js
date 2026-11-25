@@ -1125,7 +1125,7 @@ function editCatalogEntry(entry,save){
  if(folder===null)return;
  return save({...entry,name,folder:folderPath(folder.slice(0,100))});
 }
-async function changeScenes(next){
+async function changeScenes(next,{throwOnError=false}={}){
  if(savingScenes)return false;
  savingScenes=true;
  const button=el('saveSceneButton'),status=el('sceneStatus');
@@ -1143,7 +1143,7 @@ async function changeScenes(next){
    scenes=next;renderScenes();status.textContent='Scenes saved in this browser.';
   }
   return true;
- }catch(error){status.textContent='Could not save scenes. '+error.message;return false}
+ }catch(error){status.textContent='Could not save scenes. '+error.message;if(throwOnError)throw error;return false}
  finally{savingScenes=false;button.disabled=false}
 }
 // Persist the working catalog scene independently of publication and activation.
