@@ -586,16 +586,18 @@ function uploadStudioWebGLFrame(blockers,showLighting,appearance,action){
    surfaces.push({world:f.world,color:shaded,grid,material,face:f,
     floorSurface:studioWebGLMapsFloorImage(f),ghostTerrain,key:JSON.stringify([!!f.rememberedFog,f.fogOverview,f.world])});
   }else{
-   // Use crossed, world-space silhouettes for the legacy tree billboards.
+   // Match the Standard renderer's camera-facing foliage patch. Crossed
+   // world-space diamonds become long spikes when viewed from above or below.
    const [x,y,z]=f.lightSample;
-   const radius=(f.projected[1][0]-f.projected[0][0])/(2*S);
-   const height=radius*.66;
-   for(const [dx,dy] of [[radius,0],[0,radius]]){
-    const world=[[x-dx,y-dy,z],[x,y,z+height],[x+dx,y+dy,z],[x,y,z-height]];
-    const material=preferences.graphicsQuality!==3?{image:foliageTexture(f.canopy,f.leafColor),cutout:true,
-     uv:([u,v,w])=>[(dx?(u-x)/dx:(v-y)/dy)*.5+.5,1-(w-z)/height]}:null;
-    surfaces.push({world,material,face:f,color:studioWebGLColor(f.leafColor||'#52683a').slice(0,3),grid:0,ghostTerrain,key:null});
-   }
+   const width=Math.max(1,f.projected[1][0]-f.projected[0][0])/S;
+   const height=Math.max(1,f.projected[3][1]-f.projected[0][1])/S;
+   const right=[C,-D,0],up=[D*Math.sin(tilt),C*Math.sin(tilt),-Math.cos(tilt)];
+   const corner=(sx,sy)=>[x+right[0]*sx+up[0]*sy,y+right[1]*sx+up[1]*sy,z+right[2]*sx+up[2]*sy];
+   const world=[corner(-width/2,height/2),corner(width/2,height/2),corner(width/2,-height/2),corner(-width/2,-height/2)];
+   const material=preferences.graphicsQuality!==3?{image:foliageTexture(f.canopy,f.leafColor),cutout:true,
+    uv:([u,v,w])=>{const dx=u-x,dy=v-y,dz=w-z;return [.5+(dx*right[0]+dy*right[1]+dz*right[2])/width,
+     .5-(dx*up[0]+dy*up[1]+dz*up[2])/height]}}:null;
+   surfaces.push({world,material,face:f,color:studioWebGLColor(f.leafColor||'#52683a').slice(0,3),grid:0,ghostTerrain,key:null});
   }
  }
  const upload=studioWebGL.upload(surfaces,blend);

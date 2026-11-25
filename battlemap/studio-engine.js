@@ -51,7 +51,7 @@ function playerAllyCameraVisible(token){
 let topDown=false;
 try{topDown=localStorage.getItem('battlemap.topDown')==='true'}catch{}
 const viewCameras=[null,null];
-let cameraFocusElevation=0,cameraZoneStorageIdentity=null;
+let cameraFocusElevation=0,cameraZoneStorageIdentity=null,cameraViewportPivot=null;
 const cameraZoneViews=new Map();
 let terrainLocked=false;
 try{terrainLocked=localStorage.getItem('battlemap.terrainLocked')==='true'}catch{}
@@ -8653,6 +8653,11 @@ function measurePoint(x,y,f=hit(x,y)){
  }
  return [...inverse(x,y,0),0];
 }
+function cameraOrbitPoint(x,y){
+ const face=hit(x,y,null,false,null,true);
+ if(face?.world)return measurePoint(x,y,face);
+ return [...inverse(x,y,cameraFocusElevation),cameraFocusElevation];
+}
 function rulerPoint(x,y,free=false){
  const face=hit(x,y);
  if(!free&&(face?.standee||face?.shadow))return basePoint(face.p);
@@ -9824,7 +9829,8 @@ function startTerrainCamera(e,x,y,allowPing=true){
  e.preventDefault();
  if(action===2)return;
  canvas.setPointerCapture(e.pointerId);
- drag=action===1||topDown?{pan:true,x,y,panX,panY,button:e.button}:{orbit:true,x,y,angle,tilt,pivot:measurePoint(x,y)};
+ if(action!==1&&!topDown)cameraViewportPivot=null;
+ drag=action===1||topDown?{pan:true,x,y,panX,panY,button:e.button}:{orbit:true,x,y,angle,tilt,pivot:cameraOrbitPoint(x,y)};
  if(drag.pan){cancelPanSettle();const handles=el('visionMarkers');if(handles)handles.style.visibility='hidden'}
  if(allowPing&&e.button===0&&action===0)armBoardPing(drag,hit(x,y));
 }
@@ -10134,7 +10140,7 @@ canvas.onpointerdown=e=>{
   armBoardPing(drag,surface,true);
   return;
  }
- if(!middle&&modifier&&!topDown){e.preventDefault();if(!carry)ghost=null;drag={orbit:true,x,y,angle,tilt,pivot:measurePoint(x,y)};return}
+ if(!middle&&modifier&&!topDown){e.preventDefault();if(!carry)ghost=null;cameraViewportPivot=null;drag={orbit:true,x,y,angle,tilt,pivot:cameraOrbitPoint(x,y)};return}
  if(middle||panMode||(topDown&&modifier)){if(!carry)ghost=null;cancelPanSettle();drag={pan:true,x,y,panX,panY,button:e.button};if(carry)draw();return}
  if(facingTarget){void applyFacingTarget(f);return}
  if(floorEdit&&canEditFloor()){pickFloorEdit(x,y,e.altKey,e.shiftKey);return}
@@ -10148,7 +10154,7 @@ canvas.onpointerdown=e=>{
  if(roomProfile&&!roomProfile.gm&&(roomState.paused||f?.p?.type==='standee'&&!carry&&!ownsRoomStandee(f.p))){
   if(phoneLayout.matches&&e.pointerType!=='mouse'){selected=f?.p??null;closeStandeeHud();refresh();return}
   if(f?.p?.type==='standee'){startTerrainCamera(e,x,y,false);return}
-  drag={x,y,angle,tilt,pivot:measurePoint(x,y)};
+  cameraViewportPivot=null;drag={x,y,angle,tilt,pivot:cameraOrbitPoint(x,y)};
   armBoardPing(drag,f);
   return;
  }
@@ -10210,7 +10216,7 @@ canvas.onpointerdown=e=>{
   }
   gmVisionStandee=null;
   if(phoneLayout.matches){selected=f?.p??null;closeStandeeHud();refresh();return}
-  selected=null;closeStandeeHud();drag={x,y,angle,tilt,pivot:measurePoint(x,y)};
+  selected=null;closeStandeeHud();cameraViewportPivot=null;drag={x,y,angle,tilt,pivot:cameraOrbitPoint(x,y)};
   armBoardPing(drag,f);refresh();return;
  }
  if(brush){drag={paint:true,visited:new Map()};paintEdge(x,y);return}
@@ -10238,7 +10244,10 @@ canvas.onpointerdown=e=>{
   const [dx,dy]=selected.type==='standee'?standeeGridOffset(selected,a,b):[Math.max(0,Math.min(w-1,Math.floor(a)-selected.x)),Math.max(0,Math.min(d-1,Math.floor(b)-selected.y))];
   drag={piece:selected,members:group.has(selected)&&group.size>1?[...group]:null,x,y,grabPlane,dx,dy};
   if(isFurniture(selected))drag.freeFurnitureGrab=[a-selected.x,b-selected.y];
- }else if(!phoneLayout.matches)drag={x,y,angle,tilt,pivot:measurePoint(x,y)};
+ }else if(!phoneLayout.matches){
+  cameraViewportPivot=null;
+  drag={x,y,angle,tilt,pivot:cameraOrbitPoint(x,y)};
+ }
  refresh();
 };
 const phoneLayout=matchMedia('(max-width:600px)');
@@ -10349,6 +10358,7 @@ function centerCubeStandee(){
 }
 function rememberCubeAngle(){cubePreferredAngle={angle,tilt,topDown}}
 function focusMapAt(x,y){
+ cameraViewportPivot=null;
  const face=hit(x,y,null,false,null,true);
  if(face?.p?.type==='standee'){
   if(!standeeHidden(face.p))focusMapTarget(basePoint(face.p),face.p,{preserveAngle:true});
@@ -10428,7 +10438,8 @@ function orbit(x,y){
 }
 function orbitViewport(delta){
  const x=W/2,y=H/2;
- orbitAround(angle+delta,tilt,measurePoint(x,y),x,y);
+ cameraViewportPivot??=cameraOrbitPoint(x,y);
+ orbitAround(angle+delta,tilt,cameraViewportPivot,x,y);
 }
 canvas.onpointermove=e=>{
  if(moveConfirmPending)return;
@@ -10537,6 +10548,7 @@ canvas.onpointermove=e=>{
  draw();
 };
 function finishCameraPan(){
+ cameraViewportPivot=null;
  drag=null;
  clearTimeout(cameraDetailTimer);
  cameraDetailTimer=null;
@@ -11588,7 +11600,7 @@ function focusCameraElevation(z){
  if(Math.abs(z-cameraFocusElevation)<1e-7)return;
  saveCameraZoneView();
  const oldLevel=cameraFocusElevation,[x,y]=inverse(W/2,H/2,oldLevel);
- cameraFocusElevation=z;syncCameraFocusElevation();
+ cameraFocusElevation=z;cameraViewportPivot=null;syncCameraFocusElevation();
  loadCameraZoneViews();
  const saved=cameraZoneViews.get(Math.round(z*100)/100);
  if(saved){
@@ -14128,6 +14140,7 @@ el('preferencesDialog').onclose=()=>{
  draw();
 };
 function focusStandee(token,action='Focus standee',partyRoster=false,{preserveZoom=false}={}){
+ cameraViewportPivot=null;
  if(standeeHidden(token)&&!(partyRoster&&baseStandeeRole(token)==='pc'&&!token.incognito))return;
  if(!preferencePreview)currentMoveReadouts().delete(moveReadoutKey(token));
  if(!preferencePreview){focusedTitle=token;focusedTitleFade=null}
