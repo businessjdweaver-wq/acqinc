@@ -370,12 +370,12 @@ function nearbyObserverRooms(topology,prepared){
   lights.every(l=>Number.isFinite(l.radius)&&l.radius>=0);
  return {regionAt:topology.regionAt,eligible,observers:prepared.observers,lights,dark};
 }
-function face(points,fill,p,z,preview,calibratedGrid=false){
+function face(points,fill,p,z,preview){
  points=turnTerrainPoints(points,p);
- const projected=points.map(v=>(calibratedGrid?gridPoint:point)(...v));
+ const projected=points.map(v=>point(...v));
  faces.push({projected,world:points,fill,p,z,preview,depth:projected.reduce((a,v)=>a+v[2],0)/projected.length});
 }
-function top(x,y,z,fill,p,preview,calibratedGrid=false){face([[x,y,z],[x+1,y,z],[x+1,y+1,z],[x,y+1,z]],fill,p,z,preview,calibratedGrid)}
+function top(x,y,z,fill,p,preview){face([[x,y,z],[x+1,y,z],[x+1,y+1,z],[x,y+1,z]],fill,p,z,preview)}
 function texture(fill,material,isTop){
  const key=fill+material+isTop;
  if(textures.has(key))return textures.get(key);
@@ -5423,7 +5423,9 @@ function drawVisibleGround(){
    }
    if(poly.length<3)continue;
   }
-  face(poly.map(([wx,wy])=>[wx,wy,0]),'#e2d4b5',null,0,false,true);
+  // These clipped grid cells are already in calibrated world coordinates.
+  // Project them directly; applying gridPoint here would calibrate them twice.
+  face(poly.map(([wx,wy])=>[wx,wy,0]),'#e2d4b5',null,0,false);
  }
 }
 function savedGridDisplay(){return areas.find(a=>a.shape==='appearance')?.appearance?.gridDisplay||{}}
