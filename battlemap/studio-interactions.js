@@ -1134,9 +1134,22 @@ async function changeScenes(next,{throwOnError=false}={}){
  const button=el('saveSceneButton'),status=el('sceneStatus');
  button.disabled=true;status.textContent='Saving scenes…';
  try{
-  const nextScenes=typeof next==='function'?next(scenes):next;
+  let nextScenes=typeof next==='function'?next(scenes):next;
   if(roomProfile?.gm){
-   const saved=await saveWorkspaceItem(scenesKey,nextScenes,true);
+   let saved;
+   try{saved=await saveWorkspaceItem(scenesKey,nextScenes,true)}
+   catch(error){
+    // A scene import is an append. If another device saved the catalog
+    // concurrently, rebase that append onto the latest list and retry once.
+    if(error?.kind!=='conflict'||typeof next!=='function')throw error;
+    const ticket=roomProfile.token,latest=await roomRpc('workspace',{ticket}),item=latest?.[scenesKey];
+    if(roomProfile?.token!==ticket||!item||!Array.isArray(item.value))
+     throw Error('The shared workspace changed on another device. Reload before saving again.');
+    scenes=item.value;workspaceVersions.set(scenesKey,item.version);
+    if(el('sceneDialog').open)renderScenes();
+    nextScenes=next(scenes);
+    saved=await saveWorkspaceItem(scenesKey,nextScenes,true);
+   }
    if(!saved)throw Error('The shared workspace is unavailable. Reopen Scenes and try again.');
    scenes=nextScenes;renderScenes();
    const localSaved=await storeValue(scenesKey,nextScenes,{skipWorkspace:true});
