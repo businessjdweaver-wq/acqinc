@@ -9440,6 +9440,27 @@ function candidate(x,y,p,dx=0,dy=0,snap=null,alt=false){
   return {...p,x:treadCenter(a,tread.x,w)-p.size/2,
    y:treadCenter(b,tread.y,d)-p.size/2,z,...(carry?.piece===p?{stairLanding:true}:{})};
  }
+ if(p.type==='standee'&&snap!==false&&!ground&&!p.flying&&f?.p?.type==='ropeBridge'){
+  const bridge=f.p,dxBridge=bridge.end[0]-bridge.start[0],dyBridge=bridge.end[1]-bridge.start[1];
+  const length=Math.hypot(dxBridge,dyBridge),length2=dxBridge*dxBridge+dyBridge*dyBridge;
+  if(length2){
+   const along=(x,y)=>((x-bridge.start[0])*dxBridge+(y-bridge.start[1])*dyBridge)/length2;
+   const deckHeight=(x,y)=>{
+    const t=along(x,y);
+    return t>=-1e-7&&t<=1+1e-7?bridgeSurfaceHeight(bridge,x,y):null;
+   };
+   const aligned=snapStandeeToGrid(p,a,b,dx,dy),alignedX=aligned.x+p.size/2,alignedY=aligned.y+p.size/2;
+   let centerX=alignedX,centerY=alignedY,height=deckHeight(alignedX,alignedY);
+   if(height===null||Math.abs(height-z)>=.25){
+    const t=Math.max(0,Math.min(1,along(a,b))),step=Math.min(1,length);
+    const snappedT=Math.max(0,Math.min(1,Math.round(t*length/step)*step/length));
+    centerX=Math.round((bridge.start[0]+dxBridge*snappedT)*4)/4;
+    centerY=Math.round((bridge.start[1]+dyBridge*snappedT)*4)/4;
+    height=deckHeight(centerX,centerY);
+   }
+   if(height!==null)return {...p,x:centerX-p.size/2,y:centerY-p.size/2,z:Math.round(height*4)/4};
+  }
+ }
  if(p.type==='standee'&&snap!==false){
   return {...p,...snapStandeeToGrid(p,a,b,dx,dy),z};
  }
