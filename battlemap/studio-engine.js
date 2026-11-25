@@ -248,24 +248,25 @@ function rawPoint(x,y,z){
  const forward=x*D+y*C;
  return [W/2+panX+S*(x*C-y*D),H*.55+panY+S*(forward*Math.sin(tilt)-z*Math.cos(tilt)),forward*Math.cos(tilt)+z*Math.sin(tilt)];
 }
+function gridPoint(x,y,z){
+ const [wx,wy]=gridToWorld(x,y);
+ return rawPoint(wx,wy,z);
+}
 function calibratedVerticalScale(){
  const c=activeGridCalibration();
  return c?Math.hypot(c.xx,c.xy):1;
 }
 function point(x,y,z){
- [x,y]=gridToWorld(x,y);
- z*=calibratedVerticalScale();
- x-=gridProjectionCenter(0);y-=gridProjectionCenter(1);
- if(topDown)return [W/2+panX+S*x,H*.55+panY+S*y,z];
- const forward=x*D+y*C;
- return [W/2+panX+S*(x*C-y*D),H*.55+panY+S*(forward*Math.sin(tilt)-z*Math.cos(tilt)),forward*Math.cos(tilt)+z*Math.sin(tilt)];
+ // Scene geometry is stored in stable world coordinates. Floor-map grid
+ // calibration belongs to the grid overlay, never to existing terrain.
+ return rawPoint(x,y,z);
 }
 function rawInverse(x,y,z){
  if(topDown)return [(x-W/2-panX)/S+gridProjectionCenter(0),(y-H*.55-panY)/S+gridProjectionCenter(1)];
  const a=(x-W/2-panX)/S,b=((y-H*.55-panY)/S+z*Math.cos(tilt))/Math.sin(tilt);
  return [a*C+b*D+gridProjectionCenter(0),-a*D+b*C+gridProjectionCenter(1)];
 }
-function inverse(x,y,z){return worldToGrid(...rawInverse(x,y,z*calibratedVerticalScale()))}
+function inverse(x,y,z){return rawInverse(x,y,z)}
 function measurePaint(kind,work){
  const profile=performanceDraw?.collectPaintBreakdown&&performanceDraw.paintBreakdown;
  if(!profile)return work();
@@ -369,12 +370,12 @@ function nearbyObserverRooms(topology,prepared){
   lights.every(l=>Number.isFinite(l.radius)&&l.radius>=0);
  return {regionAt:topology.regionAt,eligible,observers:prepared.observers,lights,dark};
 }
-function face(points,fill,p,z,preview){
+function face(points,fill,p,z,preview,calibratedGrid=false){
  points=turnTerrainPoints(points,p);
- const projected=points.map(v=>point(...v));
+ const projected=points.map(v=>(calibratedGrid?gridPoint:point)(...v));
  faces.push({projected,world:points,fill,p,z,preview,depth:projected.reduce((a,v)=>a+v[2],0)/projected.length});
 }
-function top(x,y,z,fill,p,preview){face([[x,y,z],[x+1,y,z],[x+1,y+1,z],[x,y+1,z]],fill,p,z,preview)}
+function top(x,y,z,fill,p,preview,calibratedGrid=false){face([[x,y,z],[x+1,y,z],[x+1,y+1,z],[x,y+1,z]],fill,p,z,preview,calibratedGrid)}
 function texture(fill,material,isTop){
  const key=fill+material+isTop;
  if(textures.has(key))return textures.get(key);
@@ -2313,7 +2314,7 @@ function drawFloorEdit(){
  const corners=[[x,y],[right,y],[right,bottom],[x,bottom]];
  const feet=el('floorHeight').valueAsNumber;
  const height=last&&Number.isFinite(feet)?Math.max(0,Math.min(maxHeight,z+feet/5)):z;
- const from=corners.map(p=>point(...p,z)),to=corners.map(p=>point(...p,height));
+ const from=corners.map(p=>gridPoint(...p,z)),to=corners.map(p=>gridPoint(...p,height));
  const outline=plan?.error?'#f27466':'#ffd178';
  polygon(from,'#ffd17819',outline);
  if(height!==z){
@@ -5376,7 +5377,7 @@ function drawVisibleGround(){
  // A calibrated imported map defines the visible grid footprint.
  // Do not render a separate battlefield-sized grid beyond its edges.
  const imagePolygon=activeGridCalibration()?importedFloorFootprint():null;
- const fixedFloor=()=>face([[offsetX,offsetY,0],[maxX,offsetY,0],[maxX,maxY,0],[offsetX,maxY,0]].map(([x,y,z])=>[...worldToGrid(x,y),z]),'#e2d4b5',null,0,false);
+ const fixedFloor=()=>face([[offsetX,offsetY,0],[maxX,offsetY,0],[maxX,maxY,0],[offsetX,maxY,0]],'#e2d4b5',null,0,false);
  if(floorSceneEditing){fixedFloor();return}
  const calibration=activeGridCalibration();
  if(!calibration){
@@ -5422,7 +5423,7 @@ function drawVisibleGround(){
    }
    if(poly.length<3)continue;
   }
-  face(poly.map(([wx,wy])=>[...worldToGrid(wx,wy),0]),'#e2d4b5',null,0,false);
+  face(poly.map(([wx,wy])=>[wx,wy,0]),'#e2d4b5',null,0,false,true);
  }
 }
 function savedGridDisplay(){return areas.find(a=>a.shape==='appearance')?.appearance?.gridDisplay||{}}
@@ -5463,8 +5464,8 @@ function drawLowAngleGrid(painted){
  // Clip to the physical battlefield too, matching drawVisibleGround().
  ctx.beginPath();physical.map(([x,y])=>rawPoint(x,y,0)).forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
  ctx.closePath();ctx.clip();ctx.beginPath();
- for(let i=minX;i<=maxX;i+=1){const [x,y]=point(i,minY,0),[u,v]=point(i,maxY,0);ctx.moveTo(x,y);ctx.lineTo(u,v)}
- for(let i=minY;i<=maxY;i+=1){const [x,y]=point(minX,i,0),[u,v]=point(maxX,i,0);ctx.moveTo(x,y);ctx.lineTo(u,v)}
+ for(let i=minX;i<=maxX;i+=1){const [x,y]=gridPoint(i,minY,0),[u,v]=gridPoint(i,maxY,0);ctx.moveTo(x,y);ctx.lineTo(u,v)}
+ for(let i=minY;i<=maxY;i+=1){const [x,y]=gridPoint(minX,i,0),[u,v]=gridPoint(maxX,i,0);ctx.moveTo(x,y);ctx.lineTo(u,v)}
  ctx.strokeStyle=gridColor();ctx.globalAlpha=gridOpacity();ctx.stroke();ctx.restore();
 }
 // Large faces can overlap at depths far from their centers.
