@@ -27,3 +27,4 @@ User requirement (2026-11-04/05): clearly increment the version number every tim
 
 - The integration manager may update build numbers, visible version labels, and necessary cache-busting references across application files without requesting approval. The manager coordinates these changes, which are exempt from ordinary feature-specific file restrictions.
 - Routine changes required to satisfy the existing development and release rules do not require owner approval. The integration manager reports these changes in the consolidated completion report.
+- Within an approved task, handle routine release-version synchronization, file-assignment corrections, and CI maintenance without interrupting the owner. Correct assignments when acceptance criteria stay the same, file ownership stays disjoint, and the change introduces no additional architectural, security, or production risk. Record these changes in the consolidated completion report.
