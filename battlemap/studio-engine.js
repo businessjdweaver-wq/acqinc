@@ -8851,7 +8851,14 @@ function validCarryDestination(){
  // The GM adjudicates elevation. Route collision is checked independently.
  return carriedMembers().every(member=>{
   const p=carriedPosition(member),[w,d]=dimensions(p);
-  return Number.isFinite(p.z)&&p.z>=-1e-7&&floorAcceptsDestination(p.x,p.y,w,d,image);
+  const onBridge=p.type==='standee'&&!p.flying&&pieces.some(bridge=>{
+   if(bridge.type!=='ropeBridge'||(bridge.width??1)<.35)return false;
+   const dx=bridge.end[0]-bridge.start[0],dy=bridge.end[1]-bridge.start[1],length2=dx*dx+dy*dy;
+   const x=p.x+p.size/2,y=p.y+p.size/2;
+   const t=length2?((x-bridge.start[0])*dx+(y-bridge.start[1])*dy)/length2:-1;
+   return t>=-1e-7&&t<=1+1e-7&&Math.abs((bridgeSurfaceHeight(bridge,x,y)??Infinity)-p.z)<.25;
+  });
+  return Number.isFinite(p.z)&&p.z>=-1e-7&&(onBridge||floorAcceptsDestination(p.x,p.y,w,d,image));
  });
 }
 function carrySegment(start,end){
