@@ -3064,7 +3064,7 @@ function mesaHeightAt(wall,distance){
  };
  const point=distance/spacing,index=Math.floor(point),fraction=point-index;
  const profile=noise(index)+(noise(index+1)-noise(index))*fraction;
- return Math.min(12,wall.z+Math.max(wall.height*.48,wall.height*(1+profile*amount)));
+ return Math.min(maxHeight,wall.z+Math.max(wall.height*.48,wall.height*(1+profile*amount)));
 }
 function compileWallPath(wall){
  const cached=pathWallCache.get(wall);
@@ -3674,31 +3674,54 @@ function renderPathOpening({poly,z,top,wall,opening}){
    world(width,halfWall,height),world(0,halfWall,height)],jamb);
  }
 }
-function validSceneWallPaths(walls){
+function wallPathValidationIssue(walls){
  const number=(n,lo,hi)=>Number.isFinite(n)&&n>=lo&&n<=hi;
  const xy=p=>Array.isArray(p)&&p.length===2&&p.every(n=>number(n,-20,120));
- const ids=new Set();
- let sampleCount=0;
- return Array.isArray(walls)&&walls.length<=100&&walls.every(wall=>{
-  if(!wall||typeof wall.id!=='string'||ids.has(wall.id)||!Array.isArray(wall.nodes)||
-   wall.nodes.length<(wall.closed?3:2)||wall.nodes.length>48||
-   !wall.nodes.every(node=>node&&xy(node.p)&&(!node.in||xy(node.in))&&(!node.out||xy(node.out)))||
-   !number(wall.z,0,11)||!number(wall.height,.1,12)||wall.z+wall.height>12||
-   !number(wall.thickness,.04,3)||!number(wall.opacity,0,1)||!number(wall.light,0,1)||
-   !/^#[a-f\d]{6}$/i.test(wall.color)||!['plain','brick','roughRock','planks','mesa'].includes(wall.texture)||
-   wall.hideBack!==undefined&&typeof wall.hideBack!=='boolean'||
-   !number(wall.mesaVariation??pathWallDefaults.mesaVariation,0,100)||
-   !number(wall.mesaJaggedness??pathWallDefaults.mesaJaggedness,0,100)||
-   !number(wall.mesaStrata??pathWallDefaults.mesaStrata,0,100)||
-   !Array.isArray(wall.openings)||wall.openings.length>24||
-   !wall.openings.every(o=>o&&['Door','Window'].includes(o.kind)&&number(o.at,0,1)&&
-    number(o.width,.15,8)&&number(o.height,.1,12)&&number(o.sill,0,12)))return false;
+ const fmt=value=>typeof value==='number'?String(Number(value.toFixed(4))):JSON.stringify(value);
+ const ids=new Set();let sampleCount=0;
+ if(!Array.isArray(walls))return 'wallPaths='+fmt(walls)+'; permitted range: an array of 0–100 wall paths.';
+ if(walls.length>100)return 'wallPaths count='+walls.length+'; permitted range: 0–100.';
+ for(let i=0;i<walls.length;i++){
+  const wall=walls[i],label='Wall path #'+(i+1)+(wall?.name?' “'+wall.name+'”':'');
+  const issue=(field,value,range)=>label+' field '+field+'='+fmt(value)+'; permitted range: '+range+'.';
+  if(!wall||typeof wall!=='object')return issue('path',wall,'a wall-path object');
+  if(typeof wall.id!=='string'||!wall.id)return issue('id',wall.id,'a nonempty unique string');
+  if(ids.has(wall.id))return issue('id',wall.id,'a unique string');
+  if(!Array.isArray(wall.nodes))return issue('nodes',wall.nodes,'an array of 2–48 nodes (3–48 when closed)');
+  if(wall.nodes.length<(wall.closed?3:2)||wall.nodes.length>48)return issue('nodes.length',wall.nodes.length,(wall.closed?'3–48':'2–48'));
+  for(let n=0;n<wall.nodes.length;n++)for(const field of ['p','in','out']){
+   const value=wall.nodes[n]?.[field];
+   if(field!=='p'&&value===undefined)continue;
+   if(!xy(value))return issue('nodes['+n+'].'+field,value,'an [x,y] point with each coordinate from -20 to 120 grid units');
+  }
+  if(!number(wall.z,0,maxHeight))return issue('z',wall.z,'0–'+maxHeight+' grid units (0–'+(maxHeight*5)+' ft)');
+  if(!number(wall.height,.1,12))return issue('height',wall.height,'.1–12 grid units (0.5–60 ft)');
+  if(wall.z+wall.height>maxHeight)return issue('z + height',wall.z+wall.height,'at most '+maxHeight+' grid units (300 ft total elevation)');
+  if(!number(wall.thickness,.04,3))return issue('thickness',wall.thickness,'.04–3 grid units');
+  if(!number(wall.opacity,0,1))return issue('opacity',wall.opacity,'0–1');
+  if(!number(wall.light,0,1))return issue('light',wall.light,'0–1');
+  if(!/^#[a-f\d]{6}$/i.test(wall.color))return issue('color',wall.color,'a six-digit hex color');
+  if(!['plain','brick','roughRock','planks','mesa'].includes(wall.texture))return issue('texture',wall.texture,'plain, brick, roughRock, planks, or mesa');
+  if(wall.hideBack!==undefined&&typeof wall.hideBack!=='boolean')return issue('hideBack',wall.hideBack,'true or false');
+  for(const [field,value] of Object.entries({mesaVariation:wall.mesaVariation??pathWallDefaults.mesaVariation,mesaJaggedness:wall.mesaJaggedness??pathWallDefaults.mesaJaggedness,mesaStrata:wall.mesaStrata??pathWallDefaults.mesaStrata}))
+   if(!number(value,0,100))return issue(field,value,'0–100');
+  if(!Array.isArray(wall.openings)||wall.openings.length>24)return issue('openings.length',Array.isArray(wall.openings)?wall.openings.length:wall.openings,'an array of 0–24 openings');
+  for(let o=0;o<wall.openings.length;o++){
+   const opening=wall.openings[o],prefix='openings['+o+'].';
+   if(!opening||!['Door','Window'].includes(opening.kind))return issue(prefix+'kind',opening?.kind,'Door or Window');
+   for(const [field,value,lo,hi] of [['at',opening.at,0,1],['width',opening.width,.15,8],['height',opening.height,.1,12],['sill',opening.sill,0,12]])
+    if(!number(value,lo,hi))return issue(prefix+field,value,field==='at'?'0–1 normalized position along the path':lo+'–'+hi+' grid units');
+  }
   ids.add(wall.id);
-  const path=compileWallPath(wall);
-  sampleCount+=path.samples.length;
-  return path.length>.1&&path.samples.length<=450&&sampleCount<=2500;
- });
+  const path=compileWallPath(wall);sampleCount+=path.samples.length;
+  if(path.length<=.1)return issue('nodes',wall.nodes,'a path longer than .1 grid units');
+  if(path.samples.length>450)return issue('nodes',wall.nodes.length,'a path generating at most 450 samples');
+  if(path.invalid.length)return issue('openings',path.invalid.map(opening=>wall.openings.indexOf(opening)+1),'openings that fit on the path and within its wall height');
+  if(sampleCount>2500)return issue('wallPaths',sampleCount,'a combined maximum of 2500 path samples');
+ }
+ return null;
 }
+function validSceneWallPaths(walls){return wallPathValidationIssue(walls)===null}
 
 let wallTool=null,wallDrag=null,wallPreview=null,wallOpeningIndex=-1;
 const wallSelection=new Set();
@@ -3706,7 +3729,7 @@ const wallPatterns=['plain','brick','roughRock','planks','mesa'];
 const wallPropertyFields={
  height:{label:'Height (ft)',min:.5,max:60,step:.05,scale:5},
  thickness:{label:'Thickness (ft)',min:.2,max:15,step:.05,scale:5},
- z:{label:'Base elevation (ft)',min:0,max:55,step:.05,scale:5},
+ z:{label:'Base elevation (ft)',min:0,max:300,step:.05,scale:5},
  color:{label:'Color',type:'color'},
  texture:{label:'Texture',options:wallPatterns},
  mesaVariation:{label:'Mesa height variation (%)',min:0,max:100,step:1,scale:1,type:'range'},
@@ -3783,7 +3806,7 @@ function updateWallList(){
  }));
  const wall=sceneWallPaths().find(w=>w.id===previous);
  el('wallPlanOpacity').value=100*(areas.find(a=>a.shape==='appearance')?.floorImageOpacity??1);
- if(wall)writeWallFields(wallPropertyFields,'wp-',wall);
+ if(wall){writeWallFields(wallPropertyFields,'wp-',wall);updateWallElevationRanges(wall)}
  document.querySelectorAll('.mesa-wall-field').forEach(label=>{label.hidden=wall?.texture!=='mesa'});
  const openings=el('wallOpeningList');
  openings.replaceChildren(...(wall&&wallSelection.size===1?wall.openings:[]).map((o,i)=>
@@ -3817,13 +3840,22 @@ function writeWallRoomFields(room,defaultFloor=false){
  el('wallRoomPattern').value=room?.floorFinish?.pattern??'plain';
  el('wallRoomAccent').value=room?.floorFinish?.accent??'#65513c';
 }
+function updateWallElevationRanges(wall){
+ const elevation=el('wp-z'),height=el('wp-height');
+ if(!elevation||!height)return;
+ const zFeet=Math.max(0,Math.min(maxHeight*5,Number(elevation.value)||0));
+ const heightFeet=Math.max(.5,Math.min(60,Number(height.value)||10));
+ elevation.max=String(Math.max(0,maxHeight*5-heightFeet));
+ height.max=String(Math.max(.5,Math.min(60,maxHeight*5-zFeet)));
+}
 function readWallRoomFields(){
  return {name:el('wallRoomName').value.trim(),dark:el('wallRoomDark').checked,
   floorFinish:el('wallRoomFloor').checked?{pattern:el('wallRoomPattern').value,
    base:el('wallRoomColor').value,accent:el('wallRoomAccent').value}:null};
 }
 function updateSceneWallPaths(next){
- if(!wallCanEdit()||!validSceneWallPaths(next)){wallStatus('Check wall dimensions or simplify the path.');return false}
+ const issue=wallPathValidationIssue(next);
+ if(!wallCanEdit()||issue){wallStatus(issue||'Wall paths cannot be edited in the current mode.');return false}
  remember();
  let area=areas.find(a=>a.shape==='appearance');
  if(!area){area={shape:'appearance',size:1,origin:[0,0,0],angle:0};areas.push(area)}
@@ -4417,7 +4449,7 @@ function initializeWallPaths(){
    '<div id="wallDoorAppearance" class="wall-path-fields">'+wallNodeFields(wallDoorAppearance(),'wd-')+'</div>'+
    '<div id="wallWindowAppearance" class="wall-path-fields">'+wallNodeFields(wallWindowAppearance,'ww-')+'</div>'+
    '<button type="submit">Apply opening</button> <button id="wallOpeningCopy" type="button">Copy opening</button> <button id="wallOpeningDelete" type="button">Delete opening</button></form></div>'+pane('rooms')+
-   '<div class="wall-path-actions"><button id="wallDetectRoom" type="button">Detect room</button><label>Room elevation (ft) <input id="wallRoomElevation" type="number" min="0" max="55" step="any" value="0"></label></div>'+
+   '<div class="wall-path-actions"><button id="wallDetectRoom" type="button">Detect room</button><label>Room elevation (ft) <input id="wallRoomElevation" type="number" min="0" max="300" step="any" value="0"></label></div>'+
    '<p>Click Detect room, then click inside the enclosed area on the map.</p>'+
    '<form id="wallRoomFields" hidden><label>Room name <input id="wallRoomName" maxlength="80"></label>'+
    '<label><input id="wallRoomDark" type="checkbox"> Dark room</label>'+
@@ -4484,6 +4516,7 @@ function initializeWallPaths(){
  el('wp-texture').onchange=()=>{
   document.querySelectorAll('.mesa-wall-field').forEach(label=>{label.hidden=el('wp-texture').value!=='mesa'});
  };
+ for(const id of ['wp-z','wp-height'])el(id).addEventListener('input',()=>updateWallElevationRanges({z:Number(el('wp-z').value)/5,height:Number(el('wp-height').value)/5}));
  el('wallOpeningList').onchange=()=>{wallOpeningIndex=el('wallOpeningList').selectedIndex;updateWallList();draw()};
  let copiedWallStyle=null;
  const wallStyleKeys=['height','thickness','z','color','texture','opacity','light','sight','blocks','hideBack','mesaVariation','mesaJaggedness','mesaStrata'];
@@ -13290,11 +13323,12 @@ el('file').onchange=async e=>{
    }
   }
   context='Areas';
-  const invalidArea=incomingAreas.findIndex(a=>!a||!['line','circle','square','cone','sphere','cube','cone3d','difficult','appearance','room','opening','light','journal'].includes(a.shape)||(a.shape==='difficult'&&a.width!==undefined&&(!Number.isInteger(a.width)||a.width<1||a.width>40))||!Number.isInteger(a.size)||a.size<1||a.size>40||!Array.isArray(a.origin)||a.origin.length!==3||!a.origin.every(Number.isFinite)||!Number.isFinite(a.angle)||(a.pitch!==undefined&&(!Number.isFinite(a.pitch)||Math.abs(a.pitch)>90))); 
-  if(incomingAreas.some(a=>a?.wallPaths!==undefined&&!validSceneWallPaths(a.wallPaths)))throw Error('Invalid wall paths.');
+  const invalidArea=incomingAreas.findIndex(a=>!a||!['line','circle','square','cone','sphere','cube','cone3d','difficult','appearance','room','opening','light','journal'].includes(a.shape)||(a.shape==='difficult'&&a.width!==undefined&&(!Number.isInteger(a.width)||a.width<1||a.width>40))||!Number.isInteger(a.size)||a.size<1||a.size>40||!Array.isArray(a.origin)||a.origin.length!==3||!a.origin.every(Number.isFinite)||(['room','opening','light'].includes(a.shape)&&(a.origin[2]<0||a.origin[2]>maxHeight))||!Number.isFinite(a.angle)||(a.pitch!==undefined&&(!Number.isFinite(a.pitch)||Math.abs(a.pitch)>90)));
+  const invalidWallArea=incomingAreas.findIndex(a=>a?.wallPaths!==undefined&&!validSceneWallPaths(a.wallPaths));
+  if(invalidWallArea>=0)throw Error(wallPathValidationIssue(incomingAreas[invalidWallArea].wallPaths)||'Invalid wall paths.');
   if(incomingAreas.some(a=>a?.wallRoomRegions!==undefined&&(!Array.isArray(a.wallRoomRegions)||a.wallRoomRegions.length>100||
-   a.wallRoomRegions.some(r=>!r||!Array.isArray(r.seed)||r.seed.length!==2||!r.seed.every(Number.isFinite)||!Number.isFinite(r.z)))))
-   throw Error('Invalid detected rooms.');
+   a.wallRoomRegions.some(r=>!r||!Array.isArray(r.seed)||r.seed.length!==2||!r.seed.every(Number.isFinite)||!Number.isFinite(r.z)||r.z<0||r.z>maxHeight))))
+   throw Error('Invalid detected rooms: room elevation must be 0–'+maxHeight+' grid units (0–'+(maxHeight*5)+' ft).');
   if(invalidArea>=0)throw Error('Area #'+(invalidArea+1)+' ('+(incomingAreas[invalidArea]?.shape??'unknown')+'): invalid shape, size, origin, angle, width or pitch.');
   context='Applying scene';
   if(roomPatchBusy||roomPatchPending){await flushRoomPatch();if(roomPatchBusy||roomPatchPending)throw Error('Previous scene has unsynchronized edits. Finish synchronization before importing.');}
