@@ -731,7 +731,7 @@ function renderEnemyProfile(enemy,index){
  if((p||enemy.sandboxPowers)&&sandboxEnemyParty?.ai==='monster'){
  for(const p of enemy.sandboxPowers||[enemy.sandboxPower]){
  const descriptions={damage:'Deals '+p.amount+' damage to the frontline hero.',heal:'Restores up to '+p.amount+' HP to the most injured living ally.',siphon:'Deals '+p.amount+' damage and restores up to '+p.heal+' HP to the most injured living ally.','drain-resource':'Removes up to '+p.amount+' '+labels[p.targetColor]+' energy from the hero team.','create-special':'Creates an enemy '+p.special+' tile with strength '+p.amount+'.','amplify-special':'Increases an eligible enemy special tile’s strength by '+p.amount+' (maximum 100).'};
- Object.assign(descriptions,{ward:'Reduces incoming damage by '+p.amount+'% for '+p.duration+' enemy turns.',evasion:'Has a '+p.amount+'% chance to evade damage for '+p.duration+' enemy turns.',countdown:'Deals '+p.amount+' damage after '+p.duration+' enemy turns.','lock-tile':'Locks an ordinary tile for '+p.duration+' enemy turns.','steal-resource':'Steals up to '+p.amount+' '+labels[p.targetColor]+' hero energy.','convert-tile':'Converts an ordinary tile to '+labels[p.targetColor]+'.','capture-special':'Captures a hero special tile.','consume-special':'Sacrifices an enemy special tile to deal '+p.amount+' damage.','heal-all':'Restores up to '+p.amount+' HP to each living monster.'});
+ Object.assign(descriptions,{intercept:'Intercepts frontline attacks against allies, reducing damage by '+p.amount+'% for '+p.duration+' enemy turns.',retaliate:'Retaliates for '+p.amount+' damage when hit and survives, for '+p.duration+' enemy turns.',ward:'Reduces incoming damage by '+p.amount+'% for '+p.duration+' enemy turns.',evasion:'Has a '+p.amount+'% chance to evade damage for '+p.duration+' enemy turns.',countdown:'Deals '+p.amount+' damage after '+p.duration+' enemy turns.','lock-tile':'Locks an ordinary tile for '+p.duration+' enemy turns.','steal-resource':'Steals up to '+p.amount+' '+labels[p.targetColor]+' hero energy.','convert-tile':'Converts an ordinary tile to '+labels[p.targetColor]+'.','capture-special':'Captures a hero special tile.','consume-special':'Sacrifices an enemy special tile to deal '+p.amount+' damage.','heal-all':'Restores up to '+p.amount+' HP to each living monster.'});
  add(p.name,descriptions[p.effect]||'Enemy power.',p.color,p.cost);
  }
  }else if(storeMode&&index===0){add('Shopkeeper Fee','Creates a fee countdown every '+(p?.interval??2)+' enemy turns when eligible. On expiry, siphons energy from up to three hero resource buckets.');}
@@ -1258,12 +1258,17 @@ function preserveDefeatedEnemySprite(index){
 }
 const malvekClaims=new Map();let malvekBargainUsed=false;
 function damageEnemy(n,index=null,{shoveBehind,bypassDefense=false,fixedDamage=false}={}){if(puzzleMode)return;const smokeDefense=scavengersMode?3*tiles.filter(t=>t?.smoke).length:0;n=Math.max(0,fixedDamage?n:n+specialStrengthTotal('player','strike')-(bypassDefense?0:specialStrengthTotal('enemy','defense'))-smokeDefense);let i=index===null?frontEnemy():index;if(i===undefined||!targetable(enemies[i]))return;let e=enemies[i];
+ if(monsterStatusLedger&&n>0&&side==='player'&&index===null){
+  const intercept=monsterStatusLedger.active('intercept').find(x=>x.owner!==e&&targetable(x.owner));
+  if(intercept){const next=enemies.indexOf(intercept.owner);if(next>=0){say(intercept.owner.name+' intercepts for '+e.name+'.');i=next;e=enemies[i];n=Math.ceil(n*(1-Math.min(85,intercept.amount)/100));}}
+ }
  if(monsterStatusLedger&&n>0){
   const veil=monsterStatusLedger.active('evasion',e)[0];
   if(veil&&Math.random()<veil.amount/100){say(e.name+' evades the attack.');float(combatSpriteTarget('enemy',i),'EVADED','#e3f5ff');return;}
   const ward=monsterStatusLedger.active('ward',e).reduce((max,x)=>Math.max(max,x.amount),0);
   if(ward)n=Math.ceil(n*(1-Math.min(85,ward)/100));
  }
+ const retaliation=side==='player'?monsterStatusLedger?.active('retaliate',e)[0]:null;
  let hit=Math.min(n,e.hp);const defeated=hit>0&&hit>=e.hp;const defeatedSprite=defeated?preserveDefeatedEnemySprite(i):null;if(defeated)holdEnemyVisualFormation(i);e.hp-=hit;
  monsterStatusLedger?.prune();
  if(e.hp===0&&hit>0){clearDefeatedAntagonistTiles(i);const claim=malvekClaims.get(i);if(claim){malvekClaims.delete(i);const available=tiles.filter(t=>t&&!t.patronDebt&&!t.effectFortified&&!t.locked&&!t.lumberFire&&!t.groveRoot&&!t.towerBrazier);if(available.length){const t=available[Math.floor(Math.random()*available.length)];RQPatronDebt.attach(t,claim.owner,claim.level,2);paint(t);say('Patron\'s Claim creates a delayed debt.');}}}
@@ -1276,7 +1281,8 @@ function damageEnemy(n,index=null,{shoveBehind,bypassDefense=false,fixedDamage=f
  render();
  if(defeatedSprite)showCombatDamage(defeatedSprite,'−'+hit,'#ffbf70');
  else void showDamageAfterFormation('enemy',i,'−'+hit,'#ffbf70');
- say(e.name+' takes '+hit+' damage'+(index===null?' on the front line.':'.'));if(enemyHP===0){if(towerMode&&!towerExtinguished&&!towerFired)say('Defenders defeated! Extinguish the brazier with '+(3-towerDisruptions)+' more adjacent match(es) to win.');else finish(true);}render();}
+ say(e.name+' takes '+hit+' damage'+(index===null?' on the front line.':'.'));if(retaliation&&hit>0&&e.hp>0&&!ended&&enemyHP>0){say(e.name+' retaliates.');damageParty(retaliation.amount);}
+ if(enemyHP===0&&!ended){if(towerMode&&!towerExtinguished&&!towerFired)say('Defenders defeated! Extinguish the brazier with '+(3-towerDisruptions)+' more adjacent match(es) to win.');else finish(true);}render();}
 const rageDamageBank=new Map(),ragePendingDamage=new Map(),juggernautWards=new Map();let astralTurnMatches=0;let astralAwaitingRegularMatch=false;let astralStillness=null;let queuedAstralFlurry=null;
 function releaseAstralFlurry(){if(!queuedAstralFlurry)return;const queued=queuedAstralFlurry;queuedAstralFlurry=null;const hits=astralTurnMatches,strike=hits*(2+queued.level*2);if(hits&&!ended&&!puzzleMode){damageEnemy(strike);say('Astral Flurry releases: '+hits+' match group(s), '+strike+' strike damage before defenses.');}else if(!ended)say('Astral Flurry released without a damaging match.');}
 
