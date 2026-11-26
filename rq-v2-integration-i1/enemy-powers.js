@@ -10,13 +10,26 @@
     if(!actor||actor.hp<=0||blocked||!power)return false;
     if(!Number.isInteger(power.color)||power.color<0||power.color>=energy.length||
        !Number.isInteger(power.cost)||power.cost<1||!(energy[power.color]>=power.cost))return false;
-    if(!Object.hasOwn(handlers,power.effect))return false;
-    const handler=handlers[power.effect];
-    const target=handler.select(actor,power);
-    if(target==null)return false;
+    const effects=power.effects??[power];
+    if(!Array.isArray(effects)||effects.length<1||effects.length>4)return false;
+    const steps=[];
+    for(const effect of effects){
+      if(!effect||!Object.hasOwn(handlers,effect.effect))return false;
+      const params={...effect,name:power.name,color:power.color,cost:power.cost};
+      const handler=handlers[effect.effect];
+      const target=handler.select(actor,params);
+      if(target==null)return false;
+      steps.push({handler,params});
+    }
     energy[power.color]-=power.cost;
-    // Counterspell deliberately retains the resource expenditure.
-    return await activation(power.name,()=>handler.apply(actor,power,target));
+    // One payment and one counterspell check for the entire activation.
+    return await activation(power.name,async()=>{
+      for(const {handler,params} of steps){
+        if(actor.hp<=0)break;
+        const target=handler.select(actor,params);
+        if(target!=null)await handler.apply(actor,params,target);
+      }
+    });
   }
   // Try ordered powers until one is attempted. Countered powers still consume
   // the actor's activation opportunity; unavailable targets do not.
