@@ -35,7 +35,7 @@
         enemyParties.set(record.id, {
           ...record,
           foes: record.combatants.map(enemy => ({
-            name: enemy.name, max: enemy.hp, icon: '🪙',
+            name: enemy.name, max: enemy.hp, icon: record.ai === 'monster' ? '⚔️' : '🪙',
             sandboxSprite: sprites.get(enemy.spriteId), sandboxPower: enemy.power
           }))
         });
