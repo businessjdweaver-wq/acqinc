@@ -18,6 +18,19 @@
     // Counterspell deliberately retains the resource expenditure.
     return await activation(power.name,()=>handler.apply(actor,power,target));
   }
+  // Try ordered powers until one is attempted. Countered powers still consume
+  // the actor's activation opportunity; unavailable targets do not.
+  async function activateOne(options){
+    const powers=options.powers||[];
+    for(const power of powers){
+      let attempted=false;
+      const result=await activate({...options,power,activation:async(name,apply)=>{
+        attempted=true;return options.activation(name,apply);
+      }});
+      if(attempted)return {attempted:true,resolved:result,power};
+    }
+    return {attempted:false,resolved:false,power:null};
+  }
   // Adapters must use the combat engine's authoritative mutation functions.
   function createHandlers(ctx){
     const living=()=>ctx.enemies().filter(e=>e.hp>0);
@@ -33,9 +46,23 @@
         apply:(a,p,t)=>ctx.drainHeroResource(t,p.amount)},
       'create-special':{select:()=>ctx.ordinaryTiles()[0],
         apply:(a,p,t)=>ctx.createEnemySpecial(t,p.special,p.amount,a)},
+      'steal-resource':{select:(a,p)=>ctx.stealHeroResource&&ctx.heroResources()[p.targetColor]>0?p.targetColor:null,
+        apply:(a,p,t)=>ctx.stealHeroResource(t,p.amount,p.color)},
+      'convert-tile':{select:(a,p)=>ctx.convertTile?ctx.ordinaryTiles().find(t=>t.v!==p.targetColor):null,
+        apply:(a,p,t)=>ctx.convertTile(t,p.targetColor)},
+      'capture-special':{select:()=>ctx.captureSpecial?ctx.heroSpecialTiles?.()[0]:null,
+        apply:(a,p,t)=>ctx.captureSpecial(t,a)},
+      'consume-special':{select:()=>ctx.consumeSpecial?ctx.enemySpecialTiles()[0]:null,
+        apply:(a,p,t)=>ctx.consumeSpecial(t,p.amount,a)},
+      'lock-tile':{select:()=>ctx.lockTile?ctx.ordinaryTiles()[0]:null,
+        apply:(a,p,t)=>ctx.lockTile(t,p.amount,a)},
+      'damage-all':{select:()=>ctx.damageAll?ctx.frontHero():null,
+        apply:(a,p,t)=>ctx.damageAll(p.amount)},
+      'heal-all':{select:()=>ctx.healEnemy&&injured(),
+        apply:async(a,p)=>{for(const ally of living())if(ally.hp<ally.max)await ctx.healEnemy(ally,p.amount);}},
       'amplify-special':{select:()=>ctx.enemySpecialTiles()[0],
         apply:(a,p,t)=>ctx.amplifyEnemySpecial(t,p.amount)}
     });
   }
-  return Object.freeze({activate,createHandlers});
+  return Object.freeze({activate,activateOne,createHandlers});
 });
