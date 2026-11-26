@@ -1,6 +1,6 @@
 # RQV2 content contract v1
 
-This contract defines the initial offline validation boundary for issue #93. The registry contains isolated character, enemy-party, and encounter fixtures.
+This contract defines the initial offline validation boundary for issue #93. The registry contains isolated character, enemy-party, encounter, and magic-item fixtures.
 
 Run `node tools/validate-content.js` from the project directory to check the registry and its listed records. Run `node --test content/registry.test.js` to exercise the contract.
 
@@ -21,7 +21,7 @@ All records require `schemaVersion`, `kind`, `id`, and plain-text `name`. Unknow
 | Character | `characters/` | `background`, `subclass`, `rarity` (1–2), `spriteId`, `baseHp`, `progression` (background for 1-star, class for 2-star), `visibility: "sandbox"`, `recruitment: { "eligible": false, "pools": [] }`, and three ordered `powers`. |
 | Enemy party | `enemy-parties/` | `combatants`, an ordered list of one to three entries with unique party-local `id`, `name`, `spriteId`, positive `hp`, and `rank` starting at 1 for the front. The supported `ai` is `merchant`. Each combatant specifies its existing power by initial slot. The merchant sprite IDs refer to existing PNGs in the roster manifest. |
 | Encounter | `encounters/` | Seeded standard 8×8 board, intro and outcome text, sandbox-only reward policy, and either Merchant combat with a registered enemy party or a Harvest puzzle with hay count and turn limit. |
-| Magic item | `magic-items/` | `form: "potion"`, `itemType: "consumable"`, `effect: "restorative-elixir"`, `trigger: "manual"`, `charges: 1`, and `acquisition: "sandbox-only"`. The proposed adapter delegates to the existing sandbox support activation. |
+| Magic item | `magic-items/` | `form: "potion"`, `itemType: "consumable"`, `effect: "restorative-elixir"`, `trigger: "manual"`, `charges: 1`, and `acquisition: "sandbox-only"`. The adapter delegates to the existing sandbox support activation. |
 
 Each power requires `id`, `slot`, `name`, `description`, `color`, `mode: "activated"`, `trigger: "manual"`, and four `levels`. A level contains a positive integer `cost` and an `effect`. The effect has a `type`, `target: "selected-ordinary-tile"`, and `value`. A `transform` takes an existing tile color name. A `create` takes one of `attack`, `defense`, or `energy`. Existing combat handlers own the selected tile's actual legality, effect parameters, and timing. Render content display strings as text.
 
@@ -31,7 +31,7 @@ Use the existing card-pattern execution, target legality, and resource handling 
 
 Enemy AI and countdowns, encounter objectives and waves, and item equipment, stacking, and eligibility each need an explicit contract before use. Keep production admission, reward receipts, pool weights, roster capacity, and inventory under existing ownership. Introduce production pool or item-economy changes only through separately approved work. Keep fixture content outside durable roster, checkpoint, reward, and pool state.
 
-See `content/registry.test.js` for complete in-memory examples. The item runtime adapter and generator are subsequent tasks.
+See `content/registry.test.js` for complete in-memory examples.
 
 ## Release version
 
@@ -64,3 +64,12 @@ If the sandbox registry is unavailable, the picker reports the error and offers 
 4. Verify victory, failure where applicable, and repeatable startup. Reloading an encounter fixture starts a new sandbox attempt. Live checkpoint, ticket, reward, and progression records are outside this fixture path. Admission and production encounter hooks stay with the existing Adventure Path and daily challenge systems.
 
 Additional objectives, tile constraints, timers, waves, and production difficulty or reward policies require tested adapters for their existing gameplay paths. The pilot rejects fields for unsupported mechanics.
+
+
+## Magic-item authoring pilot
+
+1. Copy `tests/fixtures/sandbox-restorative-elixir.json` and choose an unused item ID. The supported fixture is a manual Restorative Elixir consumable. It has one simulated charge, instant duration, no stacking, and equips in a combat support slot. It heals up to 20 HP for each injured, living ally of any level, for four gray energy. It cannot revive or use a charge when the entire living party is at full HP.
+2. Run `node tools/generate-magic-item.js input.json` to preview. Add `--write` after reviewing the diff and use `--replace` only for an approved replacement. Run `node tools/validate-content.js`.
+3. In Two-Star Combat Sandbox choose the practice consumable and launch with full resources. It is initially equipped in the third support slot. Use the sandbox party dialog to lower an ally’s HP. Verify the support dialog, cancel, successful activation, and the spent slot. Reloading begins with one fresh simulated charge.
+
+Equipment, passive triggers, stacking, other effects, and all production acquisition or economy changes require separately approved engine work. Practice charges are held in memory.

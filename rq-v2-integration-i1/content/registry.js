@@ -176,13 +176,21 @@ function validateEncounter(record, location) {
 
 function validateMagicItem(record, location) {
   object(record, ['schemaVersion', 'kind', 'id', 'name', 'form', 'itemType',
-    'effect', 'trigger', 'charges', 'acquisition'], location);
+    'effect', 'trigger', 'charges', 'acquisition', 'eligibility', 'consumption',
+    'duration', 'stacking', 'equip'], location);
   oneOf(record.form, ['potion'], `${location}.form`);
   oneOf(record.itemType, ['consumable'], `${location}.itemType`);
   oneOf(record.effect, ['restorative-elixir'], `${location}.effect`);
   oneOf(record.trigger, ['manual'], `${location}.trigger`);
   oneOf(record.charges, [1], `${location}.charges`);
   oneOf(record.acquisition, ['sandbox-only'], `${location}.acquisition`);
+  object(record.eligibility, ['target', 'minLevel'], `${location}.eligibility`);
+  oneOf(record.eligibility.target, ['injured-living-party'], `${location}.eligibility.target`);
+  oneOf(record.eligibility.minLevel, [1], `${location}.eligibility.minLevel`);
+  oneOf(record.consumption, ['on-activation'], `${location}.consumption`);
+  oneOf(record.duration, ['instant'], `${location}.duration`);
+  oneOf(record.stacking, ['none'], `${location}.stacking`);
+  oneOf(record.equip, ['support-slot'], `${location}.equip`);
 }
 
 const validators = {

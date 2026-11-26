@@ -14,6 +14,7 @@ const approvedSprites = loadApprovedSprites();
 const merchant = require('../tests/fixtures/sandbox-merchant.json');
 const merchantEncounter = require('../tests/fixtures/sandbox-merchant-encounter.json');
 const harvestEncounter = require('../tests/fixtures/sandbox-harvest-encounter.json');
+const elixir = require('../tests/fixtures/sandbox-restorative-elixir.json');
 
 function fixture(id) {
   return {
@@ -92,9 +93,7 @@ test('sandbox encounter links resolve to a valid enemy party and rewards stay is
       ...merchant, id: 'sandbox-party', combatants: merchant.combatants.slice(0, 1)
     },
     'magic-items/sandbox-item.json': {
-      schemaVersion: 1, kind: 'magic-item', id: 'sandbox-item', name: 'Sandbox Elixir',
-      form: 'potion', itemType: 'consumable', effect: 'restorative-elixir', trigger: 'manual',
-      charges: 1, acquisition: 'sandbox-only'
+      ...elixir, id: 'sandbox-item'
     }
   };
   const entries = Object.entries(records).map(([path, { id, kind }]) => ({ id, kind, path }));
@@ -164,5 +163,31 @@ test('encounter generator round-trips combat and puzzle fixtures and rejects uns
     const record = structuredClone(harvestEncounter);
     mutate(record);
     assert.throws(() => planRecord('encounter', record, registry, read, approvedSprites), error);
+  }
+});
+
+
+test('magic-item generator round-trips the elixir and rejects other item rules', () => {
+  const read = path => require('./' + path);
+  const registry = { ...manifest, entries: manifest.entries.filter(entry => entry.id !== elixir.id) };
+  const plan = planRecord('magic-item', elixir, registry, read, approvedSprites);
+  assert.equal(plan.entry.path, `magic-items/${elixir.id}.json`);
+  assert.deepEqual(loadRegistry(plan.next, read, approvedSprites).get(elixir.id), elixir);
+  for (const [mutate, error] of [
+    [record => { record.itemType = 'equipment'; }, /itemType/],
+    [record => { record.effect = 'revive'; }, /effect/],
+    [record => { record.trigger = 'passive'; }, /trigger/],
+    [record => { record.acquisition = 'store'; }, /acquisition/],
+    [record => { record.eligibility.minLevel = 100; }, /eligibility.minLevel/],
+    [record => { record.eligibility.target = 'unconscious'; }, /eligibility.target/],
+    [record => { record.charges = 2; }, /charges/],
+    [record => { record.consumption = 'on-equip'; }, /consumption/],
+    [record => { record.duration = 'turn'; }, /duration/],
+    [record => { record.stacking = 'stack'; }, /stacking/],
+    [record => { record.equip = 'ring'; }, /equip/],
+  ]) {
+    const record = structuredClone(elixir);
+    mutate(record);
+    assert.throws(() => planRecord('magic-item', record, registry, read, approvedSprites), error);
   }
 });

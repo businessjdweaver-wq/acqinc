@@ -24,11 +24,13 @@
     const heroes = new Map();
     const enemyParties = new Map();
     const encounters = new Map();
+    const magicItems = new Map();
     for (const record of records.values()) {
       if (record.kind === 'character' && record.rarity === 2) {
         heroes.set(record.id, combatTemplate(record, sprites.get(record.spriteId)));
       }
       if (record.kind === 'encounter') encounters.set(record.id, record);
+      if (record.kind === 'magic-item') magicItems.set(record.id, record);
       if (record.kind === 'enemy-party') {
         enemyParties.set(record.id, {
           ...record,
@@ -39,7 +41,7 @@
         });
       }
     }
-    return { heroes, enemyParties, encounters };
+    return { heroes, enemyParties, encounters, magicItems };
   }
 
   function combatTemplate(record, spritePath) {
