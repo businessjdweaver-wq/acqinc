@@ -88,6 +88,7 @@
         entries.push({owner,target,kind,remaining:duration,amount,cleanup});return true;
       },
       active(kind,target){prune();return entries.filter(e=>e.kind===kind&&(target===undefined||e.target===target)).map(e=>({...e}));},
+      consume(kind,target){prune();const e=entries.find(e=>e.kind===kind&&(target===undefined||e.target===target));if(!e)return null;remove(e,'consumed');return {...e};},
       tick(){prune();for(const e of [...entries])if(--e.remaining<=0)remove(e,'expired');},
       prune,
       clear(){for(const e of [...entries])remove(e,'reset');}
