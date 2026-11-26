@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
-  splitDamage, leafspeechSelection, convertLeafspeech, blight, bleedTarget, matchMultiplier,
+  splitDamage, leafspeechCandidates, leafspeechSelection, convertLeafspeech, blight, bleedTarget, matchMultiplier,
 } = require('./grimm-hester.js');
 const { characters, characterMaxHp, grimmHesterPowerDetail } = require('./character-catalog.js');
 
@@ -141,4 +141,12 @@ test('Bleed Out clears only its own lock after restore or Leafspeech', () => {
   assert.equal(lockedSpecial.locked, true);
   assert.equal(lockedSpecial.effectFortified, true);
   assert.equal(lockedSpecial.bleedOut, undefined);
+});
+
+test('Leafspeech excludes the anchor, lower rows, other columns and out-of-range rows', () => {
+  const origin = { r: 4, c: 3, v: 2 };
+  const above = { r: 2, c: 3, v: 2 };
+  const tiles = [origin, above, { r: 1, c: 3, v: 2 }, { r: 5, c: 3, v: 2 }, { r: 3, c: 4, v: 2 }];
+  assert.deepEqual(leafspeechCandidates(tiles, origin, 2), [above]);
+  assert.deepEqual(leafspeechCandidates(tiles, { r: 0, c: 3 }, 7), []);
 });
