@@ -46,6 +46,8 @@
         apply:(a,p,t)=>ctx.drainHeroResource(t,p.amount)},
       'create-special':{select:()=>ctx.ordinaryTiles()[0],
         apply:(a,p,t)=>ctx.createEnemySpecial(t,p.special,p.amount,a)},
+      intercept:{select:(a,p)=>ctx.statusTarget?.(a,p,'intercept'),apply:(a,p,t)=>ctx.addStatus(a,p,t,'intercept')},
+      retaliate:{select:(a,p)=>ctx.statusTarget?.(a,p,'retaliate'),apply:(a,p,t)=>ctx.addStatus(a,p,t,'retaliate')},
       ward:{select:(a,p)=>ctx.statusTarget?.(a,p,'ward'),apply:(a,p,t)=>ctx.addStatus(a,p,t,'ward')},
       evasion:{select:(a,p)=>ctx.statusTarget?.(a,p,'evasion'),apply:(a,p,t)=>ctx.addStatus(a,p,t,'evasion')},
       countdown:{select:(a,p)=>ctx.countdownTarget?.(a,p),apply:(a,p,t)=>ctx.addCountdown(a,p,t)},
