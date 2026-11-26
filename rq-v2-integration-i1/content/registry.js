@@ -106,6 +106,15 @@ function approvedSpritePaths(roster, ids = legacyIds) {
     sprites.set(ids[sprite.id], sprite.asset);
   }
   for (const sprite of roster.enemies) {
+    if (sprite.status === 'approved-idle') {
+      requireValue(typeof sprite.id === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(sprite.id),
+        sprite.name, 'invalid approved monster sprite ID');
+      requireValue(/^assets\/sprites\/clean\/[a-z0-9_]+\.png$/.test(sprite.asset),
+        sprite.name, 'invalid approved monster sprite path');
+      requireValue(!sprites.has(sprite.id), sprite.name, 'duplicate approved sprite ID');
+      sprites.set(sprite.id, sprite.asset);
+      continue;
+    }
     if (sprite.status !== 'existing-idle') continue;
     requireValue(/^merchant-[a-z0-9-]+\.png$/.test(sprite.asset),
       sprite.name, 'invalid approved enemy sprite path');
