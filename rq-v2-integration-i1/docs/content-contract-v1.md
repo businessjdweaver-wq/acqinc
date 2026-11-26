@@ -73,3 +73,6 @@ Additional objectives, tile constraints, timers, waves, and production difficult
 3. In Two-Star Combat Sandbox choose the practice consumable and launch with full resources. It is initially equipped in the third support slot. Use the sandbox party dialog to lower an ally’s HP. Verify the support dialog, cancel, successful activation, and the spent slot. Reloading begins with one fresh simulated charge.
 
 Equipment, passive triggers, stacking, other effects, and all production acquisition or economy changes require separately approved engine work. Practice charges are held in memory.
+
+## Monster power kits
+Monster combatants accept either the legacy single `power` or exactly three ordered `powers`, with unique names. Merchant records retain their original schema. Each monster attempts at most one affordable, targetable power per turn; counterspell consumes that attempt. Supported additional effects are steal-resource, convert-tile, capture-special, consume-special and heal-all. Temporary and reactive effects are not yet accepted.
