@@ -125,7 +125,7 @@ function approvedSpritePaths(roster, ids = legacyIds) {
 
 function validateEnemyParty(record, location, approvedSprites) {
   object(record, ['schemaVersion', 'kind', 'id', 'name', 'ai', 'combatants'], location);
-  oneOf(record.ai, ['merchant'], `${location}.ai`);
+  oneOf(record.ai, ['merchant', 'monster'], `${location}.ai`);
   list(record.combatants, 1, 3, `${location}.combatants`);
   const combatantIds = new Set();
   for (const [index, enemy] of record.combatants.entries()) {
@@ -136,11 +136,28 @@ function validateEnemyParty(record, location, approvedSprites) {
     combatantIds.add(enemy.id);
     displayText(enemy.name, `${path}.name`);
     id(enemy.spriteId, `${path}.spriteId`);
-    requireValue(enemy.spriteId.startsWith('merchant-') && approvedSprites.has(enemy.spriteId),
-      `${path}.spriteId`, 'unknown approved merchant sprite');
+    requireValue(approvedSprites.has(enemy.spriteId) && (record.ai === 'merchant'
+      ? enemy.spriteId.startsWith('merchant-')
+      : /^assets\/sprites\/clean\/[a-z0-9]+_[a-z0-9_]+\.png$/.test(approvedSprites.get(enemy.spriteId))),
+      `${path}.spriteId`, 'unknown approved enemy sprite');
     integer(enemy.hp, 1, 10000, `${path}.hp`);
     oneOf(enemy.rank, [index + 1], `${path}.rank`);
     const powerPath = `${path}.power`;
+    if (record.ai === 'monster') {
+      const p = enemy.power;
+      requireValue(p && typeof p === 'object', powerPath, 'expected power');
+      oneOf(p.effect, ['damage', 'heal', 'siphon', 'drain-resource', 'create-special', 'amplify-special'], powerPath + '.effect');
+      object(p, ['name', 'effect', 'color', 'cost', 'amount',
+        ...(p.effect === 'siphon' ? ['heal'] : p.effect === 'drain-resource' ? ['targetColor'] : p.effect === 'create-special' ? ['special'] : [])], powerPath);
+      displayText(p.name, powerPath + '.name');
+      integer(p.color, 0, 6, powerPath + '.color');
+      integer(p.cost, 1, 20, powerPath + '.cost');
+      integer(p.amount, 1, 100, powerPath + '.amount');
+      if (p.effect === 'siphon') integer(p.heal, 1, 100, powerPath + '.heal');
+      if (p.effect === 'drain-resource') integer(p.targetColor, 0, 6, powerPath + '.targetColor');
+      if (p.effect === 'create-special') oneOf(p.special, ['attack', 'defense', 'energy'], powerPath + '.special');
+      continue;
+    }
     if (index === 0) {
       object(enemy.power, ['effect', 'target', 'interval', 'countdown'], powerPath);
       oneOf(enemy.power.effect, ['merchant-fee'], `${powerPath}.effect`);
