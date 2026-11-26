@@ -89,9 +89,9 @@ const characters=[
  characters.push({name:'Grimm · Blood Hunter',icon:'🩸',background:'Haunted One',baseHp:205,spriteKey:'grim',powers:[
   ['Crimson Trail',0,7,'Hold the front rank and increase Grimm’s match damage for each red tile.','grimm-trail',{costs:[7,7,7,6],duration:[3,3,4,4],bonus:[2,3,3,4],cap:[30,45,45,60]}],
   ['Extraction',6,6,'Sacrifice HP to heal each other living ally.','grimm-extraction',{costs:[6,6,6,5],sacrifice:24,heal:[16,20,24,28]}],
-  ['Bleed Out',4,7,'Lock an enemy special, damage its owner each round and spread red tiles.','grimm-bleed',{costs:[7,7,7,6],damage:[4,6,8,10],conversions:[1,1,2,2]}]
+  ['Bleed Out',4,7,'Lock a hostile special tile or enemy countdown, damage its owner each round and spread red tiles.','grimm-bleed',{costs:[7,7,7,6],damage:[4,6,8,10],conversions:[1,1,2,2]}]
  ]});
- characters.push({name:'Hester · Witch (Mystic)',icon:'🦉',background:'Hermit',baseHp:182,spriteKey:'hester',powers:[
+ characters.push({name:'Hester · Witch (Mystic)',icon:'🦉',background:'Hermit',baseHp:182,spriteKey:'hester',spriteScale:.85,powers:[
   ['Woven Life',2,8,'Reduce incoming damage and share the remainder across conscious allies.','hester-woven',{costs:[8,8,8,7],duration:[3,3,4,4],reduction:[15,20,25,30]}],
   ['Leafspeech',1,7,'Transform eligible tiles above a selected tile into green and resolve matches.','hester-leaf',{costs:[7,7,7,6],range:[4,5,6,7],percent:[50,60,70,80],cap:[2,3,4,6]}],
   ['Withering Blight',4,7,'Destroy enemy energy and damage the front enemy for each point destroyed.','hester-blight',{costs:[7,7,7,6],percent:[30,40,50,60],damage:[2,2,3,3]}]
@@ -125,7 +125,7 @@ function grimmHesterPowerDetail(power,level){
  switch(power?.[4]){
   case 'grimm-trail':return 'Create one countdown for '+p.duration[n]+' rounds. Grimm holds the front and his match damage gains '+p.bonus[n]+'% per red tile, up to '+p.cap[n]+'%.';
   case 'grimm-extraction':return 'Spend '+p.sacrifice+' of Grimm’s HP to heal each other living ally for '+p.heal[n]+' HP. Cannot knock Grimm out.';
-  case 'grimm-bleed':return 'Lock one enemy special and deal '+p.damage[n]+' damage per round to its owner, or the current front enemy if team-owned. Convert up to '+p.conversions[n]+' orthogonally adjacent ordinary tiles to red per round.';
+  case 'grimm-bleed':return 'Lock one hostile special tile or enemy countdown and deal '+p.damage[n]+' damage per round to its owner, or the current front enemy if team-owned. Convert up to '+p.conversions[n]+' orthogonally adjacent ordinary tiles to red per round.';
   case 'hester-woven':return 'Create one countdown for '+p.duration[n]+' rounds. After normal mitigation, reduce the hit by '+p.reduction[n]+'% and divide the remainder evenly.';
   case 'hester-leaf':return 'Convert '+p.percent[n]+'% of eligible tiles up to '+p.range[n]+' spaces above the selection to green (maximum '+p.cap[n]+'). Includes enemy specials and locked or fortified tiles. Resolves cascades.';
   case 'hester-blight':return 'Destroy '+p.percent[n]+'% of the enemy’s largest stored color (rounded down), then deal '+p.damage[n]+' damage per point destroyed to the front enemy.';
