@@ -2,21 +2,12 @@
   'use strict';
 
   const catalog = root.RQCharacterCatalog;
-  const { planRegistry, loadRegistry } = root.RQContentRegistry;
+  const { planRegistry, loadRegistry, approvedSpritePaths } = root.RQContentRegistry;
 
   async function readJson(path) {
     const response = await fetch(root.RQRelease.url(path), { redirect: 'error' });
     if (!response.ok) throw new Error(path + ' returned HTTP ' + response.status);
     return response.json();
-  }
-
-  function approvedSprites(roster, legacyIds) {
-    return new Map(roster.characters.flatMap(sprite => {
-      const id = legacyIds[sprite.id];
-      const approved = sprite.status === 'approved-idle' &&
-        /^assets\/sprites\/clean\/[a-z0-9_-]+\.png$/.test(sprite.asset);
-      return id && approved ? [[id, sprite.asset]] : [];
-    }));
   }
 
   async function load() {
@@ -28,15 +19,25 @@
     const paths = planRegistry(manifest, legacyIds);
     const data = new Map(await Promise.all(paths.map(async ({ path }) =>
       [path, await readJson('content/' + path)])));
-    const sprites = approvedSprites(roster, legacyIds);
+    const sprites = approvedSpritePaths(roster, legacyIds);
     const records = loadRegistry(manifest, path => data.get(path), sprites, legacyIds);
     const heroes = new Map();
+    const enemyParties = new Map();
     for (const record of records.values()) {
       if (record.kind === 'character' && record.rarity === 2) {
         heroes.set(record.id, combatTemplate(record, sprites.get(record.spriteId)));
       }
+      if (record.kind === 'enemy-party') {
+        enemyParties.set(record.id, {
+          ...record,
+          foes: record.combatants.map(enemy => ({
+            name: enemy.name, max: enemy.hp, icon: '🪙',
+            sandboxSprite: sprites.get(enemy.spriteId), sandboxPower: enemy.power
+          }))
+        });
+      }
     }
-    return heroes;
+    return { heroes, enemyParties };
   }
 
   function combatTemplate(record, spritePath) {

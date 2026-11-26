@@ -2,7 +2,7 @@
 
 const { readFileSync, realpathSync, statSync } = require('node:fs');
 const { join, relative, isAbsolute, sep } = require('node:path');
-const { loadRegistry, resolveLegacyPower } = require('../content/registry.js');
+const { loadRegistry, approvedSpritePaths } = require('../content/registry.js');
 
 const project = join(__dirname, '..');
 const content = join(project, 'content');
@@ -27,18 +27,11 @@ function readJson(root, path) {
 
 function loadApprovedSprites() {
   const roster = readJson(project, 'assets/sprites/roster-manifest.json');
-  const approvedSprites = new Set();
-  for (const sprite of roster.characters) {
-    const identity = resolveLegacyPower(sprite.id, 0);
-    if (sprite.status !== 'approved-idle' || !identity) continue;
-    if (!/^assets\/sprites\/clean\/[a-z0-9_-]+\.png$/.test(sprite.asset)) {
-      throw new Error(`Invalid approved sprite path for ${identity.characterId}`);
-    }
-    fileWithin(join(project, 'assets/sprites'), sprite.asset.replace(/^assets\/sprites\//, ''));
-    approvedSprites.add(identity.characterId);
+  const sprites = approvedSpritePaths(roster);
+  for (const asset of sprites.values()) {
+    fileWithin(join(project, 'assets/sprites'), asset.replace(/^assets\/sprites\//, ''));
   }
-
-  return approvedSprites;
+  return sprites;
 }
 
 if (require.main === module) {

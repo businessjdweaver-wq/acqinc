@@ -97,21 +97,56 @@ function validateCharacter(record, location, approvedSprites) {
   }
 }
 
+function approvedSpritePaths(roster, ids = legacyIds) {
+  const sprites = new Map();
+  for (const sprite of roster.characters) {
+    if (sprite.status !== 'approved-idle' || !ids[sprite.id]) continue;
+    requireValue(/^assets\/sprites\/clean\/[a-z0-9_-]+\.png$/.test(sprite.asset),
+      sprite.name, 'invalid approved character sprite path');
+    sprites.set(ids[sprite.id], sprite.asset);
+  }
+  for (const sprite of roster.enemies) {
+    if (sprite.status !== 'existing-idle') continue;
+    requireValue(/^merchant-[a-z0-9-]+\.png$/.test(sprite.asset),
+      sprite.name, 'invalid approved enemy sprite path');
+    sprites.set(sprite.asset.slice(0, -4), 'assets/sprites/' + sprite.asset);
+  }
+  return sprites;
+}
+
 function validateEnemyParty(record, location, approvedSprites) {
-  object(record, ['schemaVersion', 'kind', 'id', 'name', 'combatants'], location);
+  object(record, ['schemaVersion', 'kind', 'id', 'name', 'ai', 'combatants'], location);
+  oneOf(record.ai, ['merchant'], `${location}.ai`);
   list(record.combatants, 1, 3, `${location}.combatants`);
   const combatantIds = new Set();
   for (const [index, enemy] of record.combatants.entries()) {
     const path = `${location}.combatants[${index}]`;
-    object(enemy, ['id', 'name', 'spriteId', 'hp', 'rank'], path);
+    object(enemy, ['id', 'name', 'spriteId', 'hp', 'rank', 'power'], path);
     id(enemy.id, `${path}.id`);
     requireValue(!combatantIds.has(enemy.id), `${path}.id`, 'duplicate combatant ID');
     combatantIds.add(enemy.id);
     displayText(enemy.name, `${path}.name`);
     id(enemy.spriteId, `${path}.spriteId`);
-    requireValue(approvedSprites.has(enemy.spriteId), `${path}.spriteId`, 'unknown approved sprite');
+    requireValue(enemy.spriteId.startsWith('merchant-') && approvedSprites.has(enemy.spriteId),
+      `${path}.spriteId`, 'unknown approved merchant sprite');
     integer(enemy.hp, 1, 10000, `${path}.hp`);
     oneOf(enemy.rank, [index + 1], `${path}.rank`);
+    const powerPath = `${path}.power`;
+    if (index === 0) {
+      object(enemy.power, ['effect', 'target', 'interval', 'countdown'], powerPath);
+      oneOf(enemy.power.effect, ['merchant-fee'], `${powerPath}.effect`);
+      oneOf(enemy.power.target, ['eligible-tile'], `${powerPath}.target`);
+      integer(enemy.power.interval, 1, 8, `${powerPath}.interval`);
+      object(enemy.power.countdown, ['min', 'max'], `${powerPath}.countdown`);
+      integer(enemy.power.countdown.min, 1, 8, `${powerPath}.countdown.min`);
+      integer(enemy.power.countdown.max, enemy.power.countdown.min, 8, `${powerPath}.countdown.max`);
+    } else {
+      object(enemy.power, ['effect', 'target', 'color', 'cost'], powerPath);
+      oneOf(enemy.power.effect, [index === 1 ? 'stamina-drain' : 'progress-drain'], `${powerPath}.effect`);
+      oneOf(enemy.power.target, ['party-front'], `${powerPath}.target`);
+      oneOf(enemy.power.color, [index === 1 ? 'red' : 'purple'], `${powerPath}.color`);
+      integer(enemy.power.cost, 1, 20, `${powerPath}.cost`);
+    }
   }
 }
 
@@ -183,5 +218,5 @@ function loadRegistry(manifest, readRecord, approvedSprites, reservedIds) {
   return records;
 }
 
-return { loadRegistry, planRegistry, resolveLegacyPower };
+return { loadRegistry, planRegistry, resolveLegacyPower, approvedSpritePaths, directories };
 });

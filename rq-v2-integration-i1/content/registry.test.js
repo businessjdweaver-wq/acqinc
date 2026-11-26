@@ -2,20 +2,16 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { existsSync } = require('node:fs');
-const { join } = require('node:path');
 const { characters } = require('../character-catalog.js');
-const sprites = require('../assets/sprites/roster-manifest.json');
+const { loadApprovedSprites } = require('../tools/validate-content.js');
+const { planRecord } = require('../tools/generate-content.js');
 const manifest = require('./registry.json');
 const { planCharacter } = require('../tools/generate-character.js');
 const pilot = require('../tests/fixtures/sandbox-mirage.json');
 const { loadRegistry, resolveLegacyPower } = require('./registry.js');
 
-const approvedSprites = new Set(sprites.characters
-  .filter(sprite => sprite.status === 'approved-idle' &&
-    existsSync(join(__dirname, '..', sprite.asset)))
-  .map(sprite => resolveLegacyPower(sprite.id, 0)?.characterId)
-  .filter(Boolean));
+const approvedSprites = loadApprovedSprites();
+const merchant = require('../tests/fixtures/sandbox-merchant.json');
 
 function fixture(id) {
   return {
@@ -92,8 +88,7 @@ test('sandbox encounter links resolve to a valid enemy party and rewards stay is
       mode: 'combat', enemyPartyId: 'sandbox-party', rewardPolicy: 'sandbox-only'
     },
     'enemy-parties/sandbox-party.json': {
-      schemaVersion: 1, kind: 'enemy-party', id: 'sandbox-party', name: 'Sandbox Party',
-      combatants: [{ id: 'opponent', name: 'Opponent', spriteId: 'alda', hp: 100, rank: 1 }]
+      ...merchant, id: 'sandbox-party', combatants: merchant.combatants.slice(0, 1)
     },
     'magic-items/sandbox-item.json': {
       schemaVersion: 1, kind: 'magic-item', id: 'sandbox-item', name: 'Sandbox Elixir',
@@ -120,4 +115,28 @@ test('generator round-trips its fixture and rejects accidental replacement', () 
   assert.deepEqual(loadRegistry(manifest, read, approvedSprites).get(pilot.id), pilot);
   assert.throws(() => planCharacter(pilot, manifest, read, approvedSprites), /already exists/);
   assert.equal(planCharacter(pilot, manifest, read, approvedSprites, true).existing.id, pilot.id);
+});
+
+
+test('enemy-party generator validates one to three ordered combatants and supported powers', () => {
+  const registry = { schemaVersion: 1, entries: [] };
+  const read = path => require('./' + path);
+  for (const count of [1, 2, 3]) {
+    const record = { ...merchant, combatants: merchant.combatants.slice(0, count) };
+    assert.equal(planRecord('enemy-party', record, registry, read, approvedSprites).entry.path,
+      'enemy-parties/sandbox-merchant.json');
+  }
+  assert.deepEqual(loadRegistry(manifest, read, approvedSprites).get(merchant.id), merchant);
+  for (const [mutate, error] of [
+    [party => { party.combatants[1].rank = 1; }, /rank/],
+    [party => { party.combatants[1].id = party.combatants[0].id; }, /duplicate combatant ID/],
+    [party => { party.combatants[0].power.countdown.max = 1; }, /countdown.max/],
+    [party => { party.combatants[1].power.color = 'green'; }, /power.color/],
+    [party => { party.combatants[2].power.cost = 0; }, /power.cost/],
+    [party => { party.combatants[2].power.target = 'party-back'; }, /power.target/]
+  ]) {
+    const party = structuredClone(merchant);
+    mutate(party);
+    assert.throws(() => planRecord('enemy-party', party, registry, read, approvedSprites), error);
+  }
 });
