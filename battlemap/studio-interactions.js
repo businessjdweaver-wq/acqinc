@@ -2828,6 +2828,11 @@ function spellRangeTarget(e,token,spell){
 }
 function spellRangeTargetAt(x,y,token,spell,square=false){
  const accept=spell==='dimension_door'?face=>!dimensionDoorIgnoredObject(face.p):null;
+ if(spell==='dimension_door'){
+  const face=hit(x,y,token,false,accept,true);
+  const [rawU,rawV,z]=measurePoint(x,y,face);
+  return spellRangeTargetInGrid(rawU,rawV,z,token,spell,square);
+ }
  const z=spell==='arcane_eye'?token.z:hit(x,y,token,true,accept)?.z??0;
  const [rawU,rawV]=inverse(x,y,z);
  return spellRangeTargetInGrid(rawU,rawV,z,token,spell,square);
