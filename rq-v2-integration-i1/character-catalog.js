@@ -86,8 +86,18 @@ const characters=[
   ['Psychic Blade',3,9,'Cut all enemies; feedback may destroy a horizontal slash of basic tiles without cascades.','kestrel-blade',{costs:[9,9,8,8],damage:[8,12,16,20],feedbackChance:[50,40,30,20]}],
   ['Fleet Foot',6,0,'PASSIVE: when white energy meets the mastery threshold, Kestrel stays in the rear rank.','kestrel-fleet',{threshold:[10,8,6,4]}]
  ]});
+ characters.push({name:'Grimm · Blood Hunter',icon:'🩸',background:'Haunted One',baseHp:205,spriteKey:'grim',powers:[
+  ['Crimson Trail',0,7,'Hold the front rank and increase Grimm’s match damage for each red tile.','grimm-trail',{costs:[7,7,7,6],duration:[3,3,4,4],bonus:[2,3,3,4],cap:[30,45,45,60]}],
+  ['Extraction',6,6,'Sacrifice HP to heal each other living ally.','grimm-extraction',{costs:[6,6,6,5],sacrifice:24,heal:[16,20,24,28]}],
+  ['Bleed Out',4,7,'Lock an enemy special, damage its owner each round and spread red tiles.','grimm-bleed',{costs:[7,7,7,6],damage:[4,6,8,10],conversions:[1,1,2,2]}]
+ ]});
+ characters.push({name:'Hester · Witch (Mystic)',icon:'🦉',background:'Hermit',baseHp:182,spriteKey:'hester',powers:[
+  ['Woven Life',2,8,'Reduce incoming damage and share the remainder across conscious allies.','hester-woven',{costs:[8,8,8,7],duration:[3,3,4,4],reduction:[15,20,25,30]}],
+  ['Leafspeech',1,7,'Transform eligible tiles above a selected tile into green and resolve matches.','hester-leaf',{costs:[7,7,7,6],range:[4,5,6,7],percent:[50,60,70,80],cap:[2,3,4,6]}],
+  ['Withering Blight',4,7,'Destroy enemy energy and damage the front enemy for each point destroyed.','hester-blight',{costs:[7,7,7,6],percent:[30,40,50,60],damage:[2,2,3,3]}]
+ ]});
 }
-const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock','Whispers Bard','Wild Magic Sorcerer','Oath of the Watchers Paladin','Circle of Stars Druid','Beast Master Ranger','Soulknife Rogue'];characters.forEach((c,i)=>{c.rosterTitle=c.rosterTitle||(i===13?'Shroomkeeper':cardTitles[i]);c.cardTitle=c.cardTitle||cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=Math.round(c.max*1.9);}); // Excess-card character levels: tier baselines are 1 and 100, respectively.
+const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock','Whispers Bard','Wild Magic Sorcerer','Oath of the Watchers Paladin','Circle of Stars Druid','Beast Master Ranger','Soulknife Rogue','Blood Hunter','Witch (Mystic)'];characters.forEach((c,i)=>{c.rosterTitle=c.rosterTitle||(i===13?'Shroomkeeper':cardTitles[i]);c.cardTitle=c.cardTitle||cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=c.baseHp??Math.round(c.max*1.9);}); // Excess-card character levels: tier baselines are 1 and 100, respectively.
 const characterLevelProgress=(archetype,level)=>{const base=Number(archetype)>=6?100:1;const cap=base+99;return Math.max(0,Math.min(99,Math.floor(Number(level)||base)-base));};
 // Rank sets the baseline; card mastery and character progression are independent.
 const characterDamageMultiplier=(archetype,level)=>1+characterLevelProgress(archetype,level)*(Number(archetype)>=6?0.005:0.002);
@@ -110,5 +120,17 @@ function characterCombatStrengths(character, member) {
   return characterColorStrength(member.archetype,member.level,color,natural,rank);
  });
 }
-return{characters,tileColors,tileColorNames,characterCombatStrengths,characterLevelProgress,characterDamageMultiplier,characterColorStrength,characterMaxHp,defaultSelection:[0,1,2],storageKey:'rq-v2-character-selection-v1'};
+function grimmHesterPowerDetail(power,level){
+ const n=level-1,p=power?.[5];
+ switch(power?.[4]){
+  case 'grimm-trail':return 'Create one countdown for '+p.duration[n]+' rounds. Grimm holds the front and his match damage gains '+p.bonus[n]+'% per red tile, up to '+p.cap[n]+'%.';
+  case 'grimm-extraction':return 'Spend '+p.sacrifice+' of Grimm’s HP to heal each other living ally for '+p.heal[n]+' HP. Cannot knock Grimm out.';
+  case 'grimm-bleed':return 'Lock one enemy special and deal '+p.damage[n]+' damage per round to its owner, or the current front enemy if team-owned. Convert up to '+p.conversions[n]+' orthogonally adjacent ordinary tiles to red per round.';
+  case 'hester-woven':return 'Create one countdown for '+p.duration[n]+' rounds. After normal mitigation, reduce the hit by '+p.reduction[n]+'% and divide the remainder evenly.';
+  case 'hester-leaf':return 'Convert '+p.percent[n]+'% of eligible tiles up to '+p.range[n]+' spaces above the selection to green (maximum '+p.cap[n]+'). Includes enemy specials and locked or fortified tiles. Resolves cascades.';
+  case 'hester-blight':return 'Destroy '+p.percent[n]+'% of the enemy’s largest stored color (rounded down), then deal '+p.damage[n]+' damage per point destroyed to the front enemy.';
+  default:return null;
+ }
+}
+return{characters,grimmHesterPowerDetail,tileColors,tileColorNames,characterCombatStrengths,characterLevelProgress,characterDamageMultiplier,characterColorStrength,characterMaxHp,defaultSelection:[0,1,2],storageKey:'rq-v2-character-selection-v1'};
 });
