@@ -150,16 +150,16 @@ function validateEnemyParty(record, location, approvedSprites) {
       for (const [slot,p] of powers.entries()) {
       const powerPath = path + (enemy.powers ? '.powers[' + slot + ']' : '.power');
       requireValue(p && typeof p === 'object', powerPath, 'expected power');
-      oneOf(p.effect, ['damage', 'heal', 'siphon', 'drain-resource', 'create-special', 'amplify-special', 'steal-resource', 'convert-tile', 'capture-special', 'consume-special', 'heal-all', 'ward', 'evasion', 'countdown', 'lock-tile', 'intercept', 'retaliate', 'damage-all'], powerPath + '.effect');
+      oneOf(p.effect, ['damage', 'heal', 'siphon', 'drain-resource', 'create-special', 'amplify-special', 'steal-resource', 'convert-tile', 'capture-special', 'consume-special', 'heal-all', 'ward', 'evasion', 'countdown', 'lock-tile', 'intercept', 'retaliate', 'damage-all', 'counterspell'], powerPath + '.effect');
       object(p, ['name', 'effect', 'color', 'cost', 'amount',
-        ...(['ward','evasion','countdown','lock-tile','intercept','retaliate'].includes(p.effect) ? ['duration'] : []),
+        ...(['ward','evasion','countdown','lock-tile','intercept','retaliate','counterspell'].includes(p.effect) ? ['duration'] : []),
         ...(p.effect === 'siphon' ? ['heal'] : ['drain-resource','steal-resource','convert-tile'].includes(p.effect) ? ['targetColor'] : p.effect === 'create-special' ? ['special'] : [])], powerPath);
       displayText(p.name, powerPath + '.name');
       requireValue(!names.has(p.name), powerPath + '.name', 'duplicate power name'); names.add(p.name);
       integer(p.color, 0, 6, powerPath + '.color');
       integer(p.cost, 1, 20, powerPath + '.cost');
       integer(p.amount, 1, ['ward','intercept'].includes(p.effect) ? 85 : 100, powerPath + '.amount');
-      if (['ward','evasion','countdown','lock-tile','intercept','retaliate'].includes(p.effect)) integer(p.duration, 1, 8, powerPath + '.duration');
+      if (['ward','evasion','countdown','lock-tile','intercept','retaliate','counterspell'].includes(p.effect)) integer(p.duration, 1, 8, powerPath + '.duration');
       if (p.effect === 'siphon') integer(p.heal, 1, 100, powerPath + '.heal');
       if (['drain-resource','steal-resource','convert-tile'].includes(p.effect)) integer(p.targetColor, 0, 6, powerPath + '.targetColor');
       if (p.effect === 'create-special') oneOf(p.special, ['attack', 'defense', 'energy'], powerPath + '.special');
