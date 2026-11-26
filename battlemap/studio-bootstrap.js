@@ -8,6 +8,7 @@
     "./map-composer-crop.js",
     "./map-composer-renderer.js",
     "./map-composer-editor.js",
+    "./studio-biological.js",
     "./studio-webgl.js",
     "./studio-engine.js",
     "./studio-path-benchmark.js",

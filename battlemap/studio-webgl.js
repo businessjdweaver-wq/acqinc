@@ -453,16 +453,19 @@ function studioWebGLFloorMapping([origin,right,,bottom]){
  return new Float32Array([q[0]-p[0],q[1]-p[1],0,r[0]-p[0],r[1]-p[1],0,...p,1]);
 }
 const studioWebGLPatternTiles=new Map();
+const studioWebGLPatternLayer=({kind,seed})=>Object.hasOwn(biologicalPatterns,kind)?biologicalPatternCanvas(kind,seed):scenePattern(kind,seed);
 function studioWebGLPatternTile(...patterns){
  const layers=patterns.flatMap(patternLayers).filter(({kind})=>kind&&kind!=='plain');
  if(!layers.length)return null;
- if(layers.length===1)return scenePattern(layers[0].kind,layers[0].seed);
+ if(layers.length===1&&!Object.hasOwn(biologicalPatterns,layers[0].kind))return studioWebGLPatternLayer(layers[0]);
  const key=JSON.stringify(layers);
  if(studioWebGLPatternTiles.has(key))return studioWebGLPatternTiles.get(key);
  const tile=document.createElement('canvas');
  tile.width=tile.height=128;
  const brush=tile.getContext('2d');
- for(const {kind,seed} of layers)brush.drawImage(scenePattern(kind,seed),0,0);
+ const rendered=layers.map(studioWebGLPatternLayer);
+ const composite=()=>{brush.clearRect(0,0,128,128);for(const layer of rendered)brush.drawImage(layer,0,0);};
+ composite();
  if(studioWebGLPatternTiles.size>=128)studioWebGLPatternTiles.delete(studioWebGLPatternTiles.keys().next().value);
  studioWebGLPatternTiles.set(key,tile);
  return tile;
@@ -472,6 +475,7 @@ function studioWebGLBaseColor(face,theme){
  if(!p)return theme?.ground||face.fill||'#e2d4b5';
  const paint=p.opaquePaint?.[face.edge??4]||p.wash?.[face.edge??4];
  if(paint)return paint;
+ if(face.ropeBridge&&p.biological)return face.ropeNonOpaque?'#732437':'#a95767';
  if(face.doorFace||face.fixtureFace||face.pathWall||face.sceneryArt)return face.fill;
  if(face.flatColumn)return theme?.column||face.fill;
  if(face.special){
@@ -496,7 +500,12 @@ function studioWebGLMaterial(face,appearance,style,theme,floorRooms){
  const basePattern=groundTop?(appearance?.ground==='image'?null:appearance?.ground||theme?.groundPattern):
   flat?theme?.topPattern:theme?.sidePattern==='barn'&&!siding?'dirt':theme?.sidePattern;
  let image,period=2;
- if(face.sceneryArt){
+ const biologicalMaterial=face.biologicalMaterial??(face.ropeBridge&&p?.biological?'muscle':null);
+ if(biologicalMaterial){
+  const tile=getArt('./art/biological/'+biologicalMaterial+'.webp?build=1.618',true);
+  image=studioWebGLPatternTile(p?.patterns?.[edge])??(tile.naturalWidth?tile:null);
+  if(!tile.complete&&!tile.onload)tile.onload=()=>{studioWebGLFrame=null;draw('Biological texture loaded');};
+ }else if(face.sceneryArt){
   const art=getArt(face.sceneryArt);
   if(art.naturalWidth)image=art;
  }else if(face.pathWall){
@@ -558,10 +567,10 @@ function uploadStudioWebGLFrame(blockers,showLighting,appearance,action){
  const prior=studioWebGLFrame;
  const blend=!!prior&&prior.key[0]===key[0]&&action?.startsWith?.('Confirmed move')&&
   !matchMedia('(prefers-reduced-motion: reduce)').matches;
- const terrain=faces.filter(face=>!face.standee&&!face.shadow&&!face.preview&&
-  !face.perimeterOnly&&(face.world?.length>=3||face.canopy!==undefined));
+ const terrain=biologicalWebGLFaces(faces.filter(face=>!face.standee&&!face.shadow&&!face.preview&&
+  !face.perimeterOnly&&(face.world?.length>=3||face.canopy!==undefined)));
  const visibleTokens=new Set(faces.filter(face=>face.standee&&!face.preview).map(face=>face.p));
- const theme=terrainThemes[appearance?.terrainTheme];
+ const theme=biologicalTheme(appearance?.terrainTheme)??terrainThemes[appearance?.terrainTheme];
  const art=webGLFloorImage(appearance);
  const style=areas.find(a=>a.shape==='appearance');
  const floorRooms=[...areas.filter(a=>a.shape==='room'&&a.floorFinish),...wallRooms().filter(a=>a.floorFinish)];
