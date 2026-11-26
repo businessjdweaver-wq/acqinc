@@ -58,7 +58,7 @@
       'consume-special':{select:()=>ctx.consumeSpecial?ctx.enemySpecialTiles()[0]:null,
         apply:(a,p,t)=>ctx.consumeSpecial(t,p.amount,a)},
       'lock-tile':{select:()=>ctx.lockTile?ctx.ordinaryTiles()[0]:null,
-        apply:(a,p,t)=>ctx.lockTile(t,p.amount,a)},
+        apply:(a,p,t)=>ctx.lockTile(t,p.duration,a)},
       'damage-all':{select:()=>ctx.damageAll?ctx.frontHero():null,
         apply:(a,p,t)=>ctx.damageAll(p.amount)},
       'heal-all':{select:()=>ctx.healEnemy&&injured(),
