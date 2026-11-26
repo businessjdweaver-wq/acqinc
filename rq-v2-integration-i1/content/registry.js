@@ -130,7 +130,7 @@ function validateEnemyParty(record, location, approvedSprites) {
   const combatantIds = new Set();
   for (const [index, enemy] of record.combatants.entries()) {
     const path = `${location}.combatants[${index}]`;
-    object(enemy, ['id', 'name', 'spriteId', 'hp', 'rank', 'power'], path);
+    object(enemy, ['id', 'name', 'spriteId', 'hp', 'rank', record.ai === 'monster' && Object.hasOwn(enemy,'powers') ? 'powers' : 'power'], path);
     id(enemy.id, `${path}.id`);
     requireValue(!combatantIds.has(enemy.id), `${path}.id`, 'duplicate combatant ID');
     combatantIds.add(enemy.id);
@@ -144,18 +144,24 @@ function validateEnemyParty(record, location, approvedSprites) {
     oneOf(enemy.rank, [index + 1], `${path}.rank`);
     const powerPath = `${path}.power`;
     if (record.ai === 'monster') {
-      const p = enemy.power;
+      const powers = enemy.powers || [enemy.power];
+      list(powers, enemy.powers ? 3 : 1, enemy.powers ? 3 : 1, powerPath);
+      const names = new Set();
+      for (const [slot,p] of powers.entries()) {
+      const powerPath = path + (enemy.powers ? '.powers[' + slot + ']' : '.power');
       requireValue(p && typeof p === 'object', powerPath, 'expected power');
-      oneOf(p.effect, ['damage', 'heal', 'siphon', 'drain-resource', 'create-special', 'amplify-special'], powerPath + '.effect');
+      oneOf(p.effect, ['damage', 'heal', 'siphon', 'drain-resource', 'create-special', 'amplify-special', 'steal-resource', 'convert-tile', 'capture-special', 'consume-special', 'heal-all'], powerPath + '.effect');
       object(p, ['name', 'effect', 'color', 'cost', 'amount',
-        ...(p.effect === 'siphon' ? ['heal'] : p.effect === 'drain-resource' ? ['targetColor'] : p.effect === 'create-special' ? ['special'] : [])], powerPath);
+        ...(p.effect === 'siphon' ? ['heal'] : ['drain-resource','steal-resource','convert-tile'].includes(p.effect) ? ['targetColor'] : p.effect === 'create-special' ? ['special'] : [])], powerPath);
       displayText(p.name, powerPath + '.name');
+      requireValue(!names.has(p.name), powerPath + '.name', 'duplicate power name'); names.add(p.name);
       integer(p.color, 0, 6, powerPath + '.color');
       integer(p.cost, 1, 20, powerPath + '.cost');
       integer(p.amount, 1, 100, powerPath + '.amount');
       if (p.effect === 'siphon') integer(p.heal, 1, 100, powerPath + '.heal');
-      if (p.effect === 'drain-resource') integer(p.targetColor, 0, 6, powerPath + '.targetColor');
+      if (['drain-resource','steal-resource','convert-tile'].includes(p.effect)) integer(p.targetColor, 0, 6, powerPath + '.targetColor');
       if (p.effect === 'create-special') oneOf(p.special, ['attack', 'defense', 'energy'], powerPath + '.special');
+      }
       continue;
     }
     if (index === 0) {
