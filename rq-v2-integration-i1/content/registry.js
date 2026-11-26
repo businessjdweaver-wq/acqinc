@@ -211,6 +211,9 @@ function validateEnemyParty(record, location, approvedSprites) {
 }
 
 const advancedMonsterEffects = {
+  'woven-life': {duration:[1,8],reduction:[1,85]},
+  leafspeech: {range:[1,7],percent:[1,100],cap:[1,7]},
+  'withering-blight': {percent:[1,100],damagePerPoint:[1,10]},
   'tile-pattern': {operation:['convert','destroy','propagate'],pattern:['random','row','column','cross','cluster'],count:[1,16],eligibility:['ordinary','hero-special','enemy-special']},
   'hero-stun': {duration:[1,8]},
   cleanse: {team:['hero','monster']},

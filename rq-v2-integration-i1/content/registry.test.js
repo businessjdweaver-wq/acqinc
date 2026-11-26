@@ -210,6 +210,9 @@ test('monster effect catalog accepts valid specimens and rejects unsupported par
   const record=structuredClone(require('./enemy-parties/sandbox-rotting-grove.json'));
   const registry={schemaVersion:1,entries:[{id:record.id,kind:record.kind,path:'enemy-parties/'+record.id+'.json'}]};
   const cases=[
+    {effect:'woven-life',duration:3,reduction:15},
+    {effect:'leafspeech',range:4,percent:50,cap:2},
+    {effect:'withering-blight',percent:30,damagePerPoint:2},
     {effect:'damage',amount:8,scaling:{metric:'hero-energy',multiplier:2,cap:30}},
     {effect:'damage-all',amount:8},{effect:'heal',amount:8},{effect:'heal-all',amount:8},
     {effect:'siphon',amount:8,heal:4},{effect:'drain-resource',amount:4,targetColor:2},
@@ -278,5 +281,21 @@ test('the confirmed monster lineup resolves to 18 distinct two-star hero kits', 
   const heartwood = kits.find(kit => kit.monster === 'Heartwood Guardian');
   assert.deepEqual(heartwood.expected.map(power => power.name), [
     'Woven Life', 'Leafspeech', 'Withering Blight'
+  ]);
+});
+
+test('Heartwood Guardian uses the canonical Hester rank-one power parameters', () => {
+  const {characters}=require('../character-catalog.js');
+  const ids=require('./legacy-character-ids.json');
+  const {combatants}=require('./enemy-parties/sandbox-rotting-grove.json');
+  const heartwood=combatants.find(enemy=>enemy.id==='heartwood-guardian');
+  const hester=characters[ids.indexOf('hester')];
+  const [woven,leaf,blight]=hester.powers.map(([name,color,cost,description,kind,parameters])=>({
+    name,color,cost:parameters.costs[0],parameters
+  }));
+  assert.deepEqual(heartwood.powers,[
+    {name:woven.name,color:woven.color,cost:woven.cost,effect:'woven-life',duration:woven.parameters.duration[0],reduction:woven.parameters.reduction[0]},
+    {name:leaf.name,color:leaf.color,cost:leaf.cost,effect:'leafspeech',range:leaf.parameters.range[0],percent:leaf.parameters.percent[0],cap:leaf.parameters.cap[0]},
+    {name:blight.name,color:blight.color,cost:blight.cost,effect:'withering-blight',percent:blight.parameters.percent[0],damagePerPoint:blight.parameters.damage[0]},
   ]);
 });

@@ -85,6 +85,9 @@
       return Math.min(cap,p.amount+multiplier*ctx.measure(metric,a,t));
     }
     return Object.freeze({
+      'woven-life':delegated('woven-life'),
+      leafspeech:delegated('leafspeech'),
+      'withering-blight':delegated('withering-blight'),
       'tile-pattern':delegated('tile-pattern'),
       'hero-stun':delegated('hero-stun'),
       cleanse:delegated('cleanse'),

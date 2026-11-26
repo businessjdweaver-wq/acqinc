@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
 
-  const version = 'I1.16.325';
+  const version = 'I1.16.326';
 
   function url(path) {
     const target = new URL(path, document.baseURI);

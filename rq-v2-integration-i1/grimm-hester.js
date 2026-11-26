@@ -9,21 +9,21 @@
   const share=Math.floor(total/recipients.length),remainder=total%recipients.length;
   return recipients.map((index,position)=>({index,damage:share+Number(position<remainder)}));
  }
- function leafspeechCandidates(tiles,origin,range){
+ function leafspeechCandidates(tiles,origin,range,hostile='enemy'){
   return tiles.filter(tile=>tile&&tile.c===origin.c&&tile.r<origin.r&&tile.r>=origin.r-range&&
-    (tile.v!==4||tile.specialOwner==='enemy')&&
-    (!tile.special||tile.specialOwner==='enemy')&&!tile.trap&&!tile.hiddenTrap&&!tile.power&&!tile.lore&&!tile.rat&&!tile.friendlyRat&&!tile.hay&&
+    (tile.v!==4||tile.specialOwner===hostile)&&
+    (!tile.special||tile.specialOwner===hostile)&&!tile.trap&&!tile.hiddenTrap&&!tile.power&&!tile.lore&&!tile.rat&&!tile.friendlyRat&&!tile.hay&&
     !tile.groveRoot&&!tile.groveVillager&&!tile.grovePetrified&&!tile.sluiceGear&&!tile.sluiceWaterlock&&!tile.lumberFire&&!tile.towerBrazier&&!tile.returnShield&&
     !tile.grimmTrail&&!tile.wovenLife);
  }
- function leafspeechSelection(tiles,origin,range,percent,cap,random=Math.random){
-  const pool=leafspeechCandidates(tiles,origin,range);
+ function leafspeechSelection(tiles,origin,range,percent,cap,random=Math.random,hostile='enemy'){
+  const pool=leafspeechCandidates(tiles,origin,range,hostile);
   const count=Math.min(cap,Math.round(pool.length*percent/100));
   return Array.from({length:count},()=>pool.splice(Math.floor(random()*pool.length),1)[0]);
  }
- function convertLeafspeech(tile){
+ function convertLeafspeech(tile,hostile='enemy'){
   tile.v=4;
-  if(tile.specialOwner==='enemy'){
+  if(tile.specialOwner===hostile){
    tile.special=null;tile.specialOwner=null;tile.specialStrength=0;tile.linkedEnemy=null;
    if(!eligibleBleedOut(tile))clearBleedOut(tile);
   }

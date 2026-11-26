@@ -150,3 +150,15 @@ test('Leafspeech excludes the anchor, lower rows, other columns and out-of-range
   assert.deepEqual(leafspeechCandidates(tiles, origin, 2), [above]);
   assert.deepEqual(leafspeechCandidates(tiles, { r: 0, c: 3 }, 7), []);
 });
+
+test('enemy Leafspeech targets player specials and preserves monster specials',()=>{
+ const {leafspeechSelection,convertLeafspeech}=require('./grimm-hester.js');
+ const anchor={r:4,c:0,v:2};
+ const hero={r:3,c:0,v:4,special:'attack',specialOwner:'player',specialStrength:3};
+ const monster={r:2,c:0,v:2,special:'defense',specialOwner:'enemy',specialStrength:3};
+ assert.deepEqual(leafspeechSelection([hero,monster],anchor,4,50,2,()=>0,'player'),[hero]);
+ convertLeafspeech(hero,'player');
+ assert.equal(hero.special,null);
+ assert.equal(hero.v,4);
+ assert.equal(monster.special,'defense');
+});

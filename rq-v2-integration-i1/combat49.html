@@ -752,6 +752,9 @@ function renderEnemyProfile(enemy,index){
  const prefix=p.optional?'If eligible: ':'';
  const scaled=p.scaling?' Adds '+p.scaling.multiplier+' per unit of '+p.scaling.metric.replaceAll('-',' ')+', capped at '+p.scaling.cap+'.':'';
  const advanced={
+  'woven-life':()=> 'Places a countdown that reduces damage by '+p.reduction+'% and shares it across living monsters for '+p.duration+' rounds.',
+  leafspeech:()=> 'Turns '+p.percent+'% of eligible tiles up to '+p.range+' spaces above the target green (maximum '+p.cap+'), removes hostile specials, and resolves matches.',
+  'withering-blight':()=> 'Destroys '+p.percent+'% of the largest hero energy pool and deals '+p.damagePerPoint+' damage per point removed.',
   'tile-pattern':()=>p.operation+' up to '+p.count+' '+p.eligibility+' tiles in a '+p.pattern+(p.filterColor===undefined?'':' filtered to '+labels[p.filterColor])+(p.operation==='convert'?' to '+(labels[p.targetColor]||'random colors'):'')+(p.cascade?', then resolve enemy cascades.':'.'),
   'hero-stun':()=> 'Stuns the frontline hero for '+p.duration+' hero turns.',
   cleanse:()=> 'Removes eligible harmful statuses from one '+p.team+' combatant.',
@@ -1119,7 +1122,7 @@ function paint(t){
  if(t.friendlyRat){icon.textContent=t.merrixFlavor==='butterflies'?'🦋':'🐀';icon.style.filter='grayscale(1) brightness(0) invert(1)';icon.style.opacity='1';icon.title='Friendly rat · climbs toward the enemy';}if(t.rat){let counter=document.createElement('span');counter.className='counter';counter.textContent='↑';d.appendChild(counter);}const burn=alchemistBurns.get(t.r*8+t.c);if(burn){const mark=document.createElement('span');mark.className='counter';mark.textContent='🔥'+burn.turns;mark.title='Alchemist Fire: '+burn.turns+' player turns until detonation';d.appendChild(mark);}if(t.lore&&!t.locked){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.loreFortified?(t.loreUnlocked?'◇':t.loreLockTimer>0?t.loreLockTimer:'◇'):t.loreCracked?'◇':t.loreTimer;d.appendChild(counter);}if(t.auraSentinel){const counter=document.createElement('span');counter.className='counter';counter.textContent=String(t.auraSentinel.remaining);counter.title='Aura of the Sentinel · '+t.auraSentinel.remaining+' turns remaining';d.appendChild(counter);}if(t.returnShield){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.returnShield;d.appendChild(counter);}if(t.trap||t.hiddenTrap?.owner==='player'&&t.hiddenTrap.duration>0){let counter=document.createElement('span');counter.className='counter';counter.textContent=t.trap||t.hiddenTrap.duration;d.appendChild(counter);}
  for(const [key,label] of [['grimmTrail','Crimson Trail'],['wovenLife','Woven Life'],['bleedOut','Bleed Out']])if(t[key]){
   const mark=document.createElement('span');mark.className=key==='bleedOut'?'counter bleed-out-counter':'counter';mark.textContent=t[key].remaining??'🩸';
-  mark.title=label+(t[key].remaining?' · '+t[key].remaining+' rounds':' · active');d.appendChild(mark);
+  mark.title=(t[key].team==='enemy'?'Enemy ':'')+label+(t[key].remaining?' · '+t[key].remaining+' rounds':' · active');d.appendChild(mark);
  }
  t.el.setAttribute('aria-label',`${labels[t.v]} tile at row ${t.r+1}, column ${t.c+1}${t.rat?' advancing rat: moves up one row each turn, reaching top deals 16 stamina damage':''}${t.trap?(t.trapOwner==='player'?' friendly spike trap, '+t.trap+' rounds remaining; triggers when enemy matches it':' enemy countdown, '+t.trap+' turns until 18 damage'):''}${t.hay?' haystack objective':''}${t.lore?' lore glyph, '+(t.loreFortified?'fortified: requires two matches':'moves each turn for '+t.loreTimer+' more turns'):''}${t.special?' '+t.special+' special tile':''}${Number.isInteger(t.linkedEnemy)?' linked to '+(enemies[t.linkedEnemy]?.name||'antagonist'):(t.independent?' independent effect':'')}${t.locked?' locked':''}${t.effectFortified||t.loreFortified?' fortified':''}${t.grimmTrail?' Crimson Trail, '+t.grimmTrail.remaining+' rounds':''}${t.wovenLife?' Woven Life, '+t.wovenLife.remaining+' rounds':''}${t.bleedOut?' Bleed Out active':''}`);
 }
@@ -1297,18 +1300,28 @@ function preserveDefeatedEnemySprite(index){
  return ghost;
 }
 const malvekClaims=new Map();let malvekBargainUsed=false;
-function damageEnemy(n,index=null,{shoveBehind,bypassDefense=false,fixedDamage=false}={}){if(puzzleMode)return;const smokeDefense=scavengersMode?3*tiles.filter(t=>t?.smoke).length:0;n=Math.max(0,fixedDamage?n:n+specialStrengthTotal('player','strike')-(bypassDefense?0:specialStrengthTotal('enemy','defense'))-smokeDefense);let i=index===null?frontEnemy():index;if(i===undefined||!targetable(enemies[i]))return;let e=enemies[i];
- if(monsterStatusLedger&&n>0&&side==='player'&&index===null){
+function damageEnemy(n,index=null,{shoveBehind,bypassDefense=false,fixedDamage=false,wovenShare=false}={}){if(puzzleMode)return;const smokeDefense=scavengersMode?3*tiles.filter(t=>t?.smoke).length:0;n=Math.max(0,fixedDamage?n:n+specialStrengthTotal('player','strike')-(bypassDefense?0:specialStrengthTotal('enemy','defense'))-smokeDefense);let i=index===null?frontEnemy():index;if(i===undefined||!targetable(enemies[i]))return;let e=enemies[i];
+ if(!wovenShare&&monsterStatusLedger&&n>0&&side==='player'&&index===null){
   const intercept=monsterStatusLedger.active('intercept').find(x=>x.owner!==e&&targetable(x.owner));
   if(intercept){const next=enemies.indexOf(intercept.owner);if(next>=0){say(intercept.owner.name+' intercepts for '+e.name+'.');i=next;e=enemies[i];n=Math.ceil(n*(1-Math.min(85,intercept.amount)/100));}}
  }
- if(monsterStatusLedger&&n>0){
+ if(!wovenShare&&monsterStatusLedger&&n>0){
   const veil=monsterStatusLedger.active('evasion',e)[0];
   if(veil&&Math.random()<veil.amount/100){say(e.name+' evades the attack.');float(combatSpriteTarget('enemy',i),'EVADED','#e3f5ff');return;}
   const ward=monsterStatusLedger.active('ward',e).reduce((max,x)=>Math.max(max,x.amount),0);
   if(ward)n=Math.ceil(n*(1-Math.min(85,ward)/100));
  }
- const retaliation=side==='player'?monsterStatusLedger?.active('retaliate',e)[0]:null;
+ const woven=!wovenShare&&monsterStatusLedger?.active('woven-life')[0];
+ if(woven&&n>0){
+  const shares=RQGrimmHester.splitDamage(n,woven.amount,livingEnemyLineup());
+  for(const {index:recipient,damage} of shares){
+   if(ended)break;
+   if(damage>0)damageEnemy(damage,recipient,{fixedDamage:true,wovenShare:true});
+  }
+  say('Enemy Woven Life reduces and distributes '+shares.reduce((sum,share)=>sum+share.damage,0)+' damage.');
+  return;
+ }
+ const retaliation=!wovenShare&&side==='player'?monsterStatusLedger?.active('retaliate',e)[0]:null;
  let hit=Math.min(n,e.hp);const defeated=hit>0&&hit>=e.hp;const defeatedSprite=defeated?preserveDefeatedEnemySprite(i):null;if(defeated)holdEnemyVisualFormation(i);e.hp-=hit;
  monsterStatusLedger?.prune();
  if(e.hp===0&&hit>0){clearDefeatedAntagonistTiles(i);const claim=malvekClaims.get(i);if(claim){malvekClaims.delete(i);const available=tiles.filter(t=>t&&!t.patronDebt&&!t.effectFortified&&!t.locked&&!t.lumberFire&&!t.groveRoot&&!t.towerBrazier);if(available.length){const t=available[Math.floor(Math.random()*available.length)];RQPatronDebt.attach(t,claim.owner,claim.level,2);paint(t);say('Patron\'s Claim creates a delayed debt.');}}}
@@ -1359,7 +1372,12 @@ function applyPartyHpLoss(i,hit){
  if(monsterPowerTestParties)return;
  party[i].hp=Math.max(0,party[i].hp-hit);if(merrixReincarnationReady&&party[i].hp===0&&hit>0){party[i].hp=1;merrixReincarnationReady=false;say('Reincarnation restores '+party[i].name+' to 1 HP.');}if(hit>0&&side==='enemy'&&party[i].hp>0){const j=party[i].powers.findIndex(p=>p[4]==='rage-engine');if(j>=0&&isEquipped(i,j))ragePendingDamage.set(i,(ragePendingDamage.get(i)||0)+hit);}
 }
-function damageParty(n,{singleTarget=false,areaTarget=null}={}){if(puzzleMode)return;if(merrixConfusion?.resolving){const target=merrixConfusion.victim;if(targetable(enemies[target])){damageEnemy(Math.max(0,Math.round(Number(n)||0)),target);say('Confused '+(enemies[merrixConfusion.attacker]?.name||'enemy')+' redirects '+n+' damage to '+enemies[target].name+'.');}return;}/* Signal Tower is tuned for two-star parties. Scale incoming raw damage once, before defense and mitigation, across enemy matches, specials, attack tiles, and traps. */n=Math.max(0,Number(n)||0);if(towerMode)n=Math.round(n*1.5);n=Math.max(0,n+specialStrengthTotal('enemy','strike')-specialStrengthTotal('player','defense'));if(astralStillness&&n>0){const blocked=Math.floor(n*astralStillness.reduction);n-=blocked;say('Stillness Beyond Form prevents '+blocked+' damage.');astralStillness=null;}let i=areaTarget===null?frontHero():areaTarget;if(i===undefined||!targetable(party[i]))return;
+function damageParty(n,{singleTarget=false,areaTarget=null,fixedDamage=false}={}){if(puzzleMode)return;if(merrixConfusion?.resolving){const target=merrixConfusion.victim;if(targetable(enemies[target])){damageEnemy(Math.max(0,Math.round(Number(n)||0)),target);say('Confused '+(enemies[merrixConfusion.attacker]?.name||'enemy')+' redirects '+n+' damage to '+enemies[target].name+'.');}return;}/* Signal Tower is tuned for two-star parties. Scale incoming raw damage once, before defense and mitigation, across enemy matches, specials, attack tiles, and traps. */n=Math.max(0,Number(n)||0);if(towerMode&&!fixedDamage)n=Math.round(n*1.5);if(!fixedDamage)n=Math.max(0,n+specialStrengthTotal('enemy','strike')-specialStrengthTotal('player','defense'));if(!fixedDamage&&astralStillness&&n>0){const blocked=Math.floor(n*astralStillness.reduction);n-=blocked;say('Stillness Beyond Form prevents '+blocked+' damage.');astralStillness=null;}let i=areaTarget===null?frontHero():areaTarget;if(i===undefined||!targetable(party[i]))return;
+ if(fixedDamage){
+  applyPartyHpLoss(i,n);saveHealth();render();
+  float(combatSpriteTarget('hero',i),'−'+n,'#ff7777');
+  return;
+ }
  const attackTarget=areaTarget===null&&guard&&targetable(party[guard.i])?guard.i:i;
  if(n>0&&side==='enemy'&&party[attackTarget].corvinVeil>0&&Math.random()<.5){
   float(combatSpriteTarget('hero',attackTarget),'EVADED','#e3f5ff');
@@ -2471,6 +2489,10 @@ const monsterCleansable=['hero-stun','suppression','recurring:damage','delayed:d
 function selectMonsterAdvanced(kind,a,p,ledger){
  const front=party[frontHero()];
  switch(kind){
+  case 'woven-life':return !ledger.active('woven-life').length&&tiles.find(t=>monsterTileEligible(t,'ordinary'));
+  case 'leafspeech':return tiles.find(tile=>tile&&Math.round(
+   RQGrimmHester.leafspeechCandidates(tiles,tile,p.range,'player').length*p.percent/100)>0);
+  case 'withering-blight':return front&&RQGrimmHester.blight(energy,p.percent,p.damagePerPoint);
   case 'tile-pattern':{
    const source=p.operation==='propagate'?tiles.find(t=>monsterTileEligible(t,'enemy-special')):null;
    return monsterPattern(p).length&&(p.operation!=='propagate'||source)?{source}:null;
@@ -2507,6 +2529,36 @@ function selectMonsterAdvanced(kind,a,p,ledger){
 
 async function applyMonsterAdvanced(kind,a,p,t,ledger,stunHero){
  switch(kind){
+  case 'woven-life':{
+   const marker={team:'enemy',remaining:p.duration};
+   if(ledger.add({owner:a,target:t,kind,amount:p.reduction,duration:p.duration,
+    valid:()=>tiles.includes(t)&&t.wovenLife===marker,
+    onChange:remaining=>{marker.remaining=remaining;paint(t);},
+    cleanup:reason=>{
+     if(t.wovenLife!==marker)return;
+     delete t.wovenLife;
+     if(tiles.includes(t))paint(t);
+     if(reason==='expired')say('Enemy Woven Life expires.');
+    }})){
+    t.wovenLife=marker;paint(t);
+    await animateTargetedPowerTiles([t],p.name,'🧵');
+   }
+   break;
+  }
+  case 'leafspeech':{
+   const chosen=RQGrimmHester.leafspeechSelection(tiles,t,p.range,p.percent,p.cap,Math.random,'player');
+   await animateTargetedPowerTiles(chosen,p.name,'🍃');
+   if(ended)break;
+   for(const tile of chosen){RQGrimmHester.convertLeafspeech(tile,'player');paint(tile);}
+   await resolve('enemy',null,null,null,{clearMatchFourLines:false});
+   break;
+  }
+  case 'withering-blight':
+   energy[t.color]-=t.destroyed;
+   damageParty(t.damage,{fixedDamage:true});
+   say(p.name+' destroys '+t.destroyed+' '+labels[t.color]+' energy and deals '+t.damage+' damage.');
+   break;
+
   case 'tile-pattern':{
    const selected=monsterPattern(p,true);
    for(const tile of selected){
@@ -3914,7 +3966,7 @@ function merrixFireballVisual(i,enemyIds,selfDamage){
 async function powerFlash(i,glyph){const hero=document.querySelector('[data-member="'+i+'"]');if(!hero)return;const mark=document.createElement('span');mark.textContent=glyph;mark.style.cssText='position:absolute;inset:0;display:grid;place-items:center;font-size:58px;z-index:40;pointer-events:none;filter:drop-shadow(0 0 10px #fff)';hero.style.position='relative';hero.append(mark);await wait(240);mark.remove();}
 const newHeroTypes=new Set(['grimm-trail','grimm-extraction','grimm-bleed','hester-woven','hester-leaf','hester-blight']);
 function heroCountdown(key){
- return tiles.find(t=>t?.[key]?.remaining>0&&party[t[key].owner]&&targetable(party[t[key].owner]));
+ return tiles.find(t=>t?.[key]?.remaining>0&&t[key].team!=='enemy'&&party[t[key].owner]&&targetable(party[t[key].owner]));
 }
 function enforceCrimsonTrail(){
  const owner=heroCountdown('grimmTrail')?.grimmTrail.owner;
@@ -3925,7 +3977,7 @@ function cleanNewHeroTiles(){
  for(const t of tiles){
   if(!t)continue;
   let changed=false;
-  for(const key of ['grimmTrail','wovenLife'])if(t[key]&&(!party[t[key].owner]||!targetable(party[t[key].owner])||t[key].remaining<=0)){
+  for(const key of ['grimmTrail','wovenLife'])if(t[key]&&t[key].team!=='enemy'&&(!party[t[key].owner]||!targetable(party[t[key].owner])||t[key].remaining<=0)){
    delete t[key];changed=true;
   }
   if(t.bleedOut&&(!t.locked||!eligibleBleedOut(t)||!party[t.bleedOut.owner]||!targetable(party[t.bleedOut.owner]))){
@@ -3935,7 +3987,7 @@ function cleanNewHeroTiles(){
  }
 }
 function tickNewHeroCountdowns(){
- for(const t of tiles)for(const key of ['grimmTrail','wovenLife'])if(t?.[key]){
+ for(const t of tiles)for(const key of ['grimmTrail','wovenLife'])if(t?.[key]&&t[key].team!=='enemy'){
   if(--t[key].remaining<=0)delete t[key];
   paint(t);
  }
