@@ -85,6 +85,22 @@
       return Math.min(cap,p.amount+multiplier*ctx.measure(metric,a,t));
     }
     return Object.freeze({
+      constellation:delegated('constellation'),
+      'mycelial-network':delegated('mycelial-network'),
+      'spore-slumber':delegated('spore-slumber'),
+      'spore-bloom':delegated('spore-bloom'),
+      'patron-bargain':delegated('patron-bargain'),
+      'patron-hellfire':delegated('patron-hellfire'),
+      'ranked-strike':delegated('ranked-strike'),
+      'knockout-intercept':delegated('knockout-intercept'),
+      'fleet-foot':delegated('fleet-foot'),
+      'rage-engine':delegated('rage-engine'),
+      'uncanny-dodge':delegated('uncanny-dodge'),
+      'shove-strike':delegated('shove-strike'),
+      'radiant-strike':delegated('radiant-strike'),
+      'refill-aura':delegated('refill-aura'),
+      'watcher-tile':delegated('watcher-tile'),
+      ...ctx.extraHandlers,
       'amplify-board-special':delegated('amplify-board-special'),
       'salvage-special':delegated('salvage-special'),
       'woven-life':delegated('woven-life'),

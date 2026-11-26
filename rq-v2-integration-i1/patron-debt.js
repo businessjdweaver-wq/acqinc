@@ -10,10 +10,10 @@ const BARGAIN=Object.freeze([
  Object.freeze({energy:10,counters:3,countdown:4,damage:12})
 ]);
 function levelConfig(level){return BARGAIN[Math.max(0,Math.min(3,Math.floor(Number(level)||1)-1))];}
-function attach(tile,owner,level,extraCountdown=0,fortified=false){
+function attach(tile,owner,level,extraCountdown=0,fortified=false,team){
  if(!tile||tile.patronDebt||tile.effectFortified) return false;
  const cfg=levelConfig(level);
- tile.patronDebt={owner,remaining:cfg.countdown+Math.max(0,extraCountdown),damage:cfg.damage,fortified:!!fortified,hitsRemaining:fortified?2:1};if(fortified)tile.effectFortified=true;
+ tile.patronDebt={owner,...(team?{team}:{}),remaining:cfg.countdown+Math.max(0,extraCountdown),damage:cfg.damage,fortified:!!fortified,hitsRemaining:fortified?2:1};if(fortified)tile.effectFortified=true;
  return true;
 }
 function settle(tile){if(!tile?.patronDebt)return false;if(tile.patronDebt.hitsRemaining>1){tile.patronDebt.hitsRemaining--;return false;}if(tile.patronDebt.fortified)tile.effectFortified=false;delete tile.patronDebt;return true;}

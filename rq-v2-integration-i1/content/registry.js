@@ -153,7 +153,8 @@ function validateEnemyParty(record, location, approvedSprites) {
       displayText(p.name, powerPath + '.name');
       requireValue(!names.has(p.name), powerPath + '.name', 'duplicate power name'); names.add(p.name);
       integer(p.color, 0, 6, powerPath + '.color');
-      integer(p.cost, 1, 20, powerPath + '.cost');
+      const passive = ['knockout-intercept','fleet-foot','rage-engine','uncanny-dodge'].includes(p.effect);
+      integer(p.cost, passive ? 0 : 1, passive ? 0 : 20, powerPath + '.cost');
       const composite = Object.hasOwn(p,'effects');
       if(composite){
         object(p,['name','color','cost','effects'],powerPath);
@@ -211,6 +212,49 @@ function validateEnemyParty(record, location, approvedSprites) {
 }
 
 const advancedMonsterEffects = {
+  'merrix-surge': {},
+  'merrix-bend': {},
+  'merrix-overchannel': {},
+  'grimm-trail': {duration:[1,8],bonus:[1,20],cap:[1,100]},
+  'grimm-extraction': {sacrifice:[1,100],heal:[1,100]},
+  'grimm-bleed': {damage:[1,100],conversions:[1,8]},
+  'corvin-traps': {count:[1,8],duration:[1,8],damage:[1,100]},
+  'corvin-vanish': {duration:[1,8],evasion:[1,100]},
+  'corvin-echo': {delay:[1,8],stun:[1,8]},
+  'iris-rewrite': {rounds:[1,4]},
+  'iris-lengthen': {ticks:[1,4]},
+  'iris-stop-time': {duration:[1,8]},
+  'astral-arms': {swaps:[1,2]},
+  'astral-flurry': {damagePerMatch:[1,10]},
+  'astral-stillness': {reduction:[1,85],swaps:[1,2]},
+  'unstoppable-charge': {amount:[1,100],span:[2,8]},
+  'immovable-object': {amount:[1,85],duration:[1,8]},
+  'rage-engine': {threshold:[1,100],amount:[1,100]},
+  'false-flag': {amount:[1,100]},
+  'uncanny-dodge': {baseReduction:[1,85],perAttackTile:[1,20],reductionCap:[1,85]},
+  'feed-the-chaos': {baseDamage:[1,100],perSpecialStrength:[1,20]},
+  constellation: {shape:['dragon','chalice','archer'],amount:[1,100]},
+  'mycelial-network': {amount:[1,100],cap:[1,8]},
+  'spore-slumber': {duration:[1,8]},
+  'spore-bloom': {},
+  'patron-bargain': {benefit:[2,20]},
+  'patron-hellfire': {amount:[1,100],bonus:[1,20]},
+  'ranked-strike': {rankTwo:[1,100],rankThree:[1,100]},
+  'knockout-intercept': {reduction:[1,85]},
+  'shove-strike': {amount:[1,100]},
+  'radiant-strike': {amount:[1,100]},
+  'refill-aura': {duration:[1,8],chance:[1,100]},
+  'watcher-tile': {},
+  'twilight-sanctuary': {count:[1,8],strength:[1,100]},
+  'twilight-absolution': {},
+  'ivory-mirage': {},
+  turncoat: {},
+  'prismatic-veil': {amount:[1,100]},
+  'marsh-guide': {distance:[1,8]},
+  chowmp: {amount:[1,100],count:[1,8],bonusPercent:[1,100]},
+  'energy-thief': {amount:[1,20]},
+  'psychic-blade': {amount:[1,100],feedbackChance:[0,100]},
+  'fleet-foot': {threshold:[1,99]},
   'amplify-board-special': {amount:[1,100]},
   'salvage-special': {baseDamage:[1,100],damagePerStrength:[1,10]},
   'woven-life': {duration:[1,8],reduction:[1,85]},

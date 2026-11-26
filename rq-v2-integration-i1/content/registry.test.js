@@ -210,6 +210,19 @@ test('monster effect catalog accepts valid specimens and rejects unsupported par
   const record=structuredClone(require('./enemy-parties/sandbox-rotting-grove.json'));
   const registry={schemaVersion:1,entries:[{id:record.id,kind:record.kind,path:'enemy-parties/'+record.id+'.json'}]};
   const cases=[
+    {effect:'constellation',shape:'archer',amount:4},{effect:'mycelial-network',amount:3,cap:2},
+    {effect:'spore-slumber',duration:3},{effect:'spore-bloom'},
+    {effect:'patron-bargain',benefit:4},{effect:'patron-hellfire',amount:8,bonus:4},
+    {effect:'ranked-strike',rankTwo:24,rankThree:32},
+    {effect:'knockout-intercept',reduction:20},
+    {effect:'shove-strike',amount:12},
+    {effect:'radiant-strike',amount:25},
+    {effect:'refill-aura',duration:3,chance:10},
+    {effect:'watcher-tile'},
+    {effect:'twilight-sanctuary',count:2,strength:2},
+    {effect:'twilight-absolution'},{effect:'ivory-mirage'},{effect:'turncoat'},{effect:'prismatic-veil',amount:20},
+    {effect:'marsh-guide',distance:2},{effect:'chowmp',amount:12,count:1,bonusPercent:25},
+    {effect:'energy-thief',amount:2},{effect:'psychic-blade',amount:8,feedbackChance:50},
     {effect:'amplify-board-special',amount:3},
     {effect:'salvage-special',baseDamage:18,damagePerStrength:6},
     {effect:'woven-life',duration:3,reduction:15},
@@ -231,16 +244,36 @@ test('monster effect catalog accepts valid specimens and rejects unsupported par
     {effect:'temporal',operation:'advance',target:'delayed',owner:'enemy-team',amount:2},
     {effect:'repeated-strikes',count:3,amount:8,targetPolicy:'fixed',retarget:true},
   ];
-  const handlers=createHandlers({});
+  const represented=new Set(cases.map(effect=>effect.effect));
+  for(const entry of manifest.entries.filter(entry=>entry.kind==='enemy-party')){
+    const party=require('./'+entry.path);
+    if(party.ai!=='monster')continue;
+    for(const monster of party.combatants)for(const power of monster.powers){
+      if(represented.has(power.effect)||!power.effect)continue;
+      const {name,color,cost,...specimen}=power;
+      cases.push(specimen);represented.add(specimen.effect);
+    }
+  }
+  const handlers=createHandlers({extraHandlers:{
+    ...require('../monster-cleric-illusionist.js').createHandlers({}),
+    ...require('../monster-hunt.js').createHandlers({}),
+    ...require('../monster-tor-vex.js').createHandlers({}),
+    ...require('../canonical-rank-one-enemy-powers.js').createHandlers({}),
+    ...require('../grimm-corvin-enemies.js').createHandlers({}),
+    ...require('../monster-merrix.js').createHandlers({})
+  }});
   assert.deepEqual(Object.keys(handlers).sort(),cases.map(effect=>effect.effect).sort());
   const mob=record.combatants[0];
   delete mob.powers;
   for(const specimen of cases){
-    mob.power={name:'Test power',color:1,cost:5,effects:[specimen]};
+    mob.power=['knockout-intercept','fleet-foot','rage-engine','uncanny-dodge'].includes(specimen.effect)
+      ?{name:'Test power',color:1,cost:0,...specimen}
+      :{name:'Test power',color:1,cost:5,effects:[specimen]};
     assert.doesNotThrow(()=>loadRegistry(registry,()=>record,approvedSprites),specimen.effect);
     assert.equal(typeof handlers[specimen.effect].select,'function');
     assert.equal(typeof handlers[specimen.effect].apply,'function');
-    mob.power.effects=[{...specimen,script:'{}'}];
+    if(mob.power.effects)mob.power.effects=[{...specimen,script:'{}'}];
+    else mob.power.script='{}';
     assert.throws(()=>loadRegistry(registry,()=>record,approvedSprites),/unknown field "script"/);
   }
   const invalidEffects=[
