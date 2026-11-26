@@ -72,8 +72,13 @@ function createStudioWebGL(onContextLost) {
   vec3 surface=tint;
   if(materialIndex>=0.){
    vec4 art=texture(terrainTextures,vec3(materialUV,materialIndex));
-   if(materialCutout>.5&&art.a<.15)discard;
-   surface=mix(surface,art.rgb,art.a);
+   if(materialCutout>.5&&materialCutout<1.5&&art.a<.15)discard;
+   vec3 materialColor=art.rgb;
+   if(materialCutout>1.5){
+    float luminance=dot(art.rgb,vec3(.2126,.7152,.0722));
+    materialColor=clamp(tint*(.45+.85*luminance),0.,1.);
+   }
+   surface=mix(surface,materialColor,art.a);
   }
   if(drawFloor>.5&&floorOpacity>0.&&all(greaterThanEqual(floorUV,vec2(0.)))&&all(lessThanEqual(floorUV,vec2(1.)))){
    vec4 art=texture(floorTexture,floorUV);
@@ -234,7 +239,7 @@ function createStudioWebGL(onContextLost) {
    for(const point of mesh){
     const [u,v]=slot>=0?material.uv(point):[0,0];
     const gridCoordinates=face&&!face.p?worldToGrid(point[0],point[1]):point;
-    styles.push(...color,...previous,grid,Number(floorSurface),u,v,slot,Number(!!material?.cutout),Number(ghostTerrain),gridCoordinates[0],gridCoordinates[1]);
+    styles.push(...color,...previous,grid,Number(floorSurface),u,v,slot,material?.tintLuminance?2:Number(!!material?.cutout),Number(ghostTerrain),gridCoordinates[0],gridCoordinates[1]);
    }
   }
   const positionsReused=nextKeys.length===positionKeys.length&&nextKeys.every((key,i)=>key===positionKeys[i]);
@@ -552,7 +557,7 @@ function studioWebGLMaterial(face,appearance,style,theme,floorRooms){
  const mapGround=groundTop&&!p&&!groundStamp&&!style?.groundTexture&&appearance?.ground!=='image';
  const groundPeriodX=mapGround?gridLimit(0)/8:period;
  const groundPeriodY=mapGround?gridLimit(1)/8:period;
- return {image,uv:([x,y,z])=>basis?
+ return {image,tintLuminance:!!biologicalMaterial,uv:([x,y,z])=>basis?
   [((x-ox)*ax+(y-oy)*ay+phase)/period,(sidePattern?-z:-(x-ox)*ay+(y-oy)*ax)/period]:
   [(useY?y/groundPeriodY:x/groundPeriodX),(flat?y/groundPeriodY:-z)/period]};
 }
