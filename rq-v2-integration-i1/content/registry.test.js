@@ -191,3 +191,16 @@ test('magic-item generator round-trips the elixir and rejects other item rules',
     assert.throws(() => planRecord('magic-item', record, registry, read, approvedSprites), error);
   }
 });
+
+test('monster party accepts approved monster art and bounded activated effects', () => {
+  const record={schemaVersion:1,kind:'enemy-party',id:'sandbox-monster-test',name:'Monster Test',ai:'monster',combatants:[
+    {id:'heartwood-guardian',name:'Heartwood Guardian',spriteId:'heartwood-guardian',hp:150,rank:1,
+     power:{name:'Bark Shield',effect:'create-special',color:4,cost:6,amount:3,special:'defense'}}
+  ]};
+  const registry={schemaVersion:1,entries:[{id:record.id,kind:record.kind,path:'enemy-parties/'+record.id+'.json'}]};
+  assert.deepEqual(loadRegistry(registry,()=>record,approvedSprites).get(record.id),record);
+  for(const mutate of [r=>r.combatants[0].power.cost=0,r=>r.combatants[0].power.effect='script',r=>r.combatants[0].power.special='unknown',r=>r.combatants[0].spriteId='missing']){
+    const invalid=structuredClone(record);mutate(invalid);
+    assert.throws(()=>loadRegistry(registry,()=>invalid,approvedSprites));
+  }
+});
