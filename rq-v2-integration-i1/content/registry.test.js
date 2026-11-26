@@ -12,6 +12,8 @@ const { loadRegistry, resolveLegacyPower } = require('./registry.js');
 
 const approvedSprites = loadApprovedSprites();
 const merchant = require('../tests/fixtures/sandbox-merchant.json');
+const merchantEncounter = require('../tests/fixtures/sandbox-merchant-encounter.json');
+const harvestEncounter = require('../tests/fixtures/sandbox-harvest-encounter.json');
 
 function fixture(id) {
   return {
@@ -84,8 +86,7 @@ test('invalid character data fails before the caller can activate a snapshot', (
 test('sandbox encounter links resolve to a valid enemy party and rewards stay isolated', () => {
   const records = {
     'encounters/sandbox-encounter.json': {
-      schemaVersion: 1, kind: 'encounter', id: 'sandbox-encounter', name: 'Sandbox Encounter',
-      mode: 'combat', enemyPartyId: 'sandbox-party', rewardPolicy: 'sandbox-only'
+      ...merchantEncounter, id: 'sandbox-encounter', enemyPartyId: 'sandbox-party'
     },
     'enemy-parties/sandbox-party.json': {
       ...merchant, id: 'sandbox-party', combatants: merchant.combatants.slice(0, 1)
@@ -138,5 +139,30 @@ test('enemy-party generator validates one to three ordered combatants and suppor
     const party = structuredClone(merchant);
     mutate(party);
     assert.throws(() => planRecord('enemy-party', party, registry, read, approvedSprites), error);
+  }
+});
+
+
+test('encounter generator round-trips combat and puzzle fixtures and rejects unsupported rules', () => {
+  const read = path => require('./' + path);
+  for (const input of [merchantEncounter, harvestEncounter]) {
+    const registry = { ...manifest, entries: manifest.entries.filter(entry => entry.id !== input.id) };
+    const plan = planRecord('encounter', input, registry, read, approvedSprites);
+    assert.equal(plan.entry.path, `encounters/${input.id}.json`);
+    assert.deepEqual(loadRegistry(plan.next, read, approvedSprites).get(input.id), input);
+  }
+  const registry = { ...manifest, entries: manifest.entries.filter(entry => entry.id !== harvestEncounter.id) };
+  for (const [mutate, error] of [
+    [record => { record.board.seed = -1; }, /board.seed/],
+    [record => { record.board.layout = 'arbitrary'; }, /board.layout/],
+    [record => { record.turnLimit = 0; }, /turnLimit/],
+    [record => { record.objective.count = 0; }, /objective.count/],
+    [record => { record.enemyPartyId = merchant.id; }, /unknown field/],
+    [record => { record.handler = 'merchant'; }, /handler/],
+    [record => { record.rewardPolicy = 'live'; }, /sandbox-only/],
+  ]) {
+    const record = structuredClone(harvestEncounter);
+    mutate(record);
+    assert.throws(() => planRecord('encounter', record, registry, read, approvedSprites), error);
   }
 });

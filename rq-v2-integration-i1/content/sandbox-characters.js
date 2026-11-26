@@ -23,10 +23,12 @@
     const records = loadRegistry(manifest, path => data.get(path), sprites, legacyIds);
     const heroes = new Map();
     const enemyParties = new Map();
+    const encounters = new Map();
     for (const record of records.values()) {
       if (record.kind === 'character' && record.rarity === 2) {
         heroes.set(record.id, combatTemplate(record, sprites.get(record.spriteId)));
       }
+      if (record.kind === 'encounter') encounters.set(record.id, record);
       if (record.kind === 'enemy-party') {
         enemyParties.set(record.id, {
           ...record,
@@ -37,7 +39,7 @@
         });
       }
     }
-    return { heroes, enemyParties };
+    return { heroes, enemyParties, encounters };
   }
 
   function combatTemplate(record, spritePath) {
@@ -77,5 +79,13 @@
       : 'Create one ' + effect.value + ' tile on a selected ordinary tile.';
   }
 
-  root.RQSandboxCharacters = Object.freeze({ load, pattern, describe });
+  function seededRandom(seed) {
+    let state = seed;
+    return limit => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return Math.floor(state / 4294967296 * limit);
+    };
+  }
+
+  root.RQSandboxCharacters = Object.freeze({ load, pattern, describe, seededRandom });
 })(window);

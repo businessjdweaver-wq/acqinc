@@ -1,6 +1,6 @@
 # RQV2 content contract v1
 
-This contract defines the initial offline validation boundary for issue #93. The registry contains isolated two-star character and Merchant enemy-party fixtures.
+This contract defines the initial offline validation boundary for issue #93. The registry contains isolated character, enemy-party, and encounter fixtures.
 
 Run `node tools/validate-content.js` from the project directory to check the registry and its listed records. Run `node --test content/registry.test.js` to exercise the contract.
 
@@ -20,7 +20,7 @@ All records require `schemaVersion`, `kind`, `id`, and plain-text `name`. Unknow
 | --- | --- | --- |
 | Character | `characters/` | `background`, `subclass`, `rarity` (1–2), `spriteId`, `baseHp`, `progression` (background for 1-star, class for 2-star), `visibility: "sandbox"`, `recruitment: { "eligible": false, "pools": [] }`, and three ordered `powers`. |
 | Enemy party | `enemy-parties/` | `combatants`, an ordered list of one to three entries with unique party-local `id`, `name`, `spriteId`, positive `hp`, and `rank` starting at 1 for the front. The supported `ai` is `merchant`. Each combatant specifies its existing power by initial slot. The merchant sprite IDs refer to existing PNGs in the roster manifest. |
-| Encounter | `encounters/` | `mode: "combat"`, `enemyPartyId` referring to a registered enemy party, and `rewardPolicy: "sandbox-only"`. |
+| Encounter | `encounters/` | Seeded standard 8×8 board, intro and outcome text, sandbox-only reward policy, and either Merchant combat with a registered enemy party or a Harvest puzzle with hay count and turn limit. |
 | Magic item | `magic-items/` | `form: "potion"`, `itemType: "consumable"`, `effect: "restorative-elixir"`, `trigger: "manual"`, `charges: 1`, and `acquisition: "sandbox-only"`. The proposed adapter delegates to the existing sandbox support activation. |
 
 Each power requires `id`, `slot`, `name`, `description`, `color`, `mode: "activated"`, `trigger: "manual"`, and four `levels`. A level contains a positive integer `cost` and an `effect`. The effect has a `type`, `target: "selected-ordinary-tile"`, and `value`. A `transform` takes an existing tile color name. A `create` takes one of `attack`, `defense`, or `energy`. Existing combat handlers own the selected tile's actual legality, effect parameters, and timing. Render content display strings as text.
@@ -31,7 +31,7 @@ Use the existing card-pattern execution, target legality, and resource handling 
 
 Enemy AI and countdowns, encounter objectives and waves, and item equipment, stacking, and eligibility each need an explicit contract before use. Keep production admission, reward receipts, pool weights, roster capacity, and inventory under existing ownership. Introduce production pool or item-economy changes only through separately approved work. Keep fixture content outside durable roster, checkpoint, reward, and pool state.
 
-See `content/registry.test.js` for complete in-memory examples. Encounter and item runtime adapters and generators are subsequent tasks.
+See `content/registry.test.js` for complete in-memory examples. The item runtime adapter and generator are subsequent tasks.
 
 ## Release version
 
@@ -54,3 +54,13 @@ If the sandbox registry is unavailable, the picker reports the error and offers 
 2. Use the existing Merchant power for each initial slot. Slot 1 places fees on eligible tiles on the configured interval. Fee countdowns are drawn from the inclusive configured range. Slots 2 and 3 use red and purple team resources respectively, with the existing stamina and progress drains targeting the frontline subject to normal mitigation. Powers stay with their combatants as formation changes.
 3. Run `node tools/generate-enemy-party.js input.json` to preview. Add `--write` after reviewing the diff and use `--replace` only for an approved replacement. Run `node tools/validate-content.js`. Keep one writer for the shared registry.
 4. In Two-Star Combat Sandbox, select Merchant’s Shop, then choose the generated enemy party. Verify initial ranks, sprite loading, legal targets, team resource spending, and fee countdowns. Other AI, targeting, and powers require an engine change. The regular Merchant encounter continues to supply its existing party by default.
+
+
+## Encounter authoring pilot
+
+1. Copy `tests/fixtures/sandbox-merchant-encounter.json` for a combat fixture or `tests/fixtures/sandbox-harvest-encounter.json` for a puzzle. Assign an unused ID and supply the intro and outcome text. Use `board.layout: "standard-8x8"` and an integer board seed. The seed repeats initial tile colors and objective or hazard placement on a fresh attempt. Later play follows the usual game randomness.
+2. For Merchant, reference a registered enemy party and use `defeat-party`. For Harvest, use `collect-hay` with 1–20 hay tiles and a 1–60 turn limit. The existing handlers own success, failure, and move processing. Use `rewardPolicy: "sandbox-only"`; the generator rejects live reward policies and unsupported board or objective rules.
+3. Run `node tools/generate-encounter.js input.json` to preview, then add `--write` after review. Run `node tools/validate-content.js`. Test the new selection in Two-Star Combat Sandbox.
+4. Verify victory, failure where applicable, and repeatable startup. Reloading an encounter fixture starts a new sandbox attempt. Live checkpoint, ticket, reward, and progression records are outside this fixture path. Admission and production encounter hooks stay with the existing Adventure Path and daily challenge systems.
+
+Additional objectives, tile constraints, timers, waves, and production difficulty or reward policies require tested adapters for their existing gameplay paths. The pilot rejects fields for unsupported mechanics.

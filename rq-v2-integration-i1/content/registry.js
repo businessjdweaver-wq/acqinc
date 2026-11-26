@@ -151,9 +151,26 @@ function validateEnemyParty(record, location, approvedSprites) {
 }
 
 function validateEncounter(record, location) {
-  object(record, ['schemaVersion', 'kind', 'id', 'name', 'mode', 'enemyPartyId', 'rewardPolicy'], location);
-  oneOf(record.mode, ['combat'], `${location}.mode`);
-  id(record.enemyPartyId, `${location}.enemyPartyId`);
+  oneOf(record.mode, ['combat', 'puzzle'], `${location}.mode`);
+  const combat = record.mode === 'combat';
+  object(record, ['schemaVersion', 'kind', 'id', 'name', 'mode', 'handler', 'board',
+    'intro', 'win', 'loss', 'objective', 'rewardPolicy',
+    ...(combat ? ['enemyPartyId'] : ['turnLimit'])], location);
+  oneOf(record.handler, [combat ? 'merchant' : 'harvest'], `${location}.handler`);
+  for (const field of ['intro', 'win', 'loss']) displayText(record[field], `${location}.${field}`);
+  object(record.board, ['layout', 'seed'], `${location}.board`);
+  oneOf(record.board.layout, ['standard-8x8'], `${location}.board.layout`);
+  integer(record.board.seed, 0, 4294967295, `${location}.board.seed`);
+  if (combat) {
+    id(record.enemyPartyId, `${location}.enemyPartyId`);
+    object(record.objective, ['type'], `${location}.objective`);
+    oneOf(record.objective.type, ['defeat-party'], `${location}.objective.type`);
+  } else {
+    object(record.objective, ['type', 'count'], `${location}.objective`);
+    oneOf(record.objective.type, ['collect-hay'], `${location}.objective.type`);
+    integer(record.objective.count, 1, 20, `${location}.objective.count`);
+    integer(record.turnLimit, 1, 60, `${location}.turnLimit`);
+  }
   oneOf(record.rewardPolicy, ['sandbox-only'], `${location}.rewardPolicy`);
 }
 
@@ -210,7 +227,7 @@ function loadRegistry(manifest, readRecord, approvedSprites, reservedIds) {
     records.set(entry.id, record);
   }
   for (const record of records.values()) {
-    if (record.kind === 'encounter') {
+    if (record.kind === 'encounter' && record.mode === 'combat') {
       requireValue(records.get(record.enemyPartyId)?.kind === 'enemy-party',
         `${record.id}.enemyPartyId`, 'unknown enemy party');
     }
