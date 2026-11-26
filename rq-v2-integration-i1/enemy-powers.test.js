@@ -36,3 +36,18 @@ test('effect adapters select injured allies and preserve enemy ownership',async(
  assert.equal(handlers['create-special'].select(),tile);
  assert.equal(handlers['amplify-special'].select(),special);
 });
+
+test('ordered activation skips unavailable powers and stops after counterspell',async()=>{
+ const {activateOne}=require('./enemy-powers.js');
+ const f=fixture();const powers=[{...f.power,effect:'missing'},f.power,{...f.power,cost:1}];
+ const result=await activateOne({...f,powers,activation:async()=>false});
+ assert.equal(result.attempted,true);assert.equal(result.resolved,false);assert.equal(f.energy[0],2);assert.equal(f.hits(),0);
+});
+test('optional effect adapters do not spend without runtime support',async()=>{
+ const {createHandlers}=require('./enemy-powers.js');const f=fixture();
+ const handlers=createHandlers({enemies:()=>[],frontHero:()=>({}),ordinaryTiles:()=>[{}],enemySpecialTiles:()=>[{}],heroResources:()=>[3]});
+ for(const effect of ['steal-resource','convert-tile','capture-special','consume-special','lock-tile','damage-all']){
+  assert.equal(await activate({...f,handlers,power:{...f.power,effect,targetColor:0}}),false);
+ }
+ assert.equal(f.energy[0],6);
+});
