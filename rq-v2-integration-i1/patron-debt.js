@@ -28,12 +28,14 @@ function advance(tiles,damageOwner){
 }
 function endEncounter(tiles,damageOwner){let damage=0;for(const tile of tiles){if(tile?.patronDebt?.fortified){const debt=tile.patronDebt;damage+=debt.damage;damageOwner(debt.owner,debt.damage);}}clear(tiles);return damage;}
 function clear(tiles){let count=0;for(const tile of tiles){if(tile?.patronDebt){if(tile.patronDebt.fortified)tile.effectFortified=false;delete tile.patronDebt;count++;}}return count;}
+function eligibleTiles(tiles){return tiles.filter(t=>t&&!t.patronDebt&&!t.effectFortified&&!t.locked&&!t.lumberFire&&!t.groveRoot&&!t.towerBrazier);}
+function canInvoke(tiles,level){return eligibleTiles(tiles).length>=levelConfig(level).counters;}
 function invoke({tiles,owner,level,random=Math.random}){
- const cfg=levelConfig(level),eligible=tiles.filter(t=>t&&!t.patronDebt&&!t.effectFortified&&!t.locked&&!t.lumberFire&&!t.groveRoot&&!t.towerBrazier);
+ const cfg=levelConfig(level),eligible=eligibleTiles(tiles);
  if(eligible.length<cfg.counters)return {ok:false,reason:'Not enough eligible tiles'};
  const pool=eligible.slice();const assigned=[];
  for(let i=0;i<cfg.counters;i++){const index=Math.min(pool.length-1,Math.max(0,Math.floor(random()*pool.length)));const tile=pool.splice(index,1)[0];attach(tile,owner,level);assigned.push(tile);}
  return {ok:true,energy:cfg.energy,tiles:assigned};
 }
-return {BARGAIN,levelConfig,attach,settle,defer,advance,clear,endEncounter,invoke};
+return {BARGAIN,levelConfig,attach,settle,defer,advance,clear,endEncounter,invoke,canInvoke};
 });
