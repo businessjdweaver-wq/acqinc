@@ -62,9 +62,9 @@ const characters=[
 ];
 {
  characters.push({name:'Merrix Duran · Wild Magic Sorcerer',rosterTitle:'Wild Magic Sorcerer',cardTitle:'Wild Magic Sorcerer',icon:'💎',background:'Sage',starTier:2,max:98,powers:[
- ['Protective Wild Magic',2,7,'Random defensive, healing or restorative effect. Level 4 rolls twice and chooses.','merrix-surge'],
- ['Destructive Wild Magic',0,7,'Random damage or destructive tile effect. Level 4 rolls twice and chooses.','merrix-overchannel'],
- ['Reality Distortion',3,5,'Random transformation or board movement. Level 4 rolls twice and chooses.','merrix-bend']
+ ['Protective Wild Magic',2,7,'Random defensive, healing or restorative effect. At level 4, choose between two distinct outcomes.','merrix-surge'],
+ ['Destructive Wild Magic',0,7,'Random damage or destructive tile effect. At level 4, choose between two distinct outcomes.','merrix-overchannel'],
+ ['Reality Distortion',3,5,'Random transformation or board movement. At level 4, choose between two distinct outcomes.','merrix-bend']
  ]});
  characters.push({name:'Aster · Oath of the Watchers Paladin',rosterTitle:'Oath of the Watchers Paladin',cardTitle:'Oath of the Watchers Paladin',icon:'👁️',background:'Acolyte',starTier:2,max:110,powers:[
   ['Divine Smite',0,7,'Deal radiant damage to the frontmost enemy, bypassing Defense tiles.','aster-smite',{damage:[25,32,40,50]}],
@@ -84,7 +84,7 @@ const characters=[
  characters.push({name:'Kestrel · Soulknife Rogue',rosterTitle:'Soulknife Rogue',cardTitle:'Soulknife Rogue',icon:'🗡️',background:'Criminal',starTier:2,max:98,powers:[
   ['Energy Thief',2,8,'Steal enemy resources and transfer them to the party.','kestrel-thief',{costs:[8,8,7,7],colors:[2,6,3],stealPerColor:[2,2,2,3],colorCount:[1,2,3,3]}],
   ['Psychic Blade',3,9,'Cut all enemies; feedback may destroy a horizontal slash of basic tiles without cascades.','kestrel-blade',{costs:[9,9,8,8],damage:[8,12,16,20],feedbackChance:[50,40,30,20]}],
-  ['Fleet Foot',6,0,'PASSIVE: when white energy meets the mastery threshold, Kestrel stays in the rear rank.','kestrel-fleet',{threshold:[10,8,6,4]}]
+  ['Fleet Foot',6,0,'At the white energy threshold, Kestrel stays in the rear. Activate from the rear to create five temporary Attack tiles.','kestrel-fleet',{threshold:[10,8,6,4]}]
  ]});
  characters.push({name:'Grimm · Blood Hunter',icon:'🩸',background:'Haunted One',baseHp:205,spriteKey:'grim',powers:[
   ['Crimson Trail',0,7,'Hold the front rank and increase Grimm’s match damage for each red tile.','grimm-trail',{costs:[7,7,7,6],duration:[3,3,4,4],bonus:[2,3,3,4],cap:[30,45,45,60]}],
@@ -132,5 +132,8 @@ function grimmHesterPowerDetail(power,level){
   default:return null;
  }
 }
-return{characters,grimmHesterPowerDetail,tileColors,tileColorNames,characterCombatStrengths,characterLevelProgress,characterDamageMultiplier,characterColorStrength,characterMaxHp,defaultSelection:[0,1,2],storageKey:'rq-v2-character-selection-v1'};
+function fleetFootDetail(power,level){
+ return 'At '+power[5].threshold[level-1]+' or more white energy, Kestrel stays in the rear rank. Activate from the rear to bring her to five Attack tiles without spending energy. They fade when she leaves that rank.';
+}
+return{characters,fleetFootDetail,grimmHesterPowerDetail,tileColors,tileColorNames,characterCombatStrengths,characterLevelProgress,characterDamageMultiplier,characterColorStrength,characterMaxHp,defaultSelection:[0,1,2],storageKey:'rq-v2-character-selection-v1'};
 });
