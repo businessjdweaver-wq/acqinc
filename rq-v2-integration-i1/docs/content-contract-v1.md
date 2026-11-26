@@ -145,3 +145,10 @@ Values in the example column are effect objects. All listed fields are required 
 **State and inspection.** Formation changes preserve actor identity. The ledger belongs to one encounter and clears on finish and restart. Iris's Rewrite the Moment restores HP and energy deltas. Status durations and tiles stay on their current timeline, and defeated actor entries are pruned. Adventure saves do not carry sandbox monster statuses. Power inspection uses the validated parameters. Combatant badges show active durations, board countdowns show the remaining ticks, and ordinary combat feedback shows damage and heals.
 
 Validate with `node tools/validate-content.js`. The effect field bounds and enumeration rules are in `content/registry.js`. The registry tests compare the supported effects with the dispatcher handlers.
+
+### Manual monster power checklist
+
+1. Open the Two-Star Combat Sandbox, choose Merchant’s Shop and one of the monster parties, then enable **Monster power testing**.
+2. Find the power in the combat checklist. **Trigger** uses the current battle state. **Prepare & trigger** refills hero energy and supplies common missing prerequisites, such as an injured monster, a special tile, or a practice countdown.
+3. Use **Advance statuses** to observe ticks and expiration. Use hero actions to test reactions such as retaliation and counterspell. Hero HP is protected throughout combat. Monster powers are triggered manually and start each attempt with full energy.
+4. Check off powers after observing their behavior. The checklist covers all six parties. Expand another party and use its **Load** link to switch encounters. The browser keeps progress across party changes, reloads, and encounter restarts.
