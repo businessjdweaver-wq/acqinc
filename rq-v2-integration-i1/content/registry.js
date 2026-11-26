@@ -150,7 +150,7 @@ function validateEnemyParty(record, location, approvedSprites) {
       for (const [slot,p] of powers.entries()) {
       const powerPath = path + (enemy.powers ? '.powers[' + slot + ']' : '.power');
       requireValue(p && typeof p === 'object', powerPath, 'expected power');
-      oneOf(p.effect, ['damage', 'heal', 'siphon', 'drain-resource', 'create-special', 'amplify-special', 'steal-resource', 'convert-tile', 'capture-special', 'consume-special', 'heal-all', 'ward', 'evasion', 'countdown', 'lock-tile', 'intercept', 'retaliate'], powerPath + '.effect');
+      oneOf(p.effect, ['damage', 'heal', 'siphon', 'drain-resource', 'create-special', 'amplify-special', 'steal-resource', 'convert-tile', 'capture-special', 'consume-special', 'heal-all', 'ward', 'evasion', 'countdown', 'lock-tile', 'intercept', 'retaliate', 'damage-all'], powerPath + '.effect');
       object(p, ['name', 'effect', 'color', 'cost', 'amount',
         ...(['ward','evasion','countdown','lock-tile','intercept','retaliate'].includes(p.effect) ? ['duration'] : []),
         ...(p.effect === 'siphon' ? ['heal'] : ['drain-resource','steal-resource','convert-tile'].includes(p.effect) ? ['targetColor'] : p.effect === 'create-special' ? ['special'] : [])], powerPath);
