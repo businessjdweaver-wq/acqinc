@@ -63,3 +63,101 @@ test('status ledger expires, rejects duplicates and cleans up defeated owners',(
  assert.equal(ledger.active('ward').length,0);assert.deepEqual(events,['expired','defeated']);
  owner.hp=10;ledger.add(status);ledger.clear();assert.deepEqual(events,['expired','defeated','reset']);
 });
+
+test('composite preflight permits a created special and checks counterspell once',async()=>{
+ const f=fixture(),events=[],tiles=[];
+ f.power.effects=[{effect:'create-special',special:'attack'},{effect:'amplify-special'},{effect:'strike'}];
+ f.handlers['create-special']={select:()=>({}),apply:()=>{events.push('create');tiles.push({});}};
+ f.handlers['amplify-special']={select:()=>tiles[0],apply:()=>events.push('amplify')};
+ let checks=0;
+ f.activation=async(name,apply)=>{checks++;await apply();return true;};
+ assert.equal(await activate(f),true);
+ assert.deepEqual(events,['create','amplify']);
+ assert.equal(checks,1);
+ assert.equal(f.energy[0],2);
+ assert.equal(f.hits(),1);
+});
+
+test('composite optional steps skip missing targets and encounter end stops later steps',async()=>{
+ const f=fixture();
+ let ended=false;
+ f.power.effects=[{effect:'missing-target',optional:true},{effect:'finish'},{effect:'strike'}];
+ f.handlers['missing-target']={select:()=>null,apply:()=>assert.fail()};
+ f.handlers.finish={select:()=>({}),apply:()=>{ended=true;}};
+ assert.equal(await activate({...f,ended:()=>ended}),true);
+ assert.equal(f.hits(),0);
+ assert.equal(f.energy[0],2);
+});
+
+test('required targets lost after commitment stop the suffix without refund',async()=>{
+ const f=fixture(),target={hp:1};
+ f.power.effects=[{effect:'defeat'},{effect:'require'},{effect:'strike'}];
+ f.handlers.defeat={select:()=>target,apply:()=>{target.hp=0;}};
+ f.handlers.require={select:()=>target.hp>0?target:null,apply:()=>assert.fail()};
+ assert.equal(await activate(f),true);
+ assert.equal(f.hits(),0);
+ assert.equal(f.energy[0],2);
+});
+
+test('status phase waits for recurring ticks and expires after the last tick',async()=>{
+ const {createStatusLedger}=require('./enemy-powers.js');
+ const ledger=createStatusLedger(),owner={hp:10},target={hp:20},events=[];
+ ledger.add({owner,target,kind:'recurring:damage',duration:2,onTick:async n=>{
+  await Promise.resolve();
+  events.push(n);
+ },cleanup:reason=>events.push(reason)});
+ await ledger.advance('hero');
+ assert.deepEqual(events,[]);
+ await ledger.advance();
+ assert.equal(ledger.entries()[0].remaining,1);
+ await ledger.advance();
+ assert.deepEqual(events,[2,1,'expired']);
+ assert.equal(ledger.entries().length,0);
+});
+
+test('timed statuses can retain a defeated owner and accelerate in order',async()=>{
+ const {createStatusLedger}=require('./enemy-powers.js');
+ const ledger=createStatusLedger(),owner={hp:10},target={hp:20},events=[];
+ for(const kind of ['recurring:heal','delayed:damage'])ledger.add({
+  owner,target,kind,duration:3,surviveOwner:kind.startsWith('delayed'),
+  onTick:n=>events.push([kind,n]),cleanup:reason=>events.push(reason)
+ });
+ owner.hp=0;
+ await ledger.adjust(e=>e.kind.startsWith('delayed'),'resolve',1,()=>false);
+ assert.deepEqual(events,['defeated',['delayed:damage',3],['delayed:damage',2],['delayed:damage',1],'expired']);
+});
+
+test('cleansing removes specified debuffs without removing other statuses',()=>{
+ const {createStatusLedger}=require('./enemy-powers.js');
+ const ledger=createStatusLedger(),owner={hp:10},target={hp:20},events=[];
+ for(const kind of ['hero-stun','ward'])ledger.add({
+  owner,target,kind,duration:2,cleanup:reason=>events.push(reason)
+ });
+ assert.equal(ledger.cleanse(target,['hero-stun']),1);
+ assert.deepEqual(ledger.entries().map(e=>e.kind),['ward']);
+ target.hp=0;
+ ledger.prune();
+ assert.deepEqual(events,['cleansed','defeated']);
+});
+
+test('a required temporal step can target a timer created by the same activation',async()=>{
+ const f=fixture(),timer=[];
+ f.power.effects=[{effect:'countdown'},{effect:'temporal',target:'countdown'}];
+ f.handlers.countdown={select:()=>({}),apply:()=>timer.push(3)};
+ f.handlers.temporal={select:()=>timer.length?timer:null,apply:(a,p,t)=>{t[0]-=2;}};
+ assert.equal(await activate(f),true);
+ assert.deepEqual(timer,[1]);
+ assert.equal(f.energy[0],2);
+});
+
+test('board replacement invalidates a status without running its expiration effect',async()=>{
+ const {createStatusLedger}=require('./enemy-powers.js');
+ const ledger=createStatusLedger(),owner={hp:10},tile={},events=[];
+ let board=[tile];
+ ledger.add({owner,target:tile,kind:'countdown',duration:1,
+  valid:()=>board.includes(tile),cleanup:reason=>events.push(reason)});
+ board=[{...tile}];
+ await ledger.advance();
+ assert.equal(ledger.entries().length,0);
+ assert.deepEqual(events,['defeated']);
+});

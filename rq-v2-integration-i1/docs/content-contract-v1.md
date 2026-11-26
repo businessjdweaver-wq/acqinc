@@ -19,7 +19,7 @@ All records require `schemaVersion`, `kind`, `id`, and plain-text `name`. Unknow
 | Kind | Directory | Additional fields and accepted behavior |
 | --- | --- | --- |
 | Character | `characters/` | `background`, `subclass`, `rarity` (1–2), `spriteId`, `baseHp`, `progression` (background for 1-star, class for 2-star), `visibility: "sandbox"`, `recruitment: { "eligible": false, "pools": [] }`, and three ordered `powers`. |
-| Enemy party | `enemy-parties/` | `combatants`, an ordered list of one to three entries with unique party-local `id`, `name`, `spriteId`, positive `hp`, and `rank` starting at 1 for the front. The supported `ai` is `merchant`. Each combatant specifies its existing power by initial slot. The merchant sprite IDs refer to existing PNGs in the roster manifest. |
+| Enemy party | `enemy-parties/` | `combatants`, an ordered list of one to three entries with unique party-local `id`, `name`, `spriteId`, positive `hp`, and `rank` starting at 1 for the front. The supported `ai` values are `merchant` and `monster`. Merchant powers depend on the initial slot. Monster powers use the catalog below. The merchant sprite IDs refer to existing PNGs in the roster manifest. |
 | Encounter | `encounters/` | Seeded standard 8×8 board, intro and outcome text, sandbox-only reward policy, and either Merchant combat with a registered enemy party or a Harvest puzzle with hay count and turn limit. |
 | Magic item | `magic-items/` | `form: "potion"`, `itemType: "consumable"`, `effect: "restorative-elixir"`, `trigger: "manual"`, `charges: 1`, and `acquisition: "sandbox-only"`. The adapter delegates to the existing sandbox support activation. |
 
@@ -53,7 +53,7 @@ If the sandbox registry is unavailable, the picker reports the error and offers 
 1. Copy `tests/fixtures/sandbox-merchant.json` and choose an unused party ID. List one to three combatants in initial front-to-rear order with ranks 1–3. HP is the actual starting HP. Select an existing approved Merchant sprite ID for each combatant.
 2. Use the existing Merchant power for each initial slot. Slot 1 places fees on eligible tiles on the configured interval. Fee countdowns are drawn from the inclusive configured range. Slots 2 and 3 use red and purple team resources respectively, with the existing stamina and progress drains targeting the frontline subject to normal mitigation. Powers stay with their combatants as formation changes.
 3. Run `node tools/generate-enemy-party.js input.json` to preview. Add `--write` after reviewing the diff and use `--replace` only for an approved replacement. Run `node tools/validate-content.js`. Keep one writer for the shared registry.
-4. In Two-Star Combat Sandbox, select Merchant’s Shop, then choose the generated enemy party. Verify initial ranks, sprite loading, legal targets, team resource spending, and fee countdowns. Other AI, targeting, and powers require an engine change. The regular Merchant encounter continues to supply its existing party by default.
+4. In Two-Star Combat Sandbox, select Merchant’s Shop, then choose the generated enemy party. Verify initial ranks, sprite loading, legal targets, team resource spending, and fee countdowns. For a monster party, use `ai: "monster"`, approved monster sprite IDs, and the monster power contract below. The regular Merchant encounter continues to supply its existing party by default.
 
 
 ## Encounter authoring pilot
@@ -75,4 +75,73 @@ Additional objectives, tile constraints, timers, waves, and production difficult
 Equipment, passive triggers, stacking, other effects, and all production acquisition or economy changes require separately approved engine work. Practice charges are held in memory.
 
 ## Monster power kits
-Monster combatants accept either the legacy single `power` or exactly three ordered `powers`, with unique names. Merchant records retain their original schema. Each monster attempts at most one affordable, targetable power per turn; counterspell consumes that attempt. Supported additional effects are steal-resource, convert-tile, capture-special, consume-special and heal-all. Temporary and reactive effects are not yet accepted.
+
+Monster combatants accept one legacy `power` or exactly three ordered `powers` with distinct names. Each power requires `name`, `color` (0 red, 1 yellow, 2 blue, 3 purple, 4 green, 5 gray, 6 ivory), and integer `cost` from 1 to 20. Supply an effect inline or put one to four effects in the `effects` array. Never nest an `effects` array.
+
+```json
+{
+  "name": "Bramble Bastion",
+  "color": 4,
+  "cost": 7,
+  "effects": [
+    { "effect": "create-special", "special": "defense", "amount": 3 },
+    { "effect": "amplify-special", "amount": 2 },
+    { "effect": "heal", "amount": 10, "optional": true }
+  ]
+}
+```
+
+Each living, unstunned caster searches its powers in order during the enemy power phase. A power must have enough shared enemy energy and at least one eligible effect. All required steps must have eligible targets at preflight. An earlier eligible `create-special` can satisfy a later `amplify-special` preflight. An earlier eligible timer can also satisfy a later `temporal` step for that timer kind. Otherwise keep conditional steps optional with `"optional": true`.
+
+The engine spends the cost once and checks the hero Watcher once per attempt. Countered powers retain the payment and use up the caster's attempt. After commitment, each step reselects targets against the current state. If a required target disappears, the power stops. Unavailable optional steps are skipped. Earlier mutations and payment are retained. Pending steps stop at encounter completion or caster defeat. Inspection lists each effect in execution order, labels conditional effects, and shows the shared pool and activation cost.
+
+### Immediate and reactive effects
+
+Values in the example column are effect objects. All listed fields are required unless marked optional. Legacy amounts are integers from 1 to 100 except `ward` and `intercept`, which cap at 85. Durations are integers from 1 to 8. A value of 1 is conventional for legacy effects that do not use the required `amount` field.
+
+| Effect | Target and behavior | Effect example |
+| --- | --- | --- |
+| `damage` | Frontline damage using normal defenses, evasion, and interception. Supports optional scaling. | `{"effect":"damage","amount":22}` |
+| `damage-all` | Each targetable hero takes a separate hit. | `{"effect":"damage-all","amount":12}` |
+| `heal` | Living ally with the lowest injured HP fraction. | `{"effect":"heal","amount":20}` |
+| `heal-all` | Every injured living monster. | `{"effect":"heal-all","amount":12}` |
+| `siphon` | Damage the frontline, then heal the most injured living monster if combat continues and the caster survives. `heal` is 1–100. | `{"effect":"siphon","amount":18,"heal":10}` |
+| `drain-resource` | Remove up to the amount from the specified nonempty hero pool. | `{"effect":"drain-resource","targetColor":2,"amount":4}` |
+| `steal-resource` | Move up to the amount from `targetColor` to the enemy pool of the power's own color. | `{"effect":"steal-resource","targetColor":2,"amount":4}` |
+| `create-special` | First eligible ordinary tile. Type is `attack`, `defense`, or `energy`. The tile is linked to the caster. | `{"effect":"create-special","special":"attack","amount":3}` |
+| `amplify-special` | First eligible enemy special. Strength caps at 100. | `{"effect":"amplify-special","amount":3}` |
+| `capture-special` | First eligible hero special. Preserves its strength and links it to the caster. | `{"effect":"capture-special","amount":1}` |
+| `consume-special` | Sacrifice first eligible enemy special for a hit on the frontline. | `{"effect":"consume-special","amount":24}` |
+| `convert-tile` | Change the first eligible ordinary tile of another color. `targetColor` is 0–6. | `{"effect":"convert-tile","targetColor":0,"amount":1}` |
+| `lock-tile` | Lock the first eligible ordinary tile until expiry or caster defeat. | `{"effect":"lock-tile","amount":1,"duration":2}` |
+| `ward` | Caster takes the specified percentage less damage. | `{"effect":"ward","amount":30,"duration":2}` |
+| `evasion` | Caster has the specified percent chance to evade a hit. | `{"effect":"evasion","amount":25,"duration":2}` |
+| `intercept` | Caster can take an untargeted frontline attack directed at an ally and reduce it by the specified percentage. | `{"effect":"intercept","amount":35,"duration":2}` |
+| `retaliate` | Caster deals damage back after surviving an effective hero hit. | `{"effect":"retaliate","amount":8,"duration":2}` |
+| `countdown` | An eligible ordinary tile shows a locked enemy countdown. Expiry deals frontline damage through normal defenses. | `{"effect":"countdown","amount":16,"duration":3}` |
+| `counterspell` | Caster cancels one committed hero power. The oldest active counterspell is consumed first. | `{"effect":"counterspell","amount":1,"duration":2}` |
+
+### Timed and advanced effects
+
+| Effect | Parameters, eligibility and timing | Effect example |
+| --- | --- | --- |
+| `recurring` | `payload` is `damage`, `heal`, `drain-resource`, or `steal-resource`. Add `targetColor` 0–6 for either resource payload. `amount` is 1–100, `duration` 1–8. | `{"effect":"recurring","payload":"damage","amount":6,"duration":3,"targetPolicy":"fixed"}` |
+| `delayed` | Same payloads as recurring plus `hero-stun`, whose `amount` is a stun duration from 1–8. Runs once on the final tick. | `{"effect":"delayed","payload":"hero-stun","amount":1,"duration":2,"targetPolicy":"reassess"}` |
+| `hero-stun` | Frontline hero, `duration` 1–8. Prevents active powers and voluntary formation shifts. Other heroes can supply match strength while the stunned hero remains attackable. | `{"effect":"hero-stun","duration":1}` |
+| `cleanse` | `team` is `hero` or `monster`. First targetable ally of the specified side with an eligible debuff. Removes stun, suppression, and fixed harmful timed damage or stun. Also removes hero-inflicted stun from monsters. | `{"effect":"cleanse","team":"monster"}` |
+| `suppression` | Marks the frontline hero for `duration` 1–8. Positive player energy generated through `charge` is reduced by `amount` percent (1–100), rounded down. Multiple marks use the highest percentage. | `{"effect":"suppression","amount":40,"duration":2}` |
+| `tile-pattern` | `operation` is `convert`, `destroy`, or `propagate`. Choose a `pattern` and `eligibility` below. Select up to `count` 1–16. Optional `filterColor` 0–6 and `cascade` boolean. Conversion optionally sets `targetColor` 0–6. Omission changes each tile to a different random color. | `{"effect":"tile-pattern","operation":"convert","pattern":"cross","count":5,"eligibility":"ordinary","targetColor":6,"cascade":true}` |
+| `formation` | Move the second eligible hero forward, move the first eligible hero backward, exchange the first eligible hero with a selected `rank` 1–3, or insert at a `rank` 1–3. Uses `operation` `forward`, `backward`, `exchange`, or `rank`. Requires two eligible slots and respects Crimson Trail. | `{"effect":"formation","operation":"exchange","rank":3}` |
+| `exchange` | Choose `source` and `destination` from `caster-hp`, `hero-energy`, or `enemy-energy`. `enemy-special` is also a source. `amount` and `benefit` are 1–100, with at most 16 sacrificed specials. `sourceColor` and `targetColor` are required only for energy endpoints. Source and destination must differ by type or energy color. A conversion within one team cannot increase its total energy. HP sacrifices must leave the caster alive. Energy sacrifice checks funds after reserving the activation cost. | `{"effect":"exchange","source":"caster-hp","destination":"enemy-energy","targetColor":0,"amount":12,"benefit":5}` |
+| `temporal` | `operation` is `advance`, `extend`, or `resolve`. `target` is `countdown`, `delayed`, or `recurring`. `owner` is `caster` or `enemy-team`. Applies to eligible ledger entries. `amount` 1–8 is phase count. Resolve runs the remaining ticks immediately. Extend caps remaining duration at 8. | `{"effect":"temporal","operation":"advance","target":"countdown","owner":"enemy-team","amount":2}` |
+| `repeated-strikes` | `count` 2–8 strikes of `amount` 1–100, with normal defenses on each hit. `targetPolicy` is `fixed` or `reassess`. Optional `retarget: true` allows a fixed target to be replaced when defeated. Supports optional scaling. | `{"effect":"repeated-strikes","count":3,"amount":8,"targetPolicy":"fixed","retarget":true}` |
+
+**Timing.** The first recurring tick is the next enemy power phase, after the enemy match and before new monster activations. A duration of three gives three ticks and expiry follows the third. A delayed payload triggers on tick three. Stun and suppression last through the following hero turn and decrement just before the next monster power phase. A timed power must specify `targetPolicy`. `fixed` keeps the original object or resource bucket. A defeated fixed combatant ends that entry. `reassess` reselects the frontline, most injured ally or named resource bucket on each tick, and skips ticks without an eligible target. Recurring and delayed entries allow `surviveOwner: true`. Otherwise they expire on caster defeat. The applied stun is independent of its original trigger. Repeated applications of the same timed kind and payload by one caster are unavailable while armed.
+
+**Tiles.** `random` samples without replacement. `row` and `column` select on one line. `cross` is a radius-two orthogonal cross and `cluster` is a Manhattan-radius-two region. Geometric patterns use the anchor with the most qualifying tiles. Eligibility is `ordinary`, `hero-special`, or `enemy-special`. Locks, fortification, countdowns and encounter objective tiles are protected. Propagation requires ordinary destinations and copies an eligible enemy special, including its strength and linked monster. Conversion preserves ownership and linkage. A cascade, when requested, uses the normal enemy resolver.
+
+**Scaling.** On `damage` and `repeated-strikes`, `scaling` takes `metric`, `multiplier` (1–10) and `cap` (base amount through 100). The engine evaluates `min(cap, amount + multiplier × metric)` at resolution. Metrics are `hero-energy`, `enemy-energy`, `strongest-hero-energy`, `enemy-specials`, `hero-specials`, `caster-missing-hp`, and `target-missing-hp`. No executable formulas are accepted.
+
+**State and inspection.** Formation changes preserve actor identity. The ledger belongs to one encounter and clears on finish and restart. Iris's Rewrite the Moment restores HP and energy deltas. Status durations and tiles stay on their current timeline, and defeated actor entries are pruned. Adventure saves do not carry sandbox monster statuses. Power inspection uses the validated parameters. Combatant badges show active durations, board countdowns show the remaining ticks, and ordinary combat feedback shows damage and heals.
+
+Validate with `node tools/validate-content.js`. The effect field bounds and enumeration rules are in `content/registry.js`. The registry tests compare the supported effects with the dispatcher handlers.

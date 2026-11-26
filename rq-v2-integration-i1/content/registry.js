@@ -17,13 +17,13 @@ function requireValue(condition, location, message) {
   if (!condition) throw new Error(`${location}: ${message}`);
 }
 
-function object(value, fields, location) {
+function object(value, fields, location, optional = []) {
   requireValue(value && typeof value === 'object' && !Array.isArray(value), location, 'expected an object');
   for (const field of fields) {
     requireValue(Object.hasOwn(value, field), location, `missing field "${field}"`);
   }
   for (const field of Object.keys(value)) {
-    requireValue(fields.includes(field), location, `unknown field "${field}"`);
+    requireValue((fields.includes(field) || optional.includes(field)), location, `unknown field "${field}"`);
   }
 }
 
@@ -162,14 +162,31 @@ function validateEnemyParty(record, location, approvedSprites) {
       for(const [effectIndex,effect] of (composite?p.effects:[p]).entries()){
       const powerPathEffect=composite?powerPath+'.effects['+effectIndex+']':powerPath;
       requireValue(effect&&typeof effect==='object',powerPathEffect,'expected effect');
-      oneOf(effect.effect, ['damage', 'heal', 'siphon', 'drain-resource', 'create-special', 'amplify-special', 'steal-resource', 'convert-tile', 'capture-special', 'consume-special', 'heal-all', 'ward', 'evasion', 'countdown', 'lock-tile', 'intercept', 'retaliate', 'damage-all', 'counterspell'], powerPathEffect + '.effect');
+      const metadata=composite?[]:['name','color','cost'];
+      const optional=composite?['optional']:[];
+      if(composite&&Object.hasOwn(effect,'optional'))requireValue(typeof effect.optional==='boolean',powerPathEffect+'.optional','expected boolean');
+      if(Object.hasOwn(advancedMonsterEffects,effect.effect)){
+        validateAdvancedMonsterEffect(effect,powerPathEffect,metadata,optional);
+        continue;
+      }
+      if(effect.effect==='damage')optional.push('scaling');
+      oneOf(effect.effect, ['damage', 'heal', 'siphon', 'drain-resource', 'create-special', 'amplify-special', 'steal-resource', 'convert-tile', 'capture-special', 'consume-special', 'heal-all', 'ward', 'evasion', 'countdown', 'lock-tile', 'intercept', 'retaliate', 'damage-all', 'counterspell', 'recurring', 'delayed'], powerPathEffect + '.effect');
+      const timed = ['recurring','delayed'].includes(effect.effect);
+      const resourcePayload = ['drain-resource','steal-resource'].includes(effect.payload);
+      if(timed){
+        oneOf(effect.payload, ['damage','heal','drain-resource','steal-resource',...(effect.effect==='delayed'?['hero-stun']:[])], powerPathEffect+'.payload');
+        oneOf(effect.targetPolicy, ['fixed','reassess'], powerPathEffect+'.targetPolicy');
+        if(Object.hasOwn(effect,'surviveOwner')) requireValue(typeof effect.surviveOwner==='boolean',powerPathEffect+'.surviveOwner','expected boolean');
+      }
       object(effect, [...(composite ? [] : ['name','color','cost']), 'effect', 'amount',
+        ...(timed ? ['payload','duration','targetPolicy',...(resourcePayload?['targetColor']:[])] : []),
         ...(['ward','evasion','countdown','lock-tile','intercept','retaliate','counterspell'].includes(effect.effect) ? ['duration'] : []),
-        ...(effect.effect === 'siphon' ? ['heal'] : ['drain-resource','steal-resource','convert-tile'].includes(effect.effect) ? ['targetColor'] : effect.effect === 'create-special' ? ['special'] : [])], powerPathEffect);
-      integer(effect.amount, 1, ['ward','intercept'].includes(effect.effect) ? 85 : 100, powerPathEffect + '.amount');
-      if (['ward','evasion','countdown','lock-tile','intercept','retaliate','counterspell'].includes(effect.effect)) integer(effect.duration, 1, 8, powerPathEffect + '.duration');
+        ...(effect.effect === 'siphon' ? ['heal'] : ['drain-resource','steal-resource','convert-tile'].includes(effect.effect) ? ['targetColor'] : effect.effect === 'create-special' ? ['special'] : [])], powerPathEffect, [...(timed?['surviveOwner']:[]),...optional]);
+      integer(effect.amount, 1, effect.payload==='hero-stun' ? 8 : ['ward','intercept'].includes(effect.effect) ? 85 : 100, powerPathEffect + '.amount');
+      if(effect.scaling!==undefined)validateMonsterScaling(effect.scaling,powerPathEffect+'.scaling',effect.amount);
+      if (timed || ['ward','evasion','countdown','lock-tile','intercept','retaliate','counterspell'].includes(effect.effect)) integer(effect.duration, 1, 8, powerPathEffect + '.duration');
       if (effect.effect === 'siphon') integer(effect.heal, 1, 100, powerPathEffect + '.heal');
-      if (['drain-resource','steal-resource','convert-tile'].includes(effect.effect)) integer(effect.targetColor, 0, 6, powerPathEffect + '.targetColor');
+      if (resourcePayload || ['drain-resource','steal-resource','convert-tile'].includes(effect.effect)) integer(effect.targetColor, 0, 6, powerPathEffect + '.targetColor');
       if (effect.effect === 'create-special') oneOf(effect.special, ['attack', 'defense', 'energy'], powerPathEffect + '.special');
       }
       }
@@ -191,6 +208,54 @@ function validateEnemyParty(record, location, approvedSprites) {
       integer(enemy.power.cost, 1, 20, `${powerPath}.cost`);
     }
   }
+}
+
+const advancedMonsterEffects = {
+  'tile-pattern': {operation:['convert','destroy','propagate'],pattern:['random','row','column','cross','cluster'],count:[1,16],eligibility:['ordinary','hero-special','enemy-special']},
+  'hero-stun': {duration:[1,8]},
+  cleanse: {team:['hero','monster']},
+  suppression: {duration:[1,8],amount:[1,100]},
+  formation: {operation:['forward','backward','exchange','rank'],rank:[1,3]},
+  exchange: {source:['caster-hp','enemy-energy','hero-energy','enemy-special'],destination:['caster-hp','enemy-energy','hero-energy'],amount:[1,100],benefit:[1,100],sourceColor:[0,6],targetColor:[0,6]},
+  temporal: {operation:['advance','extend','resolve'],target:['countdown','delayed','recurring'],owner:['caster','enemy-team'],amount:[1,8]},
+  'repeated-strikes': {count:[2,8],amount:[1,100],targetPolicy:['fixed','reassess']}
+};
+
+function validateAdvancedMonsterEffect(effect, path, metadata, optional) {
+  const schema=advancedMonsterEffects[effect.effect];
+  const fields={...schema};
+  if(effect.effect==='tile-pattern'){
+    if(effect.operation==='convert')optional.push('targetColor');
+    if(effect.operation==='propagate')requireValue(effect.eligibility==='ordinary',path+'.eligibility','propagation needs ordinary destination tiles');
+    optional.push('filterColor','cascade');
+  }
+  if(effect.effect==='repeated-strikes')optional.push('retarget','scaling');
+  if(effect.effect==='formation'&&!['exchange','rank'].includes(effect.operation))delete fields.rank;
+  if(effect.effect==='exchange'){
+    if(effect.source===effect.destination){
+      requireValue(['hero-energy','enemy-energy'].includes(effect.source)&&effect.sourceColor!==effect.targetColor,
+        path+'.destination','exchange requires different resources or energy colors');
+      requireValue(effect.benefit<=effect.amount,path+'.benefit','within-team energy conversion cannot increase the total pool');
+    }
+    if(!effect.source?.endsWith?.('-energy'))delete fields.sourceColor;
+    if(!effect.destination?.endsWith?.('-energy'))delete fields.targetColor;
+    if(effect.source==='enemy-special')requireValue(effect.amount<=16,path+'.amount','special tile sacrifice maximum is 16');
+  }
+  object(effect,[...metadata,'effect',...Object.keys(fields)],path,optional);
+  for(const [key,range] of Object.entries(fields)){
+    if(typeof range[0]==='number')integer(effect[key],...range,path+'.'+key);
+    else oneOf(effect[key],range,path+'.'+key);
+  }
+  for(const key of ['cascade','retarget'])if(Object.hasOwn(effect,key))requireValue(typeof effect[key]==='boolean',path+'.'+key,'expected boolean');
+  for(const key of ['targetColor','filterColor'])if(optional.includes(key)&&Object.hasOwn(effect,key))integer(effect[key],0,6,path+'.'+key);
+  if(effect.scaling!==undefined)validateMonsterScaling(effect.scaling,path+'.scaling',effect.amount);
+}
+
+function validateMonsterScaling(scaling,path,base){
+  object(scaling,['metric','multiplier','cap'],path);
+  oneOf(scaling.metric,['hero-energy','enemy-energy','strongest-hero-energy','enemy-specials','hero-specials','caster-missing-hp','target-missing-hp'],path+'.metric');
+  integer(scaling.multiplier,1,10,path+'.multiplier');
+  integer(scaling.cap,base,100,path+'.cap');
 }
 
 function validateEncounter(record, location) {

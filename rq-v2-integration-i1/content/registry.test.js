@@ -204,3 +204,68 @@ test('monster party accepts approved monster art and bounded activated effects',
     assert.throws(()=>loadRegistry(registry,()=>invalid,approvedSprites));
   }
 });
+
+test('monster effect catalog accepts valid specimens and rejects unsupported parameters', () => {
+  const {createHandlers}=require('../enemy-powers.js');
+  const record=structuredClone(require('./enemy-parties/sandbox-rotting-grove.json'));
+  const registry={schemaVersion:1,entries:[{id:record.id,kind:record.kind,path:'enemy-parties/'+record.id+'.json'}]};
+  const cases=[
+    {effect:'damage',amount:8,scaling:{metric:'hero-energy',multiplier:2,cap:30}},
+    {effect:'damage-all',amount:8},{effect:'heal',amount:8},{effect:'heal-all',amount:8},
+    {effect:'siphon',amount:8,heal:4},{effect:'drain-resource',amount:4,targetColor:2},
+    {effect:'steal-resource',amount:4,targetColor:2},{effect:'create-special',special:'attack',amount:4},
+    {effect:'amplify-special',amount:4},{effect:'capture-special',amount:1},
+    {effect:'consume-special',amount:8},{effect:'convert-tile',targetColor:0,amount:1},
+    ...['ward','evasion','intercept','retaliate','countdown','lock-tile','counterspell'].map(effect=>({effect,amount:8,duration:2})),
+    {effect:'recurring',payload:'steal-resource',targetColor:0,targetPolicy:'fixed',amount:2,duration:3},
+    {effect:'delayed',payload:'hero-stun',targetPolicy:'reassess',amount:2,duration:3,surviveOwner:true},
+    {effect:'tile-pattern',operation:'destroy',pattern:'cross',count:5,eligibility:'ordinary',filterColor:2,cascade:true},
+    {effect:'hero-stun',duration:2},{effect:'cleanse',team:'monster'},{effect:'suppression',amount:50,duration:2},
+    {effect:'formation',operation:'rank',rank:2},
+    {effect:'exchange',source:'enemy-energy',sourceColor:1,destination:'caster-hp',amount:4,benefit:6},
+    {effect:'temporal',operation:'advance',target:'delayed',owner:'enemy-team',amount:2},
+    {effect:'repeated-strikes',count:3,amount:8,targetPolicy:'fixed',retarget:true},
+  ];
+  const handlers=createHandlers({});
+  assert.deepEqual(Object.keys(handlers).sort(),cases.map(effect=>effect.effect).sort());
+  const mob=record.combatants[0];
+  delete mob.powers;
+  for(const specimen of cases){
+    mob.power={name:'Test power',color:1,cost:5,effects:[specimen]};
+    assert.doesNotThrow(()=>loadRegistry(registry,()=>record,approvedSprites),specimen.effect);
+    assert.equal(typeof handlers[specimen.effect].select,'function');
+    assert.equal(typeof handlers[specimen.effect].apply,'function');
+    mob.power.effects=[{...specimen,script:'{}'}];
+    assert.throws(()=>loadRegistry(registry,()=>record,approvedSprites),/unknown field "script"/);
+  }
+  const invalidEffects=[
+    {effect:'recurring',payload:'damage',targetPolicy:'fixed',amount:2,duration:9},
+    {effect:'delayed',payload:'delayed',targetPolicy:'fixed',amount:2,duration:1},
+    {effect:'tile-pattern',operation:'propagate',pattern:'cross',count:4,eligibility:'hero-special'},
+    {effect:'tile-pattern',operation:'destroy',pattern:'cross',count:17,eligibility:'ordinary'},
+    {effect:'repeated-strikes',count:9,amount:6,targetPolicy:'fixed'},
+    {effect:'damage',amount:8,scaling:{metric:'eval',multiplier:2,cap:30}},
+    {effect:'exchange',source:'enemy-energy',sourceColor:1,destination:'enemy-energy',targetColor:2,amount:4,benefit:6},
+  ];
+  for(const invalid of invalidEffects){
+    mob.power.effects=[invalid];
+    assert.throws(()=>loadRegistry(registry,()=>record,approvedSprites),/\.effects\[0\]\./);
+  }
+  mob.power.effects=Array(5).fill({effect:'damage',amount:8});
+  assert.throws(()=>loadRegistry(registry,()=>record,approvedSprites),/one to four/);
+});
+
+test('the six sandbox monster parties provide 54 powers on approved sprites', () => {
+  const loaded=loadRegistry(manifest,path=>require('./'+path),approvedSprites);
+  const parties=[...loaded.values()].filter(record=>record.kind==='enemy-party'&&record.ai==='monster');
+  assert.equal(parties.length,6);
+  const monsters=parties.flatMap(record=>{
+    assert.equal(record.combatants.length,3,record.id);
+    return record.combatants;
+  });
+  assert.equal(new Set(monsters.map(monster=>monster.spriteId)).size,18);
+  for(const monster of monsters){
+    assert.equal(monster.powers.length,3,monster.id);
+    assert.ok(approvedSprites.has(monster.spriteId),monster.spriteId);
+  }
+});
