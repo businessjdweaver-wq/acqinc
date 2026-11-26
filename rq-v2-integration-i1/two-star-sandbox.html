@@ -1,6 +1,14 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RQ V2 · Two-Star Combat Sandbox</title><script data-rq-release>document.write('<script src="release.js?request='+Date.now()+'"><\/script>');</script><style>body{font:16px system-ui;background:#101925;color:#f4f4f4;max-width:760px;margin:32px auto;padding:16px}fieldset{border:1px solid #52617a;border-radius:12px;margin:16px 0;padding:16px}label{display:block;margin:10px 0}select,button{font:inherit;background:#243650;color:white;border:1px solid #8397b5;padding:10px;border-radius:8px;max-width:100%}button{cursor:pointer;background:#345d87}small{color:#bdc8d8}a{color:#a9d5ff}</style></head><body><h1>🧪 Two-Star Combat Sandbox <small style="font-size:13px" data-rq-build>Loading build…</small></h1><p>Test two-star heroes, including Grimm and Hester, in the existing combat prototype without spending adventure tickets or changing their live roster. Choose three heroes, individual power levels, and an encounter. Development power overrides are enabled.</p><form id="setup"><fieldset><legend>Party and power levels</legend><div id="heroes"></div></fieldset><fieldset><legend>Encounter</legend><label>Two-star encounter <select id="node"><option value="lumbermill">Burning Lumber Mill</option><option value="sluice">Broken Sluice</option><option value="scavengers">Scavengers in the Smoke</option><option value="grove">Ashen Grove</option><option value="tower">Signal Tower</option><option value="crisis">Village Crisis</option><option value="granary">Village Granary</option><option value="merchant">Merchant's Shop</option></select></label></fieldset><fieldset><legend>Starting resources</legend><label><input type="checkbox" id="fullResources"> Start with full resource bars</label><small>Off by default: all resource bars begin empty.</small></fieldset><button type="submit">Launch sandbox encounter</button></form><p><small>Sandbox is for development. The selected party is temporary; no roster slot is granted. Power levels are simulated rather than earned. Do not use sandbox results for live rewards.</small></p><script>RQRelease.loadScripts("character-catalog.js");</script><script>
-const {characters}=window.RQCharacterCatalog;
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>RQ V2 · Two-Star Combat Sandbox</title><script data-rq-release>document.write('<script src="release.js?request='+Date.now()+'"><\/script>');</script><style>body{font:16px system-ui;background:#101925;color:#f4f4f4;max-width:760px;margin:32px auto;padding:16px}fieldset{border:1px solid #52617a;border-radius:12px;margin:16px 0;padding:16px}label{display:block;margin:10px 0}select,button{font:inherit;background:#243650;color:white;border:1px solid #8397b5;padding:10px;border-radius:8px;max-width:100%}button{cursor:pointer;background:#345d87}small{color:#bdc8d8}a{color:#a9d5ff}</style></head><body><h1>🧪 Two-Star Combat Sandbox <small style="font-size:13px" data-rq-build>Loading build…</small></h1><p>Test two-star heroes, including Grimm and Hester, in the existing combat prototype without spending adventure tickets or changing their live roster. Choose three heroes, individual power levels, and an encounter. Development power overrides are enabled.</p><form id="setup"><fieldset><legend>Party and power levels</legend><div id="heroes"></div><p id="contentStatus" role="status"></p><div id="powerPreviews"></div></fieldset><fieldset><legend>Encounter</legend><label>Two-star encounter <select id="node"><option value="lumbermill">Burning Lumber Mill</option><option value="sluice">Broken Sluice</option><option value="scavengers">Scavengers in the Smoke</option><option value="grove">Ashen Grove</option><option value="tower">Signal Tower</option><option value="crisis">Village Crisis</option><option value="granary">Village Granary</option><option value="merchant">Merchant's Shop</option></select></label></fieldset><fieldset><legend>Starting resources</legend><label><input type="checkbox" id="fullResources"> Start with full resource bars</label><small>Off by default: all resource bars begin empty.</small></fieldset><button type="submit" id="launchSandbox" disabled>Launch sandbox encounter</button></form><p><small>Sandbox is for development. The selected party is temporary; no roster slot is granted. Power levels are simulated rather than earned. Do not use sandbox results for live rewards.</small></p><script>RQRelease.loadScripts("character-catalog.js");</script><script>RQRelease.loadScripts("content/registry.js");</script><script>RQRelease.loadScripts("content/sandbox-characters.js");</script><script>
+(async function () {
+const {characters,tileColorNames}=window.RQCharacterCatalog;
+let content=new Map();
+try { content=await RQSandboxCharacters.load(); }
+catch (error) {
+ document.getElementById('contentStatus').textContent='Sandbox content unavailable. Existing heroes are still playable. '+error.message;
+}
+
 const heroes=characters.map((hero,id)=>({hero,id})).filter(({hero})=>hero.starTier===2);
+for(const [id,hero] of content)heroes.push({hero,id});
 const partyKey='rqv2.twoStarSandbox.party';
 function validParty(ids){
  return Array.isArray(ids)&&ids.length===3&&new Set(ids).size===3&&ids.every(id=>heroes.some(hero=>String(hero.id)===id));
@@ -20,5 +28,29 @@ function rememberParty(ids){
  if(!validParty(ids))return;
  try{localStorage.setItem(partyKey,JSON.stringify(ids));}catch{}
 }
-document.getElementById('heroes').addEventListener('change',()=>rememberParty(readParty()));
-document.getElementById('setup').onsubmit=e=>{e.preventDefault();const ids=readParty(),levels=[...document.querySelectorAll('.level')].map(x=>x.value);if(!validParty(ids)){alert('Choose three different heroes.');return;}rememberParty(ids);const p=new URLSearchParams({sandbox:'1',party:ids.join(','),levels:levels.join(','),adventureNode:document.getElementById('node').value});p.set('fullResources',document.getElementById('fullResources').checked?'1':'0');p.set('build',RQRelease.version);location.href='./combat49.html?'+p.toString();};</script></body></html>
+function updatePreviews(){
+ const host=document.getElementById('powerPreviews');
+ host.replaceChildren();
+ readParty().forEach((id,index)=>{
+  const hero=content.get(id);
+  if(!hero)return;
+  const level=Number(document.querySelectorAll('.level')[index].value);
+  const title=document.createElement('h3');
+  title.textContent=hero.name+' · Power level '+level;
+  const list=document.createElement('ul');
+  for(const power of hero.powers){
+   const row=document.createElement('li');
+   row.textContent=power[0]+' · '+power[5].costs[level-1]+' '+tileColorNames[power[1]]+' · '+RQSandboxCharacters.describe(power,level);
+   list.append(row);
+  }
+  host.append(title,list);
+ });
+}
+document.getElementById('heroes').addEventListener('change',()=>{
+ rememberParty(readParty());
+ updatePreviews();
+});
+updatePreviews();
+document.getElementById('launchSandbox').disabled=false;
+document.getElementById('setup').onsubmit=e=>{e.preventDefault();const ids=readParty(),levels=[...document.querySelectorAll('.level')].map(x=>x.value);if(!validParty(ids)){alert('Choose three different heroes.');return;}rememberParty(ids);const p=new URLSearchParams({sandbox:'1',party:ids.join(','),levels:levels.join(','),adventureNode:document.getElementById('node').value});p.set('fullResources',document.getElementById('fullResources').checked?'1':'0');p.set('build',RQRelease.version);location.href='./combat49.html?'+p.toString();};
+})();</script></body></html>

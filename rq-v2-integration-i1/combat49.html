@@ -584,10 +584,11 @@ html,body{overscroll-behavior-x:none;overflow-x:hidden}#game{scroll-margin-top:0
  </form>
 </dialog>
 <div id="modal" class="modal hidden"><div class="dialog"><h3 id="modalTitle"></h3><p id="modalDesc"></p><p class="muted" id="modalCost"></p><div class="row"><button class="btn" id="modalCancel">Cancel</button><button class="btn primary" id="modalActivate">Activate</button></div></div></div><dialog class="sandbox-dialog" id="enemyEnergyDialog" aria-labelledby="enemyEnergyTitle"><h3 id="enemyEnergyTitle">Enemy Team Resource Buckets</h3><p class="small" id="enemyEnergySource">Shared energy available to the opposing team.</p><div id="enemyEnergyBuckets"></div><form method="dialog"><button class="btn">Close</button></form></dialog><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script><script>RQRelease.loadScripts("character-catalog.js");</script><script>RQRelease.loadScripts("power-collection.js");</script><script>RQRelease.loadScripts("card-mechanics.js");</script><script>RQRelease.loadScripts("grimm-hester.js");</script><script>RQRelease.loadScripts("patron-debt.js");</script>
+<script>RQRelease.loadScripts("content/registry.js");</script><script>RQRelease.loadScripts("content/sandbox-characters.js");</script>
 <script>
 window.addEventListener('error',e=>{const box=document.getElementById('combatRuntimeError');if(box){box.hidden=false;box.textContent='Combat startup error: '+(e.message||'Unknown error')+' · line '+(e.lineno||'?')+':'+(e.colno||'?')}});
 window.addEventListener('unhandledrejection',e=>{const box=document.getElementById('combatRuntimeError');if(box){box.hidden=false;box.textContent='Combat promise error: '+String(e.reason?.message||e.reason)}});
-(()=>{
+(async ()=>{
 const $=id=>document.getElementById(id),board=$('board'),overlay=$('overlay');const C=window.RQCharacterCatalog.tileColors,G=['◆','✦','●','⬟','▲','■','◇'];const labels=window.RQCharacterCatalog.tileColorNames;const ORDINARY_COLOR_COUNT=7,SUPPORT_COLOR=5,IVORY_COLOR=6;const supports=[{id:'fox',name:'Fox Companion',icon:'🦊',type:'Pet',cost:5,description:'Protect the weakest ally from the next 20 damage.',effect:'shield'},{id:'ranger',name:'Ranger Volley',icon:'🏹',type:'Ally',cost:7,description:'Choose any enemy to receive 35 damage, including the backline.',effect:'damage'},{id:'potion',name:'Restorative Elixir',icon:'🧪',type:'Item',cost:4,description:'Heal all living party members for 20 HP.',effect:'heal'},{id:'fire',name:'Alchemist Fire',icon:'💣',type:'Item',cost:6,description:'Choose a tile: blast six tiles, then ignite two survivors for three-turn delayed explosions.',effect:'fire'},{id:'shuffle',name:'Tactical Reshuffle',icon:'🔀',type:'Item',cost:6,description:'Reshuffle unlocked tiles while retaining locked tiles and special properties.',effect:'shuffle'},{id:'row',name:'Sweeping Strike',icon:'↔️',type:'Ally',cost:8,description:'Choose a row to clear; fortified objectives require another hit.',effect:'row'},{id:'exchange',name:'Free Exchange',icon:'🔁',type:'Item',cost:5,description:'Swap any two unlocked tiles without using a turn.',effect:'exchange'}];const initialSupportInventory={fox:3,ranger:2,potion:5,fire:2,shuffle:2,row:2,exchange:2};const inventory={...initialSupportInventory};
 const SUPPORT_STORAGE_PREFIX='rq-v2-combat-support-inventory-v1-';
 let supportStorageKey=null;let supportCloudClient=null;let supportCloudReady=false;
@@ -619,10 +620,27 @@ const encounters=[
 {name:'Tobin · Farmer',icon:'🐄',background:'Folk Hero',trait:'Patient with animals',bond:'Keep the village safe',flaw:'Too stubborn to retreat',feature:'Rustic Hospitality · earns trust and shelter',max:110,hp:110,powers:[['Loyal Mastiff',1,6,'Equipment/companion · Summon attack tiles.','spawn-attack'],['Stubborn Stand',4,6,'Flaw · Place a returning protective marker on a tile.','return-shield'],['Harvest Wisdom',0,6,'Background feature · Change one tile to green.','single-convert']]},
 {name:'Lark · Entertainer',icon:'🎭',background:'Entertainer',trait:'Always performing',bond:'Prove themself to a famous rival',flaw:'Cannot resist a challenge',feature:'By Popular Demand · finds allies in settlements',max:92,hp:92,powers:[['Traveling Lute',2,6,'Equipment · Create energy-boosting tiles.','spawn-energy'],['Rival’s Challenge',0,5,'Rival/flaw · Remove a selected ordinary tile.','single-remove'],['Crowd Favorite',4,6,'Background feature · Rally allies with defense tiles.','spawn-defense']]}];const sandboxParams=new URLSearchParams(location.search),combatSandbox=sandboxParams.get('sandbox')==='1';
 const catalog=window.RQCharacterCatalog?.characters||[];
-let selectedCharacterIds=[0,1,2];if(combatSandbox){const ids=(sandboxParams.get('party')||'12,13,14').split(',').map(Number);if(ids.length===3&&new Set(ids).size===3&&ids.every(id=>Number.isInteger(id)&&catalog[id]?.starTier===2))selectedCharacterIds=ids;else if(catalog[12]&&catalog[13]&&catalog[14])selectedCharacterIds=[12,13,14];}try{const saved=JSON.parse(localStorage.getItem('rq-v2-character-selection-v1')||'null');if(Array.isArray(saved)&&saved.length===3&&new Set(saved).size===3&&saved.every(i=>Number.isInteger(i)&&i>=0&&i<(window.RQCharacterCatalog?.characters?.length||6)))if(!combatSandbox)selectedCharacterIds=saved;}catch(e){}const party=selectedCharacterIds.map(i=>{
- const template=catalog[i]||baseParty[i]||baseParty[0];
- return {...structuredClone(template),...(combatSandbox?{archetype:i}:{}),hp:template.max};
-});const powerCollection=window.RQPowerCollection;let collectionState=null;try{collectionState=powerCollection?.read();powerCollection?.expire(collectionState);}catch(e){console.warn('Power collection unavailable',e);}const equipped=party.map((p,i)=>{const record=collectionState?.roster?.[selectedCharacterIds[i]];return record?((record.powers||[]).filter(j=>Number.isInteger(j)&&j>=0&&j<p.powers.length).slice(0,3)):[];});const skillLevels=party.map((p,i)=>p.powers.map((_,j)=>Math.max(1,Math.min(4,Number(collectionState?.roster?.[selectedCharacterIds[i]]?.powerLevels?.[j])||1))));let powerCopies=0;let combatTestMode=false;if(combatSandbox){const levels=(sandboxParams.get('levels')||'4,4,4').split(',').map(Number);party.forEach((h,i)=>{equipped[i]=[0,1,2];h.powers.forEach((_,j)=>skillLevels[i][j]=Math.max(1,Math.min(4,Number(levels[i])||4)));});combatTestMode=true;powerCopies=99;}
+let selectedCharacterIds=[0,1,2];
+let sandboxHeroes;
+if(combatSandbox){
+ const ids=(sandboxParams.get('party')||'12,13,14').split(',');
+ const usesContent=ids.some(id=>!/^[0-9]+$/.test(id));
+ if(usesContent)$('start').disabled=true;
+ sandboxHeroes=usesContent?await RQSandboxCharacters.load():new Map();
+ const selection=ids.map(id=>/^[0-9]+$/.test(id)?Number(id):id);
+ if(selection.length===3&&new Set(selection).size===3&&selection.every(id=>
+   (sandboxHeroes.get(id)||catalog[id])?.starTier===2)){
+  selectedCharacterIds=selection;
+ }else if(usesContent){
+  throw Error('Sandbox character selection is unavailable. Return to the sandbox and choose the party again.');
+ }else if(catalog[12]&&catalog[13]&&catalog[14]){
+  selectedCharacterIds=[12,13,14];
+ }
+}
+try{const saved=JSON.parse(localStorage.getItem('rq-v2-character-selection-v1')||'null');if(Array.isArray(saved)&&saved.length===3&&new Set(saved).size===3&&saved.every(i=>Number.isInteger(i)&&i>=0&&i<(window.RQCharacterCatalog?.characters?.length||6)))if(!combatSandbox)selectedCharacterIds=saved;}catch(e){}const party=selectedCharacterIds.map(i=>{
+ const template=sandboxHeroes?.get(i)||catalog[i]||baseParty[i]||baseParty[0];
+ return {...structuredClone(template),...(combatSandbox&&typeof i==='number'?{archetype:i}:{}),hp:template.max};
+});const powerCollection=window.RQPowerCollection;let collectionState=null;try{if(!combatSandbox)collectionState=powerCollection?.read();if(collectionState)powerCollection?.expire(collectionState);}catch(e){console.warn('Power collection unavailable',e);}const equipped=party.map((p,i)=>{const record=collectionState?.roster?.[selectedCharacterIds[i]];return record?((record.powers||[]).filter(j=>Number.isInteger(j)&&j>=0&&j<p.powers.length).slice(0,3)):[];});const skillLevels=party.map((p,i)=>p.powers.map((_,j)=>Math.max(1,Math.min(4,Number(collectionState?.roster?.[selectedCharacterIds[i]]?.powerLevels?.[j])||1))));let powerCopies=0;let combatTestMode=false;if(combatSandbox){const levels=(sandboxParams.get('levels')||'4,4,4').split(',').map(value=>/^[1-4]$/.test(value)?Number(value):4);party.forEach((h,i)=>{equipped[i]=[0,1,2];h.powers.forEach((_,j)=>skillLevels[i][j]=Math.max(1,Math.min(4,Number(levels[i])||4)));});combatTestMode=true;powerCopies=99;}
 let HEALTH_KEY='rq-v2-prototype40-commonfolk-health-'+selectedCharacterIds.join('-');
 const localDay=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 let healthData={hp:party.map(p=>p.max),lastLongRest:localDay(),shortRests:2};
@@ -710,6 +728,7 @@ function powerPatternPreview(i,j){
  return '<span style="display:flex;flex-direction:column;gap:3px"><small>'+label+'</small><span style="display:grid;grid-template-columns:repeat('+(right-left+1)+',17px);gap:2px">'+html+'</span></span>';}).join('')+'</span>';
 }
 function powerDetail(i,j){const p=party[i].powers[j],n=level(i,j),type=p[4];
+ if(p[5]?.sandboxLevels)return RQSandboxCharacters.describe(p,n);
  const newHeroDetail=RQCharacterCatalog.grimmHesterPowerDetail(p,n);if(newHeroDetail)return newHeroDetail;
  if(type==='vega-dragon')return 'Launch seven Energy stars without changing their tile colors. Weaken up to '+p[5].weaken[n-1]+' enemy special tile(s) by 1 on launch and each enemy round. The number of targets scales down with the surviving stars; ends when none remain.';
  if(type==='vega-chalice')return 'Launch seven Energy stars without changing their tile colors. Heal each living ally for up to '+p[5].heal[n-1]+' HP on launch and each enemy round, scaled by surviving stars; ends when none remain.';
@@ -1362,6 +1381,7 @@ const SPRITE_PREVIEW_KEY='rqv2-pixel-sprite-preview';
 const spriteAssetsRoot='assets/sprites/';
 let spritePreviewEnabled=false;
 try{spritePreviewEnabled=localStorage.getItem(SPRITE_PREVIEW_KEY)==='on'}catch(e){}
+if(combatSandbox&&party.some(hero=>hero.sandboxSprite))spritePreviewEnabled=true;
 const spriteCleanCache=new Map();
 function cleanSpriteImage(img){
  const url=img.getAttribute('data-sprite-src');
@@ -1809,9 +1829,9 @@ function renderPixelSpriteStage(){
  const merchantEnemies=(defeatedEnemyVisualHold?.lineup?.slice().reverse()||enemyOrder.filter(i=>!!enemies[i]&&targetable(enemies[i]))).map(i=>({enemy:enemies[i],i,file:encounterEnemyMap[enemies[i].name]})).filter(x=>x.file);
  stage.innerHTML=characters.map(({hero,i,labOnly})=>{
   const name=hero.powers?.some(power=>power[4]==='rook-throw')?'rook':hero.powers?.some(power=>power[4]==='corvin-echo')?'corvin':(hero.spriteKey||String(hero.name).split(' · ')[0].trim().split(/\s+/)[0].toLowerCase()),front=labOnly?i===2:frontHero()===i,down=hero.hp<=0;
-  const hasPreparedSprite=spriteLabRoster.some(spriteName=>spriteName.toLowerCase()===name);
+  const hasPreparedSprite=hero.sandboxSprite||spriteLabRoster.some(spriteName=>spriteName.toLowerCase()===name);
   if(!hasPreparedSprite)return '<div class="sprite-figure sprite-fallback '+(front?'sprite-front ':'')+(down?'sprite-down':'')+'" data-sprite-hero="'+i+'" style="--sprite-index:'+i+'"><div class="sprite-fallback-art" aria-label="'+hero.name+' sprite not yet available"><span class="sprite-fallback-initial">'+hero.name.slice(0,1).toUpperCase()+'</span><small>'+hero.name+'</small></div></div>';
-  const url=spriteAssetsRoot+'clean/'+(name==='corvin'?'corvin_final_transparent.png':'rqv2-'+name+'-idle.png')+'?v=1.16.283'; // Existing extracted down frames are not usable as full-body atlases; show a prone pose using the verified idle asset.
+  const url=RQRelease.url(hero.sandboxSprite||spriteAssetsRoot+'clean/'+(name==='corvin'?'corvin_final_transparent.png':'rqv2-'+name+'-idle.png')); // Existing extracted down frames are not usable as full-body atlases; show a prone pose using the verified idle asset.
   return '<div class="sprite-figure '+(front?'sprite-front ':'')+(down?'sprite-down':'')+'" data-sprite-hero="'+i+'" style="--sprite-index:'+i+'"><img src="'+url+'" data-sprite-src="'+url+'" alt="'+hero.name+' pixel sprite" loading="eager"><span>'+hero.name+'</span></div>';
  }).join('')+merchantEnemies.map(({enemy,i,file},slot)=>'<div class="sprite-figure sprite-enemy '+((defeatedEnemyVisualHold?.front??frontEnemy())===i?'sprite-front':'')+'" data-sprite-enemy="'+i+'" style="--enemy-index:'+slot+'"><img src="'+spriteAssetsRoot+file+(storeMode?'?v=1.16.155':'')+'" alt="'+enemy.name+' adversary"><span title="'+enemy.name+'">'+enemy.name+'</span></div>').join('');
  stage.querySelectorAll('img[data-sprite-src]').forEach(img=>{
@@ -2489,7 +2509,7 @@ function cardPatternCanChange(config,center){
  for(const c of centers)for(const pos of CARD_MECHANICS.patternTargets(8,8,config.cells,c))positions.add(pos.y*8+pos.x);
  const amount=Math.max(0,Number(config.amount)||0);
  return [...positions].some(index=>{
-  const t=tiles[index];if(!t)return false;
+  const t=tiles[index];if(!t||(config.sandboxOrdinary&&!ivoryTransformEligible(t)))return false;
   switch(config.effect){
    case 'amplify':return !!t.special&&amount>0;
    case 'dampen':return !!t.special&&amount>0&&Math.max(0,Number(t.specialStrength??1))>0;
@@ -2581,6 +2601,7 @@ async function pick(t){if(await handleTileDevPick(t))return;if(pendingCardPatter
 // Experimental card progression: levels 2/3 grow the effect; level 4 offers a choice.
 function progressedPattern(i,j,wide=false){
  const p=party[i].powers[j],n=level(i,j),base=p[5],effect=base.effect;
+ if(base.sandboxLevels)return RQSandboxCharacters.pattern(p,n);
  const cells=base.cells.map(c=>({...c}));
  const config={...base,cells};
  if(p[0]==='Pin the Mechanism'){config.cells=n===1?[{x:0,y:0}]:n===2?[{x:0,y:0},{x:1,y:0}]:n===3?[{x:-1,y:0},{x:0,y:0},{x:1,y:0}]:[{x:0,y:0},{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];return config;}
@@ -2603,7 +2624,7 @@ function progressedPattern(i,j,wide=false){
 function chooseProgressedPattern(i,j){
  const p=party[i].powers[j],n=level(i,j);
  const run=(wide)=>{const config=progressedPattern(i,j,wide);if(config.centerMode==='selected')chooseCardPatternCenter(config,'player',{i,j});else executeCardPattern(config,'player',{i,j});};
- if(n<4||['Pin the Mechanism','Raise the Bulwark','Ambush Marker','Reinforced Guard','Ivory Mirage','Release the Catch','Unsnare'].includes(p[0])){run(false);return;}
+ if(p[5]?.sandboxLevels||n<4||['Pin the Mechanism','Raise the Bulwark','Ambush Marker','Reinforced Guard','Ivory Mirage','Release the Catch','Unsnare'].includes(p[0])){run(false);return;}
  openModal(p[0]+' · Mastery choice','Focused: retain the stronger level-3 effect. Wide: affect additional tiles (amplify/dampen uses a smaller bonus).','Choose before spending energy.',true,()=>run(false));
  const button=document.createElement('button');button.type='button';button.className='btn';button.textContent='Wide effect';button.onclick=()=>{$('modal').classList.add('hidden');run(true);};
  $('modalDesc').appendChild(document.createElement('br'));$('modalDesc').appendChild(button);

@@ -29,10 +29,10 @@ function checkRelease(readPage, assetExists) {
     }
     if ([...source.matchAll(bootstrap)].length !== 1) fail(file, 'expected one fresh release bootstrap');
     if (/[?&]build=[a-z0-9.-]+/i.test(source)) fail(file, 'hardcoded cache version');
-    if (/<script\b[^>]*\bsrc="(?:\.\/)?[a-z0-9-]+\.js"/i.test(source)) {
+    if (/<script\b[^>]*\bsrc="(?:\.\/)?(?:content\/)?[a-z0-9-]+\.js"/i.test(source)) {
       fail(file, 'local scripts must be loaded through the release');
     }
-    for (const [, script] of source.matchAll(/RQRelease\.loadScripts\("([a-z0-9-]+\.js)"\)/g)) {
+    for (const [, script] of source.matchAll(/RQRelease\.loadScripts\("((?:content\/)?[a-z0-9-]+\.js)"\)/g)) {
       if (!assetExists(script)) fail(file, `missing release asset ${script}`);
     }
   }

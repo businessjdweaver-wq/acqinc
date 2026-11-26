@@ -1,6 +1,12 @@
 'use strict';
 
-const legacyIds = require('./legacy-character-ids.json');
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) {
+    module.exports = factory(require('./legacy-character-ids.json'));
+  } else {
+    root.RQContentRegistry = factory([]);
+  }
+})(globalThis, function (legacyIds) {
 
 const directories = { character: 'characters', 'enemy-party': 'enemy-parties', encounter: 'encounters', 'magic-item': 'magic-items' };
 const idPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -42,7 +48,7 @@ function id(value, location) {
 
 function displayText(value, location) {
   requireValue(typeof value === 'string' && value.trim().length > 0 &&
-    value.length <= 240 && !/[<>&\u0000-\u001f]/u.test(value),
+    value.length <= 240 && !/[<>&"'\u0000-\u001f]/u.test(value),
   location, 'expected plain display text up to 240 characters');
 }
 
@@ -139,12 +145,11 @@ function resolveLegacyPower(archetype, slot) {
   return { characterId: legacyIds[archetype], slot };
 }
 
-function loadRegistry(manifest, readRecord, approvedSprites) {
+function planRegistry(manifest, reservedIds = legacyIds) {
   object(manifest, ['schemaVersion', 'entries'], 'registry');
   oneOf(manifest.schemaVersion, [1], 'registry.schemaVersion');
   list(manifest.entries, 0, 1000, 'registry.entries');
-  const records = new Map();
-  const ids = new Set(legacyIds);
+  const ids = new Set(reservedIds);
   const paths = new Set();
   for (const entry of manifest.entries) {
     object(entry, ['id', 'kind', 'path'], 'registry entry');
@@ -155,7 +160,12 @@ function loadRegistry(manifest, readRecord, approvedSprites) {
     ids.add(entry.id);
     paths.add(entry.path);
   }
-  for (const entry of [...manifest.entries].sort((a, b) => a.id < b.id ? -1 : 1)) {
+  return [...manifest.entries].sort((a, b) => a.id < b.id ? -1 : 1);
+}
+
+function loadRegistry(manifest, readRecord, approvedSprites, reservedIds) {
+  const records = new Map();
+  for (const entry of planRegistry(manifest, reservedIds)) {
     const record = readRecord(entry.path);
     requireValue(record && typeof record === 'object', entry.path, 'expected a record');
     oneOf(record.schemaVersion, [1], `${entry.path}.schemaVersion`);
@@ -173,4 +183,5 @@ function loadRegistry(manifest, readRecord, approvedSprites) {
   return records;
 }
 
-module.exports = { loadRegistry, resolveLegacyPower };
+return { loadRegistry, planRegistry, resolveLegacyPower };
+});

@@ -7,6 +7,8 @@ const { join } = require('node:path');
 const { characters } = require('../character-catalog.js');
 const sprites = require('../assets/sprites/roster-manifest.json');
 const manifest = require('./registry.json');
+const { planCharacter } = require('../tools/generate-character.js');
+const pilot = require('../tests/fixtures/sandbox-mirage.json');
 const { loadRegistry, resolveLegacyPower } = require('./registry.js');
 
 const approvedSprites = new Set(sprites.characters
@@ -55,7 +57,7 @@ test('registry order has no effect on load order or legacy slot resolution', () 
     assert.deepEqual([...loaded.keys()], ['sandbox-a', 'sandbox-z']);
     assert.deepEqual(resolveLegacyPower(24, 2), { characterId: 'grimm', slot: 2 });
   }
-  assert.equal(loadRegistry(manifest, read, approvedSprites).size, 0);
+  assert.equal(loadRegistry({ schemaVersion: 1, entries: [] }, read, approvedSprites).size, 0);
 });
 
 test('registry rejects reserved IDs, duplicates, and paths outside the content directory', () => {
@@ -109,4 +111,13 @@ test('sandbox encounter links resolve to a valid enemy party and rewards stay is
   encounter.enemyPartyId = 'sandbox-party';
   encounter.rewardPolicy = 'live';
   assert.throws(load, /sandbox-only/);
+});
+
+test('generator round-trips its fixture and rejects accidental replacement', () => {
+  const read = path => require('./' + path);
+  const plan = planCharacter(pilot, { schemaVersion: 1, entries: [] }, read, approvedSprites);
+  assert.equal(plan.entry.path, 'characters/sandbox-mirage.json');
+  assert.deepEqual(loadRegistry(manifest, read, approvedSprites).get(pilot.id), pilot);
+  assert.throws(() => planCharacter(pilot, manifest, read, approvedSprites), /already exists/);
+  assert.equal(planCharacter(pilot, manifest, read, approvedSprites, true).existing.id, pilot.id);
 });

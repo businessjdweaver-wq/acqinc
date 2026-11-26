@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
 
-  const version = 'I1.16.285';
+  const version = 'I1.16.286';
 
   function url(path) {
     const target = new URL(path, document.baseURI);
@@ -14,7 +14,7 @@
   // Run during parsing so dependent inline scripts retain their existing load order.
   function loadScripts(...paths) {
     for (const path of paths) {
-      if (!/^[a-z0-9-]+\.js$/.test(path)) throw new Error('Invalid release script path');
+      if (!/^(?:content\/)?[a-z0-9-]+\.js$/.test(path)) throw new Error('Invalid release script path');
       document.write('<script src="' + path + '?build=' + version + '"><\/script>');
     }
   }

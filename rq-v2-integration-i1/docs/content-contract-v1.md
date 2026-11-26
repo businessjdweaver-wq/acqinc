@@ -1,6 +1,6 @@
 # RQV2 content contract v1
 
-This contract defines the initial offline validation boundary for issue #93. The public registry is empty until a runtime adapter and its sandbox pilot have passed parity checks.
+This contract defines the initial offline validation boundary for issue #93. The registry currently contains one isolated two-star character fixture.
 
 Run `node tools/validate-content.js` from the project directory to check the registry and its listed records. Run `node --test content/registry.test.js` to exercise the contract.
 
@@ -31,8 +31,18 @@ Use the existing card-pattern execution, target legality, and resource handling 
 
 Enemy AI and countdowns, encounter objectives and waves, and item equipment, stacking, and eligibility each need an explicit contract before use. Keep production admission, reward receipts, pool weights, roster capacity, and inventory under existing ownership. Introduce production pool or item-economy changes only through separately approved work. Keep fixture content outside durable roster, checkpoint, reward, and pool state.
 
-See `content/registry.test.js` for complete in-memory examples. The examples exercise validation only. The release bootstrap, browser integration, CLI generators, and fixture playthroughs are subsequent tasks.
+See `content/registry.test.js` for complete in-memory examples. Enemy-party, encounter, and item runtime adapters and generators are subsequent tasks.
 
 ## Release version
 
 The active RQV2 pages load the authoritative version from `release.js`. Increment that value for an application release. A fresh manifest request on page load keeps the release independent of a cached HTML copy. The manifest version is shared by the rendered build marker, local code assets, and versioned in-app navigation. Keep Supabase client loading and configuration separate from release metadata. Run `node tools/check-build-version.js` before handing off a release, and check the rendered version in the browser. The archived Lumber Mill prototype is outside the release-page list.
+
+
+## Character authoring pilot
+
+1. Copy `tests/fixtures/sandbox-mirage.json` to an input file outside the registry. Pick an unused stable ID and an approved sprite ID from the roster manifest’s legacy mapping. The current sandbox picker accepts two-star fixtures. Use ordinary-tile transform and special-tile creation effects with explicit costs for all four power levels.
+2. Run `node tools/generate-character.js input.json` to preview the definition and registry diff. Add `--write` after reviewing it. Use `--replace` only for an approved change to an existing definition. The generator writes no sprites or application pages. Use one writer for the shared registry.
+3. Run `node tools/validate-content.js` and the Node suites. Increment `release.js` for an application release.
+4. Open Two-Star Combat Sandbox, select the fixture, and check all three power previews at levels 1–4. Launch with full resources to exercise cancellation, valid tile selection, and formation changes. Fixture IDs work only in sandbox combat. The sandbox can remember its own selected party; fixture data stays out of owned roster, recruitment pools, and rewards.
+
+If the sandbox registry is unavailable, the picker reports the error and offers existing heroes. A combat link referring to unavailable fixture content reports a startup error.
