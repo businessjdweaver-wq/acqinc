@@ -8663,6 +8663,10 @@ function measurePoint(x,y,f=hit(x,y)){
  }
  return [...inverse(x,y,0),0];
 }
+function selectedOrbitPoint(){
+ const token=selected?.type==='standee'?(tokens.find(t=>t===selected||selected.roomId&&t.roomId===selected.roomId)):null;
+ return token?basePoint(token):null;
+}
 function cameraOrbitPoint(x,y){
  const face=hit(x,y,null,false,null,true);
  if(face?.world)return measurePoint(x,y,face);
@@ -10312,7 +10316,7 @@ canvas.onpointerdown=e=>{
   }
   gmVisionStandee=null;
   if(phoneLayout.matches){selected=f?.p??null;closeStandeeHud();refresh();return}
-  selected=null;closeStandeeHud();cameraViewportPivot=null;drag={x,y,angle,tilt,pivot:cameraOrbitPoint(x,y)};
+  if(selected?.type!=='standee')selected=null;closeStandeeHud();cameraViewportPivot=null;drag={x,y,angle,tilt,pivot:cameraOrbitPoint(x,y)};
   armBoardPing(drag,f);refresh();return;
  }
  if(brush){drag={paint:true,visited:new Map()};paintEdge(x,y);return}
@@ -10515,7 +10519,8 @@ el('isoLock').onclick=()=>{
  isoLocked=!isoLocked;
  el('isoLock').setAttribute('aria-pressed',String(isoLocked));
  const x=W/2,y=H/2;
- orbitAround(angle,tilt,measurePoint(x,y),x,y);
+ const pivot=selectedOrbitPoint()??cameraOrbitPoint(x,y);
+ orbitAround(angle,tilt,pivot,...point(...pivot).slice(0,2));
 };
 function orbitAround(nextAngle,nextTilt,pivot,x,y){
  angle=nextAngle;tilt=isoLocked?.69:nextTilt;
@@ -10530,10 +10535,17 @@ function orbit(x,y){
   panX=drag.panX+x-drag.x;panY=drag.panY+y-drag.y;draw('Camera pan');return;
  }
  const nextTilt=Math.max(.07,Math.min(1.45,drag.tilt+(y-drag.y)*.008));
- orbitAround(drag.angle-(x-drag.x)*.012,nextTilt,drag.pivot,drag.x,drag.y);
+ if(!drag.rotationAnchor){
+  const pivot=selectedOrbitPoint()??drag.pivot;
+  drag.rotationAnchor={pivot,screen:point(...pivot).slice(0,2)};
+ }
+ const {pivot,screen}=drag.rotationAnchor;
+ orbitAround(drag.angle-(x-drag.x)*.012,nextTilt,pivot,...screen);
 }
 function orbitViewport(delta){
  const x=W/2,y=H/2;
+ const selectedPivot=selectedOrbitPoint();
+ if(selectedPivot){orbitAround(angle+delta,tilt,selectedPivot,...point(...selectedPivot).slice(0,2));return}
  cameraViewportPivot??=cameraOrbitPoint(x,y);
  orbitAround(angle+delta,tilt,cameraViewportPivot,x,y);
 }
@@ -11638,7 +11650,7 @@ for(const [id,apply] of [
 let previousCameraTilt=.69;
 el('lowAngle').onclick=()=>{
  if(!W||!H)return;
- const x=W/2,y=H/2,pivot=measurePoint(x,y);
+ const pivot=selectedOrbitPoint()??cameraOrbitPoint(W/2,H/2),[x,y]=point(...pivot);
  if(tilt>.13){
   previousCameraTilt=tilt;
   orbitAround(angle,.10,pivot,x,y);
