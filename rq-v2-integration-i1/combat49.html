@@ -1257,7 +1257,14 @@ function preserveDefeatedEnemySprite(index){
  return ghost;
 }
 const malvekClaims=new Map();let malvekBargainUsed=false;
-function damageEnemy(n,index=null,{shoveBehind,bypassDefense=false,fixedDamage=false}={}){if(puzzleMode)return;const smokeDefense=scavengersMode?3*tiles.filter(t=>t?.smoke).length:0;n=Math.max(0,fixedDamage?n:n+specialStrengthTotal('player','strike')-(bypassDefense?0:specialStrengthTotal('enemy','defense'))-smokeDefense);let i=index===null?frontEnemy():index;if(i===undefined||!targetable(enemies[i]))return;let e=enemies[i],hit=Math.min(n,e.hp);const defeated=hit>0&&hit>=e.hp;const defeatedSprite=defeated?preserveDefeatedEnemySprite(i):null;if(defeated)holdEnemyVisualFormation(i);e.hp-=hit;
+function damageEnemy(n,index=null,{shoveBehind,bypassDefense=false,fixedDamage=false}={}){if(puzzleMode)return;const smokeDefense=scavengersMode?3*tiles.filter(t=>t?.smoke).length:0;n=Math.max(0,fixedDamage?n:n+specialStrengthTotal('player','strike')-(bypassDefense?0:specialStrengthTotal('enemy','defense'))-smokeDefense);let i=index===null?frontEnemy():index;if(i===undefined||!targetable(enemies[i]))return;let e=enemies[i];
+ if(monsterStatusLedger&&n>0){
+  const veil=monsterStatusLedger.active('evasion',e)[0];
+  if(veil&&Math.random()<veil.amount/100){say(e.name+' evades the attack.');float(combatSpriteTarget('enemy',i),'EVADED','#e3f5ff');return;}
+  const ward=monsterStatusLedger.active('ward',e).reduce((max,x)=>Math.max(max,x.amount),0);
+  if(ward)n=Math.ceil(n*(1-Math.min(85,ward)/100));
+ }
+ let hit=Math.min(n,e.hp);const defeated=hit>0&&hit>=e.hp;const defeatedSprite=defeated?preserveDefeatedEnemySprite(i):null;if(defeated)holdEnemyVisualFormation(i);e.hp-=hit;
  monsterStatusLedger?.prune();
  if(e.hp===0&&hit>0){clearDefeatedAntagonistTiles(i);const claim=malvekClaims.get(i);if(claim){malvekClaims.delete(i);const available=tiles.filter(t=>t&&!t.patronDebt&&!t.effectFortified&&!t.locked&&!t.lumberFire&&!t.groveRoot&&!t.towerBrazier);if(available.length){const t=available[Math.floor(Math.random()*available.length)];RQPatronDebt.attach(t,claim.owner,claim.level,2);paint(t);say('Patron\'s Claim creates a delayed debt.');}}}
  if(!defeated&&shoveBehind!==undefined&&targetable(enemies[shoveBehind])){
@@ -2354,6 +2361,11 @@ async function activateMonsterPowers(stunnedEnemy,sporeStunned){
  monsterStatusLedger.tick();
  const handlers=RQEnemyPowers.createHandlers({
   enemies:()=>enemies,frontHero:()=>party[frontHero()],
+  statusTarget:(a,p,kind)=>monsterStatusLedger.active(kind,a).length?null:a,
+  addStatus:(a,p,t,kind)=>monsterStatusLedger.add({owner:a,target:t,kind,duration:p.duration,amount:p.amount}),
+  countdownTarget:(a,p)=>monsterStatusLedger.active('countdown',a).length?null:a,
+  addCountdown:(a,p,t)=>monsterStatusLedger.add({owner:a,target:t,kind:'countdown',duration:p.duration,amount:p.amount,cleanup:reason=>{if(reason==='expired'&&!ended){say(a.name+' — '+p.name+' expires.');damageParty(p.amount);}}}),
+
   heroResources:()=>energy,ordinaryTiles:()=>tiles.filter(ordinaryNewHeroTile),
   enemySpecialTiles:()=>tiles.filter(t=>t&&!t.locked&&t.specialOwner==='enemy'&&['attack','defense','strike'].includes(t.special)),
   damageHero:(t,n)=>damageParty(n),
