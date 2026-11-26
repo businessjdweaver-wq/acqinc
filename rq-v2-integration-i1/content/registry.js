@@ -150,19 +150,28 @@ function validateEnemyParty(record, location, approvedSprites) {
       for (const [slot,p] of powers.entries()) {
       const powerPath = path + (enemy.powers ? '.powers[' + slot + ']' : '.power');
       requireValue(p && typeof p === 'object', powerPath, 'expected power');
-      oneOf(p.effect, ['damage', 'heal', 'siphon', 'drain-resource', 'create-special', 'amplify-special', 'steal-resource', 'convert-tile', 'capture-special', 'consume-special', 'heal-all', 'ward', 'evasion', 'countdown', 'lock-tile', 'intercept', 'retaliate', 'damage-all', 'counterspell'], powerPath + '.effect');
-      object(p, ['name', 'effect', 'color', 'cost', 'amount',
-        ...(['ward','evasion','countdown','lock-tile','intercept','retaliate','counterspell'].includes(p.effect) ? ['duration'] : []),
-        ...(p.effect === 'siphon' ? ['heal'] : ['drain-resource','steal-resource','convert-tile'].includes(p.effect) ? ['targetColor'] : p.effect === 'create-special' ? ['special'] : [])], powerPath);
       displayText(p.name, powerPath + '.name');
       requireValue(!names.has(p.name), powerPath + '.name', 'duplicate power name'); names.add(p.name);
       integer(p.color, 0, 6, powerPath + '.color');
       integer(p.cost, 1, 20, powerPath + '.cost');
-      integer(p.amount, 1, ['ward','intercept'].includes(p.effect) ? 85 : 100, powerPath + '.amount');
-      if (['ward','evasion','countdown','lock-tile','intercept','retaliate','counterspell'].includes(p.effect)) integer(p.duration, 1, 8, powerPath + '.duration');
-      if (p.effect === 'siphon') integer(p.heal, 1, 100, powerPath + '.heal');
-      if (['drain-resource','steal-resource','convert-tile'].includes(p.effect)) integer(p.targetColor, 0, 6, powerPath + '.targetColor');
-      if (p.effect === 'create-special') oneOf(p.special, ['attack', 'defense', 'energy'], powerPath + '.special');
+      const composite = Object.hasOwn(p,'effects');
+      if(composite){
+        object(p,['name','color','cost','effects'],powerPath);
+        requireValue(Array.isArray(p.effects)&&p.effects.length>=1&&p.effects.length<=4,powerPath+'.effects','expected one to four effects');
+      }
+      for(const [effectIndex,effect] of (composite?p.effects:[p]).entries()){
+      const powerPathEffect=composite?powerPath+'.effects['+effectIndex+']':powerPath;
+      requireValue(effect&&typeof effect==='object',powerPathEffect,'expected effect');
+      oneOf(effect.effect, ['damage', 'heal', 'siphon', 'drain-resource', 'create-special', 'amplify-special', 'steal-resource', 'convert-tile', 'capture-special', 'consume-special', 'heal-all', 'ward', 'evasion', 'countdown', 'lock-tile', 'intercept', 'retaliate', 'damage-all', 'counterspell'], powerPathEffect + '.effect');
+      object(effect, [...(composite ? [] : ['name','color','cost']), 'effect', 'amount',
+        ...(['ward','evasion','countdown','lock-tile','intercept','retaliate','counterspell'].includes(effect.effect) ? ['duration'] : []),
+        ...(effect.effect === 'siphon' ? ['heal'] : ['drain-resource','steal-resource','convert-tile'].includes(effect.effect) ? ['targetColor'] : effect.effect === 'create-special' ? ['special'] : [])], powerPathEffect);
+      integer(effect.amount, 1, ['ward','intercept'].includes(effect.effect) ? 85 : 100, powerPathEffect + '.amount');
+      if (['ward','evasion','countdown','lock-tile','intercept','retaliate','counterspell'].includes(effect.effect)) integer(effect.duration, 1, 8, powerPathEffect + '.duration');
+      if (effect.effect === 'siphon') integer(effect.heal, 1, 100, powerPathEffect + '.heal');
+      if (['drain-resource','steal-resource','convert-tile'].includes(effect.effect)) integer(effect.targetColor, 0, 6, powerPathEffect + '.targetColor');
+      if (effect.effect === 'create-special') oneOf(effect.special, ['attack', 'defense', 'energy'], powerPathEffect + '.special');
+      }
       }
       continue;
     }
