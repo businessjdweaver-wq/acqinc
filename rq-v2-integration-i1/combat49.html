@@ -752,6 +752,8 @@ function renderEnemyProfile(enemy,index){
  const prefix=p.optional?'If eligible: ':'';
  const scaled=p.scaling?' Adds '+p.scaling.multiplier+' per unit of '+p.scaling.metric.replaceAll('-',' ')+', capped at '+p.scaling.cap+'.':'';
  const advanced={
+  'amplify-board-special':()=> 'Increases one special tile’s strength by '+p.amount+'.',
+  'salvage-special':()=> 'Consumes a special tile and deals '+p.baseDamage+' damage plus '+p.damagePerStrength+' per point of its strength.',
   'woven-life':()=> 'Places a countdown that reduces damage by '+p.reduction+'% and shares it across living monsters for '+p.duration+' rounds.',
   leafspeech:()=> 'Turns '+p.percent+'% of eligible tiles up to '+p.range+' spaces above the target green (maximum '+p.cap+'), removes hostile specials, and resolves matches.',
   'withering-blight':()=> 'Destroys '+p.percent+'% of the largest hero energy pool and deals '+p.damagePerPoint+' damage per point removed.',
@@ -2489,6 +2491,10 @@ const monsterCleansable=['hero-stun','suppression','recurring:damage','delayed:d
 function selectMonsterAdvanced(kind,a,p,ledger){
  const front=party[frontHero()];
  switch(kind){
+  case 'amplify-board-special':return tiles.find(t=>t?.specialOwner==='enemy'&&t.special)||tiles.find(t=>t?.special);
+  case 'salvage-special':return front&&(
+   tiles.find(t=>t?.specialOwner==='player'&&t.special&&!t.towerBrazier)||
+   tiles.find(t=>t?.special&&!t.towerBrazier));
   case 'woven-life':return !ledger.active('woven-life').length&&tiles.find(t=>monsterTileEligible(t,'ordinary'));
   case 'leafspeech':return tiles.find(tile=>tile&&Math.round(
    RQGrimmHester.leafspeechCandidates(tiles,tile,p.range,'player').length*p.percent/100)>0);
@@ -2529,6 +2535,22 @@ function selectMonsterAdvanced(kind,a,p,ledger){
 
 async function applyMonsterAdvanced(kind,a,p,t,ledger,stunHero){
  switch(kind){
+  case 'amplify-board-special':
+   await applyCardPattern({
+    effect:'amplify',amount:p.amount,cells:[{x:0,y:0}],count:1,
+    centerMode:'selected',center:{x:t.c,y:t.r}
+   },'enemy');
+   break;
+  case 'salvage-special':{
+   await animatePowerTile(t,powerEmote(p.name));
+   if(ended)break;
+   const damage=p.baseDamage+p.damagePerStrength*Math.max(1,Number(t.specialStrength??1));
+   t.special=null;t.specialOwner=null;t.specialStrength=0;t.linkedEnemy=null;t.independent=false;
+   if(t.bleedOut&&!eligibleBleedOut(t))RQGrimmHester.clearBleedOut(t);
+   paint(t);damageParty(damage);
+   say(p.name+' consumed a special tile for '+damage+' damage.');
+   break;
+  }
   case 'woven-life':{
    const marker={team:'enemy',remaining:p.duration};
    if(ledger.add({owner:a,target:t,kind,amount:p.reduction,duration:p.duration,
@@ -2660,7 +2682,7 @@ function prepareMonsterTestPower(actor,power,handlers){
    injuredAlly.hp=Math.max(1,injuredAlly.hp-20);
    enemyHP=enemies.reduce((sum,e)=>sum+e.hp,0);
   }
-  const needsEnemySpecial=['amplify-special','consume-special'].includes(effect)||
+  const needsEnemySpecial=['amplify-special','consume-special','amplify-board-special','salvage-special'].includes(effect)||
    effect==='tile-pattern'&&step.operation==='propagate'||step.scaling?.metric==='enemy-specials';
   if(needsEnemySpecial&&!handlers['amplify-special'].select()){
    const tile=tiles.find(t=>monsterTileEligible(t,'ordinary'));

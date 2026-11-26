@@ -211,6 +211,8 @@ function validateEnemyParty(record, location, approvedSprites) {
 }
 
 const advancedMonsterEffects = {
+  'amplify-board-special': {amount:[1,100]},
+  'salvage-special': {baseDamage:[1,100],damagePerStrength:[1,10]},
   'woven-life': {duration:[1,8],reduction:[1,85]},
   leafspeech: {range:[1,7],percent:[1,100],cap:[1,7]},
   'withering-blight': {percent:[1,100],damagePerPoint:[1,10]},

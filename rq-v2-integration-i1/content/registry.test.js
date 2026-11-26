@@ -210,6 +210,8 @@ test('monster effect catalog accepts valid specimens and rejects unsupported par
   const record=structuredClone(require('./enemy-parties/sandbox-rotting-grove.json'));
   const registry={schemaVersion:1,entries:[{id:record.id,kind:record.kind,path:'enemy-parties/'+record.id+'.json'}]};
   const cases=[
+    {effect:'amplify-board-special',amount:3},
+    {effect:'salvage-special',baseDamage:18,damagePerStrength:6},
     {effect:'woven-life',duration:3,reduction:15},
     {effect:'leafspeech',range:4,percent:50,cap:2},
     {effect:'withering-blight',percent:30,damagePerPoint:2},
@@ -298,4 +300,15 @@ test('Heartwood Guardian uses the canonical Hester rank-one power parameters', (
     {name:leaf.name,color:leaf.color,cost:leaf.cost,effect:'leafspeech',range:leaf.parameters.range[0],percent:leaf.parameters.percent[0],cap:leaf.parameters.cap[0]},
     {name:blight.name,color:blight.color,cost:blight.cost,effect:'withering-blight',percent:blight.parameters.percent[0],damagePerPoint:blight.parameters.damage[0]},
   ]);
+});
+
+test('Clockwork Scorpion uses the canonical Orin rank-one kit and energy costs', () => {
+  const {characters}=require('../character-catalog.js');
+  const ids=require('./legacy-character-ids.json');
+  const {combatants}=require('./enemy-parties/sandbox-fallen-constellation.json');
+  const scorpion=combatants.find(enemy=>enemy.id==='clockwork-scorpion');
+  const orin=characters[ids.indexOf('orin')];
+  assert.deepEqual(scorpion.powers.map(({name,color,cost})=>[name,color,cost]),orin.powers.map(power=>power.slice(0,3)));
+  assert.equal(scorpion.powers[0].amount,orin.powers[0][5].amount);
+  assert.equal(scorpion.powers[1].amount,orin.powers[1][5].amount);
 });
