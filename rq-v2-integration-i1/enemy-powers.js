@@ -64,5 +64,29 @@
         apply:(a,p,t)=>ctx.amplifyEnemySpecial(t,p.amount)}
     });
   }
-  return Object.freeze({activate,activateOne,createHandlers});
+  // Encounter-local status ledger. Owners and targets are object identities,
+  // not formation ranks, so rearranging the formation cannot transfer effects.
+  function createStatusLedger(){
+    const entries=[];
+    function remove(entry,reason){
+      const i=entries.indexOf(entry);if(i<0)return;
+      entries.splice(i,1);entry.cleanup?.(reason,entry);
+    }
+    function prune(){
+      for(const e of [...entries])if(e.owner.hp<=0||(e.target&&typeof e.target.hp==='number'&&e.target.hp<=0))remove(e,'defeated');
+    }
+    return Object.freeze({
+      add({owner,target=null,kind,duration,amount=0,cleanup}){
+        prune();
+        if(!owner||owner.hp<=0||typeof kind!=='string'||!Number.isInteger(duration)||duration<1||duration>8)return false;
+        if(entries.some(e=>e.owner===owner&&e.target===target&&e.kind===kind))return false;
+        entries.push({owner,target,kind,remaining:duration,amount,cleanup});return true;
+      },
+      active(kind,target){prune();return entries.filter(e=>e.kind===kind&&(target===undefined||e.target===target)).map(e=>({...e}));},
+      tick(){prune();for(const e of [...entries])if(--e.remaining<=0)remove(e,'expired');},
+      prune,
+      clear(){for(const e of [...entries])remove(e,'reset');}
+    });
+  }
+  return Object.freeze({activate,activateOne,createHandlers,createStatusLedger});
 });
