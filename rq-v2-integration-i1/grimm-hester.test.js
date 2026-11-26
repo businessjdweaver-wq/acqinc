@@ -40,6 +40,7 @@ test('Bleed Out follows a linked owner or the current front for a team tile', ()
   assert.equal(bleedTarget({ linkedEnemy: 1 }, () => false, 0), undefined);
   assert.equal(bleedTarget({ linkedEnemy: null }, () => true, 0), 0);
   assert.equal(bleedTarget({ linkedEnemy: null }, () => true, 2), 2);
+  assert.equal(bleedTarget({ linkedEnemy: 1, independent: true }, () => true, 2), 2);
 });
 
 test('Woven Life distributes only the reduced total over living recipients', () => {
@@ -99,4 +100,45 @@ test('all four randomized pull branches include both recruits and retain their u
   assert.deepEqual(replacements, existing.map(sql => sql.replaceAll('random()*18', 'random()*20').replace(/;?$/, ';')));
   const widths = [...migration.matchAll(/6\s*\+\s*floor\(random\(\)\*(\d+)\)/g)].map(match => Number(match[1]));
   assert.deepEqual(widths, [20, 20, 20, 20]);
+});
+
+test('Bleed Out accepts hostile effects including locked and fortified tiles', () => {
+  const { eligibleBleedOut } = require('./grimm-hester.js');
+  for (const special of ['attack', 'defense', 'strike', 'energy', 'energy5', 'wild', 'watcher']) {
+    assert.equal(eligibleBleedOut({ special, specialOwner: 'enemy', locked: true, effectFortified: true }), true);
+  }
+  for (const tile of [{ trap: 3, trapOwner: 0 }, { trap: 1, trapOwner: 2 }, { trap: 2 }, { rat: true }]) {
+    assert.equal(eligibleBleedOut(tile), true);
+  }
+  for (const tile of [null, { v: 0 }, { v: 5 }, { trap: 0 }, { trap: 3, trapOwner: 'player' },
+    { hiddenTrap: { owner: 'player' }, trap: 3 }, { friendlyRat: {}, rat: true },
+    { special: 'attack', specialOwner: 'player' }]) {
+    assert.equal(eligibleBleedOut(tile), false);
+  }
+  for (const objective of ['hay', 'lore', 'towerBrazier', 'groveRoot', 'groveVillager',
+    'grovePetrified', 'sluiceGear', 'sluiceWaterlock', 'lumberFire', 'smoke', 'supply']) {
+    assert.equal(eligibleBleedOut({ [objective]: true, trap: 3, trapOwner: 0 }), false, objective);
+  }
+});
+
+test('Bleed Out clears only its own lock after restore or Leafspeech', () => {
+  const { clearBleedOut, eligibleBleedOut } = require('./grimm-hester.js');
+  for (const introducedLock of [true, false, undefined]) {
+    const state = JSON.parse(JSON.stringify({
+      trap: 3, trapOwner: 0, bleedOut: { owner: 0, introducedLock }, locked: true, effectFortified: true,
+    }));
+    assert.equal(eligibleBleedOut(state), true);
+    state.trap = 0;
+    assert.equal(eligibleBleedOut(state), false);
+    clearBleedOut(state);
+    assert.equal(state.locked, introducedLock === false);
+    assert.equal(state.effectFortified, true);
+    assert.equal(state.bleedOut, undefined);
+  }
+  const lockedSpecial = { special: 'attack', specialOwner: 'enemy', locked: true,
+    effectFortified: true, bleedOut: { introducedLock: false } };
+  convertLeafspeech(lockedSpecial);
+  assert.equal(lockedSpecial.locked, true);
+  assert.equal(lockedSpecial.effectFortified, true);
+  assert.equal(lockedSpecial.bleedOut, undefined);
 });
