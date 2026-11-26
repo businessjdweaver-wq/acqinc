@@ -152,3 +152,9 @@ Validate with `node tools/validate-content.js`. The effect field bounds and enum
 2. Find the power in the combat checklist. **Trigger** uses the current battle state. **Prepare & trigger** refills hero energy and supplies common missing prerequisites, such as an injured monster, a special tile, or a practice countdown.
 3. Use **Advance statuses** to observe ticks and expiration. Use hero actions to test reactions such as retaliation and counterspell. Hero HP is protected throughout combat. Monster powers are triggered manually and start each attempt with full energy.
 4. Check off powers after observing their behavior. The checklist covers all six parties. Expand another party and use its **Load** link to switch encounters. The browser keeps progress across party changes, reloads, and encounter restarts.
+
+### Two-star hero counterparts
+
+The original proposed lineup is recorded in `content/monster-counterparts.json`. It pairs the six existing teams with 18 distinct built-in two-star heroes. Pip (Rat-King Swarm) and Alda (Bulwark Golem) were proposed as reserves and are outside the six existing teams.
+
+Run `node tools/audit-monster-counterparts.js` to compare the current monster definitions with the canonical hero names, power descriptions, and handlers. The sandbox currently runs the older monster-specific definitions. A shared name is insufficient evidence of parity. Enemy-side execution needs to preserve targeting, timing, and passive triggers before a hero power replaces a legacy assignment.

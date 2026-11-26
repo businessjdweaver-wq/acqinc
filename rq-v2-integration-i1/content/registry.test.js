@@ -269,3 +269,14 @@ test('the six sandbox monster parties provide 54 powers on approved sprites', ()
     assert.ok(approvedSprites.has(monster.spriteId),monster.spriteId);
   }
 });
+
+test('the confirmed monster lineup resolves to 18 distinct two-star hero kits', () => {
+  const { auditMonsterCounterparts } = require('../tools/audit-monster-counterparts.js');
+  const kits = auditMonsterCounterparts();
+  assert.equal(kits.length, 18);
+  assert.equal(kits.flatMap(kit => kit.expected).length, 54);
+  const heartwood = kits.find(kit => kit.monster === 'Heartwood Guardian');
+  assert.deepEqual(heartwood.expected.map(power => power.name), [
+    'Woven Life', 'Leafspeech', 'Withering Blight'
+  ]);
+});
