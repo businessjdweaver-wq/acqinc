@@ -51,3 +51,15 @@ test('optional effect adapters do not spend without runtime support',async()=>{
  }
  assert.equal(f.energy[0],6);
 });
+
+test('status ledger expires, rejects duplicates and cleans up defeated owners',()=>{
+ const {createStatusLedger}=require('./enemy-powers.js');
+ const ledger=createStatusLedger(),owner={hp:10},target={hp:20},events=[];
+ const status={owner,target,kind:'ward',duration:2,amount:3,cleanup:r=>events.push(r)};
+ assert.equal(ledger.add(status),true);assert.equal(ledger.add(status),false);
+ ledger.tick();assert.equal(ledger.active('ward',target)[0].remaining,1);
+ ledger.tick();assert.deepEqual(events,['expired']);
+ assert.equal(ledger.add(status),true);owner.hp=0;ledger.prune();
+ assert.equal(ledger.active('ward').length,0);assert.deepEqual(events,['expired','defeated']);
+ owner.hp=10;ledger.add(status);ledger.clear();assert.deepEqual(events,['expired','defeated','reset']);
+});
