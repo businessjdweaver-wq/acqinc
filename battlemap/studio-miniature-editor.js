@@ -150,7 +150,7 @@ function updateMiniatureEditor(){
  el('miniatureBaseSizeValue').value=el('miniatureBaseSizeValue').textContent=`${Math.round(base.size*100)}%`;
  if(!enabled)el('miniaturePreview').hidden=true;
  el('miniaturePaintPanel').hidden=!(enabled&&draft.asset?.sourceTriangles);
- if(enabled&&draft.asset)renderStudioMiniaturePreview(draft.asset,{base,modelScale:Number(el('miniatureScale').value)/100,scaleMode:el('miniatureScaleMode').value,footprint:1,referenceHeight:standeeArtHeight(draft.token)/S/Math.max(1,draft.token.size||1),paint:draft.paint,rotation:miniatureRotationFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked});
+ if(enabled&&draft.asset)renderStudioMiniaturePreview(draft.asset,{base,modelScale:Number(el('miniatureScale').value)/100,scaleMode:el('miniatureScaleMode').value,footprint:1,referenceHeight:standeeArtHeight(draft.token)/S/Math.max(1,draft.token.size||1),paint:draft.paint,sculptShade:Number(el('miniatureSculptShade').value)/100,rotation:miniatureRotationFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked});
 }
 async function openMiniatureEditor(token){
  const panel=el('standeeMiniatures');
@@ -176,6 +176,7 @@ async function openMiniatureEditor(token){
  miniatureBaseDefault.ringColors.forEach((c,i)=>el('miniatureBaseRing'+i).value=c);
  el('miniatureDoubleSided').checked=true;
  el('miniatureForceOpaque').checked=true;
+ el('miniatureSculptShade').value='65';
  el('miniaturePreviewRotation').value='0';
  el('miniaturePreviewElevation').value='25';
  el('miniatureStatus').textContent='';
@@ -207,6 +208,7 @@ async function openMiniatureEditor(token){
     base.ringColors.forEach((c,i)=>el('miniatureBaseRing'+i).value=c);
    el('miniatureDoubleSided').checked=settings.doubleSided!==false;
    el('miniatureForceOpaque').checked=settings.forceOpaque!==false;
+ el('miniatureSculptShade').value=String(Math.round((settings.sculptShade??.65)*100));
    if(settings.enabled)await chooseStudioMiniature(settings.id);
   }
  }catch(error){
@@ -280,7 +282,7 @@ async function saveMiniatureEditor(token){
  if(!await storageReady)throw Error('Browser storage is unavailable.');
  const key=miniatureAssignmentKey(token)??miniatureAssignmentKey({...token,trackingId:crypto.randomUUID()});
  const settings={id:draft.id,enabled,scale:Number(el('miniatureScale').value)/100,scaleMode:el('miniatureScaleMode').value,facing:Number(el('miniatureFacing').value),
-  paint:draft.paint||{},rotation:miniatureRotationFromControls(),base:miniatureBaseFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked};
+  paint:draft.paint||{},sculptShade:Number(el('miniatureSculptShade').value)/100,rotation:miniatureRotationFromControls(),base:miniatureBaseFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked};
  if(!Number.isFinite(settings.scale)||settings.scale<.25||settings.scale>3||!Number.isFinite(settings.facing)||Math.abs(settings.facing)>180)
   throw Error('Enter a valid miniature scale and facing offset.');
  const db=await storageReady;
@@ -312,6 +314,7 @@ el('miniatureMode').addEventListener('change',()=>{
 });
 el('miniatureLibrary').addEventListener('change',event=>void chooseStudioMiniature(event.target.value));
 el('miniatureStlResolution').addEventListener('change',()=>{if(miniatureEditor?.sourceFile)void pickStudioMiniature(miniatureEditor.sourceFile);});
+el('miniatureSculptShade').addEventListener('input',updateMiniatureEditor);
 el('miniatureScale').addEventListener('input',updateMiniatureEditor);
 el('miniatureScaleMode').addEventListener('change',updateMiniatureEditor);
 el('miniatureBaseRingWidth').addEventListener('input',updateMiniatureEditor);
