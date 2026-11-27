@@ -22,9 +22,20 @@
     const build = document.getElementById("battlemapBuild")?.textContent.trim() || "unknown";
     const url = new URL(path, document.baseURI);
     url.searchParams.set("build", build);
-    const response = await fetch(url, { cache: "no-store" });
-    if (!response.ok) throw new Error(path + " returned HTTP " + response.status);
-    return response.text();
+    let lastError;
+    for (let attempt=0; attempt<4; attempt++) {
+      try {
+        const response=await fetch(url,{cache:attempt?"reload":"default"});
+        if(response.ok) return await response.text();
+        lastError=new Error(path+" returned HTTP "+response.status);
+        if(![408,429,500,502,503,504].includes(response.status)) throw lastError;
+      } catch(error) {
+        if(error===lastError && !/HTTP (408|429|500|502|503|504)$/.test(error.message)) throw error;
+        lastError=error;
+      }
+      if(attempt<3) await new Promise(resolve=>setTimeout(resolve,500*2**attempt));
+    }
+    throw lastError;
   })).then(sources => {
     // A single function scope is essential: these scripts share lexical
     // declarations (including 'top', 'el', and 'chatFilterIds').
