@@ -6,6 +6,8 @@ function createStudioMiniaturePass(gl, compile) {
  layout(location=0) in vec3 position;
  layout(location=1) in vec3 normal;
  layout(location=2) in vec2 uv;
+ layout(location=3) in vec4 paintColor;
+ out vec4 surfacePaint;
  uniform mat4 camera;
  uniform mat4 model;
  out vec3 worldNormal;
@@ -13,7 +15,7 @@ function createStudioMiniaturePass(gl, compile) {
  void main(){
   gl_Position=camera*model*vec4(position,1.);
   worldNormal=mat3(model)*normal;
-  texCoord=uv;
+  texCoord=uv;surfacePaint=paintColor;
  }`);
  const fragment=compile(gl.FRAGMENT_SHADER,`#version 300 es
  precision highp float;
@@ -24,12 +26,14 @@ function createStudioMiniaturePass(gl, compile) {
  uniform float desaturate;
  in vec3 worldNormal;
  in vec2 texCoord;
+ in vec4 surfacePaint;
  out vec4 pixel;
  vec3 toSRGB(vec3 rgb){
   return mix(12.92*rgb,1.055*pow(max(rgb,vec3(0.)),vec3(1./2.4))-.055,step(vec3(.0031308),rgb));
  }
  void main(){
   vec4 color=texture(albedo,texCoord)*baseColor;
+  color.rgb=mix(color.rgb,surfacePaint.rgb,surfacePaint.a);
   if(color.a<alphaCutoff)discard;
   vec3 n=normalize(worldNormal);
   if(!gl_FrontFacing)n=-n;
@@ -75,7 +79,7 @@ function createStudioMiniaturePass(gl, compile) {
    }
    for(const primitive of asset.primitives){
     const vao=gl.createVertexArray();
-    resource.meshes.push({vao,primitive,count:primitive.indices.length});
+    const mesh={vao,primitive,count:primitive.indices.length};resource.meshes.push(mesh);
     gl.bindVertexArray(vao);
     for(const [attribute,size,array] of [[0,3,primitive.positions],[1,3,primitive.normals],[2,2,primitive.texcoords]]){
      if(!array)continue;
@@ -86,6 +90,7 @@ function createStudioMiniaturePass(gl, compile) {
      gl.enableVertexAttribArray(attribute);
      gl.vertexAttribPointer(attribute,size,gl.FLOAT,false,0,0);
     }
+    if(asset.sourceTriangles){mesh.paintBuffer=gl.createBuffer();resource.buffers.push(mesh.paintBuffer);gl.bindBuffer(gl.ARRAY_BUFFER,mesh.paintBuffer);gl.bufferData(gl.ARRAY_BUFFER,primitive.positions.length/3*16,gl.DYNAMIC_DRAW);gl.enableVertexAttribArray(3);gl.vertexAttribPointer(3,4,gl.FLOAT,false,0,0);}
     const elements=gl.createBuffer();
     resource.buffers.push(elements);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,elements);
@@ -119,14 +124,17 @@ function createStudioMiniaturePass(gl, compile) {
   gl.uniformMatrix4fv(uniforms.camera,false,matrix);
   gl.activeTexture(gl.TEXTURE2);
   try{
-   for(const {resource,transform,light,desaturate,doubleSided,forceOpaque,colors} of instances){
+   for(const {resource,transform,light,desaturate,doubleSided,forceOpaque,colors,paint} of instances){
     gl.uniformMatrix4fv(uniforms.model,false,transform);
     gl.uniform3fv(uniforms.light,light);
     gl.uniform1f(uniforms.desaturate,desaturate);
-    for(const {vao,primitive,count} of resource.meshes){
+    for(const mesh of resource.meshes){
+     const {vao,primitive,count}=mesh;
      if(doubleSided||primitive.material.doubleSided)gl.disable(gl.CULL_FACE);
      else gl.enable(gl.CULL_FACE);
      gl.bindVertexArray(vao);
+     if(mesh.paintBuffer&&mesh.lastPaint!==paint){const data=new Float32Array(primitive.positions.length/3*4);for(const [face,hex] of Object.entries(paint||{})){const i=Number(face);if(!Number.isInteger(i)||i<0||i*3>=count||!/^#[0-9a-f]{6}$/i.test(hex))continue;const c=studioMiniatureBaseColor(hex);for(let v=0;v<3;v++)data.set(c,primitive.indices[i*3+v]*4);}gl.bindBuffer(gl.ARRAY_BUFFER,mesh.paintBuffer);gl.bufferSubData(gl.ARRAY_BUFFER,0,data);mesh.lastPaint=paint;}
+     if(!mesh.paintBuffer)gl.vertexAttrib4f(3,0,0,0,0);
      gl.bindTexture(gl.TEXTURE_2D,resource.textures[primitive.material.image]||white);
      gl.uniform4fv(uniforms.baseColor,colors?.[primitive.colorSlot]??primitive.material.baseColor);
      gl.uniform1f(uniforms.alphaCutoff,forceOpaque?0:(primitive.material.alphaCutoff??0));
@@ -300,7 +308,7 @@ function studioMiniatureBaseInstance(pass,asset,base,[x,y,z],footprint,heading,l
 function studioMiniatureBaseHeight(footprint){return Math.min(.18,footprint*.075)}
 
 let studioMiniaturePreview=null;
-function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation}={}){
+function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation,paint}={}){
  const canvas=el('miniaturePreview');
  try{
   if(!studioMiniaturePreview){
@@ -332,7 +340,8 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
   const lift=baseAsset?studioMiniatureBaseHeight(baseFootprint):0;
   const instances=[];
   if(baseAsset)instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,[0,0,0],baseFootprint,heading,light,desaturate));
-  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque});
+  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque,paint});
+  studioMiniaturePreview.pick={asset,camera,model:instances.at(-1).transform};
   pass.draw(camera,instances);
   canvas.hidden=false;
  }catch(error){
@@ -343,4 +352,17 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
 function disposeStudioMiniaturePreview(){
  studioMiniaturePreview?.pass.destroy();
  studioMiniaturePreview=null;
+}
+
+// Pick the nearest projected STL triangle in the current orthographic preview.
+function studioMiniaturePaintPick(event,radius=0){
+ const pick=studioMiniaturePreview?.pick;if(!pick?.asset.sourceTriangles)return [];
+ const canvas=el('miniaturePreview'),rect=canvas.getBoundingClientRect();
+ const x=(event.clientX-rect.left)/rect.width*2-1,y=1-(event.clientY-rect.top)/rect.height*2;
+ const {camera,model,asset}=pick,p=asset.primitives[0],m=(a,b)=>Array.from({length:16},(_,i)=>{const row=i%4,col=i>>2;return [0,1,2,3].reduce((v,k)=>v+a[k*4+row]*b[col*4+k],0);}),t=m(camera,model);
+ const projected=new Float32Array(p.positions.length);
+ for(let i=0;i<p.positions.length;i+=3){const a=p.positions[i],b=p.positions[i+1],c=p.positions[i+2];for(let j=0;j<3;j++)projected[i+j]=t[j]*a+t[4+j]*b+t[8+j]*c+t[12+j];}
+ let best=-1,depth=Infinity;
+ for(let i=0;i<p.indices.length;i+=3){const a=p.indices[i]*3,b=p.indices[i+1]*3,c=p.indices[i+2]*3,ax=projected[a],ay=projected[a+1],bx=projected[b],by=projected[b+1],cx=projected[c],cy=projected[c+1];const d=(by-cy)*(ax-cx)+(cx-bx)*(ay-cy);if(Math.abs(d)<1e-12)continue;const u=((by-cy)*(x-cx)+(cx-bx)*(y-cy))/d,v=((cy-ay)*(x-cx)+(ax-cx)*(y-cy))/d,w=1-u-v;if(Math.min(u,v,w)<0)continue;const z=u*projected[a+2]+v*projected[b+2]+w*projected[c+2];if(z<depth){depth=z;best=i/3;}}
+ return best<0?[]:[best];
 }
