@@ -187,7 +187,7 @@ async function openMiniatureEditor(token){
   const select=el('miniatureLibrary');
   select.replaceChildren(new Option('Choose a saved miniature',''),...library.map(({name,id})=>new Option(name,id)));
   draft.initial=settings;
-  draft.paint={...(settings?.paint||{})};draft.paintUndo=[];
+  draft.paint={...(settings?.paint||{})};draft.paintUndo=[];draft.paintRedo=[];
   if(settings?.id){
    draft.id=settings.id;
    select.value=settings.id;
@@ -241,7 +241,7 @@ async function pickStudioMiniature(file){
  const draft=miniatureEditor;
  if(!draft||!file)return;
  const change=++draft.change;
- draft.busy=true;draft.id='';draft.file=null;draft.asset=null;draft.paint={};draft.paintUndo=[];
+ draft.busy=true;draft.id='';draft.file=null;draft.asset=null;draft.paint={};draft.paintUndo=[];draft.paintRedo=[];
  el('miniaturePreview').hidden=true;
  el('miniatureStatus').textContent='Reading miniature…';
  let asset;
@@ -342,17 +342,31 @@ miniatureDrop.addEventListener('drop',event=>{
  else if(files.length>1)el('miniatureStatus').textContent='Drop one miniature file at a time.';
 });
 
-let miniaturePaintErasing=false,miniaturePaintDragging=false;
-function miniaturePaintAt(event){
- const draft=miniatureEditor;if(!draft?.asset?.sourceTriangles||!el('miniaturePaintMode').checked)return;
- const faces=studioMiniaturePaintPick(event);if(!faces.length)return;
- const paint={...draft.paint};for(const face of faces){if(miniaturePaintErasing)delete paint[face];else paint[face]=el('miniaturePaintColor').value;}
- draft.paint=paint;updateMiniatureEditor();
+let miniaturePaintDragging=false;
+function miniaturePaintCheckpoint(d){
+ (d.paintUndo??=[]).push({...d.paint});if(d.paintUndo.length>20)d.paintUndo.shift();d.paintRedo=[];
 }
-el('miniaturePreview').addEventListener('pointerdown',event=>{if(!el('miniaturePaintMode').checked||!miniatureEditor?.asset?.sourceTriangles)return;event.preventDefault();miniaturePaintDragging=true;el('miniaturePreview').setPointerCapture(event.pointerId);(miniatureEditor.paintUndo??=[]).push({...miniatureEditor.paint});miniaturePaintAt(event);});
+function miniaturePaintAt(event){
+ const d=miniatureEditor;if(!d?.asset?.sourceTriangles||!el('miniaturePaintMode').checked)return;
+ const tool=el('miniaturePaintTool').value,diameter=Number(el('miniaturePaintDiameter').value);
+ let faces=studioMiniaturePaintPick(event,['brush','erase'].includes(tool)&&diameter>1?diameter/2:0);if(!faces.length)return;
+ if(tool==='sample'){el('miniaturePaintColor').value=d.paint?.[faces[0]]||'#7a7a7a';return;}
+ if(tool==='fill')faces=studioMiniaturePaintRegion(d.asset,faces[0],Number(el('miniaturePaintAngle').value),d.paint);
+ const paint={...d.paint};for(const face of faces){if(tool==='erase')delete paint[face];else paint[face]=el('miniaturePaintColor').value;}
+ d.paint=paint;updateMiniatureEditor();
+}
+el('miniaturePreview').addEventListener('pointerdown',event=>{
+ const d=miniatureEditor;if(!el('miniaturePaintMode').checked||!d?.asset?.sourceTriangles)return;
+ event.preventDefault();const tool=el('miniaturePaintTool').value;
+ if(tool!=='sample')miniaturePaintCheckpoint(d);
+ miniaturePaintDragging=['brush','erase'].includes(tool);
+ if(miniaturePaintDragging)el('miniaturePreview').setPointerCapture(event.pointerId);
+ miniaturePaintAt(event);
+});
 el('miniaturePreview').addEventListener('pointermove',event=>{if(miniaturePaintDragging)miniaturePaintAt(event);});
 for(const name of ['pointerup','pointercancel','lostpointercapture'])el('miniaturePreview').addEventListener(name,()=>miniaturePaintDragging=false);
-el('miniaturePaintErase').addEventListener('click',()=>{miniaturePaintErasing=!miniaturePaintErasing;el('miniaturePaintErase').textContent=miniaturePaintErasing?'Erasing · switch to paint':'Erase mode';});
-el('miniaturePaintColor').addEventListener('input',()=>{miniaturePaintErasing=false;el('miniaturePaintErase').textContent='Erase mode';});
-el('miniaturePaintUndo').addEventListener('click',()=>{const d=miniatureEditor;if(d?.paintUndo?.length){d.paint=d.paintUndo.pop();updateMiniatureEditor();}});
-el('miniaturePaintClear').addEventListener('click',()=>{const d=miniatureEditor;if(d){(d.paintUndo??=[]).push({...d.paint});d.paint={};updateMiniatureEditor();}});
+el('miniaturePaintDiameter').addEventListener('input',()=>el('miniaturePaintDiameterValue').textContent=el('miniaturePaintDiameter').value+' px');
+el('miniaturePaintUndo').addEventListener('click',()=>{const d=miniatureEditor;if(d?.paintUndo?.length){(d.paintRedo??=[]).push({...d.paint});d.paint=d.paintUndo.pop();updateMiniatureEditor();}});
+el('miniaturePaintRedo').addEventListener('click',()=>{const d=miniatureEditor;if(d?.paintRedo?.length){(d.paintUndo??=[]).push({...d.paint});d.paint=d.paintRedo.pop();updateMiniatureEditor();}});
+el('miniaturePaintClear').addEventListener('click',()=>{const d=miniatureEditor;if(d){miniaturePaintCheckpoint(d);d.paint={};updateMiniatureEditor();}});
+el('miniaturePaintAll').addEventListener('click',()=>{const d=miniatureEditor;if(!d?.asset?.sourceTriangles)return;miniaturePaintCheckpoint(d);const color=el('miniaturePaintColor').value;d.paint=Object.fromEntries(Array.from({length:d.asset.primitives[0].indices.length/3},(_,i)=>[i,color]));updateMiniatureEditor();});
