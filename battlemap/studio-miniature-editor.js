@@ -150,7 +150,7 @@ function updateMiniatureEditor(){
  el('miniatureBaseSizeValue').value=el('miniatureBaseSizeValue').textContent=`${Math.round(base.size*100)}%`;
  if(!enabled)el('miniaturePreview').hidden=true;
  el('miniaturePaintPanel').hidden=!(enabled&&draft.asset?.sourceTriangles);
- if(enabled&&draft.asset)renderStudioMiniaturePreview(draft.asset,{base,modelScale:Number(el('miniatureScale').value)/100,scaleMode:el('miniatureScaleMode').value,footprint:1,referenceHeight:standeeArtHeight(draft.token)/S/Math.max(1,draft.token.size||1),paint:draft.paint,sculptShade:Number(el('miniatureSculptShade').value)/100,rotation:miniatureRotationFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked});
+ if(enabled&&draft.asset)renderStudioMiniaturePreview(draft.asset,{base,modelScale:Number(el('miniatureScale').value)/100,scaleMode:el('miniatureScaleMode').value,footprint:1,referenceHeight:standeeArtHeight(draft.token)/S/Math.max(1,draft.token.size||1),paint:draft.paint,inspectionDirection:miniatureInspectionDirection(),inspectionIntensity:Number(el('miniatureLampIntensity').value)/100,sculptShade:Number(el('miniatureSculptShade').value)/100,rotation:miniatureRotationFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked});
 }
 async function openMiniatureEditor(token){
  const panel=el('standeeMiniatures');
@@ -373,3 +373,6 @@ el('miniaturePaintUndo').addEventListener('click',()=>{const d=miniatureEditor;i
 el('miniaturePaintRedo').addEventListener('click',()=>{const d=miniatureEditor;if(d?.paintRedo?.length){(d.paintUndo??=[]).push({...d.paint});d.paint=d.paintRedo.pop();updateMiniatureEditor();}});
 el('miniaturePaintClear').addEventListener('click',()=>{const d=miniatureEditor;if(d){miniaturePaintCheckpoint(d);d.paint={};updateMiniatureEditor();}});
 el('miniaturePaintAll').addEventListener('click',()=>{const d=miniatureEditor;if(!d?.asset?.sourceTriangles)return;miniaturePaintCheckpoint(d);const color=el('miniaturePaintColor').value;d.paint=Object.fromEntries(Array.from({length:d.asset.primitives[0].indices.length/3},(_,i)=>[i,color]));updateMiniatureEditor();});
+
+function miniatureInspectionDirection(){const a=Number(el('miniatureLampAzimuth').value)*Math.PI/180,e=Number(el('miniatureLampElevation').value)*Math.PI/180;return [Math.cos(a)*Math.cos(e),Math.sin(a)*Math.cos(e),Math.sin(e)];}
+for(const id of ['miniatureLampAzimuth','miniatureLampElevation','miniatureLampIntensity'])el(id).addEventListener('input',updateMiniatureEditor);
