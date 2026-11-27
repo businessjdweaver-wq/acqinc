@@ -235,9 +235,10 @@ function studioMiniatureBaseTexture(pattern){
 }
 
 const studioMiniatureBases=new Map();
-function studioMiniatureBaseAsset(shape,pattern='solid',ringCount=0){
+function studioMiniatureBaseAsset(shape,pattern='solid',ringCount=0,ringWidth=.28){
  ringCount=Math.max(0,Math.min(3,Math.trunc(Number(ringCount)||0)));
- const key=shape+':'+pattern+':'+ringCount;
+ ringWidth=Math.max(.05,Math.min(.5,Number(ringWidth)||.28));
+ const key=shape+':'+pattern+':'+ringCount+':'+ringWidth;
  if(studioMiniatureBases.has(key))return studioMiniatureBases.get(key);
  const texture=studioMiniatureBaseTexture(pattern);
  const top={positions:[],normals:[]},rim={positions:[],normals:[]};
@@ -258,14 +259,14 @@ function studioMiniatureBaseAsset(shape,pattern='solid',ringCount=0){
  };
  for(let i=0;i<sides;i++){
   const a=corners[i],b=corners[(i+1)%sides];
-  const insideA=point(a,ringCount?.66:.82,1),insideB=point(b,ringCount?.66:.82,1);
+  const insideA=point(a,ringCount?.94-ringWidth:.82,1),insideB=point(b,ringCount?.94-ringWidth:.82,1);
   const outerA=point(a,.94,1),outerB=point(b,.94,1);
   const bottomA=point(a,1,0),bottomB=point(b,1,0);
   const edge=[(a[0]+b[0])/2,.16,(a[1]+b[1])/2];
   emit(top,flat,[0,1,0],insideB,insideA);
   if(!ringCount)emit(rim,flat,insideA,insideB,outerB,insideA,outerB,outerA);
   else for(let j=0;j<ringCount;j++){
-   const inner=.66+.28*j/ringCount,outer=.66+.28*(j+1)/ringCount;
+   const inner=.94-ringWidth+ringWidth*j/ringCount,outer=.94-ringWidth+ringWidth*(j+1)/ringCount;
    const ia=point(a,inner,1),ib=point(b,inner,1),oa=point(a,outer,1),ob=point(b,outer,1);
    emit(rings[ringCount-1-j],flat,ia,ib,ob,ia,ob,oa);
   }
@@ -322,7 +323,7 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
   const c=Math.cos(pitch),s=Math.sin(pitch);
   const camera=new Float32Array([.65,0,0,0, 0,-.85*s,-.3*c,0,
    0,.85*c,-.3*s,0, 0,-height*.425*c,0,1]);
-  const baseAsset=base?.shape&&base.shape!=='off'?studioMiniatureBaseAsset(base.shape,base.pattern,base.ringCount):null;
+  const baseAsset=base?.shape&&base.shape!=='off'?studioMiniatureBaseAsset(base.shape,base.pattern,base.ringCount,base.ringWidth):null;
   pass.retain(new Set(baseAsset?[asset,baseAsset]:[asset]));
   const resource=pass.prepare(asset);
   gl.viewport(0,0,canvas.width,canvas.height);
