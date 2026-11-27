@@ -44,7 +44,7 @@ function resetMiniatureWorker(message){
  }
  miniatureRequests.clear();
 }
-function decodeStudioMiniature(buffer,filename=''){
+function decodeStudioMiniature(buffer,filename='',stlTarget=60000){
  if(!miniatureWorker){
   const url=new URL('./studio-miniature-worker.js',document.baseURI);
   url.searchParams.set('build',el('battlemapBuild').textContent.trim());
@@ -63,7 +63,7 @@ function decodeStudioMiniature(buffer,filename=''){
   const id=++miniatureRequestId;
   const timer=setTimeout(()=>resetMiniatureWorker('The miniature took too long to read.'),20000);
   miniatureRequests.set(id,{resolve,reject,timer});
-  try{miniatureWorker.postMessage({id,buffer,expectStl:/\.stl$/i.test(filename),expectUnity:/\.unity3d$/i.test(filename),expectZip:/\.zip$/i.test(filename)},[buffer])}
+  try{miniatureWorker.postMessage({id,buffer,stlTarget,expectStl:/\.stl$/i.test(filename),expectUnity:/\.unity3d$/i.test(filename),expectZip:/\.zip$/i.test(filename)},[buffer])}
   catch(error){clearTimeout(timer);miniatureRequests.delete(id);reject(error)}
  });
 }
@@ -90,7 +90,7 @@ function loadStudioMiniature(id){
  const promise=(async()=>{
   const value=await savedValue(key,null);
   if(!(value?.file instanceof Blob)||value.file.size>miniatureFileLimit)throw Error('Miniature file is unavailable.');
-  const asset=await decodeStudioMiniature(await value.file.arrayBuffer(),value.file.name);
+  const asset=await decodeStudioMiniature(await value.file.arrayBuffer(),value.file.name,value.stlTarget);
   cacheStudioMiniature(key,asset);
   return asset;
  })().catch(error=>{miniatureAssets.set(key,{error});throw error});
@@ -153,6 +153,8 @@ async function openMiniatureEditor(token){
  if(panel.hidden)return;
  const draft=miniatureEditor={token,asset:null,id:'',file:null,change:0,busy:false};
  el('miniatureFile').value='';
+ el('miniatureStlResolutionRow').hidden=true;
+ el('miniatureStlResolution').value='60000';
  el('miniatureMode').value='2d';
  el('miniatureScale').value='100';
  el('miniatureFacing').value='0';
@@ -232,17 +234,20 @@ async function pickStudioMiniature(file){
  let asset;
  try{
   if(file.size>miniatureFileLimit)throw Error('Choose a ZIP, .unity3d, STL, or GLB no larger than 24 MB.');
+  const stl=/\.stl$/i.test(file.name),stlTarget=Number(el('miniatureStlResolution').value);
+  draft.sourceFile=file;
+  el('miniatureStlResolutionRow').hidden=!stl;
   const raw=await file.arrayBuffer();
   const hash=await crypto.subtle.digest('SHA-256',raw);
-  const id=Array.from(new Uint8Array(hash),value=>value.toString(16).padStart(2,'0')).join('');
-  asset=await decodeStudioMiniature(raw,file.name);
+  const id=Array.from(new Uint8Array(hash),value=>value.toString(16).padStart(2,'0')).join('')+(stl?'-stl-'+stlTarget:'');
+  asset=await decodeStudioMiniature(raw,file.name,stlTarget);
   if(miniatureEditor!==draft||draft.change!==change){releaseMiniatureBitmaps(asset);return}
   const existing=miniatureAssets.get(miniatureAssetKey(id))?.asset;
   if(existing){releaseMiniatureBitmaps(asset);asset=existing}
   else cacheStudioMiniature(miniatureAssetKey(id),asset);
-  Object.assign(draft,{id,file,asset});
+  Object.assign(draft,{id,file,asset,stlTarget});
   el('miniatureLibrary').value='';
-  el('miniatureStatus').textContent=file.name;
+  el('miniatureStatus').textContent=file.name+(asset.sourceTriangles?' · '+asset.sourceTriangles.toLocaleString()+' → '+(asset.primitives[0].indices.length/3).toLocaleString()+' triangles':'');
   updateMiniatureEditor();
  }catch(error){
   if(miniatureEditor===draft&&draft.change===change)el('miniatureStatus').textContent=error.message;
@@ -272,7 +277,7 @@ async function saveMiniatureEditor(token){
   const store=tx.objectStore('saves');
   tx.oncomplete=resolve;tx.onabort=tx.onerror=()=>reject(Error('The miniature could not be saved to browser storage.'));
   if(draft.file&&enabled){
-   store.put({name:draft.file.name,file:draft.file},miniatureAssetKey(id));
+   store.put({name:draft.file.name,file:draft.file,stlTarget:draft.stlTarget},miniatureAssetKey(id));
    store.put({name:draft.file.name,id},miniaturePrefix+miniatureAccount()+'/label/'+id);
   }
   store.put(settings,key);
@@ -292,6 +297,7 @@ el('miniatureMode').addEventListener('change',()=>{
  updateMiniatureEditor();
 });
 el('miniatureLibrary').addEventListener('change',event=>void chooseStudioMiniature(event.target.value));
+el('miniatureStlResolution').addEventListener('change',()=>{if(miniatureEditor?.sourceFile)void pickStudioMiniature(miniatureEditor.sourceFile);});
 el('miniatureFile').addEventListener('change',event=>void pickStudioMiniature(event.target.files[0]));
 for(const id of ['miniaturePreviewRotation','miniaturePreviewElevation'])
  el(id).addEventListener('input',updateMiniatureEditor);
