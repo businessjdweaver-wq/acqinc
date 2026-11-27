@@ -63,7 +63,7 @@ function decodeStudioMiniature(buffer,filename=''){
   const id=++miniatureRequestId;
   const timer=setTimeout(()=>resetMiniatureWorker('The miniature took too long to read.'),20000);
   miniatureRequests.set(id,{resolve,reject,timer});
-  try{miniatureWorker.postMessage({id,buffer,expectUnity:/\.unity3d$/i.test(filename),expectZip:/\.zip$/i.test(filename)},[buffer])}
+  try{miniatureWorker.postMessage({id,buffer,expectStl:/\.stl$/i.test(filename),expectUnity:/\.unity3d$/i.test(filename),expectZip:/\.zip$/i.test(filename)},[buffer])}
   catch(error){clearTimeout(timer);miniatureRequests.delete(id);reject(error)}
  });
 }
@@ -231,7 +231,7 @@ async function pickStudioMiniature(file){
  el('miniatureStatus').textContent='Reading miniature…';
  let asset;
  try{
-  if(file.size>miniatureFileLimit)throw Error('Choose a ZIP, .unity3d, or GLB no larger than 24 MB.');
+  if(file.size>miniatureFileLimit)throw Error('Choose a ZIP, .unity3d, STL, or GLB no larger than 24 MB.');
   const raw=await file.arrayBuffer();
   const hash=await crypto.subtle.digest('SHA-256',raw);
   const id=Array.from(new Uint8Array(hash),value=>value.toString(16).padStart(2,'0')).join('');
