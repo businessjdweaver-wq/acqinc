@@ -163,8 +163,8 @@ async function openMiniatureEditor(token){
  el('miniatureBaseRimColor').value=miniatureBaseDefault.rimColor;
  el('miniatureBaseRingCount').value='0';
  miniatureBaseDefault.ringColors.forEach((c,i)=>el('miniatureBaseRing'+i).value=c);
- el('miniatureDoubleSided').checked=false;
- el('miniatureForceOpaque').checked=false;
+ el('miniatureDoubleSided').checked=true;
+ el('miniatureForceOpaque').checked=true;
  el('miniaturePreviewRotation').value='0';
  el('miniaturePreviewElevation').value='25';
  el('miniatureStatus').textContent='';
@@ -190,8 +190,8 @@ async function openMiniatureEditor(token){
    el('miniatureBaseRimColor').value=base.rimColor;
     el('miniatureBaseRingCount').value=String(base.ringCount);
     base.ringColors.forEach((c,i)=>el('miniatureBaseRing'+i).value=c);
-   el('miniatureDoubleSided').checked=settings.doubleSided===true;
-   el('miniatureForceOpaque').checked=settings.forceOpaque===true;
+   el('miniatureDoubleSided').checked=settings.doubleSided!==false;
+   el('miniatureForceOpaque').checked=settings.forceOpaque!==false;
    if(settings.enabled)await chooseStudioMiniature(settings.id);
   }
  }catch(error){
