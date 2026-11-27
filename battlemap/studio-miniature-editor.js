@@ -149,7 +149,8 @@ function updateMiniatureEditor(){
  for(let i=0;i<3;i++)el('miniatureBaseRing'+i).closest('label').hidden=i>=base.ringCount;
  el('miniatureBaseSizeValue').value=el('miniatureBaseSizeValue').textContent=`${Math.round(base.size*100)}%`;
  if(!enabled)el('miniaturePreview').hidden=true;
- if(enabled&&draft.asset)renderStudioMiniaturePreview(draft.asset,{base,rotation:miniatureRotationFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked});
+ el('miniaturePaintPanel').hidden=!(enabled&&draft.asset?.sourceTriangles);
+ if(enabled&&draft.asset)renderStudioMiniaturePreview(draft.asset,{base,paint:draft.paint,rotation:miniatureRotationFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked});
 }
 async function openMiniatureEditor(token){
  const panel=el('standeeMiniatures');
@@ -157,6 +158,7 @@ async function openMiniatureEditor(token){
  if(panel.hidden)return;
  const draft=miniatureEditor={token,asset:null,id:'',file:null,change:0,busy:false};
  el('miniatureFile').value='';
+ el('miniaturePaintMode').checked=false;
  el('miniatureStlResolutionRow').hidden=true;
  el('miniatureStlResolution').value='60000';
  el('miniatureMode').value='2d';
@@ -184,6 +186,7 @@ async function openMiniatureEditor(token){
   const select=el('miniatureLibrary');
   select.replaceChildren(new Option('Choose a saved miniature',''),...library.map(({name,id})=>new Option(name,id)));
   draft.initial=settings;
+  draft.paint={...(settings?.paint||{})};draft.paintUndo=[];
   if(settings?.id){
    draft.id=settings.id;
    select.value=settings.id;
@@ -236,7 +239,7 @@ async function pickStudioMiniature(file){
  const draft=miniatureEditor;
  if(!draft||!file)return;
  const change=++draft.change;
- draft.busy=true;draft.id='';draft.file=null;draft.asset=null;
+ draft.busy=true;draft.id='';draft.file=null;draft.asset=null;draft.paint={};draft.paintUndo=[];
  el('miniaturePreview').hidden=true;
  el('miniatureStatus').textContent='Reading miniature…';
  let asset;
@@ -274,7 +277,7 @@ async function saveMiniatureEditor(token){
  if(!await storageReady)throw Error('Browser storage is unavailable.');
  const key=miniatureAssignmentKey(token)??miniatureAssignmentKey({...token,trackingId:crypto.randomUUID()});
  const settings={id:draft.id,enabled,scale:Number(el('miniatureScale').value)/100,facing:Number(el('miniatureFacing').value),
-  rotation:miniatureRotationFromControls(),base:miniatureBaseFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked};
+  paint:draft.paint||{},rotation:miniatureRotationFromControls(),base:miniatureBaseFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked};
  if(!Number.isFinite(settings.scale)||settings.scale<.25||settings.scale>3||!Number.isFinite(settings.facing)||Math.abs(settings.facing)>180)
   throw Error('Enter a valid miniature scale and facing offset.');
  const db=await storageReady;
@@ -333,3 +336,18 @@ miniatureDrop.addEventListener('drop',event=>{
  if(files.length===1)void pickStudioMiniature(files[0]);
  else if(files.length>1)el('miniatureStatus').textContent='Drop one miniature file at a time.';
 });
+
+let miniaturePaintErasing=false,miniaturePaintDragging=false;
+function miniaturePaintAt(event){
+ const draft=miniatureEditor;if(!draft?.asset?.sourceTriangles||!el('miniaturePaintMode').checked)return;
+ const faces=studioMiniaturePaintPick(event);if(!faces.length)return;
+ const paint={...draft.paint};for(const face of faces){if(miniaturePaintErasing)delete paint[face];else paint[face]=el('miniaturePaintColor').value;}
+ draft.paint=paint;updateMiniatureEditor();
+}
+el('miniaturePreview').addEventListener('pointerdown',event=>{if(!el('miniaturePaintMode').checked||!miniatureEditor?.asset?.sourceTriangles)return;event.preventDefault();miniaturePaintDragging=true;el('miniaturePreview').setPointerCapture(event.pointerId);(miniatureEditor.paintUndo??=[]).push({...miniatureEditor.paint});miniaturePaintAt(event);});
+el('miniaturePreview').addEventListener('pointermove',event=>{if(miniaturePaintDragging)miniaturePaintAt(event);});
+for(const name of ['pointerup','pointercancel','lostpointercapture'])el('miniaturePreview').addEventListener(name,()=>miniaturePaintDragging=false);
+el('miniaturePaintErase').addEventListener('click',()=>{miniaturePaintErasing=!miniaturePaintErasing;el('miniaturePaintErase').textContent=miniaturePaintErasing?'Erasing · switch to paint':'Erase mode';});
+el('miniaturePaintColor').addEventListener('input',()=>{miniaturePaintErasing=false;el('miniaturePaintErase').textContent='Erase mode';});
+el('miniaturePaintUndo').addEventListener('click',()=>{const d=miniatureEditor;if(d?.paintUndo?.length){d.paint=d.paintUndo.pop();updateMiniatureEditor();}});
+el('miniaturePaintClear').addEventListener('click',()=>{const d=miniatureEditor;if(d){(d.paintUndo??=[]).push({...d.paint});d.paint={};updateMiniatureEditor();}});
