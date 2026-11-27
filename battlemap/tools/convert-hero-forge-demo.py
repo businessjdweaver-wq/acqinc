@@ -26,7 +26,7 @@ EXPECTED_ARCHIVE_SHA256 = "0b1ac787be4b30936b7ce1c2517337ca8a256818f56c0ff8f6b22
 
 def _blender_script() -> str:
     return r'''import bpy, json, os
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 cfg = json.load(open(os.environ["HF_CONVERT_CONFIG"], "r", encoding="utf-8"))
 bpy.ops.object.select_all(action="SELECT")
@@ -80,12 +80,17 @@ if cfg.get("render_dir"):
     scene.eevee.taa_render_samples = 8
     scene.world.color = (0.035, 0.035, 0.035)
     extent = max(maximum[i] - minimum[i] for i in range(3))
-    light_data = bpy.data.lights.new("Key", "AREA")
-    light = bpy.data.objects.new("Key", light_data)
-    scene.collection.objects.link(light)
-    light.location = center + Vector((extent, -extent, extent * 1.3))
-    light_data.energy = 40000
-    light_data.size = extent * 0.8
+    for name, direction, power in (
+        ("Key", (1, -1, 1.3), 180),
+        ("Fill", (-1, 1, 1), 110),
+    ):
+        light_data = bpy.data.lights.new(name, "AREA")
+        light = bpy.data.objects.new(name, light_data)
+        scene.collection.objects.link(light)
+        light.location = Vector(direction) * extent
+        light.rotation_euler = (-light.location).to_track_quat("-Z", "Y").to_euler()
+        light_data.energy = power
+        light_data.size = extent * 0.8
     camera_data = bpy.data.cameras.new("Review Camera")
     camera = bpy.data.objects.new("Review Camera", camera_data)
     scene.collection.objects.link(camera)
@@ -93,14 +98,16 @@ if cfg.get("render_dir"):
     camera_data.type = "ORTHO"
     camera_data.ortho_scale = extent * 1.3
     os.makedirs(cfg["render_dir"], exist_ok=True)
-    for name, direction, up in (
-        ("front", (0, -1, 0), "Z"),
-        ("rear", (0, 1, 0), "Z"),
-        ("top", (0, 0, 1), "Y"),
+    for name, direction, world_up in (
+        ("front", (0, -1, 0), (0, 0, 1)),
+        ("rear", (0, 1, 0), (0, 0, 1)),
+        ("top", (0, 0, 1), (0, 1, 0)),
     ):
-        d = Vector(direction)
-        camera.location = center + d * extent * 2
-        camera.rotation_euler = (-d).to_track_quat("-Z", up).to_euler()
+        backward = Vector(direction)
+        right = Vector(world_up).cross(backward).normalized()
+        up = backward.cross(right)
+        camera.location = backward * extent * 2
+        camera.rotation_euler = Matrix((right, up, backward)).transposed().to_euler()
         scene.render.filepath = os.path.join(cfg["render_dir"], name + ".png")
         bpy.ops.render.render(write_still=True)
 '''
