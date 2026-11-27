@@ -37,7 +37,9 @@
  }
  function blightSpread(resources,percent,damagePerPoint,poolCount,cap=Infinity){
   let remaining=cap;
-  const drains=resources.map((amount,color)=>({amount,color})).sort((a,b)=>b.amount-a.amount||a.color-b.color).slice(0,poolCount).map(({amount,color})=>{const destroyed=Math.min(remaining,Math.floor(Math.max(0,amount)*percent/100));remaining-=destroyed;return {color,destroyed};}).filter(d=>d.destroyed>0);
+  const eligible=resources.map((amount,color)=>({amount,color})).filter(({amount,color})=>color!==5&&Math.floor(amount*percent/100)>0);
+  const preferred=eligible.filter(({amount})=>amount>3);
+  const drains=(preferred.length?preferred:eligible).sort((a,b)=>b.amount-a.amount||a.color-b.color).slice(0,poolCount).map(({amount,color})=>{const destroyed=Math.min(remaining,Math.floor(Math.max(0,amount)*percent/100));remaining-=destroyed;return {color,destroyed};}).filter(d=>d.destroyed>0);
   const destroyed=drains.reduce((sum,d)=>sum+d.destroyed,0);
   return destroyed?{drains,destroyed,damage:destroyed*damagePerPoint}:null;
  }
