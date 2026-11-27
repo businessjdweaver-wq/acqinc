@@ -25,6 +25,8 @@ function createStudioMiniaturePass(gl, compile) {
  uniform float alphaCutoff;
  uniform float desaturate;
  uniform float sculptShade;
+ uniform vec3 inspectionDirection;
+ uniform float inspectionIntensity;
  in vec3 worldNormal;
  in vec2 texCoord;
  in vec4 surfacePaint;
@@ -44,6 +46,8 @@ function createStudioMiniaturePass(gl, compile) {
   float rim=pow(1.-abs(dot(n,normalize(vec3(.35,-.45,1.)))),3.);
   shade*=1.-.28*sculptShade*crease;
   shade+=sculptShade*(.14*rim+.12*crease*ndl);
+  float lamp=max(0.,dot(n,normalize(inspectionDirection)));
+  shade+=inspectionIntensity*(.18+.85*lamp);
   vec3 rgb=toSRGB(clamp(color.rgb*light*shade,0.,1.));
   rgb=mix(rgb,vec3(dot(rgb,vec3(.2126,.7152,.0722))),desaturate);
   pixel=vec4(rgb,1.);
@@ -55,7 +59,7 @@ function createStudioMiniaturePass(gl, compile) {
   gl.deleteProgram(program);
   throw new Error(error);
  }
- const uniforms=Object.fromEntries(['albedo','camera','model','baseColor','light','alphaCutoff','desaturate','sculptShade']
+ const uniforms=Object.fromEntries(['albedo','camera','model','baseColor','light','alphaCutoff','desaturate','sculptShade','inspectionDirection','inspectionIntensity']
   .map(name=>[name,gl.getUniformLocation(program,name)]));
  const white=gl.createTexture();
  const cache=new Map();
@@ -130,10 +134,12 @@ function createStudioMiniaturePass(gl, compile) {
   gl.uniformMatrix4fv(uniforms.camera,false,matrix);
   gl.activeTexture(gl.TEXTURE2);
   try{
-   for(const {resource,transform,light,desaturate,doubleSided,forceOpaque,colors,paint,sculptShade} of instances){
+   for(const {resource,transform,light,desaturate,doubleSided,forceOpaque,colors,paint,sculptShade,inspectionDirection,inspectionIntensity} of instances){
     gl.uniformMatrix4fv(uniforms.model,false,transform);
     gl.uniform3fv(uniforms.light,light);
     gl.uniform1f(uniforms.desaturate,desaturate);
+    gl.uniform3fv(uniforms.inspectionDirection,inspectionDirection||[0,0,1]);
+    gl.uniform1f(uniforms.inspectionIntensity,inspectionIntensity||0);
     gl.uniform1f(uniforms.sculptShade,Math.max(0,Math.min(1,Number(sculptShade)||0)));
     for(const mesh of resource.meshes){
      const {vao,primitive,count}=mesh;
@@ -319,7 +325,7 @@ function studioMiniatureBaseInstance(pass,asset,base,[x,y,z],footprint,heading,l
 function studioMiniatureBaseHeight(footprint){return Math.min(.18,footprint*.075)}
 
 let studioMiniaturePreview=null;
-function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation,paint,sculptShade,modelScale=1,scaleMode='height',footprint=1,referenceHeight=1.35}={}){
+function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation,paint,sculptShade,inspectionDirection,inspectionIntensity,modelScale=1,scaleMode='height',footprint=1,referenceHeight=1.35}={}){
  const canvas=el('miniaturePreview');
  try{
   if(!studioMiniaturePreview){
@@ -351,7 +357,7 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
   const lift=baseAsset?studioMiniatureBaseHeight(baseFootprint):0;
   const instances=[];
   if(baseAsset)instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,[0,0,0],baseFootprint,heading,light,desaturate));
-  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque,paint,sculptShade});
+  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque,paint,sculptShade,inspectionDirection,inspectionIntensity});
   studioMiniaturePreview.pick={asset,camera,model:instances.at(-1).transform};
   pass.draw(camera,instances);
   canvas.hidden=false;
