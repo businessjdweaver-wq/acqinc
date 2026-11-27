@@ -171,16 +171,28 @@ function validateEnemyParty(record, location, approvedSprites) {
       integer(p.color, 0, 6, powerPath + '.color');
       const passive = ['knockout-intercept','fleet-foot','rage-engine','uncanny-dodge'].includes(p.effect);
       integer(p.cost, passive ? 0 : 1, passive ? 0 : 20, powerPath + '.cost');
+      if(Object.hasOwn(p,'levels')){
+        list(p.levels, 3, 3, powerPath+'.levels');
+        for(const [i,override] of p.levels.entries()){
+          requireValue(override && typeof override==='object' && !Array.isArray(override),powerPath+'.levels['+i+']','expected power override');
+          requireValue(Object.keys(override).every(k=>!['name','color','effect','levels'].includes(k)&&Object.hasOwn(p,k)),powerPath+'.levels['+i+']','override must preserve power identity and existing fields');
+          const {levels,...base}=p;
+          const resolved={...base,...override};
+          if(base.effects)requireValue(Array.isArray(resolved.effects)&&resolved.effects.length===base.effects.length&&resolved.effects.every((e,j)=>e?.effect===base.effects[j].effect),powerPath+'.levels['+i+']','composite effect identity must remain unchanged');
+          const single={...record,combatants:record.combatants.map((c,j)=>j===index?{...c,...(enemy.powers?{powers:enemy.powers.map((q,k)=>k===slot?resolved:(({levels,...rest})=>rest)(q))}:{power:resolved})}:({...c,...(c.powers?{powers:c.powers.map(({levels,...rest})=>rest)}:{power:(({levels,...rest})=>rest)(c.power)})}))};
+          validateEnemyParty(single,location,approvedSprites);
+        }
+      }
       const composite = Object.hasOwn(p,'effects');
       if(composite){
-        object(p,['name','color','cost','effects'],powerPath);
+        object(p,['name','color','cost','effects'],powerPath,['levels']);
         requireValue(Array.isArray(p.effects)&&p.effects.length>=1&&p.effects.length<=4,powerPath+'.effects','expected one to four effects');
       }
       for(const [effectIndex,effect] of (composite?p.effects:[p]).entries()){
       const powerPathEffect=composite?powerPath+'.effects['+effectIndex+']':powerPath;
       requireValue(effect&&typeof effect==='object',powerPathEffect,'expected effect');
       const metadata=composite?[]:['name','color','cost'];
-      const optional=composite?['optional']:[];
+      const optional=composite?['optional']:['levels'];
       if(composite&&Object.hasOwn(effect,'optional'))requireValue(typeof effect.optional==='boolean',powerPathEffect+'.optional','expected boolean');
       if(Object.hasOwn(advancedMonsterEffects,effect.effect)){
         validateAdvancedMonsterEffect(effect,powerPathEffect,metadata,optional);
