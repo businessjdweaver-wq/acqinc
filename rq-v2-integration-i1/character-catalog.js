@@ -93,7 +93,7 @@ const characters=[
  ]});
  characters.push({name:'Hester · Witch (Mystic)',icon:'🦉',background:'Hermit',baseHp:182,spriteKey:'hester',powers:[
   ['Woven Life',2,8,'Reduce incoming damage and share the remainder across conscious allies.','hester-woven',{costs:[8,8,8,7],duration:[3,3,4,4],reduction:[15,20,25,30]}],
-  ['Leafspeech',1,7,'Transform eligible tiles above a selected tile into green and resolve matches.','hester-leaf',{costs:[7,7,7,6],range:[4,5,6,7],percent:[50,60,70,80],cap:[2,3,4,6]}],
+  ['Leafspeech',1,7,'Transform eligible tiles above a selected tile into green and resolve matches.','hester-leaf',{costs:[7,7,7,6],range:[4,5,6,7],percent:[50,60,70,80],cap:[2,3,4,4]}],
   ['Withering Blight',4,7,'Destroy enemy energy and damage the front enemy for each point destroyed.','hester-blight',{costs:[7,7,7,6],percent:[30,40,50,60],damage:[3,4,5,6],pools:[2,3,4,99],caps:[3,4,5,6]}]
  ]});
 }
