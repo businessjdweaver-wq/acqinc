@@ -21,7 +21,7 @@
  });
 
  function ordinary(t){return !!t&&Number.isInteger(t.v)&&t.v>=0&&t.v<6&&!t.special&&!t.locked&&!t.effectFortified&&!t.fortifyLayers&&!t.power&&!t.trap&&!t.hiddenTrap&&!t.rat&&!t.friendlyRat&&!t.lore&&!t.hay&&!t.returnShield&&!t.grimmTrail&&!t.wovenLife&&!t.groveRoot&&!t.groveVillager&&!t.grovePetrified&&!t.sluiceGear&&!t.sluiceWaterlock&&!t.lumberFire&&!t.towerBrazier&&!t.smoke;}
- function bleedEligible(t){return !!t&&(t.special&&t.specialOwner==='player'||t.trap>0&&t.trapOwner==='player'||t.hiddenTrap?.owner==='player')&&!t.hay&&!t.lore&&!t.towerBrazier&&!t.groveRoot&&!t.groveVillager&&!t.grovePetrified&&!t.sluiceGear&&!t.sluiceWaterlock&&!t.lumberFire&&!t.smoke&&!t.supply&&!t.friendlyRat;}
+ function bleedEligible(t){return !!t&&(t.special&&t.specialOwner==='player'||t.trap>0&&t.trapOwner==='player'||t.hiddenTrap?.owner==='player'||t.wovenLife&&t.wovenLife.team!=='enemy'||t.grimmTrail&&t.grimmTrail.team!=='enemy'||t.auraSentinel&&t.auraSentinel.team!=='enemy'||t.corvinEcho&&!Number.isInteger(t.corvinEchoOwner)||t.sporeSlumber&&t.sporeSlumber.team!=='enemy'||t.sporeBloom&&t.sporeBloom.team!=='enemy')&&!t.hay&&!t.lore&&!t.towerBrazier&&!t.groveRoot&&!t.groveVillager&&!t.grovePetrified&&!t.sluiceGear&&!t.sluiceWaterlock&&!t.lumberFire&&!t.smoke&&!t.supply&&!t.friendlyRat;}
  function adjacentOrdinary(tiles,origin){return tiles.filter(t=>ordinary(t)&&Math.abs(t.r-origin.r)+Math.abs(t.c-origin.c)===1);}
  function crimsonMultiplier(trail,redCount){return trail?1+Math.min(trail.cap,Math.max(0,redCount)*trail.bonus)/100:1;}
  function extractionPlan(actor,allies,p){return actor.hp>p.sacrifice?allies.filter(a=>a!==actor&&a.hp>0&&a.hp<a.max).map(ally=>({ally,heal:Math.min(p.heal,ally.max-ally.hp)})):[];}
