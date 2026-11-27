@@ -176,11 +176,11 @@
       for(const e of [...entries])if(e.valid?.()===false||(!e.surviveOwner&&e.owner.hp<=0)||(e.target&&typeof e.target.hp==='number'&&e.target.hp<=0))remove(e,'defeated');
     }
     return Object.freeze({
-      add({owner,target=null,kind,duration,amount=0,cleanup,onTick,onChange,valid,surviveOwner=false,phase='enemy'}){
+      add({owner,target=null,kind,duration,amount=0,cleanup,onTick,onChange,valid,surviveOwner=false,phase='enemy',plant=false}){
         prune();
         if(!owner||owner.hp<=0||typeof kind!=='string'||!Number.isInteger(duration)||duration<1||duration>8)return false;
         if(entries.some(e=>e.owner===owner&&e.target===target&&e.kind===kind))return false;
-        entries.push({owner,target,kind,remaining:duration,amount,cleanup,onTick,onChange,valid,surviveOwner,phase});return true;
+        entries.push({owner,target,kind,remaining:duration,amount,cleanup,onTick,onChange,valid,surviveOwner,phase,plant});return true;
       },
       active(kind,target){prune();return entries.filter(e=>e.kind===kind&&(target===undefined||e.target===target)).map(e=>({...e}));},
       consume(kind,target){prune();const e=entries.find(e=>e.kind===kind&&(target===undefined||e.target===target));if(!e)return null;remove(e,'consumed');return {...e};},

@@ -3108,9 +3108,9 @@ function buildMonsterTestChecklist(){
 
 
 function createCombatMonsterHandlers(ledger){
- const stunHero=(t,duration)=>{
+ const stunHero=(t,duration,plant=false)=>{
    if(!t||!targetable(t))return;
-   if(ledger.add({owner:t,target:t,kind:'hero-stun',phase:'hero',duration,
+   if(ledger.add({owner:t,target:t,kind:'hero-stun',phase:'hero',duration,plant,
     cleanup:reason=>{if(reason==='expired')say(t.name+' recovers from stun.');}})){
     say(t.name+' is stunned for '+duration+' hero turn(s).');render();
    }
@@ -3174,7 +3174,7 @@ function createCombatMonsterHandlers(ledger){
      case 'restore':for(const color of outcome.colors)enemyEnergy[color]=Math.max(enemyEnergy[color],outcome.cap);break;
      case 'extra':await swap(...target);if(!ended)await resolve('enemy',swapAttackColor(...target),...target);break;
      case 'sheep':await extraHandlers['unstoppable-charge'].apply(actor,{amount:12},juggernautChargeTargets(target,1));break;
-     case 'plant-stun':{await extraHandlers['corvin-echo'].apply(actor,{delay:outcome.duration,stun:1},target);const hero=party[frontHero()];const status=ledger.active('hero-stun',hero)[0];if(status)status.plant=true;break;}
+     case 'plant-stun':{stunHero(party[frontHero()],1,true);target.corvinEcho=outcome.duration;target.corvinEchoDuration=outcome.duration;target.corvinEchoOwner=enemies.indexOf(actor);target.monsterPlantEcho=true;paint(target);break;}
      case 'plant-tiles':
       target.v=outcome.color;target.merrixFlavor='plant';paint(target);await resolve('enemy');break;
      case 'teleport':reshufflePreservingTiles();break;
@@ -3425,14 +3425,14 @@ async function activateMonsterPowers(stunnedEnemy,sporeStunned){
    delete tile.enemyVeilOwner;paint(tile);
   }
   if(Number.isInteger(tile.corvinEchoOwner)&&tile.corvinEcho&&!tile.locked&&--tile.corvinEcho===0){
-   const owner=tile.corvinEchoOwner,duration=tile.corvinEchoDuration;
+   const owner=tile.corvinEchoOwner,duration=tile.corvinEchoDuration,plant=!!tile.monsterPlantEcho;delete tile.monsterPlantEcho;
    delete tile.corvinEchoOwner;delete tile.corvinEcho;delete tile.corvinEchoDuration;
    paint(tile);
    if(enemies[owner]?.hp>0){
     const front=party[frontHero()];
-    if(front)ledger.add({owner:front,target:front,kind:'hero-stun',phase:'hero',duration:1});
-    const next=tiles.find(t=>t?.v===1&&echoEligible(t));
-    if(next){next.corvinEcho=duration;next.corvinEchoDuration=duration;next.corvinEchoOwner=owner;paint(next);}
+    if(front)ledger.add({owner:front,target:front,kind:'hero-stun',phase:'hero',duration:1,plant});
+    const next=randomEligibleMonsterTile(t=>t?.v===1&&echoEligible(t));
+    if(next){next.corvinEcho=duration;next.corvinEchoDuration=duration;next.corvinEchoOwner=owner;if(plant)next.monsterPlantEcho=true;paint(next);}
    }
   }else if(Number.isInteger(tile.corvinEchoOwner)&&!tile.locked)paint(tile);
  }
