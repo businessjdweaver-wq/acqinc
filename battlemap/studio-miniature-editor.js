@@ -3,21 +3,22 @@
 const miniaturePrefix='battlemap.miniatures.v1/';
 const miniatureAssets=new Map(),miniatureAssignments=new Map();
 const miniatureFileLimit=24*1024*1024;
-const miniatureBaseDefault={shape:'off',size:1,color:'#6b4b32',rimColor:'#241b16'};
+const miniatureBaseDefault={shape:'off',pattern:'solid',size:1,color:'#6b4b32',rimColor:'#241b16'};
 const miniatureRequests=new Map();
 let miniatureWorker=null,miniatureRequestId=0,miniatureEditor=null;
 
 function miniatureBaseSettings(settings){
  const base=settings?.base||{};
  const shape=['off','round','square'].includes(base.shape)?base.shape:'off';
+ const pattern=['solid','stone','sand','snow','grass'].includes(base.pattern)?base.pattern:'solid';
  const size=Number(base.size);
  const color=value=>typeof value==='string'&&/^#[\da-f]{6}$/i.test(value)?value.toLowerCase():null;
- return {shape,size:Number.isFinite(size)?Math.min(1.6,Math.max(.65,size)):1,
+ return {shape,pattern,size:Number.isFinite(size)?Math.min(1.6,Math.max(.65,size)):1,
   color:color(base.color)||miniatureBaseDefault.color,
   rimColor:color(base.rimColor)||miniatureBaseDefault.rimColor};
 }
 function miniatureBaseFromControls(){
- return miniatureBaseSettings({base:{shape:el('miniatureBaseShape').value,
+ return miniatureBaseSettings({base:{shape:el('miniatureBaseShape').value,pattern:el('miniatureBasePattern').value,
   size:Number(el('miniatureBaseSize').value)/100,color:el('miniatureBaseColor').value,
   rimColor:el('miniatureBaseRimColor').value}});
 }
@@ -128,7 +129,7 @@ async function localMiniatureLibrary(){
 }
 function miniatureFields(){
  return ['miniatureMode','miniatureLibrary','miniatureFile','miniatureScale','miniatureFacing',
-  'miniatureBaseShape','miniatureBaseSize','miniatureBaseColor','miniatureBaseRimColor','miniatureDoubleSided']
+  'miniatureBaseShape','miniatureBasePattern','miniatureBaseSize','miniatureBaseColor','miniatureBaseRimColor','miniatureDoubleSided']
   .map(el);
 }
 function updateMiniatureEditor(){
@@ -152,6 +153,7 @@ async function openMiniatureEditor(token){
  el('miniatureScale').value='100';
  el('miniatureFacing').value='0';
  el('miniatureBaseShape').value=miniatureBaseDefault.shape;
+ el('miniatureBasePattern').value=miniatureBaseDefault.pattern;
  el('miniatureBaseSize').value=String(miniatureBaseDefault.size*100);
  el('miniatureBaseColor').value=miniatureBaseDefault.color;
  el('miniatureBaseRimColor').value=miniatureBaseDefault.rimColor;
@@ -175,6 +177,7 @@ async function openMiniatureEditor(token){
    el('miniatureFacing').value=String(settings.facing);
    const base=miniatureBaseSettings(settings);
    el('miniatureBaseShape').value=base.shape;
+   el('miniatureBasePattern').value=base.pattern;
    el('miniatureBaseSize').value=String(base.size*100);
    el('miniatureBaseColor').value=base.color;
    el('miniatureBaseRimColor').value=base.rimColor;
@@ -286,6 +289,7 @@ for(const id of ['miniatureBaseSize','miniatureBaseColor','miniatureBaseRimColor
  el(id).addEventListener('input',updateMiniatureEditor);
 for(const id of ['miniatureBaseShape','miniatureDoubleSided'])
  el(id).addEventListener('change',updateMiniatureEditor);
+el('miniatureBasePattern').addEventListener('change',updateMiniatureEditor);
 
 const miniatureDrop=el('miniatureDrop');
 miniatureDrop.addEventListener('dragover',event=>{
