@@ -2609,6 +2609,19 @@ function monsterPattern(p,randomize=false){
 
 const monsterCleansable=['hero-stun','suppression','recurring:damage','delayed:damage','delayed:hero-stun'];
 function randomEligibleMonsterTile(predicate){const pool=tiles.filter(predicate);return pool.length?pool[rnd(pool.length)]:undefined;}
+function monsterMatchPlan(predicate){
+ const options=moves().sort((a,b)=>b.score-a.score);
+ for(const {i,j} of options){
+  const a=tiles[i],b=tiles[j];
+  if(!a||!b||a.locked||b.locked)continue;
+  let matched;
+  [tiles[i],tiles[j]]=[b,a];
+  try{matched=[...new Set(runs().flat())];}finally{[tiles[i],tiles[j]]=[a,b];}
+  const tile=matched.find(predicate);
+  if(tile)return {tile,pair:[a,b]};
+ }
+ return null;
+}
 function selectMonsterAdvanced(kind,a,p,ledger){
  const front=party[frontHero()];
  switch(kind){
@@ -2617,8 +2630,8 @@ function selectMonsterAdvanced(kind,a,p,ledger){
    return (p.shape!=='archer'||front)&&vegaPatternFit(template[5]);
   }
   case 'mycelial-network':return tiles.find(tile=>tile?.enemyMycelium?.owner===a)||randomEligibleMonsterTile(tile=>mycelialEligible(tile)&&!tile.enemyMycelium);
-  case 'spore-slumber':
-  case 'spore-bloom':return randomEligibleMonsterTile(sporeTargetEligible);
+  case 'spore-slumber':return randomEligibleMonsterTile(sporeTargetEligible);
+  case 'spore-bloom':return monsterMatchPlan(sporeTargetEligible);
   case 'patron-bargain':return a.bargainRound!==round?a:null;
   case 'patron-hellfire':return front;
   case 'ranked-strike':{
@@ -2693,10 +2706,13 @@ async function applyMonsterAdvanced(kind,a,p,t,ledger,stunHero){
   }
   case 'spore-slumber':
   case 'spore-bloom':{
+   const plan=kind==='spore-bloom'?t:null;
+   if(plan)t=plan.tile;
    const key=kind==='spore-slumber'?'sporeSlumber':'sporeBloom';
    for(const tile of tiles)if(tile?.[key]?.team==='enemy'&&tile[key].owner===a){delete tile[key];paint(tile);}
    const marker={team:'enemy',owner:a,level:1,remaining:p.duration};
    t[key]=marker;paint(t);
+   if(plan){await swap(...plan.pair);if(!ended)await resolve('enemy',swapAttackColor(...plan.pair),...plan.pair);}
    if(kind==='spore-slumber')ledger.add({owner:a,target:t,kind,duration:p.duration,
     valid:()=>tiles.includes(t)&&t[key]===marker,
     onChange:remaining=>{marker.remaining=remaining;paint(t);},
@@ -3083,6 +3099,8 @@ function createCombatMonsterHandlers(ledger){
   }
  };
  const adjacentOrdinaryPair=()=>{
+  const preferred=moves().sort((a,b)=>b.score-a.score).find(({i,j})=>astralSwapEligible(tiles[i])&&astralSwapEligible(tiles[j]));
+  if(preferred)return [tiles[preferred.i],tiles[preferred.j]];
   for(const tile of tiles){
    if(!astralSwapEligible(tile))continue;
    const other=tiles.find(q=>astralSwapEligible(q)&&Math.abs(q.r-tile.r)+Math.abs(q.c-tile.c)===1);
@@ -3200,7 +3218,11 @@ function createCombatMonsterHandlers(ledger){
   }),
 
   ...RQMonsterTorVex.createHandlers({
-   chargeTiles:power=>{const tile=tiles.find(juggernautChargeEligible);return tile&&juggernautChargeTargets(tile,1,power.span);},
+   chargeTiles:power=>{
+    const options=tiles.filter(juggernautChargeEligible).map(tile=>juggernautChargeTargets(tile,1,power.span));
+    const score=group=>group.reduce((n,t)=>n+(t.effectFortified||t.fortifyLayers?10:!t.special&&!t.returnShield&&!t.smoke?1:0),0);
+    return options.length?options.sort((a,b)=>score(b)-score(a))[0]:null;
+   },
    async applyCharge(actor,power,selected){
     await showJuggernautChargePreview(selected);
     for(const tile of selected){
