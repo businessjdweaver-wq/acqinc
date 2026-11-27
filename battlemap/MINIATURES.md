@@ -91,3 +91,7 @@ Synchronized miniature appearances, server-side
 asset access, independent base replacement, and authenticated multiplayer
 acceptance tests are pending. The current remote room configuration targets the
 live Supabase project, so the browser checks used isolated local data.
+
+## STL painting
+
+Enable Paint STL surface in the preview. Brush and Eraser use a 1–80 pixel diameter; the smallest setting selects one triangle. Smart fill follows connected edges until a surface-angle or existing paint boundary is reached. Eyedropper samples paint, Paint all applies a base coat, and Undo/Redo restore strokes. Paint is device-local and tied to the selected mesh resolution. Smart fill is geometric, not semantic, and can spread over smooth connected surfaces.
