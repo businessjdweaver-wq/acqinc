@@ -16,7 +16,7 @@
    {name:'Fog Cloud',effect:'fog',amount:20},
    {name:'Mass Invisibility',effect:'invisibility',duration:1},
    {name:'Reincarnation',effect:'reincarnate',hp:1},
-   {name:'Sorcery Restoration',effect:'restore',colors:[0,2,3],cap:20}
+   {name:'Sorcery Restoration',effect:'restore',colors:[0,2,3],cap:10}
   ]),
   'merrix-bend':Object.freeze([
    {name:'Extra Action',effect:'extra',swaps:1},
