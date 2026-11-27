@@ -1372,7 +1372,9 @@ function damageEnemy(n,index=null,{shoveBehind,bypassDefense=false,fixedDamage=f
   const dodge=e.sandboxPowers?.find(p=>p.effect==='uncanny-dodge');
   if(dodge){
    const flags=tiles.filter(t=>t?.special==='attack'&&t.specialOwner==='player').length;
+   const beforeDodge=n;
    n=Math.ceil(n*(1-Math.min(dodge.reductionCap,dodge.baseReduction+flags*dodge.perAttackTile)/100));
+   if(n<beforeDodge){say(e.name+' — Uncanny Dodge prevents '+(beforeDodge-n)+' damage ('+flags+' hostile Attack tiles).');float(combatSpriteTarget('enemy',i),'DODGE −'+(beforeDodge-n),'#e3f5ff');}
   }
  }
  if(!wovenShare&&n>0&&e.merrixReduction){
@@ -2969,12 +2971,15 @@ function triggerMonsterTestPower(index,power,prepare){
   enemyEnergy.fill(20);
   if(power.effect==='rage-engine'||power.effect==='uncanny-dodge'){
    if(!prepare)return power.name+' is passive. Observe it after the monster takes damage.';
+   if(power.effect==='uncanny-dodge'&&!tiles.some(t=>t?.special==='attack'&&t.specialOwner==='player')){
+    const t=randomEligibleMonsterTile(q=>monsterTileEligible(q,'ordinary'));if(t){t.special='attack';t.specialOwner='player';t.specialStrength=3;paint(t);}
+   }
    const hit=power.threshold??20;
    if(actor.hp<=hit)return 'Restart the encounter so the monster can survive the demonstration hit.';
    const index=enemies.indexOf(actor),before=actor.hp;
    side='player';damageEnemy(hit,index,{fixedDamage:true});side='enemy';
    if(power.effect==='rage-engine')await activateMonsterPowers(null,new Set());
-   return power.name+' demonstrated. The '+hit+' damage test hit removed '+(before-actor.hp)+' HP. Check the board for any generated Attack tiles.';
+   return power.name+' test: '+hit+' incoming damage, '+(before-actor.hp)+' HP lost. '+(power.effect==='uncanny-dodge'?'Check the Uncanny Dodge prevention entry in the combat log.':'Check the board for generated Attack tiles.');
   }
   if(power.effect==='fleet-foot'){
    render();
@@ -2989,7 +2994,7 @@ function triggerMonsterTestPower(index,power,prepare){
    if(from<to)[enemyOrder[from],enemyOrder[to]]=[enemyOrder[to],enemyOrder[from]];
    enemies[ally].hp=1;delete actor.interceptRound;
    side='player';damageEnemy(2+specialStrengthTotal('enemy','defense'),ally,{singleTarget:true});
-   return power.name+' demonstrated. Check formation and the damage log.';
+   return actor.interceptRound===round?power.name+' intercepted the lethal hit. Check formation and damage log.':power.name+' did not intercept this hit. Check wards, damage reduction and formation before retrying.';
   }
   if(!monsterStatusLedger)monsterStatusLedger=RQEnemyPowers.createStatusLedger();
   const handlers=createCombatMonsterHandlers(monsterStatusLedger);
