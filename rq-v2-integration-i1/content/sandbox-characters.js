@@ -91,5 +91,20 @@
     };
   }
 
-  root.RQSandboxCharacters = Object.freeze({ load, pattern, describe, seededRandom });
+  function resolveMonsterPower(power, level = 1) {
+    if (!Number.isInteger(level) || level < 1 || level > 4) throw new RangeError('Monster power level must be 1–4');
+    const { levels, ...base } = power;
+    return JSON.parse(JSON.stringify({ ...base, ...(level > 1 ? levels?.[level - 2] : undefined) }));
+  }
+
+  function resolveMonsterParty(record, level = 1) {
+    if (!Number.isInteger(level) || level < 1 || level > 4) throw new RangeError('Monster power level must be 1–4');
+    if (record.ai !== 'monster') return record;
+    return { ...record, monsterPowerLevel: level, foes: record.foes.map(foe => {
+      const powers = (foe.sandboxPowers || [foe.sandboxPower]).filter(Boolean).map(power => resolveMonsterPower(power, level));
+      return { ...foe, sandboxPower: powers[0], sandboxPowers: powers, monsterPowerLevel: level };
+    }) };
+  }
+
+  root.RQSandboxCharacters = Object.freeze({ load, pattern, describe, seededRandom, resolveMonsterPower, resolveMonsterParty });
 })(window);
