@@ -2582,7 +2582,7 @@ el('standeePasteForm').onsubmit=async e=>{
  const [x,y,z]=measurePoint(...standeePastePoint);
  const clone={...structuredClone(original),x:Math.floor(x+1e-8),y:Math.floor(y+1e-8),z:original.flying?original.z:Math.round(z),trackingId:crypto.randomUUID()};
  clone.ownerStandeeId=original.roomId||original.characterRoomId||original.ownerStandeeId;
- delete clone.targetId;delete clone.initiativeKey;delete clone.hpPoolId;delete clone.roomId;delete clone.characterRoomId;delete clone.controllerNames;
+ delete clone.targetId;delete clone.initiativeKey;delete clone.hpPoolId;clone.roomId=clone.trackingId;delete clone.characterRoomId;delete clone.controllerNames;
  if(!valid(clone,[...pieces,...tokens],null)){error('The standee does not fit there. Cancel and point at another square.');return}
  const submit=e.submitter;
  if(submit?.disabled)return;
@@ -2590,7 +2590,9 @@ el('standeePasteForm').onsubmit=async e=>{
  try{
   const sourceKey=miniatureAssignmentKey(original),cloneKey=miniatureAssignmentKey(clone);
   if(sourceKey&&cloneKey){
-   const settings=miniatureAssignments.get(sourceKey)||await savedValue(sourceKey,null);
+   const templateKey=miniatureAssignmentKey(standeeClipboard.template);
+   const settings=miniatureAssignments.get(sourceKey)||await savedValue(sourceKey,null)||
+    (templateKey&&templateKey!==sourceKey?(miniatureAssignments.get(templateKey)||await savedValue(templateKey,null)):null);
    if(settings?.id){
     const copied=structuredClone(settings),db=await storageReady;
     if(!db)throw Error('Browser storage is unavailable.');
