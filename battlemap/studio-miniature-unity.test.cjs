@@ -4,8 +4,8 @@ const {
  isStudioUnityBundle,validateStudioUnityBundle,decodeUnityMiniatureTexture
 }=require('./studio-miniature-unity.js');
 
-function bundle({name='CAB-abcd',expanded=8,blockType=0,dictionary=0}={}){
- const prefix=Buffer.from('UnityFS\0\0\0\0\x065.x.x\0'+'2019.1.0f2\0');
+function bundle({name='CAB-abcd',expanded=8,blockType=0,dictionary=0,version='2019.1.0f2'}={}){
+ const prefix=Buffer.from('UnityFS\0\0\0\0\x065.x.x\0'+version+'\0');
  const info=Buffer.alloc(55+name.length);
  info.writeUInt32BE(1,16);
  info.writeUInt32BE(expanded,20);
@@ -30,6 +30,7 @@ test('accepts bounded UnityFS archive metadata and rejects other signatures',()=
  assert.equal(isStudioUnityBundle(valid),true);
  assert.doesNotThrow(()=>validateStudioUnityBundle(valid,unneeded));
  assert.throws(()=>validateStudioUnityBundle(valid.subarray(1),unneeded),/Expected a UnityFS/);
+ assert.throws(()=>validateStudioUnityBundle(bundle({version:'2019.0.0f2'}),unneeded),/Expected a Unity 2019/);
 });
 test('rejects expanded-size, LZMA dictionary and path violations before unpacking',()=>{
  assert.throws(()=>validateStudioUnityBundle(bundle({expanded:40*1024*1024,blockType:3}),unneeded),/expansion limit/);

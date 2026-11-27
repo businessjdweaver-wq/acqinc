@@ -15,7 +15,7 @@ function validateStudioUnityBundle(bytes,decompressLz4){
  if(engineEnd<13||revisionEnd<=engineEnd+1||revisionEnd>128||revisionEnd+21>bytes.length)
   throw unityBundleError('Invalid bundle header.');
  const version=new TextDecoder().decode(bytes.subarray(engineEnd+1,revisionEnd));
- if(!/^2019\.[0-3]\./.test(version))throw unityBundleError('Expected a Unity 2019.1–2019.3 tabletop bundle.');
+ if(!/^2019\.[1-3]\./.test(version))throw unityBundleError('Expected a Unity 2019.1–2019.3 tabletop bundle.');
  const base=revisionEnd+1;
  const packedInfo=header.getUint32(base+8),unpackedInfo=header.getUint32(base+12),flags=header.getUint32(base+16);
  const compression=flags&63;
