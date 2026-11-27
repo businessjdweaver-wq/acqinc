@@ -179,6 +179,10 @@ function studioMiniatureOriented(asset,rotation){
  const result={axes,bounds:{min,max,groundCenter:[(gx+hx)/2,(gz+hz)/2]}};
  cache.set(key,result);return result;
 }
+function studioMiniatureSizedHeight(asset,rotation,referenceHeight,footprint,scale=1,mode='height'){
+ const {min,max}=studioMiniatureOriented(asset,rotation).bounds;
+ return (mode==='footprint'?footprint*(max[1]-min[1])/Math.max(max[0]-min[0],max[2]-min[2],.000001):referenceHeight)*scale;
+}
 function studioMiniatureTransform(asset,[x,y,z],height,heading,centerOnGround=false,rotation){
  const {bounds,axes}=studioMiniatureOriented(asset,rotation),{min,max}=bounds;
  const scale=height/Math.max(max[1]-min[1],.000001);
@@ -308,7 +312,7 @@ function studioMiniatureBaseInstance(pass,asset,base,[x,y,z],footprint,heading,l
 function studioMiniatureBaseHeight(footprint){return Math.min(.18,footprint*.075)}
 
 let studioMiniaturePreview=null;
-function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation,paint}={}){
+function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation,paint,modelScale=1,scaleMode='height',footprint=1,referenceHeight=1.35}={}){
  const canvas=el('miniaturePreview');
  try{
   if(!studioMiniaturePreview){
@@ -325,7 +329,7 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
   }
   const {gl,pass}=studioMiniaturePreview;
   const {min,max}=studioMiniatureOriented(asset,rotation).bounds;
-  const height=Math.min(1.35,1.35*(max[1]-min[1])/Math.max(max[0]-min[0],max[2]-min[2],.000001));
+  const height=studioMiniatureSizedHeight(asset,rotation,referenceHeight,footprint,modelScale,scaleMode);
   const heading=(180+Number(el('miniaturePreviewRotation').value))*Math.PI/180;
   const pitch=Number(el('miniaturePreviewElevation').value)*Math.PI/180;
   const c=Math.cos(pitch),s=Math.sin(pitch);
@@ -336,7 +340,7 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
   const resource=pass.prepare(asset);
   gl.viewport(0,0,canvas.width,canvas.height);
   gl.clearColor(.13,.12,.1,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-  const light=[1,1,1],desaturate=0,baseFootprint=1;
+  const light=[1,1,1],desaturate=0,baseFootprint=footprint;
   const lift=baseAsset?studioMiniatureBaseHeight(baseFootprint):0;
   const instances=[];
   if(baseAsset)instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,[0,0,0],baseFootprint,heading,light,desaturate));
