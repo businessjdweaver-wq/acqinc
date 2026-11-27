@@ -78,6 +78,41 @@ function createStudioMiniaturePass(gl, compile) {
  }
  const uniforms=Object.fromEntries(['albedo','camera','model','baseColor','light','alphaCutoff','desaturate','sculptShade','inspectionDirection','inspectionIntensity','edgeWidth','edgeColor','edgeSensitivity']
   .map(name=>[name,gl.getUniformLocation(program,name)]));
+ const contourProgram=gl.createProgram();
+ const cv=compile(gl.VERTEX_SHADER,`#version 300 es
+ layout(location=0) in vec3 a;
+ layout(location=1) in vec3 b;
+ layout(location=2) in float score;
+ uniform mat4 camera,model;
+ uniform vec2 viewport;
+ uniform float width;
+ out vec2 local;
+ flat out float lengthPx;
+ flat out float strength;
+ void main(){
+ vec4 p=camera*model*vec4(a,1.),q=camera*model*vec4(b,1.);
+ vec2 d=(q.xy/q.w-p.xy/p.w)*viewport*.5;
+ lengthPx=length(d);vec2 t=d/max(lengthPx,.001),n=vec2(-t.y,t.x);
+ int k=gl_VertexID%6;bool end=k==1||k==2||k==4;float side=(k==0||k==1||k==3)?-1.:1.;
+ // Two triangles: start-, end-, end+, start-, end+, start+.
+ vec4 pos=end?q:p;float r=width*.5+1.;
+ vec2 offset=t*(end?r:-r)+n*side*r;
+ pos.xy+=offset*2./viewport*pos.w;pos.z-=.00015*pos.w;
+ gl_Position=pos;local=vec2(end?lengthPx+r:-r,side*r);strength=score;
+ }`);
+ const cf=compile(gl.FRAGMENT_SHADER,`#version 300 es
+ precision highp float;
+ in vec2 local;flat in float lengthPx;flat in float strength;
+ uniform float width,sensitivity;uniform vec3 color;
+ out vec4 pixel;
+ void main(){if(strength<sensitivity)discard;
+ float d=length(vec2(local.x-clamp(local.x,0.,lengthPx),local.y));
+ float alpha=1.-smoothstep(max(0.,width*.5-.65),width*.5+.65,d);
+ if(alpha<.01)discard;pixel=vec4(color,alpha);}
+ `);
+ gl.attachShader(contourProgram,cv);gl.attachShader(contourProgram,cf);gl.linkProgram(contourProgram);gl.deleteShader(cv);gl.deleteShader(cf);
+ if(!gl.getProgramParameter(contourProgram,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(contourProgram));
+ const cu=Object.fromEntries(['camera','model','viewport','width','sensitivity','color'].map(n=>[n,gl.getUniformLocation(contourProgram,n)]));
  const white=gl.createTexture();
  const cache=new Map();
  gl.activeTexture(gl.TEXTURE2);
@@ -89,7 +124,7 @@ function createStudioMiniaturePass(gl, compile) {
  function dispose(resource){
   for(const texture of resource.textures)gl.deleteTexture(texture);
   for(const buffer of resource.buffers)gl.deleteBuffer(buffer);
-  for(const mesh of resource.meshes)gl.deleteVertexArray(mesh.vao);
+  for(const mesh of resource.meshes){gl.deleteVertexArray(mesh.vao);if(mesh.contourVao)gl.deleteVertexArray(mesh.contourVao);}
  }
  function upload(asset){
   const resource={textures:[],buffers:[],meshes:[]};
@@ -118,11 +153,19 @@ function createStudioMiniaturePass(gl, compile) {
      gl.vertexAttribPointer(attribute,size,gl.FLOAT,false,0,0);
     }
     if(asset.sourceTriangles){mesh.paintBuffer=gl.createBuffer();resource.buffers.push(mesh.paintBuffer);gl.bindBuffer(gl.ARRAY_BUFFER,mesh.paintBuffer);gl.bufferData(gl.ARRAY_BUFFER,primitive.positions.length/3*16,gl.DYNAMIC_DRAW);gl.enableVertexAttribArray(3);gl.vertexAttribPointer(3,4,gl.FLOAT,false,0,0);}
-    if(asset.sourceTriangles){const mask=studioMiniatureFeatureMask(primitive);const buffer=gl.createBuffer();resource.buffers.push(buffer);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,mask,gl.STATIC_DRAW);gl.enableVertexAttribArray(4);gl.vertexAttribPointer(4,3,gl.FLOAT,false,0,0);}
+
     const elements=gl.createBuffer();
     resource.buffers.push(elements);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,elements);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,primitive.indices,gl.STATIC_DRAW);
+    if(asset.sourceTriangles){
+     const data=studioMiniatureContours(primitive);
+     mesh.contourCount=data.length/7;
+     if(mesh.contourCount){mesh.contourVao=gl.createVertexArray();gl.bindVertexArray(mesh.contourVao);
+      const buffer=gl.createBuffer();resource.buffers.push(buffer);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
+      for(const [loc,size,offset] of [[0,3,0],[1,3,12],[2,1,24]]){gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,28,offset);gl.vertexAttribDivisor(loc,1);}
+     }
+    }
    }
    return resource;
   }catch(error){
@@ -159,7 +202,7 @@ function createStudioMiniaturePass(gl, compile) {
     gl.uniform3fv(uniforms.inspectionDirection,inspectionDirection||[0,0,1]);
     gl.uniform1f(uniforms.inspectionIntensity,inspectionIntensity||0);
     gl.uniform1f(uniforms.edgeSensitivity,Math.max(.01,Number(edgeSensitivity)||.65));
-    gl.uniform1f(uniforms.edgeWidth,Number(edgeWidth)||0);
+    gl.uniform1f(uniforms.edgeWidth,0);
     gl.uniform3fv(uniforms.edgeColor,studioMiniatureBaseColor(edgeColor||'#202020').slice(0,3));
     gl.uniform1f(uniforms.sculptShade,Math.max(0,Math.min(1,Number(sculptShade)||0)));
     for(const mesh of resource.meshes){
@@ -175,13 +218,25 @@ function createStudioMiniaturePass(gl, compile) {
      gl.drawElements(gl.TRIANGLES,count,gl.UNSIGNED_INT,0);
     }
    }
+   const viewport=gl.getParameter(gl.VIEWPORT),blend=gl.isEnabled(gl.BLEND),depthMask=gl.getParameter(gl.DEPTH_WRITEMASK);
+   const blendState=[gl.BLEND_SRC_RGB,gl.BLEND_DST_RGB,gl.BLEND_SRC_ALPHA,gl.BLEND_DST_ALPHA].map(k=>gl.getParameter(k));
+   try{
+    gl.useProgram(contourProgram);gl.uniformMatrix4fv(cu.camera,false,matrix);gl.uniform2f(cu.viewport,viewport[2],viewport[3]);
+    gl.disable(gl.CULL_FACE);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
+    for(const {resource,transform,edgeWidth,edgeColor,edgeSensitivity,light} of instances){
+     if(!(edgeWidth>0))continue;
+     gl.uniformMatrix4fv(cu.model,false,transform);gl.uniform1f(cu.width,edgeWidth);gl.uniform1f(cu.sensitivity,edgeSensitivity??.65);
+     gl.uniform3fv(cu.color,studioMiniatureBaseColor(edgeColor||'#202020').slice(0,3).map((v,i)=>v*light[i]));
+     for(const mesh of resource.meshes)if(mesh.contourVao){gl.bindVertexArray(mesh.contourVao);gl.drawArraysInstanced(gl.TRIANGLES,0,6,mesh.contourCount);}
+    }
+   }finally{gl.depthMask(depthMask);gl.blendFuncSeparate(...blendState);if(!blend)gl.disable(gl.BLEND);gl.useProgram(program);}
   }finally{
    gl.bindVertexArray(null);
    gl.activeTexture(gl.TEXTURE0);
    gl.disable(gl.CULL_FACE);
   }
  }
- return {prepare,retain,draw,destroy(){retain(new Set());gl.deleteTexture(white);gl.deleteProgram(program)}};
+ return {prepare,retain,draw,destroy(){retain(new Set());gl.deleteTexture(white);gl.deleteProgram(program);gl.deleteProgram(contourProgram)}};
 }
 
 const studioMiniatureOrientationCache=new WeakMap();
@@ -428,9 +483,9 @@ function studioMiniaturePaintRegion(asset,seed,angle,paint,range=25,cleanup=true
 
 // STL vertices are sequential triangle corners. Mark actual shared creases, not all tessellation edges.
 const studioFeatureCache=new WeakMap();
-function studioMiniatureFeatureMask(p){
+function studioMiniatureContours(p){
  if(studioFeatureCache.has(p))return studioFeatureCache.get(p);
- const v=p.positions,idx=p.indices,mask=new Float32Array(v.length),edges=new Map();
+ const v=p.positions,idx=p.indices,segments=[],edges=new Map();
  const key=i=>[v[i*3],v[i*3+1],v[i*3+2]].join(',');
  for(let i=0;i<idx.length;i+=3){
   const a=idx[i]*3,b=idx[i+1]*3,c=idx[i+2]*3;
@@ -457,7 +512,18 @@ function studioMiniatureFeatureMask(p){
   }
   if(length<span*.025||chain.length<3)continue;
   const score=Math.min(1,length/(span*.18))*.65+Math.min(1,weighted/Math.max(length,1e-9)/1.2)*.35;
-  for(const e of chain)for(const {i,j} of e.list)for(let k=0;k<3;k++)mask[idx[i+k]*3+j]=score;
+  // Walk unbranched paths and smooth interior points, preserving sharp corners.
+  const links=new Map(),unused=new Set(chain);
+  for(const e of chain)for(const k of e.ends){if(!links.has(k))links.set(k,[]);links.get(k).push(e);}
+  const paths=[];
+  const walk=(k,e)=>{const path=[k];while(e&&unused.delete(e)){k=e.ends.find(x=>x!==k);path.push(k);if(links.get(k).length!==2)break;e=links.get(k).find(x=>unused.has(x));}return path;};
+  for(const [k,es] of links)if(es.length!==2)for(const e of es)if(unused.has(e))paths.push(walk(k,e));
+  while(unused.size){const e=unused.values().next().value;paths.push(walk(e.ends[0],e));}
+  for(const path of paths){
+   const points=path.map(k=>k.split(',').map(Number));
+   const smooth=points.map((p,i)=>{if(!i||i===points.length-1)return p;const a=points[i-1],b=points[i+1],u=p.map((x,j)=>x-a[j]),w=b.map((x,j)=>x-p[j]);const dot=u.reduce((sum,x,j)=>sum+x*w[j],0)/(Math.hypot(...u)*Math.hypot(...w)||1);return dot<.5?p:p.map((x,j)=>.75*x+.125*(a[j]+b[j]));});
+   for(let i=1;i<smooth.length;i++)segments.push(...smooth[i-1],...smooth[i],score);
+  }
  }
- studioFeatureCache.set(p,mask);return mask;
+ const data=new Float32Array(segments);studioFeatureCache.set(p,data);return data;
 }
