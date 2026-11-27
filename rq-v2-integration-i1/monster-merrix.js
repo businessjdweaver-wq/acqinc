@@ -24,7 +24,7 @@
    {name:'Potted Plants',effect:'plant-stun',duration:5},
    {name:'Modron March',effect:'plant-tiles',count:1,color:6},
    {name:'Teleport',effect:'teleport'},
-   {name:'Spell Slot Recovery',effect:'cascade',count:3,color:2},
+   {name:'Tidal Weave',effect:'cascade',count:3,color:2},
    {name:'Confusion',effect:'confusion',duration:1}
   ]),
   'merrix-overchannel':Object.freeze([
