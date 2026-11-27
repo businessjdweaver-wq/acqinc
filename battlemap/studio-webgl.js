@@ -765,7 +765,7 @@ function studioWebGLMiniatures(candidates,{showLighting,blockers}){
   const tint=lamp?studioWebGLColor(lamp.tint||'#ffcc80'):[1,1,1];
   const strength=lamp?.strength??0;
   const light=tint.slice(0,3).map(channel=>Math.max(intensity,.45+.55*strength*channel));
-  const height=standeeArtHeight(token)/S*settings.scale;
+  const height=studioMiniatureSizedHeight(asset,settings.rotation,standeeArtHeight(token)/S,token.size,settings.scale,settings.scaleMode);
   const heading=defaultFacingHeading-((trackingFacing(token)??0)+settings.facing)*Math.PI/180;
   const desaturate=!ambient&&!lamp?1:0;
   const base=miniatureBaseSettings(settings);
