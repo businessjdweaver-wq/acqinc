@@ -2608,6 +2608,7 @@ function monsterPattern(p,randomize=false){
 }
 
 const monsterCleansable=['hero-stun','suppression','recurring:damage','delayed:damage','delayed:hero-stun'];
+function randomEligibleMonsterTile(predicate){const pool=tiles.filter(predicate);return pool.length?pool[rnd(pool.length)]:undefined;}
 function selectMonsterAdvanced(kind,a,p,ledger){
  const front=party[frontHero()];
  switch(kind){
@@ -2615,9 +2616,9 @@ function selectMonsterAdvanced(kind,a,p,ledger){
    const template=RQCharacterCatalog.characters.flatMap(hero=>hero.powers).find(power=>power[4]==='vega-'+p.shape);
    return (p.shape!=='archer'||front)&&vegaPatternFit(template[5]);
   }
-  case 'mycelial-network':return tiles.find(tile=>tile?.enemyMycelium?.owner===a)||tiles.find(tile=>mycelialEligible(tile)&&!tile.enemyMycelium);
+  case 'mycelial-network':return tiles.find(tile=>tile?.enemyMycelium?.owner===a)||randomEligibleMonsterTile(tile=>mycelialEligible(tile)&&!tile.enemyMycelium);
   case 'spore-slumber':
-  case 'spore-bloom':return tiles.find(sporeTargetEligible);
+  case 'spore-bloom':return randomEligibleMonsterTile(sporeTargetEligible);
   case 'patron-bargain':return a.bargainRound!==round?a:null;
   case 'patron-hellfire':return front;
   case 'ranked-strike':{
@@ -2629,13 +2630,13 @@ function selectMonsterAdvanced(kind,a,p,ledger){
    return ranks.length>=2?ranks.slice(0,2):null;
   }
   case 'radiant-strike':return front;
-  case 'refill-aura':return tiles.find(t=>t?.auraSentinel?.team==='enemy')||tiles.find(t=>monsterTileEligible(t,'ordinary'));
-  case 'watcher-tile':return !tiles.some(t=>t?.special==='watcher'&&t.specialOwner==='enemy')&&tiles.find(t=>monsterTileEligible(t,'ordinary'));
-  case 'amplify-board-special':return tiles.find(t=>t?.specialOwner==='enemy'&&t.special)||tiles.find(t=>t?.special);
+  case 'refill-aura':return tiles.find(t=>t?.auraSentinel?.team==='enemy')||randomEligibleMonsterTile(t=>monsterTileEligible(t,'ordinary'));
+  case 'watcher-tile':return !tiles.some(t=>t?.special==='watcher'&&t.specialOwner==='enemy')&&randomEligibleMonsterTile(t=>monsterTileEligible(t,'ordinary'));
+  case 'amplify-board-special':return randomEligibleMonsterTile(t=>t?.specialOwner==='enemy'&&t.special);
   case 'salvage-special':return front&&(
    tiles.find(t=>t?.specialOwner==='player'&&t.special&&!t.towerBrazier)||
    tiles.find(t=>t?.special&&!t.towerBrazier));
-  case 'woven-life':return !ledger.active('woven-life').length&&tiles.find(t=>monsterTileEligible(t,'ordinary'));
+  case 'woven-life':return !ledger.active('woven-life').length&&randomEligibleMonsterTile(t=>monsterTileEligible(t,'ordinary'));
   case 'leafspeech':return tiles.find(tile=>tile&&Math.round(
    RQGrimmHester.leafspeechCandidates(tiles,tile,p.range,'player').length*p.percent/100)>0);
   case 'withering-blight':return front&&RQGrimmHester.blight(energy,p.percent,p.damagePerPoint);
@@ -2901,31 +2902,31 @@ function prepareMonsterTestPower(actor,power,handlers){
   const needsEnemySpecial=['amplify-special','consume-special','amplify-board-special','salvage-special'].includes(effect)||
    effect==='tile-pattern'&&step.operation==='propagate'||step.scaling?.metric==='enemy-specials';
   if(needsEnemySpecial&&!handlers['amplify-special'].select()){
-   const tile=tiles.find(t=>monsterTileEligible(t,'ordinary'));
+   const tile=randomEligibleMonsterTile(t=>monsterTileEligible(t,'ordinary'));
    if(tile)handlers['create-special'].apply(actor,{special:'attack',amount:3},tile);
   }
   if(['capture-special','turncoat','grimm-bleed'].includes(effect)&&!handlers[effect].select()){
-   const tile=tiles.find(t=>monsterTileEligible(t,'ordinary'));
+   const tile=randomEligibleMonsterTile(t=>monsterTileEligible(t,'ordinary'));
    if(tile){tile.special='defense';tile.specialOwner='player';tile.specialStrength=3;paint(tile);}
   }
   if(effect==='iris-rewrite'&&!handlers[effect].select(actor,step)){
    const before=moveTotals();actor.hp=Math.max(1,actor.hp-10);recordRewindMove('allied',before);
   }
   if(['iris-lengthen','iris-stop-time'].includes(effect)&&!handlers[effect].select(actor,step)){
-   const tile=tiles.find(t=>monsterTileEligible(t,'ordinary'));
+   const tile=randomEligibleMonsterTile(t=>monsterTileEligible(t,'ordinary'));
    if(tile){tile.trap=2;tile.trapOwner='player';paint(tile);}
   }
   if(effect==='astral-flurry'&&!enemyAstralMatches)enemyAstralMatches=1;
   if(effect==='immovable-object'&&!handlers[effect].select(actor,step)){
-   const tile=tiles.find(t=>monsterTileEligible(t,'ordinary'));
+   const tile=randomEligibleMonsterTile(t=>monsterTileEligible(t,'ordinary'));
    if(tile)handlers['create-special'].apply(actor,{special:'defense',amount:2},tile);
   }
   if(effect==='feed-the-chaos'&&!handlers[effect].select(actor,step)){
-   const tile=tiles.find(t=>monsterTileEligible(t,'ordinary'));
+   const tile=randomEligibleMonsterTile(t=>monsterTileEligible(t,'ordinary'));
    if(tile){tile.special='attack';tile.specialOwner='player';tile.specialStrength=2;paint(tile);}
   }
   if(effect==='twilight-absolution'&&!handlers[effect].select()){
-   const tile=tiles.find(t=>monsterTileEligible(t,'ordinary'));
+   const tile=randomEligibleMonsterTile(t=>monsterTileEligible(t,'ordinary'));
    if(tile){tile.locked=true;paint(tile);}
   }
   if(effect==='cleanse'&&step.team==='monster'&&!handlers.cleanse.select(actor,step)){
@@ -3276,7 +3277,7 @@ function createCombatMonsterHandlers(ledger){
    }
   },
   countdownTarget:a=>ledger.entries().some(e=>e.owner===a&&e.kind==='countdown')?null:
-   tiles.find(t=>monsterTileEligible(t,'ordinary')),
+   randomEligibleMonsterTile(t=>monsterTileEligible(t,'ordinary')),
   addCountdown:(a,p,t)=>{
    const display=remaining=>{t.el.dataset.monsterCountdown=String(remaining);};
    const cleanup=reason=>{
@@ -3347,7 +3348,7 @@ async function activateMonsterPowers(stunnedEnemy,sporeStunned){
   actor.rageBank=(actor.rageBank||0)+actor.ragePending;actor.ragePending=0;
   for(let burst=0;burst<3&&actor.rageBank>=power.threshold;burst++){
    actor.rageBank-=power.threshold;
-   const tile=tiles.find(t=>monsterTileEligible(t,'ordinary'));
+   const tile=randomEligibleMonsterTile(t=>monsterTileEligible(t,'ordinary'));
    if(tile){tile.special='attack';tile.specialOwner='enemy';tile.specialStrength=power.amount;assignEnemyTileLink(tile,index);}
   }
  }
