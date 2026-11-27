@@ -130,8 +130,9 @@ async function localMiniatureLibrary(){
   request.onerror=()=>reject(request.error);
  });
 }
+function miniatureRotationFromControls(){return ['X','Y','Z'].map(a=>Number(el('miniatureRotation'+a).value));}
 function miniatureFields(){
- return ['miniatureMode','miniatureLibrary','miniatureFile','miniatureScale','miniatureFacing',
+ return ['miniatureMode','miniatureLibrary','miniatureFile','miniatureScale','miniatureFacing','miniatureRotationX','miniatureRotationY','miniatureRotationZ',
   'miniatureBaseShape','miniatureBasePattern','miniatureBaseSize','miniatureBaseColor','miniatureBaseRimColor','miniatureBaseRingCount','miniatureBaseRing0','miniatureBaseRing1','miniatureBaseRing2','miniatureDoubleSided','miniatureForceOpaque']
   .map(el);
 }
@@ -145,7 +146,7 @@ function updateMiniatureEditor(){
  for(let i=0;i<3;i++)el('miniatureBaseRing'+i).closest('label').hidden=i>=base.ringCount;
  el('miniatureBaseSizeValue').value=el('miniatureBaseSizeValue').textContent=`${Math.round(base.size*100)}%`;
  if(!enabled)el('miniaturePreview').hidden=true;
- if(enabled&&draft.asset)renderStudioMiniaturePreview(draft.asset,{base,doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked});
+ if(enabled&&draft.asset)renderStudioMiniaturePreview(draft.asset,{base,rotation:miniatureRotationFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked});
 }
 async function openMiniatureEditor(token){
  const panel=el('standeeMiniatures');
@@ -158,6 +159,7 @@ async function openMiniatureEditor(token){
  el('miniatureMode').value='2d';
  el('miniatureScale').value='100';
  el('miniatureFacing').value='0';
+ for(const a of ['X','Y','Z'])el('miniatureRotation'+a).value='0';
  el('miniatureBaseShape').value=miniatureBaseDefault.shape;
  el('miniatureBasePattern').value=miniatureBaseDefault.pattern;
  el('miniatureBaseSize').value=String(miniatureBaseDefault.size*100);
@@ -184,6 +186,7 @@ async function openMiniatureEditor(token){
    el('miniatureMode').value=settings.enabled?'3d':'2d';
    el('miniatureScale').value=String(settings.scale*100);
    el('miniatureFacing').value=String(settings.facing);
+   ['X','Y','Z'].forEach((a,i)=>el('miniatureRotation'+a).value=String(settings.rotation?.[i]??0));
    const base=miniatureBaseSettings(settings);
    el('miniatureBaseShape').value=base.shape;
    el('miniatureBasePattern').value=base.pattern;
@@ -266,7 +269,7 @@ async function saveMiniatureEditor(token){
  if(!await storageReady)throw Error('Browser storage is unavailable.');
  const key=miniatureAssignmentKey(token)??miniatureAssignmentKey({...token,trackingId:crypto.randomUUID()});
  const settings={id:draft.id,enabled,scale:Number(el('miniatureScale').value)/100,facing:Number(el('miniatureFacing').value),
-  base:miniatureBaseFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked};
+  rotation:miniatureRotationFromControls(),base:miniatureBaseFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked};
  if(!Number.isFinite(settings.scale)||settings.scale<.25||settings.scale>3||!Number.isFinite(settings.facing)||Math.abs(settings.facing)>180)
   throw Error('Enter a valid miniature scale and facing offset.');
  const db=await storageReady;
@@ -303,7 +306,7 @@ for(const id of ['miniaturePreviewRotation','miniaturePreviewElevation'])
  el(id).addEventListener('input',updateMiniatureEditor);
 for(const id of ['miniatureBaseSize','miniatureBaseColor','miniatureBaseRimColor','miniatureBaseRing0','miniatureBaseRing1','miniatureBaseRing2'])
  el(id).addEventListener('input',updateMiniatureEditor);
-for(const id of ['miniatureBaseShape','miniatureBaseRingCount','miniatureDoubleSided','miniatureForceOpaque'])
+for(const id of ['miniatureRotationX','miniatureRotationY','miniatureRotationZ','miniatureBaseShape','miniatureBaseRingCount','miniatureDoubleSided','miniatureForceOpaque'])
  el(id).addEventListener('change',updateMiniatureEditor);
 el('miniatureBasePattern').addEventListener('change',updateMiniatureEditor);
 
