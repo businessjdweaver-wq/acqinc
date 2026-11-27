@@ -159,10 +159,10 @@ function createStudioMiniaturePass(gl, compile) {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,elements);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,primitive.indices,gl.STATIC_DRAW);
     if(asset.sourceTriangles){
-     const data=studioMiniatureContours(primitive);
+     const data=studioMiniatureContours(primitive,0);mesh.contourLevel=0;
      mesh.contourCount=data.length/7;
-     if(mesh.contourCount){mesh.contourVao=gl.createVertexArray();gl.bindVertexArray(mesh.contourVao);
-      const buffer=gl.createBuffer();resource.buffers.push(buffer);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
+     {mesh.contourVao=gl.createVertexArray();gl.bindVertexArray(mesh.contourVao);
+      const buffer=mesh.contourBuffer=gl.createBuffer();resource.buffers.push(buffer);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,data,gl.DYNAMIC_DRAW);
       for(const [loc,size,offset] of [[0,3,0],[1,3,12],[2,1,24]]){gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,28,offset);gl.vertexAttribDivisor(loc,1);}
      }
     }
@@ -223,11 +223,11 @@ function createStudioMiniaturePass(gl, compile) {
    try{
     gl.useProgram(contourProgram);gl.uniformMatrix4fv(cu.camera,false,matrix);gl.uniform2f(cu.viewport,viewport[2],viewport[3]);
     gl.disable(gl.CULL_FACE);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
-    for(const {resource,transform,edgeWidth,edgeColor,edgeSensitivity,light} of instances){
+    for(const {resource,transform,edgeWidth,edgeColor,edgeSensitivity,edgeSmoothing,light} of instances){
      if(!(edgeWidth>0))continue;
      gl.uniformMatrix4fv(cu.model,false,transform);gl.uniform1f(cu.width,edgeWidth);gl.uniform1f(cu.sensitivity,edgeSensitivity??.65);
      gl.uniform3fv(cu.color,studioMiniatureBaseColor(edgeColor||'#202020').slice(0,3).map((v,i)=>v*light[i]));
-     for(const mesh of resource.meshes)if(mesh.contourVao){gl.bindVertexArray(mesh.contourVao);gl.drawArraysInstanced(gl.TRIANGLES,0,6,mesh.contourCount);}
+     for(const mesh of resource.meshes)if(mesh.contourVao){const level=Math.round(Math.max(0,Math.min(1,edgeSmoothing??.6))*10)/10;if(mesh.contourLevel!==level){const data=studioMiniatureContours(mesh.primitive,level);gl.bindBuffer(gl.ARRAY_BUFFER,mesh.contourBuffer);gl.bufferData(gl.ARRAY_BUFFER,data,gl.DYNAMIC_DRAW);mesh.contourCount=data.length/7;mesh.contourLevel=level;}gl.bindVertexArray(mesh.contourVao);gl.drawArraysInstanced(gl.TRIANGLES,0,6,mesh.contourCount);}
     }
    }finally{gl.depthMask(depthMask);gl.blendFuncSeparate(...blendState);if(!blend)gl.disable(gl.BLEND);gl.useProgram(program);}
   }finally{
@@ -401,7 +401,7 @@ function studioMiniatureBaseInstance(pass,asset,base,[x,y,z],footprint,heading,l
 function studioMiniatureBaseHeight(footprint){return Math.min(.18,footprint*.075)}
 
 let studioMiniaturePreview=null;
-function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor,edgeSensitivity,modelScale=1,scaleMode='height',footprint=1,referenceHeight=1.35}={}){
+function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor,edgeSensitivity,edgeSmoothing,modelScale=1,scaleMode='height',footprint=1,referenceHeight=1.35}={}){
  const canvas=el('miniaturePreview');
  try{
   if(!studioMiniaturePreview){
@@ -438,7 +438,7 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
   const lift=baseAsset?studioMiniatureBaseHeight(baseFootprint):0;
   const instances=[];
   if(baseAsset)instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,[0,0,0],baseFootprint,heading,light,desaturate));
-  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth:edgeWidth*pixelScale,edgeColor,edgeSensitivity});
+  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth:edgeWidth*pixelScale,edgeColor,edgeSensitivity,edgeSmoothing});
   studioMiniaturePreview.pick={asset,camera,model:instances.at(-1).transform};
   pass.draw(camera,instances);
   canvas.hidden=false;
@@ -488,9 +488,9 @@ function studioMiniaturePaintRegion(asset,seed,angle,paint,range=25,cleanup=true
 
 // STL vertices are sequential triangle corners. Mark actual shared creases, not all tessellation edges.
 const studioFeatureCache=new WeakMap();
-function studioMiniatureContours(p){
- if(studioFeatureCache.has(p))return studioFeatureCache.get(p);
- const v=p.positions,idx=p.indices,segments=[],edges=new Map();
+function studioMiniatureContours(p,level=0){
+ let variants=studioFeatureCache.get(p);if(!variants){variants=new Map();studioFeatureCache.set(p,variants);}if(variants.has(level))return variants.get(level);
+ const v=p.positions,idx=p.indices,segments=[],edges=new Map(),allPaths=[];
  const key=i=>[v[i*3],v[i*3+1],v[i*3+2]].join(',');
  for(let i=0;i<idx.length;i+=3){
   const a=idx[i]*3,b=idx[i+1]*3,c=idx[i+2]*3;
@@ -537,8 +537,37 @@ function studioMiniatureContours(p){
     const delta=q.map((x,j)=>x-points[i][j]),d=Math.hypot(...delta),limit=span*.0015;
     return d>limit?points[i].map((x,j)=>x+delta[j]*limit/d):q;
    });
-   for(let i=1;i<smooth.length;i++)segments.push(...smooth[i-1],...smooth[i],score);
+   allPaths.push({points:smooth,score});
   }
  }
- const data=new Float32Array(segments);studioFeatureCache.set(p,data);return data;
+ const dist=(a,b)=>Math.hypot(...a.map((x,j)=>x-b[j]));
+ const length=p=>p.slice(1).reduce((sum,x,i)=>sum+dist(x,p[i]),0);
+ const dot=(a,b)=>a.reduce((sum,x,j)=>sum+x*b[j],0)/(Math.hypot(...a)*Math.hypot(...b)||1);
+ const sub=(a,b)=>a.map((x,j)=>x-b[j]);
+ let paths=allPaths.filter(p=>level===0||length(p.points)>=span*(.003+.012*level));
+ // Spatially bucket endpoints; bridge only mutually facing, nearby open paths.
+ if(level>0){
+ const gap=span*.012*level, bins=new Map(),key=p=>p.map(x=>Math.floor(x/gap));
+ for(const path of paths){if(dist(path.points[0],path.points.at(-1))<1e-9)continue;for(const end of [0,1]){const p=end?path.points.at(-1):path.points[0],k=key(p).join(',');if(!bins.has(k))bins.set(k,[]);bins.get(k).push({path,end,p});}}
+ const used=new Set();
+ for(const entries of bins.values())for(const a of entries){if(used.has(a.path))continue;const k=key(a.p);let best=null,bd=gap;
+ const tangent=e=>sub(e.p,e.end?e.path.points.at(-2):e.path.points[1]);
+ for(let x=-1;x<=1;x++)for(let y=-1;y<=1;y++)for(let z=-1;z<=1;z++)for(const b of bins.get([k[0]+x,k[1]+y,k[2]+z].join(','))||[]){if(a.path===b.path||used.has(b.path))continue;const d=dist(a.p,b.p),v=sub(b.p,a.p);if(d>1e-9&&d<bd&&dot(tangent(a),v)>.65&&dot(tangent(b),v)<-.65){best=b;bd=d;}}
+ if(best){used.add(a.path);used.add(best.path);const ap=a.end?a.path.points:[...a.path.points].reverse(),bp=best.end?[...best.path.points].reverse():best.path.points;paths.push({points:[...ap,...bp],score:Math.min(a.path.score,best.path.score)});}
+ }
+ paths=paths.filter(p=>!used.has(p));
+ }
+ for(const path of paths){let pts=path.points;
+ if(level>0){
+ // Corner-aware quadratic interpolation with bounded displacement.
+ const out=[pts[0]];
+ for(let i=1;i<pts.length-1;i++){const a=pts[i-1],p=pts[i],b=pts[i+1];if(dot(sub(p,a),sub(b,p))<-.15){out.push(p);continue;}
+ const t=Math.min(.45*level,span*.0025/Math.max(dist(a,p),dist(b,p),1e-9));
+ const q=p.map((x,j)=>x+(a[j]-x)*t),r=p.map((x,j)=>x+(b[j]-x)*t);
+ for(let k=0;k<=3;k++){const u=k/3;out.push(q.map((x,j)=>(1-u)**2*x+2*u*(1-u)*p[j]+u*u*r[j]));}}
+ out.push(pts.at(-1));pts=out;
+ }
+ for(let i=1;i<pts.length;i++)segments.push(...pts[i-1],...pts[i],path.score);
+ }
+ const data=new Float32Array(segments);if(variants.size>=3)variants.delete(variants.keys().next().value);variants.set(level,data);return data;
 }
