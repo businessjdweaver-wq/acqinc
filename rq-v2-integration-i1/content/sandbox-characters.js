@@ -2,7 +2,7 @@
   'use strict';
 
   const catalog = root.RQCharacterCatalog;
-  const { planRegistry, loadRegistry, approvedSpritePaths } = root.RQContentRegistry;
+  const { planRegistry, loadRegistry, approvedSpritePaths, creatureSizeMetadata } = root.RQContentRegistry;
 
   async function readJson(path) {
     const response = await fetch(root.RQRelease.url(path), { redirect: 'error' });
@@ -35,6 +35,7 @@
         enemyParties.set(record.id, {
           ...record,
           foes: record.combatants.map(enemy => ({
+            ...creatureSizeMetadata(enemy),
             name: enemy.name, max: enemy.hp, icon: record.ai === 'monster' ? '⚔️' : '🪙',
             sandboxSprite: sprites.get(enemy.spriteId), sandboxPower: enemy.power, sandboxPowers: enemy.powers || (record.ai === 'monster' ? [enemy.power] : undefined)
           }))
@@ -46,6 +47,7 @@
 
   function combatTemplate(record, spritePath) {
     return {
+      ...creatureSizeMetadata(record),
       name: record.name,
       icon: '🧪',
       background: record.background,

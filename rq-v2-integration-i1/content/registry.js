@@ -31,6 +31,20 @@ function oneOf(value, choices, location) {
   requireValue(choices.includes(value), location, `expected one of ${choices.join(', ')}`);
 }
 
+const creatureSizeScales = Object.freeze({ tiny: .35, small: .70, medium: 1, large: 1.35, huge: 1.65, gargantuan: 1.95 });
+function validateCreatureSize(record, location) {
+  if (Object.hasOwn(record, 'creatureSize')) oneOf(record.creatureSize, Object.keys(creatureSizeScales), location + '.creatureSize');
+  if (Object.hasOwn(record, 'visualScale')) requireValue(Number.isFinite(record.visualScale) && record.visualScale >= .5 && record.visualScale <= 2, location + '.visualScale', 'expected a finite number from 0.5 to 2');
+}
+function creatureSizeMetadata(record = {}) {
+  validateCreatureSize(record, 'creature');
+  return { creatureSize: record.creatureSize ?? 'medium', visualScale: record.visualScale ?? 1 };
+}
+function creatureSizeMultiplier(record) {
+  const { creatureSize, visualScale } = creatureSizeMetadata(record);
+  return creatureSizeScales[creatureSize] * visualScale;
+}
+
 function integer(value, min, max, location) {
   requireValue(Number.isSafeInteger(value) && value >= min && value <= max,
     location, `expected an integer from ${min} to ${max}`);
@@ -62,7 +76,8 @@ function validateEffect(effect, location) {
 
 function validateCharacter(record, location, approvedSprites) {
   object(record, ['schemaVersion', 'kind', 'id', 'name', 'background', 'subclass', 'rarity',
-    'spriteId', 'baseHp', 'progression', 'visibility', 'recruitment', 'powers'], location);
+    'spriteId', 'baseHp', 'progression', 'visibility', 'recruitment', 'powers'], location, ['creatureSize', 'visualScale']);
+  validateCreatureSize(record, location);
   for (const field of ['background', 'subclass']) displayText(record[field], `${location}.${field}`);
   integer(record.rarity, 1, 2, `${location}.rarity`);
   integer(record.baseHp, 1, 10000, `${location}.baseHp`);
@@ -130,7 +145,8 @@ function validateEnemyParty(record, location, approvedSprites) {
   const combatantIds = new Set();
   for (const [index, enemy] of record.combatants.entries()) {
     const path = `${location}.combatants[${index}]`;
-    object(enemy, ['id', 'name', 'spriteId', 'hp', 'rank', record.ai === 'monster' && Object.hasOwn(enemy,'powers') ? 'powers' : 'power'], path);
+    object(enemy, ['id', 'name', 'spriteId', 'hp', 'rank', record.ai === 'monster' && Object.hasOwn(enemy,'powers') ? 'powers' : 'power'], path, ['creatureSize', 'visualScale']);
+    validateCreatureSize(enemy, path);
     id(enemy.id, `${path}.id`);
     requireValue(!combatantIds.has(enemy.id), `${path}.id`, 'duplicate combatant ID');
     combatantIds.add(enemy.id);
@@ -400,5 +416,5 @@ function loadRegistry(manifest, readRecord, approvedSprites, reservedIds) {
   return records;
 }
 
-return { loadRegistry, planRegistry, resolveLegacyPower, approvedSpritePaths, directories };
+return { loadRegistry, planRegistry, resolveLegacyPower, approvedSpritePaths, directories, creatureSizeScales, creatureSizeMetadata, creatureSizeMultiplier };
 });
