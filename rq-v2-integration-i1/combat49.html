@@ -1328,6 +1328,17 @@ function reshufflePreservingTiles(){
  tiles=original;original.forEach((t,i)=>{if(t){t.r=Math.floor(i/8);t.c=i%8;place(t);paint(t);}});
  return false;
 }
+function showBlightDrain(result,enemyCast=false){
+ const zone=$('combatFormationZone');if(!zone||!result?.drains?.length)return;
+ zone.querySelector('.blight-drain-overlay')?.remove();
+ const panel=document.createElement('div');panel.className='blight-drain-overlay';panel.setAttribute('role','status');
+ panel.style.cssText='position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:30;pointer-events:none;background:#142033f5;border:1px solid #91a3bc;border-radius:10px;padding:8px 12px;color:white;text-align:center;box-shadow:0 4px 14px #0009;width:max-content;max-width:92%;transition:opacity .3s';
+ const heading=document.createElement('b');heading.textContent=(enemyCast?'Enemy ':'')+'Withering Blight';panel.append(heading);
+ const row=document.createElement('div');row.style.cssText='display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin:6px 0';
+ for(const d of result.drains){const item=document.createElement('span');item.style.cssText='display:inline-flex;align-items:center;gap:4px;font-weight:900;font-size:15px';const swatch=document.createElement('span');swatch.style.cssText='width:14px;height:14px;border:1px solid #ffffff88;border-radius:3px;background:'+C[d.color];item.append(swatch,document.createTextNode('−'+d.destroyed+' '+labels[d.color]));row.append(item);}
+ panel.append(row);const total=document.createElement('small');total.textContent=result.destroyed+' energy drained · '+result.damage+' damage';panel.append(total);zone.append(panel);
+ setTimeout(()=>{panel.style.opacity='0';setTimeout(()=>panel.remove(),320);},1800);
+}
 function banner(text){let e=document.createElement('div');e.className='banner';e.textContent=text;overlay.appendChild(e);setTimeout(()=>e.remove(),1250*speed);}function float(el,text,color='#ff7777',anchorY=.5,compact=false){if(!el)return;const target=el.matches?.('[data-member],[data-enemy]')?((spritePreviewEnabled?document.querySelector('#spriteStage .sprite-figure[data-sprite-'+(el.hasAttribute('data-member')?'hero':'enemy')+'="'+(el.dataset.member??el.dataset.enemy)+'"] img'):null)||document.querySelector('#combatArtStage .combat-art-unit[data-art-'+(el.hasAttribute('data-member')?'hero':'enemy')+'="'+(el.dataset.member??el.dataset.enemy)+'"]')||el):el;const rect=target.getBoundingClientRect();let f=document.createElement('span');f.className=compact?'combat-float combat-float--compact':'combat-float';f.textContent=text;f.style.color=color;f.style.left=(rect.left+rect.width/2)+'px';f.style.top=(rect.top+rect.height*anchorY)+'px';document.body.appendChild(f);setTimeout(()=>f.remove(),1600);}function targetable(p){return p.hp>0&&!p.away;}function frontHero(){return heroOrder.map(i=>i).reverse().find(i=>targetable(party[i]));}function frontEnemy(){return enemyOrder.slice().reverse().find(i=>!!enemies[i]&&targetable(enemies[i]));}
 function clearDefeatedAntagonistTiles(index){let count=0;for(const t of tiles){if(!t||t.linkedEnemy!==index||t.independent)continue;if(t.trap>0&&t.trapOwner!=='player'){t.trap=0;t.trapOwner=null;t.fresh=false;delete t.irisExtension;count++;}if(t.rat){t.rat=false;count++;}if(t.special&&t.specialOwner==='enemy'){t.special=null;t.specialOwner=null;t.specialStrength=1;count++;}t.linkedEnemy=null;if(t.bleedOut&&!(t.bleedOut.team==='enemy'?RQGrimmCorvinEnemies.bleedEligible(t):eligibleBleedOut(t)))RQGrimmHester.clearBleedOut(t);paint(t);}if(count){say(enemies[index].name+' defeated: '+count+' linked effects fade.');banner('LINKED EFFECTS FADE!');}return count;}
 function assignEnemyTileLink(t,enemyIndex,independent=false){t.linkedEnemy=Number.isInteger(enemyIndex)?enemyIndex:null;t.independent=!!independent;paint(t);}
@@ -2861,6 +2872,7 @@ async function applyMonsterAdvanced(kind,a,p,t,ledger,stunHero){
   }
   case 'withering-blight':
    for(const d of t.drains)energy[d.color]-=d.destroyed;
+   showBlightDrain(t,true);
    damageParty(t.damage,{fixedDamage:true});
    say(p.name+' destroys '+t.destroyed+' energy ('+t.drains.map(d=>d.destroyed+' '+labels[d.color]).join(', ')+') and deals '+t.damage+' damage.');
    break;
@@ -4735,6 +4747,7 @@ async function castNewHeroPower(i,j,t=null){
    await resolve('player',null,null,null,{clearMatchFourLines:false});
   }else if(type==='hester-blight'){
    for(const d of blight.drains)enemyEnergy[d.color]-=d.destroyed;
+   showBlightDrain(blight);
    await powerFlash(i,'🥀');
    damageEnemy(blight.damage,enemy,{fixedDamage:true});
    say('Withering Blight destroys '+blight.destroyed+' energy ('+blight.drains.map(d=>d.destroyed+' '+labels[d.color]).join(', ')+') and deals '+blight.damage+' damage.');
