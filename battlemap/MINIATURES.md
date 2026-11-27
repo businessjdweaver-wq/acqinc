@@ -18,7 +18,8 @@ standee. Other players on separate devices see the scene's 2D appearance.
 The GM can customize miniature bases, and players can edit bases for their
 assigned standees. In the 3D appearance editor, choose a round or square base,
 then set its size relative to the standee's footprint and pick the surface and
-rim colors. This base is decorative. Leaving the shape off displays the model
+rim colors. The surface options include dungeon stone, sand, snow, and
+grassland. Surface color tints these original [CC0 patterns](https://creativecommons.org/publicdomain/zero/1.0/). This base is decorative. Leaving the shape off displays the model
 with any base already built into its geometry. An added base sits underneath
 the model, including any built-in base. Appearance settings are stored on the
 current device.

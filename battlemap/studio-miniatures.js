@@ -154,10 +154,62 @@ function studioMiniatureTransform(asset,[x,y,z],height,heading,centerOnGround=fa
  ]);
 }
 
-// Two procedural meshes shared by all miniature bases on a WebGL canvas.
+// Original procedural textures shared between round and square bases.
+const studioMiniatureBaseTextures=new Map();
+function studioMiniatureBaseTexture(pattern){
+ if(pattern==='solid')return null;
+ if(studioMiniatureBaseTextures.has(pattern))return studioMiniatureBaseTextures.get(pattern);
+ const canvas=document.createElement('canvas');
+ const size=128;
+ canvas.width=canvas.height=size;
+ const ctx=canvas.getContext('2d');
+ const palette={
+  stone:['#4e4d4d','#9b9890','#777873'],
+  sand:['#c59c64','#e9cb8c','#946f43'],
+  snow:['#e9f1f5','#ffffff','#a3bccc'],
+  grass:['#566b33','#8b9d4e','#344822']
+ }[pattern];
+ if(!palette)return null;
+ let state=29;
+ const random=()=>{
+  state=(Math.imul(state,1664525)+1013904223)>>>0;
+  return state/4294967296;
+ };
+ ctx.fillStyle=palette[0];ctx.fillRect(0,0,size,size);
+ if(pattern==='stone'){
+  for(let row=0;row<5;row++)for(let x=row%2?-15:0;x<size;x+=30){
+   const y=row*26;
+   ctx.fillStyle=palette[1];ctx.fillRect(x+1,y+1,28,24);
+   ctx.fillStyle=palette[2];ctx.fillRect(x+2,y+3,26,21);
+  }
+ }else{
+  for(let i=0;i<9;i++){
+   const y=i*17;
+   ctx.beginPath();ctx.moveTo(-16,y);
+   ctx.bezierCurveTo(24,y-12,69,y+14,size+16,y-4);
+   ctx.strokeStyle=palette[1];ctx.globalAlpha=pattern==='grass'?.14:.34;
+   ctx.lineWidth=pattern==='snow'?8:pattern==='sand'?3:5;
+   ctx.stroke();
+  }
+ }
+ ctx.globalAlpha=.45;
+ for(let i=0;i<850;i++){
+  const x=random()*size,y=random()*size,n=random();
+  ctx.fillStyle=palette[n<.5?1:2];
+  if(pattern==='grass'){
+   ctx.fillRect(x,y,1+n*1.6,2+n*4);
+  }else ctx.fillRect(x,y,1+n*1.7,1+n*.8);
+ }
+ ctx.globalAlpha=1;
+ studioMiniatureBaseTextures.set(pattern,canvas);
+ return canvas;
+}
+
 const studioMiniatureBases=new Map();
-function studioMiniatureBaseAsset(shape){
- if(studioMiniatureBases.has(shape))return studioMiniatureBases.get(shape);
+function studioMiniatureBaseAsset(shape,pattern='solid'){
+ const key=shape+':'+pattern;
+ if(studioMiniatureBases.has(key))return studioMiniatureBases.get(key);
+ const texture=studioMiniatureBaseTexture(pattern);
  const top={positions:[],normals:[]},rim={positions:[],normals:[]};
  const sides=shape==='square'?4:32;
  const corners=Array.from({length:sides},(_,i)=>{
@@ -186,11 +238,13 @@ function studioMiniatureBaseAsset(shape){
  const primitives=[top,rim].map(({positions,normals},colorSlot)=>({
   positions:new Float32Array(positions),normals:new Float32Array(normals),
   indices:Uint32Array.from({length:positions.length/3},(_,i)=>i),
-  material:{image:-1,baseColor:[1,1,1,1],doubleSided:true},
+  texcoords:colorSlot===0&&texture?Float32Array.from(
+   Array.from({length:positions.length/3},(_,i)=>[.5+positions[i*3],.5+positions[i*3+2]]).flat()):null,
+  material:{image:colorSlot===0&&texture?0:-1,baseColor:[1,1,1,1],doubleSided:true},
   colorSlot
  }));
- const asset={primitives,bitmaps:[]};
- studioMiniatureBases.set(shape,asset);
+ const asset={primitives,bitmaps:texture?[texture]:[]};
+ studioMiniatureBases.set(key,asset);
  return asset;
 }
 function studioMiniatureBaseColor(hex){
@@ -200,8 +254,10 @@ function studioMiniatureBaseColor(hex){
 function studioMiniatureBaseInstance(pass,asset,base,[x,y,z],footprint,heading,light,desaturate){
  const width=footprint*.85*base.size,thickness=studioMiniatureBaseHeight(footprint);
  const c=Math.cos(heading)*width,s=Math.sin(heading)*width;
+ const color=studioMiniatureBaseColor(base.color);
+ const surfaceColor=base.pattern!=='solid'?color.map(value=>.75+.25*value):color;
  return {resource:pass.prepare(asset),light,desaturate,
-  colors:[studioMiniatureBaseColor(base.color),studioMiniatureBaseColor(base.rimColor)],
+  colors:[surfaceColor,studioMiniatureBaseColor(base.rimColor)],
   transform:new Float32Array([c,s,0,0, 0,0,thickness,0, s,-c,0,0, x,y,z+.002,1])};
 }
 function studioMiniatureBaseHeight(footprint){return Math.min(.18,footprint*.075)}
@@ -230,7 +286,7 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided}={}){
   const c=Math.cos(pitch),s=Math.sin(pitch);
   const camera=new Float32Array([.65,0,0,0, 0,-.85*s,-.3*c,0,
    0,.85*c,-.3*s,0, 0,-height*.425*c,0,1]);
-  const baseAsset=base?.shape&&base.shape!=='off'?studioMiniatureBaseAsset(base.shape):null;
+  const baseAsset=base?.shape&&base.shape!=='off'?studioMiniatureBaseAsset(base.shape,base.pattern):null;
   pass.retain(new Set(baseAsset?[asset,baseAsset]:[asset]));
   const resource=pass.prepare(asset);
   gl.viewport(0,0,canvas.width,canvas.height);

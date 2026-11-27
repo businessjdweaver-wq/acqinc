@@ -770,7 +770,7 @@ function studioWebGLMiniatures(candidates,{showLighting,blockers}){
   const desaturate=!ambient&&!lamp?1:0;
   const base=miniatureBaseSettings(settings);
   if(base.shape!=='off'){
-   const baseAsset=studioMiniatureBaseAsset(base.shape);
+   const baseAsset=studioMiniatureBaseAsset(base.shape,base.pattern);
    baseAssets.add(baseAsset);
    instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,point,token.size,heading,light,desaturate));
    point[2]+=studioMiniatureBaseHeight(token.size);
