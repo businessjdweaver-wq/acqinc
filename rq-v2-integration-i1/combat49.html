@@ -2038,9 +2038,10 @@ const merrixPottedPlantSvg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0
 </g></svg>`;
 const merrixPottedPlantUrl='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(merrixPottedPlantSvg);
 function merrixPlantVisuals(){
- for(const el of document.querySelectorAll('[data-sprite-enemy],[data-art-enemy]')){
-  const index=Number(el.dataset.spriteEnemy??el.dataset.artEnemy);
-  const active=((merrixPlantTurns.get(index)||0)>0||merrixPlantLastTurn.has(index))&&enemies[index]?.hp>0;
+ for(const el of document.querySelectorAll('[data-sprite-enemy],[data-art-enemy],[data-sprite-hero],[data-art-hero]')){
+  const enemy=(el.dataset.spriteEnemy??el.dataset.artEnemy)!==undefined;
+  const index=Number(el.dataset.spriteEnemy??el.dataset.artEnemy??el.dataset.spriteHero??el.dataset.artHero);
+  const active=enemy?((merrixPlantTurns.get(index)||0)>0||merrixPlantLastTurn.has(index))&&enemies[index]?.hp>0:party[index]?.hp>0&&!!monsterStatusLedger?.active('hero-stun',party[index]).some(status=>status.plant);
   el.classList.toggle('merrix-potted',active);
   let pot=el.querySelector('.merrix-plant-overlay');
   if(active&&!pot){pot=document.createElement('img');pot.className='merrix-plant-overlay';pot.src=merrixPottedPlantUrl;pot.alt='Potted plant — stunned';pot.title='Wild Magic: potted plant (stunned)';el.appendChild(pot);}
@@ -2080,6 +2081,7 @@ function markCombatSprites(){
   const enemy=enemyIndex!==undefined;
   const index=Number(enemyIndex??el.dataset.spriteHero??el.dataset.artHero);
   const status=combatStatus((enemy?enemies:party)[index],enemy,index);
+  if(!enemy)el.classList.toggle('merrix-confused-facing',enemyMerrixConfusion?.round===round&&index===frontHero());
   el.classList.toggle('combat-status-invisible',status==='invisible');
   el.classList.toggle('combat-status-stunned',status==='stunned');
   if(enemy){
@@ -3169,7 +3171,7 @@ function createCombatMonsterHandlers(ledger){
      case 'restore':for(const color of outcome.colors)enemyEnergy[color]=Math.max(enemyEnergy[color],outcome.cap);break;
      case 'extra':await swap(...target);if(!ended)await resolve('enemy',swapAttackColor(...target),...target);break;
      case 'sheep':await extraHandlers['unstoppable-charge'].apply(actor,{amount:12},juggernautChargeTargets(target,1));break;
-     case 'plant-stun':await extraHandlers['corvin-echo'].apply(actor,{delay:outcome.duration,stun:1},target);break;
+     case 'plant-stun':{await extraHandlers['corvin-echo'].apply(actor,{delay:outcome.duration,stun:1},target);const hero=party[frontHero()];const status=ledger.active('hero-stun',hero)[0];if(status)status.plant=true;break;}
      case 'plant-tiles':
       target.v=outcome.color;target.merrixFlavor='plant';paint(target);await resolve('enemy');break;
      case 'teleport':reshufflePreservingTiles();break;
@@ -3179,6 +3181,8 @@ function createCombatMonsterHandlers(ledger){
      case 'confusion':enemyMerrixConfusion={round:round+1,target};break;
      case 'missile':damageParty(outcome.damage,{areaTarget:target});break;
      case 'fireball':
+      for(const id of heroOrder.filter(i=>targetable(party[i])))flyCombatEffect(combatSpriteTarget('enemy',enemies.indexOf(actor)),combatSpriteTarget('hero',id),'🔥','#ff8b19');
+      await wait(300);
       damageAll(outcome.damage);
       if(!ended&&actor.hp>0)damageEnemy(Math.ceil(outcome.damage*outcome.selfBacklash),enemies.indexOf(actor),{fixedDamage:true});
       break;
@@ -3189,9 +3193,9 @@ function createCombatMonsterHandlers(ledger){
       break;
      }
      case 'lightning':
-      for(const tile of tiles.filter(t=>t?.r===target.r&&!t.locked&&!t.towerBrazier&&!t.groveRoot)){
-       if(tile.effectFortified){tile.effectFortified=false;paint(tile);}
-       else await collapseRemovedTile(tile,true);
+      for(const tile of tiles.filter(t=>t?.r===target.r&&juggernautChargeEligible(t))){
+       if(tile.effectFortified||tile.fortifyLayers){tile.effectFortified=false;tile.fortifyLayers=0;paint(tile);}
+       else if(!tile.special&&!tile.returnShield)await collapseRemovedTile(tile,true);
       }
       break;
      case 'butterflies':
