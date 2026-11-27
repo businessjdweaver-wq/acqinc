@@ -94,7 +94,7 @@ const characters=[
  characters.push({name:'Hester · Witch (Mystic)',icon:'🦉',background:'Hermit',baseHp:182,spriteKey:'hester',powers:[
   ['Woven Life',2,8,'Reduce incoming damage and share the remainder across conscious allies.','hester-woven',{costs:[8,8,8,7],duration:[3,3,4,4],reduction:[15,20,25,30]}],
   ['Leafspeech',1,7,'Transform eligible tiles above a selected tile into green and resolve matches.','hester-leaf',{costs:[7,7,7,6],range:[4,5,6,7],percent:[50,60,70,80],cap:[2,3,4,6]}],
-  ['Withering Blight',4,7,'Destroy enemy energy and damage the front enemy for each point destroyed.','hester-blight',{costs:[7,7,7,6],percent:[30,40,50,60],damage:[3,4,5,6],pools:[2,3,4,99]}]
+  ['Withering Blight',4,7,'Destroy enemy energy and damage the front enemy for each point destroyed.','hester-blight',{costs:[7,7,7,6],percent:[30,40,50,60],damage:[3,4,5,6],pools:[2,3,4,99],caps:[3,4,5,6]}]
  ]});
 }
 const cardTitles=['Scholar','Farmer','Entertainer','Locksmith','Veteran','Wayfarer','Artificer','Swarmkeeper','Saboteur','Warden','Chronomancer','Illusionist','Twilight Cleric','Fungus Druid','Juggernaut Barbarian','Astral Self Monk','Battle Master Fighter','Fiend Warlock','Whispers Bard','Wild Magic Sorcerer','Oath of the Watchers Paladin','Circle of Stars Druid','Beast Master Ranger','Soulknife Rogue','Blood Hunter','Witch (Mystic)'];characters.forEach((c,i)=>{c.rosterTitle=c.rosterTitle||(i===13?'Shroomkeeper':cardTitles[i]);c.cardTitle=c.cardTitle||cardTitles[i];c.starTier=i<6?1:2;if(i>=6)c.max=c.baseHp??Math.round(c.max*1.9);}); // Excess-card character levels: tier baselines are 1 and 100, respectively.
@@ -128,7 +128,7 @@ function grimmHesterPowerDetail(power,level){
   case 'grimm-bleed':return 'Lock one hostile special tile or enemy countdown and deal '+p.damage[n]+' damage per round to its owner, or the current front enemy if team-owned. Convert up to '+p.conversions[n]+' orthogonally adjacent ordinary tiles to red per round.';
   case 'hester-woven':return 'Create one countdown for '+p.duration[n]+' rounds. After normal mitigation, reduce the hit by '+p.reduction[n]+'% and divide the remainder evenly.';
   case 'hester-leaf':return 'Convert '+p.percent[n]+'% of eligible tiles up to '+p.range[n]+' spaces above the selection to green (maximum '+p.cap[n]+'). Includes enemy specials and locked or fortified tiles. Matches cascade without full-row or full-column clears.';
-  case 'hester-blight':return 'Destroy '+p.percent[n]+'% of the enemy’s '+(p.pools[n]===99?'stored energy across all colors':p.pools[n]+' largest stored color pools')+' (rounded down per pool), then deal '+p.damage[n]+' damage per point destroyed to the front enemy.';
+  case 'hester-blight':return 'Destroy '+p.percent[n]+'% of the enemy’s '+(p.pools[n]===99?'stored energy across all colors':p.pools[n]+' largest stored color pools')+' (rounded down per pool), up to '+p.caps[n]+' total energy, then deal '+p.damage[n]+' damage per point destroyed to the front enemy.';
   default:return null;
  }
 }
