@@ -112,7 +112,7 @@ function encodeUnityMiniatureGlb(glb,png,nodes,color,cutoff){
  json.bufferViews.push({buffer:0,byteOffset:geometry.length,byteLength:png.length});
  json.images=[{bufferView:view,mimeType:'image/png'}];
  json.textures=[{source:0}];
- json.materials=[{pbrMetallicRoughness:{baseColorFactor:color,baseColorTexture:{index:0}},
+ json.materials=[{doubleSided:true,pbrMetallicRoughness:{baseColorFactor:color,baseColorTexture:{index:0}},
   ...(cutoff===null?{}:{alphaMode:'MASK',alphaCutoff:cutoff})}];
  for(const primitive of json.meshes[0].primitives){
   if(primitive.attributes.TEXCOORD_0===undefined)throw unityBundleError('The mesh is missing texture coordinates.');
