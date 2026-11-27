@@ -8,6 +8,9 @@ function createStudioMiniaturePass(gl, compile) {
  layout(location=2) in vec2 uv;
  layout(location=3) in vec4 paintColor;
  out vec4 surfacePaint;
+ layout(location=4) in vec3 featureMask;
+ flat out vec3 edgeMask;
+ out vec3 bary;
  uniform mat4 camera;
  uniform mat4 model;
  out vec3 worldNormal;
@@ -15,7 +18,8 @@ function createStudioMiniaturePass(gl, compile) {
  void main(){
   gl_Position=camera*model*vec4(position,1.);
   worldNormal=mat3(model)*normal;
-  texCoord=uv;surfacePaint=paintColor;
+  texCoord=uv;surfacePaint=paintColor;edgeMask=featureMask;
+  int k=gl_VertexID%3;bary=vec3(k==0?1.:0.,k==1?1.:0.,k==2?1.:0.);
  }`);
  const fragment=compile(gl.FRAGMENT_SHADER,`#version 300 es
  precision highp float;
@@ -32,6 +36,8 @@ function createStudioMiniaturePass(gl, compile) {
  in vec3 worldNormal;
  in vec2 texCoord;
  in vec4 surfacePaint;
+ flat in vec3 edgeMask;
+ in vec3 bary;
  out vec4 pixel;
  vec3 toSRGB(vec3 rgb){
   return mix(12.92*rgb,1.055*pow(max(rgb,vec3(0.)),vec3(1./2.4))-.055,step(vec3(.0031308),rgb));
@@ -52,7 +58,10 @@ function createStudioMiniaturePass(gl, compile) {
   shade+=inspectionIntensity*(.18+.85*lamp);
   vec3 rgb=toSRGB(clamp(color.rgb*light*shade,0.,1.));
   float edge=length(dFdx(n))+length(dFdy(n));
-  float ink=smoothstep(.12,.45,edge*edgeWidth)*step(.001,edgeWidth);
+  vec3 dist=bary/max(fwidth(bary),vec3(.000001));
+  vec3 lines=(1.-smoothstep(vec3(max(0.,edgeWidth-.75)),vec3(edgeWidth+.75),dist))*edgeMask;
+  float ink=max(max(lines.x,lines.y),lines.z)*step(.001,edgeWidth);
+  ink=max(ink,smoothstep(.12,.45,edge*edgeWidth)*step(.001,edgeWidth));
   rgb=mix(rgb,edgeColor*light,ink);
   rgb=mix(rgb,vec3(dot(rgb,vec3(.2126,.7152,.0722))),desaturate);
   pixel=vec4(rgb,1.);
@@ -106,6 +115,7 @@ function createStudioMiniaturePass(gl, compile) {
      gl.vertexAttribPointer(attribute,size,gl.FLOAT,false,0,0);
     }
     if(asset.sourceTriangles){mesh.paintBuffer=gl.createBuffer();resource.buffers.push(mesh.paintBuffer);gl.bindBuffer(gl.ARRAY_BUFFER,mesh.paintBuffer);gl.bufferData(gl.ARRAY_BUFFER,primitive.positions.length/3*16,gl.DYNAMIC_DRAW);gl.enableVertexAttribArray(3);gl.vertexAttribPointer(3,4,gl.FLOAT,false,0,0);}
+    if(asset.sourceTriangles){const mask=studioMiniatureFeatureMask(primitive);const buffer=gl.createBuffer();resource.buffers.push(buffer);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,mask,gl.STATIC_DRAW);gl.enableVertexAttribArray(4);gl.vertexAttribPointer(4,3,gl.FLOAT,false,0,0);}
     const elements=gl.createBuffer();
     resource.buffers.push(elements);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,elements);
@@ -154,7 +164,7 @@ function createStudioMiniaturePass(gl, compile) {
      else gl.enable(gl.CULL_FACE);
      gl.bindVertexArray(vao);
      if(mesh.paintBuffer&&mesh.lastPaint!==paint){const data=new Float32Array(primitive.positions.length/3*4);for(const [face,hex] of Object.entries(paint||{})){const i=Number(face);if(!Number.isInteger(i)||i<0||i*3>=count||!/^#[0-9a-f]{6}$/i.test(hex))continue;const c=studioMiniatureBaseColor(hex);for(let v=0;v<3;v++)data.set(c,primitive.indices[i*3+v]*4);}gl.bindBuffer(gl.ARRAY_BUFFER,mesh.paintBuffer);gl.bufferSubData(gl.ARRAY_BUFFER,0,data);mesh.lastPaint=paint;}
-     if(!mesh.paintBuffer)gl.vertexAttrib4f(3,0,0,0,0);
+     if(!mesh.paintBuffer){gl.vertexAttrib4f(3,0,0,0,0);gl.vertexAttrib3f(4,0,0,0);}
      gl.bindTexture(gl.TEXTURE_2D,resource.textures[primitive.material.image]||white);
      gl.uniform4fv(uniforms.baseColor,colors?.[primitive.colorSlot]??primitive.material.baseColor);
      gl.uniform1f(uniforms.alphaCutoff,forceOpaque?0:(primitive.material.alphaCutoff??0));
@@ -410,4 +420,23 @@ function studioMiniaturePaintRegion(asset,seed,angle,paint,range=25,cleanup=true
  for(let i=0;i<queue.length;i++)for(const next of adj[queue[i]])if(!seen.has(next)&&within(next)&&paint?.[next]===color&&norm[queue[i]].reduce((a,v,j)=>a+v*norm[next][j],0)>=threshold){seen.add(next);queue.push(next);}
  if(cleanup){for(let pass=0;pass<2;pass++){const candidates=new Set(queue.flatMap(i=>adj[i]));const add=[...candidates].filter(i=>!seen.has(i)&&within(i)&&paint?.[i]===undefined&&adj[i].length>=2&&adj[i].filter(j=>seen.has(j)).length>=Math.max(2,Math.ceil(adj[i].length*.75)));for(const i of add){seen.add(i);queue.push(i);}}}
  return queue;
+}
+
+// STL vertices are sequential triangle corners. Mark actual shared creases, not all tessellation edges.
+const studioFeatureCache=new WeakMap();
+function studioMiniatureFeatureMask(p){
+ if(studioFeatureCache.has(p))return studioFeatureCache.get(p);
+ const v=p.positions,idx=p.indices,mask=new Float32Array(v.length),edges=new Map();
+ const key=i=>[v[i*3],v[i*3+1],v[i*3+2]].join(',');
+ for(let i=0;i<idx.length;i+=3){
+  const a=idx[i]*3,b=idx[i+1]*3,c=idx[i+2]*3;
+  const u=[0,1,2].map(j=>v[b+j]-v[a+j]),w=[0,1,2].map(j=>v[c+j]-v[a+j]);
+  const n=[u[1]*w[2]-u[2]*w[1],u[2]*w[0]-u[0]*w[2],u[0]*w[1]-u[1]*w[0]],len=Math.hypot(...n)||1;
+  for(let j=0;j<3;j++){const k=[key(idx[i+(j+1)%3]),key(idx[i+(j+2)%3])].sort().join('|');const entry={i,j,n:n.map(x=>x/len)};if(edges.has(k))edges.get(k).push(entry);else edges.set(k,[entry]);}
+ }
+ for(const list of edges.values()){
+  const sharp=list.length===1||list.some(a=>list.some(b=>a.n.reduce((sum,x,j)=>sum+x*b.n[j],0)<.94));
+  if(sharp)for(const {i,j} of list)for(let k=0;k<3;k++)mask[idx[i+k]*3+j]=1;
+ }
+ studioFeatureCache.set(p,mask);return mask;
 }
