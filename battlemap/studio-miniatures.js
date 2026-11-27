@@ -366,7 +366,25 @@ function studioMiniaturePaintPick(event,radius=0){
  const {camera,model,asset}=pick,p=asset.primitives[0],m=(a,b)=>Array.from({length:16},(_,i)=>{const row=i%4,col=i>>2;return [0,1,2,3].reduce((v,k)=>v+a[k*4+row]*b[col*4+k],0);}),t=m(camera,model);
  const projected=new Float32Array(p.positions.length);
  for(let i=0;i<p.positions.length;i+=3){const a=p.positions[i],b=p.positions[i+1],c=p.positions[i+2];for(let j=0;j<3;j++)projected[i+j]=t[j]*a+t[4+j]*b+t[8+j]*c+t[12+j];}
- let best=-1,depth=Infinity;
- for(let i=0;i<p.indices.length;i+=3){const a=p.indices[i]*3,b=p.indices[i+1]*3,c=p.indices[i+2]*3,ax=projected[a],ay=projected[a+1],bx=projected[b],by=projected[b+1],cx=projected[c],cy=projected[c+1];const d=(by-cy)*(ax-cx)+(cx-bx)*(ay-cy);if(Math.abs(d)<1e-12)continue;const u=((by-cy)*(x-cx)+(cx-bx)*(y-cy))/d,v=((cy-ay)*(x-cx)+(ax-cx)*(y-cy))/d,w=1-u-v;if(Math.min(u,v,w)<0)continue;const z=u*projected[a+2]+v*projected[b+2]+w*projected[c+2];if(z<depth){depth=z;best=i/3;}}
- return best<0?[]:[best];
+ const samples=[{x,y,best:-1,depth:Infinity}];
+ if(radius>0)for(let dy=-radius;dy<=radius;dy+=Math.max(2,radius/5))for(let dx=-radius;dx<=radius;dx+=Math.max(2,radius/5))if(dx*dx+dy*dy<=radius*radius)samples.push({x:x+2*dx/rect.width,y:y-2*dy/rect.height,best:-1,depth:Infinity});
+ for(let i=0;i<p.indices.length;i+=3){const a=p.indices[i]*3,b=p.indices[i+1]*3,c=p.indices[i+2]*3,ax=projected[a],ay=projected[a+1],bx=projected[b],by=projected[b+1],cx=projected[c],cy=projected[c+1];const d=(by-cy)*(ax-cx)+(cx-bx)*(ay-cy);if(Math.abs(d)<1e-12)continue;for(const sample of samples){const {x,y}=sample;if(x<Math.min(ax,bx,cx)||x>Math.max(ax,bx,cx)||y<Math.min(ay,by,cy)||y>Math.max(ay,by,cy))continue;const u=((by-cy)*(x-cx)+(cx-bx)*(y-cy))/d,v=((cy-ay)*(x-cx)+(ax-cx)*(y-cy))/d,w=1-u-v;if(Math.min(u,v,w)<0)continue;const z=u*projected[a+2]+v*projected[b+2]+w*projected[c+2];if(z<sample.depth){sample.depth=z;sample.best=i/3;}}}
+ return [...new Set(samples.map(s=>s.best).filter(i=>i>=0))];
+}
+
+const studioPaintTopology=new WeakMap();
+function studioMiniaturePaintRegion(asset,seed,angle,paint){
+ let topo=studioPaintTopology.get(asset);
+ if(!topo){
+ const p=asset.primitives[0],v=p.positions,idx=p.indices,edges=new Map(),adj=Array.from({length:idx.length/3},()=>[]),norm=[];
+ const key=i=>[v[i*3],v[i*3+1],v[i*3+2]].map(n=>Math.round(n*1e5)).join(',');
+ for(let i=0;i<idx.length;i+=3){
+ const a=idx[i]*3,b=idx[i+1]*3,c=idx[i+2]*3,u=[0,1,2].map(j=>v[b+j]-v[a+j]),w=[0,1,2].map(j=>v[c+j]-v[a+j]),n=[u[1]*w[2]-u[2]*w[1],u[2]*w[0]-u[0]*w[2],u[0]*w[1]-u[1]*w[0]],l=Math.hypot(...n)||1;norm.push(n.map(x=>x/l));
+ for(let j=0;j<3;j++){const k=[key(idx[i+j]),key(idx[i+(j+1)%3])].sort().join('|'),prev=edges.get(k);if(prev!==undefined){adj[i/3].push(prev);adj[prev].push(i/3);}else edges.set(k,i/3);}
+ }
+ topo={adj,norm};studioPaintTopology.set(asset,topo);
+ }
+ const {adj,norm}=topo,threshold=Math.cos(angle*Math.PI/180),seen=new Set([seed]),queue=[seed],color=paint?.[seed];
+ for(let i=0;i<queue.length;i++)for(const next of adj[queue[i]])if(!seen.has(next)&&paint?.[next]===color&&norm[queue[i]].reduce((a,v,j)=>a+v*norm[next][j],0)>=threshold){seen.add(next);queue.push(next);}
+ return queue;
 }
