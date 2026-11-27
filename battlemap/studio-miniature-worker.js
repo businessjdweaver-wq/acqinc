@@ -24,7 +24,35 @@ function generatedNormals(positions,indices){
  }
  return normals;
 }
-async function readMiniature({id,buffer,expectUnity,expectZip}){
+// Read standard binary or ASCII STL, converting Z-up to Y-up.
+function parseStudioMiniatureStl(buffer){
+ const view=new DataView(buffer), limit=66666;
+ let positions;
+ const count=buffer.byteLength>=84?view.getUint32(80,true):0;
+ if(count&&84+50*count===buffer.byteLength){
+  if(count>limit)throw Error('STL exceeds 66,666 triangles.');
+  positions=new Float32Array(count*9);
+  for(let t=0;t<count;t++)for(let v=0;v<3;v++){
+   const at=84+t*50+12+v*12,i=t*9+v*3;
+   positions.set([view.getFloat32(at,true),view.getFloat32(at+8,true),-view.getFloat32(at+4,true)],i);
+  }
+ }else{
+  const source=new TextDecoder().decode(buffer);
+  if(!/^\s*solid\b/i.test(source))throw Error('Invalid STL file.');
+  const values=[], pattern=/\bvertex\s+(\S+)\s+(\S+)\s+(\S+)/gi;
+  for(const match of source.matchAll(pattern)){
+   if(values.length>=limit*9)throw Error('STL exceeds 66,666 triangles.');
+   values.push(Number(match[1]),Number(match[3]),-Number(match[2]));
+  }
+  if(!values.length||values.length%9)throw Error('Invalid ASCII STL triangles.');
+  positions=new Float32Array(values);
+ }
+ if(!positions.every(Number.isFinite))throw Error('Invalid STL coordinates.');
+ const indices=Uint32Array.from({length:positions.length/3},(_,i)=>i);
+ return {meshes:[{positions,indices,material:{alphaMode:'OPAQUE',baseColorFactor:[.48,.48,.48,1],doubleSided:true}}]};
+}
+
+async function readMiniature({id,buffer,expectUnity,expectZip,expectStl}){
  const bitmaps=[];
  try{
   let raw=new Uint8Array(buffer);
@@ -41,7 +69,7 @@ async function readMiniature({id,buffer,expectUnity,expectZip}){
    if(typeof StudioUnityReader==='undefined')importScripts(miniatureScript('./vendor/miniature-unity/reader.js'));
    buffer=await convertStudioUnityMiniature(raw,StudioUnityReader);
   }
-  const {meshes}=parseStudioMiniatureGlb(buffer,{limits:{
+  const {meshes}=expectStl?parseStudioMiniatureStl(buffer):parseStudioMiniatureGlb(buffer,{limits:{
    fileBytes:24*1024*1024,vertices:200000,indices:600000,primitives:64,textureDimension:2048
   }});
   const usedImages=[...new Set(meshes.map(mesh=>mesh.material.baseColorTexture).filter(Boolean))];
