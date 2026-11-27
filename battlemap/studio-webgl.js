@@ -103,6 +103,7 @@ function createStudioWebGL(onContextLost) {
  const floorBase=gl.getUniformLocation(program,'floorBase');
  const terrainOpacity=gl.getUniformLocation(program,'terrainOpacity');
  const gridColor=gl.getUniformLocation(program,'gridColor');
+ const miniaturePass=createStudioMiniaturePass(gl,shader);
  const floorTexture=gl.createTexture();
  gl.bindTexture(gl.TEXTURE_2D,floorTexture);
  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
@@ -160,7 +161,7 @@ function createStudioWebGL(onContextLost) {
  function render(now){
   frame=0;
   if(layer.hidden||!lastView)return;
-  const {matrix,background,gridColor:lineColor}=lastView;
+  const {matrix,background,gridColor:lineColor,miniatures}=lastView;
   const weight=blendWeight(now);
   gl.viewport(0,0,layer.width,layer.height);
   gl.clearColor(...background,1);
@@ -178,16 +179,18 @@ function createStudioWebGL(onContextLost) {
   if(cutawayKey){
    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,cutawayBuffer);
    gl.drawElements(gl.TRIANGLES,opaqueCount,gl.UNSIGNED_INT,0);
-   if(fadeCount){
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
-    gl.depthMask(false);
-    gl.uniform1f(terrainOpacity,.17);
-    gl.drawElements(gl.TRIANGLES,fadeCount,gl.UNSIGNED_INT,opaqueCount*4);
-    gl.depthMask(true);
-    gl.disable(gl.BLEND);
-   }
   }else gl.drawArrays(gl.TRIANGLES,0,count);
+  miniaturePass.draw(matrix,miniatures);
+  if(cutawayKey&&fadeCount){
+   gl.useProgram(program);
+   gl.enable(gl.BLEND);
+   gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+   gl.depthMask(false);
+   gl.uniform1f(terrainOpacity,.17);
+   gl.drawElements(gl.TRIANGLES,fadeCount,gl.UNSIGNED_INT,opaqueCount*4);
+   gl.depthMask(true);
+   gl.disable(gl.BLEND);
+  }
   if(weight<1)frame=requestAnimationFrame(time=>{
    blendAt??=time;
    render(time);
@@ -289,10 +292,12 @@ function createStudioWebGL(onContextLost) {
   cancelAnimationFrame(frame);
   frame=0;
   lastView=null;
+  miniaturePass.retain(new Set());
  }
  function destroy(){
   hide();
   layer.remove();
+  miniaturePass.destroy();
   gl.deleteTexture(floorTexture);gl.deleteTexture(atlas);gl.deleteBuffer(cutawayBuffer);
   gl.deleteBuffer(positionBuffer);gl.deleteBuffer(styleBuffer);gl.deleteProgram(program);
  }
@@ -300,7 +305,7 @@ function createStudioWebGL(onContextLost) {
   event.preventDefault();
   onContextLost();
  });
- return {layer,setFloor,setCutaway,upload,draw,hide,destroy};
+ return {layer,setFloor,setCutaway,upload,draw,hide,destroy,miniaturePass};
 }
 
 // Project planar faces to their dominant plane before triangulating. Path
@@ -422,13 +427,13 @@ function studioWebGLProjector(){
   origin[2]+x*axes[0][2]+y*axes[1][2]+z*axes[2][2]
  ]};
 }
-function studioWebGLDrawTerrain(appearance,{origin,axes}){
+function studioWebGLDrawTerrain(appearance,{origin,axes},miniatures){
  const matrix=[];
  for(const [x,y,d] of axes)matrix.push(2*x/W,-2*y/H,-d/512,0);
  matrix.push(2*origin[0]/W-1,1-2*origin[1]/H,-origin[2]/512,1);
  studioWebGL.draw({matrix:new Float32Array(matrix),width:canvas.width,height:canvas.height,
   background:studioWebGLColor(mapFogEnabled()&&!playerFogOverview()?'#23272a':appearance?.outsideColor||'#c4b99f').slice(0,3),
-  gridColor:studioWebGLColor(gridColor()).slice(0,3)});
+  gridColor:studioWebGLColor(gridColor()).slice(0,3),miniatures});
  canvas.classList.add('studioWebGLActive');
 }
 let studioWebGLFloorSource=null;
@@ -624,7 +629,7 @@ function uploadStudioWebGLFrame(blockers,showLighting,appearance,action){
   performanceDraw.webGLMissingTextureFaces=surfaces.filter(surface=>surface.material).length-upload.texturedFaces;
  }
  studioWebGLFrame={key,coverage,terrain:terrain.filter(f=>f.world),movement:movementSurfaces.slice(),
-  visibleTokens,blockers,appearance,texturedFaces:upload.texturedFaces,
+  visibleTokens,blockers,appearance,showLighting,texturedFaces:upload.texturedFaces,
   outlines:faces.filter(face=>face.perimeterOnly&&face.world?.length>=3)};
 }
 function studioWebGLCutaway(frame){
@@ -662,7 +667,6 @@ function drawStudioWebGLFrame(frame,ratio,destination=null,retainTerrain=false){
  const cutaway=retainTerrain?frame.cutawayModes??new Map():studioWebGLCutaway(frame);
  if(!retainTerrain){
   studioWebGL.setCutaway(cutaway);
-  studioWebGLDrawTerrain(appearance,projector);
  }
  if(performanceDraw){
   performanceDraw.webGLCutawayFaces=cutaway.size;
@@ -689,6 +693,11 @@ function drawStudioWebGLFrame(frame,ratio,destination=null,retainTerrain=false){
  const {allowed,focalOverlay}=studioWebGLStandeeOverlay(visibleTokens,playerCameraCutawayToken(),preview,carry?.piece);
  studioWebGLOverlayTokens=new Set(preview?[...allowed,preview]:allowed);
  try{
+ const {instances,rendered}=studioWebGLMiniatures(studioWebGLOverlayTokens,frame);
+ if(!retainTerrain||instances.length||studioWebGLHadMiniatures){
+  studioWebGLDrawTerrain(appearance,projector,instances);
+  studioWebGLHadMiniatures=!!instances.length;
+ }
  for(const token of allowed)if(visiblePiece(token))drawStandee(token,false);
  if(preview&&visiblePiece(preview))drawStandee(preview,!confirmed);
  const standees=faces.sort((a,b)=>a.depth-b.depth);
@@ -710,7 +719,8 @@ function drawStudioWebGLFrame(frame,ratio,destination=null,retainTerrain=false){
    }
   }
   // Camera-only frames use the already accepted visibility list.
-  paintBattlefieldStandee(f,false,blockers);
+  if(rendered.has(f.p)&&f.standee)drawFacingArrow(f);
+  else paintBattlefieldStandee(f,false,blockers);
   ctx.restore();
  }
  for(const token of allowed){
@@ -724,4 +734,48 @@ function drawStudioWebGLFrame(frame,ratio,destination=null,retainTerrain=false){
  drawArcaneEyes();drawJournalPins();positionCharacterPanel();updatePlayCombatStats();
  el('startup').hidden=true;
  }finally{studioWebGLOverlayTokens=null}
+}
+
+let studioWebGLHadMiniatures=false;
+function studioWebGLMiniatures(candidates,{showLighting,blockers}){
+ const assets=new Set(),keys=new Set(),rendered=new Set(),instances=[];
+ const pass=studioWebGL.miniaturePass;
+ let bytes=0;
+ for(const token of candidates){
+  if(topDown||token.incognito||token.conditions?.some(c=>['dead','invisible'].includes(c))||
+   !visiblePiece(token)||standeeObscured(token)||dimensionDoorHidden.has(token.roomId))continue;
+  const settings=sceneMiniatureSettings(token);
+  if(!settings)continue;
+  const key=miniatureAssetKey(settings.id);
+  if(!keys.has(key)&&keys.size>=6)continue;
+  keys.add(key);
+  const asset=sceneMiniatureAsset(settings.id,key);
+  if(!asset)continue;
+  if(!assets.has(asset)&&bytes+asset.byteCost>80*1024*1024)continue;
+  let resource;
+  try{resource=pass.prepare(asset)}
+  catch(error){console.warn('Miniature could not be drawn.',error);continue}
+  if(!assets.has(asset))bytes+=asset.byteCost;
+  assets.add(asset);rendered.add(token);
+  const point=basePoint(token);
+  const ambient=showLighting?ambientAt(point,blockers):{level:5};
+  const lamp=showLighting?lightAt(point,blockers,false,false,true):null;
+  const intensity=ambient?.level==null ? .35 : .35+.13*ambient.level;
+  const tint=lamp?studioWebGLColor(lamp.tint||'#ffcc80'):[1,1,1];
+  const strength=lamp?.strength??0;
+  const light=tint.slice(0,3).map(channel=>Math.max(intensity,.45+.55*strength*channel));
+  const height=standeeArtHeight(token)/S*settings.scale;
+  const heading=defaultFacingHeading-((trackingFacing(token)??0)+settings.facing)*Math.PI/180;
+  instances.push({resource,light,desaturate:!ambient&&!lamp?1:0,
+   transform:studioMiniatureTransform(asset,point,height,heading+Math.PI/2)});
+ }
+ pass.retain(assets);
+ if(miniatureEditor?.id)keys.add(miniatureAssetKey(miniatureEditor.id));
+ collectStudioMiniatures(keys);
+ if(performanceDraw){
+  performanceDraw.webGLMiniatureInstances=instances.length;
+  performanceDraw.webGLMiniatureAssets=assets.size;
+  performanceDraw.webGLMiniatureBytes=bytes;
+ }
+ return {instances,rendered};
 }

@@ -9,11 +9,13 @@
     "./map-composer-renderer.js",
     "./map-composer-editor.js",
     "./studio-biological.js",
+    "./studio-miniatures.js",
     "./studio-webgl.js",
     "./studio-engine.js",
     "./studio-path-benchmark.js",
     "./tactical-discovery.js",
     "./studio-interactions.js",
+    "./studio-miniature-editor.js",
     "./studio-room-sync.js"
   ];
   Promise.all(parts.map(async path => {
