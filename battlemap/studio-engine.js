@@ -13908,6 +13908,7 @@ function hasMarker(token,input){
 }
 function openBulkMarks(targets){
  bulkMarks={targets,changes:new Map()};
+ el('standeeMiniatures').hidden=true;
  configureMarkerEditor(true);
  for(const input of markerInputs()){
   const count=targets.filter(token=>hasMarker(token,input)).length;
@@ -14014,7 +14015,9 @@ function openStandeeArt(token){
  el('catalogPolymorph').hidden=!roomProfile?.gm||playing;
  el('saveSharedFamiliar').hidden=!roomProfile?.gm||playing;
  el('managedLookImages').hidden=player;
- el('standeeLooks').open=player;showLook();el('standeeArtDialog').showModal();
+ el('standeeLooks').open=player;showLook();
+ void openMiniatureEditor(token);
+ el('standeeArtDialog').showModal();
 }
 function updateStandeeSize(){
  const {name,footprint}=standeeSizes[artDraft.sizeIndex];
@@ -14103,18 +14106,24 @@ saveSharedFamiliar.onclick=async()=>{
  catch(error){el('artError').textContent=error.message}
 };
 el('artCancel').onclick=()=>el('standeeArtDialog').close();
-el('standeeArtDialog').onclose=()=>{artDraft=null;bulkMarks=null;draw()};
+el('standeeArtDialog').onclose=()=>{closeMiniatureEditor();artDraft=null;bulkMarks=null;draw()};
 el('standeeArtForm').onsubmit=async e=>{
  e.preventDefault();
  const faceAfterSave=e.submitter?.id==='standeeFaceToward';
  if(bulkMarks){saveBulkMarks();el('standeeArtDialog').close();refresh();return}
  if(!readLook()){el('standeeLooks').open=true;return}
- const {token,looks,index}=artDraft;
+ const draft=artDraft;
+ const {token,looks,index}=draft;
  if(roomProfile?.gm===false){
   if(!token||roomProfile?.gm===false&&!ownsRoomStandee(token))return;
   const submit=e.submitter;
   if(submit)submit.disabled=true;
-  try{await customizeRoomObject(token,'looks',{looks,activeLook:index});el('standeeArtDialog').close();await pollRoom()}
+  try{
+   await saveMiniatureEditor(token);
+   if(artDraft!==draft)return;
+   await customizeRoomObject(token,'looks',{looks,activeLook:index});
+   el('standeeArtDialog').close();await pollRoom();
+  }
   catch(err){el('artError').textContent=err.message;await pollRoom()}
   finally{if(submit)submit.disabled=false}
   return;
@@ -14138,6 +14147,8 @@ el('standeeArtForm').onsubmit=async e=>{
   el('artError').textContent=artDraft.size!==token.size?'The new base does not fit here. Move the standee to an open area or choose a smaller size.':'That altitude intersects terrain or another standee. Choose a clear height or move to a landing spot.';return;
  }
  const replacingDefault=token.looks?.[0]&&['front','back'].some(side=>uploadedStandeeImage(token.looks[0][side])&&token.looks[0][side]!==looks[0][side]);
+ try{await saveMiniatureEditor(token)}catch(error){el('artError').textContent=error.message;return}
+ if(artDraft!==draft)return;
  if(!replacingDefault)remember();
  token.x=position.x;token.y=position.y;token.flying=position.flying;token.z=position.z;token.size=position.size;
  token.sizeCategory=standeeSizes[artDraft.sizeIndex].id;
