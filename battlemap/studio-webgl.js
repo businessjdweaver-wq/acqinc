@@ -103,7 +103,7 @@ function createStudioWebGL(onContextLost) {
  const floorBase=gl.getUniformLocation(program,'floorBase');
  const terrainOpacity=gl.getUniformLocation(program,'terrainOpacity');
  const gridColor=gl.getUniformLocation(program,'gridColor');
- const miniaturePass=createStudioMiniaturePass(gl,shader);
+ const miniaturePass=createStudioMiniaturePass(gl,shader,redrawStudioMiniatureGeometry);
  const floorTexture=gl.createTexture();
  gl.bindTexture(gl.TEXTURE_2D,floorTexture);
  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
@@ -404,7 +404,7 @@ function studioWebGLUnavailableReason(){
 function studioWebGLKey(){
  // A camera-only draw can reuse only the last authoritative scene inputs.
  return [currentSceneId,roomProfile,roomRevision,pieces,areas,tokens,gmVisionObserver(),
-  gmIgnoreLighting,playerFogOverview(),preferences.fogMemory,showThroughTerrain,playerShowAllies,focusCutaway,cutawayHeight,preferences.graphicsQuality];
+  gmIgnoreLighting,playerFogOverview(),preferences.fogMemory,showThroughTerrain,playerShowAllies,focusCutaway,cutawayHeight,preferences.graphicsQuality,enhancedMiniatureFinishesEnabled()];
 }
 function studioWebGLColor(value){
  if(studioWebGLColors.has(value))return studioWebGLColors.get(value);
@@ -736,10 +736,12 @@ function drawStudioWebGLFrame(frame,ratio,destination=null,retainTerrain=false){
  }finally{studioWebGLOverlayTokens=null}
 }
 
+function redrawStudioMiniatureGeometry(){draw('Miniature finish geometry ready')}
 let studioWebGLHadMiniatures=false;
 function studioWebGLMiniatures(candidates,{showLighting,blockers}){
  const assets=new Set(),keys=new Set(),rendered=new Set(),instances=[];
  const pass=studioWebGL.miniaturePass;
+ const enhancedFinishes=enhancedMiniatureFinishesEnabled();
  const baseAssets=new Set();
  let bytes=0;
  for(const token of candidates){
@@ -775,7 +777,10 @@ function studioWebGLMiniatures(candidates,{showLighting,blockers}){
    instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,point,token.size,heading,light,desaturate));
    point[2]+=studioMiniatureBaseHeight(token.size);
   }
-  instances.push({resource,light,desaturate,paint:settings.paint,sculptShade:settings.sculptShade??.65,edgeStyle:settings.edgeStyle,edgeSmoothing:settings.edgeSmoothing,edgeSensitivity:settings.edgeSensitivity,edgeWidth:settings.edgeWidth,edgeColor:settings.edgeColor,doubleSided:settings.doubleSided!==false,forceOpaque:settings.forceOpaque!==false,
+  instances.push({resource,light,desaturate,paint:settings.paint,sculptShade:enhancedFinishes?(settings.sculptShade??.65):0,
+   edgeStyle:settings.edgeStyle,edgeSmoothing:settings.edgeSmoothing,edgeSensitivity:settings.edgeSensitivity,
+   edgeWidth:enhancedFinishes?settings.edgeWidth:0,edgeColor:settings.edgeColor,doubleSided:settings.doubleSided!==false,forceOpaque:settings.forceOpaque!==false,
+   finishes:enhancedFinishes&&asset.sourceTriangles?studioMiniatureFinishSettings(settings.finishes):null,
    transform:studioMiniatureTransform(asset,point,height,heading+Math.PI/2,base.shape!=='off',settings.rotation)});
  }
  pass.retain(new Set([...assets,...baseAssets]));

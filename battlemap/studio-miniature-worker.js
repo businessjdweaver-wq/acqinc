@@ -151,7 +151,18 @@ async function readMiniature({id,buffer,expectUnity,expectZip,expectStl,stlTarge
  }
 }
 
+function bakeMiniatureFinishes({id,positions,indices}){
+ try{
+  if(typeof computeStudioMiniatureFinishes==='undefined')
+   importScripts(miniatureScript('./studio-miniature-finishes.js'));
+  const finishData=computeStudioMiniatureFinishes(positions,indices);
+  self.postMessage({id,finishData},[finishData.buffer]);
+ }catch(error){
+  self.postMessage({id,error:error.message||'The miniature finishes could not be computed.'});
+ }
+}
+
 let queue=Promise.resolve();
 self.onmessage=({data})=>{
- queue=queue.then(()=>readMiniature(data));
+ queue=queue.then(()=>data.finishGeometry?bakeMiniatureFinishes(data):readMiniature(data));
 };

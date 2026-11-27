@@ -14210,6 +14210,26 @@ const preferenceFields=[
  ['markerColor','battlemap.initiativeMarkerColor','#f3e2b8',value=>/^#[0-9a-f]{6}$/i.test(value)]
 ];
 const preferences={};
+const miniatureFinishPreferences=new Map();
+function enhancedMiniatureFinishesKey(){
+ const name=roomProfile?.name;
+ return 'battlemap.enhancedMiniatureFinishes'+(name?':'+encodeURIComponent(name):'');
+}
+function enhancedMiniatureFinishesEnabled(){
+ const key=enhancedMiniatureFinishesKey();
+ if(!miniatureFinishPreferences.has(key)){
+  let enabled=true;
+  try{enabled=localStorage.getItem(key)!=='0'}catch{}
+  miniatureFinishPreferences.set(key,enabled);
+ }
+ return miniatureFinishPreferences.get(key);
+}
+el('enhancedMiniatureFinishes').onchange=()=>{
+ const key=enhancedMiniatureFinishesKey(),enabled=el('enhancedMiniatureFinishes').checked;
+ miniatureFinishPreferences.set(key,enabled);
+ try{localStorage.setItem(key,enabled?'1':'0')}catch{}
+ draw('Enhanced miniature finishes preference');
+};
 try{el('hideOtherHp').checked=localStorage.getItem('battlemap.hideOtherHp')==='1'}catch{}
 el('hideOtherHp').onchange=()=>{
  const enabled=el('hideOtherHp').checked;
@@ -14293,6 +14313,7 @@ function drawPreferencePreview(){
 }
 el('preferences').onclick=()=>{
  el('standeeNameDefault').disabled=playing;
+ el('enhancedMiniatureFinishes').checked=enhancedMiniatureFinishesEnabled();
  const token=linkedStandee(activeInitiative)||tokens[0];
  preferencePreview={zoom,panX,panY,target:token||{x:19.5,y:19.5,z:0,size:1}};
  el('previewHint').textContent=token?'Adjust a setting to preview it on the map.':'Adjust a setting to preview it with a sample marker.';

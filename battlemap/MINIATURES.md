@@ -96,6 +96,33 @@ live Supabase project, so the browser checks used isolated local data.
 
 Enable Paint STL surface in the preview. Brush and Eraser use a 1–80 pixel diameter; the smallest setting selects one triangle. Smart fill follows connected edges until a surface-angle or existing paint boundary is reached. Eyedropper samples paint, Paint all applies a base coat, and Undo/Redo restore strokes. Paint is device-local and tied to the selected mesh resolution. Smart fill is geometric, not semantic, and can spread over smooth connected surfaces.
 
+## Miniature finishing
+
+Expand **Miniature finishing** in the STL editor to adjust the recess wash, dry
+brush, zenithal highlight, and material. The wash tints areas sheltered by
+nearby geometry. Dry brushing blends a tint over raised features. Zenithal
+highlighting gives upward-facing surfaces a gradual lift under scene lighting.
+Choose matte, satin, gloss, or metallic for the surface's light response. The
+inspection lamp and the finish preview checkbox affect only the editor preview.
+
+Finishes are saved with each standee's miniature settings in browser storage.
+Existing STL assignments can use them without reimporting or repainting. The
+renderer computes the occlusion and curvature fields in a worker when needed,
+so a miniature can appear with its base paint while the calculation finishes.
+Instances of the same loaded mesh and resolution share the baked field.
+
+**Preferences → Enhanced miniature finishes** is on by default. Each GM or
+player can turn it off in their own browser profile to skip optional live WebGL
+finish and outline work. Base paint, imported textures, decorative bases, and
+scene lighting still render. Turning it back on restores saved settings. The
+checkbox in the editor can preview finishes independently of this preference.
+
+Texture painting remains a follow-up. STL imports have no UV coordinates. A
+texture workflow would need a mesh atlas with stable seams and padding at each
+supported resolution, a way to transfer existing triangle colors, and texture
+storage and undo limits. The GLB diffuse texture import already provides a path
+for displaying externally textured assets.
+
 ## Edge styles
 
 Off disables outlines. Geometric contours retain the existing crease paths. Cel outlines sample the visible miniature's normal and depth buffers at several distances to emphasize surface boundaries and the silhouette. Thickness, color, feature scale and smoothing remain adjustable. Cel mode adds a per-miniature render pass and may cost more GPU time.

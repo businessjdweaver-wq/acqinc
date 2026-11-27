@@ -132,9 +132,36 @@ async function localMiniatureLibrary(){
  });
 }
 function miniatureRotationFromControls(){return ['X','Y','Z'].map(a=>Number(el('miniatureRotation'+a).value));}
+const miniatureFinishSliders={
+ washStrength:'miniatureWashStrength',
+ dryBrushStrength:'miniatureDryBrushStrength',
+ zenithalStrength:'miniatureZenithalStrength'
+};
+const miniatureFinishChoices={
+ washTint:'miniatureWashTint',
+ dryBrushTint:'miniatureDryBrushTint',
+ material:'miniatureMaterialFinish'
+};
+function miniatureFinishFromControls(){
+ const finish={};
+ for(const [key,id] of Object.entries(miniatureFinishSliders))finish[key]=Number(el(id).value)/100;
+ for(const [key,id] of Object.entries(miniatureFinishChoices))finish[key]=el(id).value;
+ return studioMiniatureFinishSettings(finish);
+}
+function updateMiniatureFinishOutput(input){input.nextElementSibling.value=input.value+'%';}
+function setMiniatureFinishControls(value){
+ const finish=studioMiniatureFinishSettings(value);
+ for(const [key,id] of Object.entries(miniatureFinishSliders)){
+  const input=el(id);
+  input.value=String(Math.round(finish[key]*100));
+  updateMiniatureFinishOutput(input);
+ }
+ for(const [key,id] of Object.entries(miniatureFinishChoices))el(id).value=finish[key];
+}
 function miniatureFields(){
  return ['miniatureMode','miniatureLibrary','miniatureFile','miniatureScale','miniatureScaleMode','miniatureFacing','miniatureRotationX','miniatureRotationY','miniatureRotationZ',
-  'miniatureBaseShape','miniatureBasePattern','miniatureBaseSize','miniatureBaseColor','miniatureBaseRimColor','miniatureBaseRingCount','miniatureBaseRingWidth','miniatureBaseRing0','miniatureBaseRing1','miniatureBaseRing2','miniatureDoubleSided','miniatureForceOpaque']
+  'miniatureBaseShape','miniatureBasePattern','miniatureBaseSize','miniatureBaseColor','miniatureBaseRimColor','miniatureBaseRingCount','miniatureBaseRingWidth','miniatureBaseRing0','miniatureBaseRing1','miniatureBaseRing2','miniatureDoubleSided','miniatureForceOpaque',
+  'miniatureFinishPreview',...Object.values(miniatureFinishSliders),...Object.values(miniatureFinishChoices)]
   .map(el);
 }
 function updateMiniatureEditor(){
@@ -148,9 +175,23 @@ function updateMiniatureEditor(){
  el('miniatureBaseRingWidthValue').textContent=Math.round(base.ringWidth*100)+'%';
  for(let i=0;i<3;i++)el('miniatureBaseRing'+i).closest('label').hidden=i>=base.ringCount;
  el('miniatureBaseSizeValue').value=el('miniatureBaseSizeValue').textContent=`${Math.round(base.size*100)}%`;
- if(!enabled)el('miniaturePreview').hidden=true;
- el('miniaturePaintPanel').hidden=!(enabled&&draft.asset?.sourceTriangles);
- if(enabled&&draft.asset)renderStudioMiniaturePreview(draft.asset,{base,modelScale:Number(el('miniatureScale').value)/100,scaleMode:el('miniatureScaleMode').value,footprint:1,referenceHeight:standeeArtHeight(draft.token)/S/Math.max(1,draft.token.size||1),paint:draft.paint,inspectionDirection:miniatureInspectionDirection(),inspectionIntensity:Number(el('miniatureLampIntensity').value)/100,edgeStyle:el('miniatureEdgeStyle').value,edgeSmoothing:Number(el('miniatureEdgeSmoothing').value)/100,edgeSensitivity:Number(el('miniatureEdgeSensitivity').value)/100,edgeWidth:Number(el('miniatureEdgeWidth').value),edgeColor:el('miniatureEdgeColor').value,sculptShade:Number(el('miniatureSculptShade').value)/100,rotation:miniatureRotationFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked});
+ const isStl=!!draft.asset?.sourceTriangles;
+ el('miniaturePaintPanel').hidden=el('miniatureFinishing').hidden=!(enabled&&isStl);
+ if(!enabled||!draft.asset){
+  el('miniaturePreview').hidden=true;
+  disposeStudioMiniaturePreview();
+  return;
+ }
+ renderStudioMiniaturePreview(draft.asset,{
+  base,modelScale:Number(el('miniatureScale').value)/100,scaleMode:el('miniatureScaleMode').value,footprint:1,
+  referenceHeight:standeeArtHeight(draft.token)/S/Math.max(1,draft.token.size||1),paint:draft.paint,
+  inspectionDirection:miniatureInspectionDirection(),inspectionIntensity:Number(el('miniatureLampIntensity').value)/100,
+  edgeStyle:el('miniatureEdgeStyle').value,edgeSmoothing:Number(el('miniatureEdgeSmoothing').value)/100,
+  edgeSensitivity:Number(el('miniatureEdgeSensitivity').value)/100,edgeWidth:Number(el('miniatureEdgeWidth').value),
+  edgeColor:el('miniatureEdgeColor').value,sculptShade:Number(el('miniatureSculptShade').value)/100,
+  rotation:miniatureRotationFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked,
+  enhancedFinishes:!isStl||el('miniatureFinishPreview').checked,finishes:isStl?miniatureFinishFromControls():undefined
+ });
 }
 async function openMiniatureEditor(token){
  const panel=el('standeeMiniatures');
@@ -159,6 +200,9 @@ async function openMiniatureEditor(token){
  const draft=miniatureEditor={token,asset:null,id:'',file:null,change:0,busy:false};
  el('miniatureFile').value='';
  el('miniaturePaintMode').checked=false;
+ el('miniatureFinishing').open=false;
+ el('miniatureFinishPreview').checked=true;
+ setMiniatureFinishControls();
  el('miniatureStlResolutionRow').hidden=true;
  el('miniatureStlResolution').value='60000';
  el('miniatureMode').value='2d';
@@ -189,6 +233,7 @@ async function openMiniatureEditor(token){
   select.replaceChildren(new Option('Choose a saved miniature',''),...library.map(({name,id})=>new Option(name,id)));
   draft.initial=settings;
   draft.paint={...(settings?.paint||{})};draft.paintUndo=[];draft.paintRedo=[];
+  setMiniatureFinishControls(settings?.finishes);
   if(settings?.id){
    draft.id=settings.id;
    select.value=settings.id;
@@ -225,8 +270,8 @@ async function chooseStudioMiniature(id){
  if(!draft)return;
  const change=++draft.change;
  draft.id=id;draft.file=null;draft.asset=null;draft.busy=!!id;
- el('miniaturePreview').hidden=true;
  el('miniatureStatus').textContent=id?'Loading miniature…':'';
+ updateMiniatureEditor();
  try{
   const asset=id?await loadStudioMiniature(id):null;
   if(miniatureEditor!==draft||change!==draft.change)return;
@@ -244,8 +289,8 @@ async function pickStudioMiniature(file){
  if(!draft||!file)return;
  const change=++draft.change;
  draft.busy=true;draft.id='';draft.file=null;draft.asset=null;draft.paint={};draft.paintUndo=[];draft.paintRedo=[];
- el('miniaturePreview').hidden=true;
  el('miniatureStatus').textContent='Reading miniature…';
+ updateMiniatureEditor();
  let asset;
  try{
   if(file.size>miniatureFileLimit)throw Error('Choose a ZIP, .unity3d, STL, or GLB no larger than 24 MB.');
@@ -283,6 +328,7 @@ async function saveMiniatureEditor(token){
  const key=miniatureAssignmentKey(token)??miniatureAssignmentKey({...token,trackingId:crypto.randomUUID()});
  const settings={id:draft.id,enabled,scale:Number(el('miniatureScale').value)/100,scaleMode:el('miniatureScaleMode').value,facing:Number(el('miniatureFacing').value),
   paint:draft.paint||{},edgeStyle:el('miniatureEdgeStyle').value,edgeSmoothing:Number(el('miniatureEdgeSmoothing').value)/100,edgeSensitivity:Number(el('miniatureEdgeSensitivity').value)/100,edgeWidth:Number(el('miniatureEdgeWidth').value),edgeColor:el('miniatureEdgeColor').value,sculptShade:Number(el('miniatureSculptShade').value)/100,rotation:miniatureRotationFromControls(),base:miniatureBaseFromControls(),doubleSided:el('miniatureDoubleSided').checked,forceOpaque:el('miniatureForceOpaque').checked};
+ if(draft.asset?.sourceTriangles||(!draft.asset&&draft.initial?.finishes))settings.finishes=miniatureFinishFromControls();
  if(!Number.isFinite(settings.scale)||settings.scale<.25||settings.scale>3||!Number.isFinite(settings.facing)||Math.abs(settings.facing)>180)
   throw Error('Enter a valid miniature scale and facing offset.');
  const db=await storageReady;
@@ -315,6 +361,14 @@ el('miniatureMode').addEventListener('change',()=>{
 el('miniatureLibrary').addEventListener('change',event=>void chooseStudioMiniature(event.target.value));
 el('miniatureStlResolution').addEventListener('change',()=>{if(miniatureEditor?.sourceFile)void pickStudioMiniature(miniatureEditor.sourceFile);});
 el('miniatureSculptShade').addEventListener('input',updateMiniatureEditor);
+for(const id of Object.values(miniatureFinishSliders)){
+ el(id).addEventListener('input',event=>{
+  updateMiniatureFinishOutput(event.currentTarget);
+  updateMiniatureEditor();
+ });
+}
+for(const id of Object.values(miniatureFinishChoices))el(id).addEventListener('input',updateMiniatureEditor);
+el('miniatureFinishPreview').addEventListener('change',updateMiniatureEditor);
 el('miniatureScale').addEventListener('input',updateMiniatureEditor);
 el('miniatureScaleMode').addEventListener('change',updateMiniatureEditor);
 el('miniatureBaseRingWidth').addEventListener('input',updateMiniatureEditor);

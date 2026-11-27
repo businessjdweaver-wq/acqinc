@@ -1,16 +1,100 @@
 // Miniatures share terrain's camera and depth buffer. The 2D standee still
 // supplies interaction geometry, nameplates, facing indicators and markers.
-function createStudioMiniaturePass(gl, compile) {
+const studioMiniatureFinishDefaults=Object.freeze({
+ washStrength:.30,washTint:'#342a31',dryBrushStrength:.20,dryBrushTint:'#d3c6a9',
+ zenithalStrength:.15,material:'matte'
+});
+const studioMiniatureMaterials={
+ matte:[.87,0],satin:[.58,0],gloss:[.29,0],metallic:[.38,.8]
+};
+function studioMiniatureFinishSettings(value){
+ const strength=key=>typeof value?.[key]==='number'&&Number.isFinite(value[key])?
+  Math.max(0,Math.min(1,value[key])):studioMiniatureFinishDefaults[key];
+ const tint=key=>typeof value?.[key]==='string'&&/^#[\da-f]{6}$/i.test(value[key])?
+  value[key]:studioMiniatureFinishDefaults[key];
+ return {washStrength:strength('washStrength'),washTint:tint('washTint'),
+  dryBrushStrength:strength('dryBrushStrength'),dryBrushTint:tint('dryBrushTint'),
+  zenithalStrength:strength('zenithalStrength'),
+  material:Object.hasOwn(studioMiniatureMaterials,value?.material)?value.material:'matte'};
+}
+
+// A single job runs across both WebGL contexts. Cache by decoded geometry so
+// copies of one miniature share the bake, and each resolution has its own field.
+const studioMiniatureFinishRequests=new Map();
+const studioMiniatureFinishCache=new WeakMap();
+const studioMiniatureFinishLru=new Set();
+const studioMiniatureFinishFailures=new WeakSet();
+const studioMiniatureFinishCacheLimit=16*1024*1024;
+let studioMiniatureFinishJob=null,studioMiniatureFinishCacheBytes=0;
+function studioMiniatureFinishField(primitive){
+ const entry=studioMiniatureFinishCache.get(primitive);
+ if(entry?.field){studioMiniatureFinishLru.delete(entry);studioMiniatureFinishLru.add(entry);}
+ return entry?.field;
+}
+function studioMiniatureScheduleFinishes(owner,primitives,onReady){
+ if(primitives.size)studioMiniatureFinishRequests.set(owner,{primitives,onReady});
+ else studioMiniatureFinishRequests.delete(owner);
+ studioMiniatureStartFinishJob();
+}
+function studioMiniatureStartFinishJob(){
+ if(!studioMiniatureFinishJob&&!studioMiniatureFinishRequests.size)return;
+ const wanted=new Set([...studioMiniatureFinishRequests.values()].flatMap(request=>[...request.primitives]));
+ if(studioMiniatureFinishJob&&!wanted.has(studioMiniatureFinishJob.primitive)){
+  const {worker,timer}=studioMiniatureFinishJob;
+  clearTimeout(timer);worker.terminate();studioMiniatureFinishJob=null;
+ }
+ if(studioMiniatureFinishJob)return;
+ for(const primitive of wanted){
+  if(studioMiniatureFinishCache.get(primitive)?.field||studioMiniatureFinishFailures.has(primitive))continue;
+  let worker;
+  try{
+   const url=new URL('./studio-miniature-worker.js',document.baseURI);
+   url.searchParams.set('build',el('battlemapBuild').textContent.trim());
+   worker=new Worker(url);
+  }catch{
+   studioMiniatureFinishFailures.add(primitive);
+   continue;
+  }
+  const complete=field=>{
+   if(studioMiniatureFinishJob?.worker!==worker)return;
+   clearTimeout(studioMiniatureFinishJob.timer);worker.terminate();studioMiniatureFinishJob=null;
+   if(field instanceof Float32Array&&field.length===primitive.positions.length/3*2){
+    const entry={field};
+    studioMiniatureFinishCache.set(primitive,entry);studioMiniatureFinishLru.add(entry);
+    studioMiniatureFinishCacheBytes+=field.byteLength;
+    while(studioMiniatureFinishCacheBytes>studioMiniatureFinishCacheLimit){
+     const old=studioMiniatureFinishLru.values().next().value;
+     studioMiniatureFinishLru.delete(old);studioMiniatureFinishCacheBytes-=old.field.byteLength;
+     old.field=null;
+    }
+   }else studioMiniatureFinishFailures.add(primitive);
+   const requests=[...studioMiniatureFinishRequests.values()];
+   for(const request of requests)if(request.primitives.has(primitive))request.onReady();
+   studioMiniatureStartFinishJob();
+  };
+  const timer=setTimeout(()=>complete(null),25000);
+  studioMiniatureFinishJob={primitive,worker,timer};
+  worker.onmessage=({data})=>complete(data.finishData);
+  worker.onerror=worker.onmessageerror=()=>complete(null);
+  try{
+   const {positions,indices}=primitive;
+   const vertices=positions.slice(),elements=indices.slice();
+   worker.postMessage({id:1,finishGeometry:true,positions:vertices,indices:elements},[vertices.buffer,elements.buffer]);
+  }catch{queueMicrotask(()=>complete(null));}
+  return;
+ }
+}
+function createStudioMiniaturePass(gl, compile, onFinishReady=()=>{}) {
+ const finishOwner={};
  const program=gl.createProgram();
  const vertex=compile(gl.VERTEX_SHADER,`#version 300 es
  layout(location=0) in vec3 position;
  layout(location=1) in vec3 normal;
  layout(location=2) in vec2 uv;
  layout(location=3) in vec4 paintColor;
+ layout(location=4) in vec2 finishData;
  out vec4 surfacePaint;
- layout(location=4) in vec3 featureMask;
- flat out vec3 edgeMask;
- out vec3 bary;
+ out vec2 surfaceFinish;
  uniform mat4 camera;
  uniform mat4 model;
  out vec3 worldNormal;
@@ -18,8 +102,7 @@ function createStudioMiniaturePass(gl, compile) {
  void main(){
   gl_Position=camera*model*vec4(position,1.);
   worldNormal=mat3(model)*normal;
-  texCoord=uv;surfacePaint=paintColor;edgeMask=featureMask;
-  int k=gl_VertexID%3;bary=vec3(k==0?1.:0.,k==1?1.:0.,k==2?1.:0.);
+  texCoord=uv;surfacePaint=paintColor;surfaceFinish=finishData;
  }`);
  const fragment=compile(gl.FRAGMENT_SHADER,`#version 300 es
  precision highp float;
@@ -30,16 +113,18 @@ function createStudioMiniaturePass(gl, compile) {
  uniform float desaturate;
  uniform float sculptShade;
  uniform bool normalPass;
- uniform float edgeWidth;
- uniform float edgeSensitivity;
- uniform vec3 edgeColor;
+ uniform bool enhancedFinish;
+ uniform vec3 finishStrength;
+ uniform vec3 washTint;
+ uniform vec3 dryBrushTint;
+ uniform vec2 materialFinish;
+ uniform vec3 viewDirection;
  uniform vec3 inspectionDirection;
  uniform float inspectionIntensity;
  in vec3 worldNormal;
  in vec2 texCoord;
  in vec4 surfacePaint;
- flat in vec3 edgeMask;
- in vec3 bary;
+ in vec2 surfaceFinish;
  out vec4 pixel;
  vec3 toSRGB(vec3 rgb){
   return mix(12.92*rgb,1.055*pow(max(rgb,vec3(0.)),vec3(1./2.4))-.055,step(vec3(.0031308),rgb));
@@ -51,23 +136,47 @@ function createStudioMiniaturePass(gl, compile) {
   vec3 n=normalize(worldNormal);
   if(!gl_FrontFacing)n=-n;
   if(normalPass){pixel=vec4(n*.5+.5,1.);return;}
-  float ndl=max(0.,dot(n,normalize(vec3(-.5,-.7,1.))));
+  vec3 key=normalize(vec3(-.5,-.7,1.));
+  float ndl=max(0.,dot(n,key));
   float shade=mix(.62+.38*ndl,.32+.68*ndl,sculptShade);
-  float crease=clamp(length(dFdx(n))+length(dFdy(n)),0.,1.);
-  float rim=pow(1.-abs(dot(n,normalize(vec3(.35,-.45,1.)))),3.);
-  shade*=1.-.28*sculptShade*crease;
-  shade+=sculptShade*(.14*rim+.12*crease*ndl);
-  float lamp=max(0.,dot(n,normalize(inspectionDirection)));
-  shade+=inspectionIntensity*(.18+.85*lamp);
-  vec3 rgb=toSRGB(clamp(color.rgb*light*shade,0.,1.));
-  rgb=mix(rgb,vec3(1.),clamp(inspectionIntensity*.32*pow(lamp,2.),0.,.65));
-  rgb+=light*(.10*sculptShade*pow(ndl,3.));
-  float edge=length(dFdx(n))+length(dFdy(n));
-  vec3 dist=bary/max(fwidth(bary),vec3(.000001));
-  vec3 lines=(1.-smoothstep(vec3(max(0.,edgeWidth-.75)),vec3(edgeWidth+.75),dist))*step(vec3(edgeSensitivity),edgeMask);
-  float ink=max(max(lines.x,lines.y),lines.z)*step(.001,edgeWidth);
-  // Do not ink individual normal derivatives: they reveal tessellation noise.
-  rgb=mix(rgb,edgeColor*light,ink);
+  if(sculptShade>0.){
+   float crease=clamp(length(dFdx(n))+length(dFdy(n)),0.,1.);
+   float rim=pow(1.-abs(dot(n,normalize(vec3(.35,-.45,1.)))),3.);
+   shade*=1.-.28*sculptShade*crease;
+   shade+=sculptShade*(.14*rim+.12*crease*ndl);
+  }
+  vec3 paint=color.rgb;
+  vec3 reflected=vec3(0.);
+  if(enhancedFinish){
+   // Scene and preview projectors use the opposite winding from their depth
+   // direction. Orient the finish response toward the actual visible side.
+   vec3 finishNormal=dot(n,viewDirection)<0.?-n:n;
+   float wash=finishStrength.x*clamp(surfaceFinish.x,0.,1.);
+   paint*=mix(vec3(1.),.20+.54*sqrt(washTint),wash);
+   float raised=smoothstep(.025,.45,surfaceFinish.y);
+   paint=mix(paint,dryBrushTint,finishStrength.y*raised*.55);
+   float zenithal=smoothstep(-.2,.95,finishNormal.z);
+   paint*=1.+finishStrength.z*(.48*zenithal-.12);
+   paint+=.018*finishStrength.z*zenithal;
+   float roughness=materialFinish.x;
+   float metallic=materialFinish.y;
+   vec3 keyView=key+viewDirection;
+   vec3 halfway=keyView/max(length(keyView),.00001);
+   float gloss=5.+115.*pow(1.-roughness,3.);
+   float lobe=pow(clamp(dot(finishNormal,halfway),0.,1.),gloss)*max(0.,dot(finishNormal,key));
+   vec3 f0=mix(vec3(.04),paint,metallic);
+   float grazing=pow(1.-clamp(dot(halfway,viewDirection),0.,1.),5.);
+   reflected=mix(f0,vec3(1.),grazing)*lobe*mix(2.8,.55,roughness);
+   paint*=1.-metallic*.45;
+  }
+  float lamp=0.;
+  if(inspectionIntensity>0.){
+   lamp=max(0.,dot(n,normalize(inspectionDirection)));
+   shade+=inspectionIntensity*(.18+.85*lamp);
+  }
+  vec3 rgb=toSRGB(clamp(light*(paint*shade+reflected),0.,1.));
+  if(inspectionIntensity>0.)rgb=mix(rgb,vec3(1.),clamp(inspectionIntensity*.32*lamp*lamp,0.,.65));
+  if(sculptShade>0.)rgb+=light*(.10*sculptShade*ndl*ndl*ndl);
   rgb=mix(rgb,vec3(dot(rgb,vec3(.2126,.7152,.0722))),desaturate);
   pixel=vec4(rgb,1.);
  }`);
@@ -78,7 +187,7 @@ function createStudioMiniaturePass(gl, compile) {
   gl.deleteProgram(program);
   throw new Error(error);
  }
- const uniforms=Object.fromEntries(['albedo','camera','model','baseColor','light','alphaCutoff','desaturate','sculptShade','inspectionDirection','inspectionIntensity','edgeWidth','edgeColor','edgeSensitivity','normalPass']
+ const uniforms=Object.fromEntries(['albedo','camera','model','baseColor','light','alphaCutoff','desaturate','sculptShade','inspectionDirection','inspectionIntensity','normalPass','enhancedFinish','finishStrength','washTint','dryBrushTint','materialFinish','viewDirection']
   .map(name=>[name,gl.getUniformLocation(program,name)]));
  const contourProgram=gl.createProgram();
  const cv=compile(gl.VERTEX_SHADER,`#version 300 es
@@ -163,13 +272,22 @@ function createStudioMiniaturePass(gl, compile) {
  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);
  gl.activeTexture(gl.TEXTURE0);
 
+ function releaseContours(mesh){
+  if(!mesh.contourVao)return;
+  gl.deleteVertexArray(mesh.contourVao);gl.deleteBuffer(mesh.contourBuffer);
+  mesh.contourVao=null;mesh.contourBuffer=null;mesh.contourLevel=null;
+ }
  function dispose(resource){
   for(const texture of resource.textures)gl.deleteTexture(texture);
   for(const buffer of resource.buffers)gl.deleteBuffer(buffer);
-  for(const mesh of resource.meshes){gl.deleteVertexArray(mesh.vao);if(mesh.contourVao)gl.deleteVertexArray(mesh.contourVao);}
+  for(const mesh of resource.meshes){
+   if(mesh.finishBuffer)gl.deleteBuffer(mesh.finishBuffer);
+   releaseContours(mesh);
+   gl.deleteVertexArray(mesh.vao);
+  }
  }
  function upload(asset){
-  const resource={textures:[],buffers:[],meshes:[]};
+  const resource={textures:[],buffers:[],meshes:[],isStl:!!asset.sourceTriangles};
   gl.activeTexture(gl.TEXTURE2);
   try{
    for(const image of asset.bitmaps){
@@ -200,14 +318,6 @@ function createStudioMiniaturePass(gl, compile) {
     resource.buffers.push(elements);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,elements);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,primitive.indices,gl.STATIC_DRAW);
-    if(asset.sourceTriangles){
-     const data=studioMiniatureContours(primitive,0);mesh.contourLevel=0;
-     mesh.contourCount=data.length/7;
-     {mesh.contourVao=gl.createVertexArray();gl.bindVertexArray(mesh.contourVao);
-      const buffer=mesh.contourBuffer=gl.createBuffer();resource.buffers.push(buffer);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,data,gl.DYNAMIC_DRAW);
-      for(const [loc,size,offset] of [[0,3,0],[1,3,12],[2,1,24]]){gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,28,offset);gl.vertexAttribDivisor(loc,1);}
-     }
-    }
    }
    return resource;
   }catch(error){
@@ -229,50 +339,116 @@ function createStudioMiniaturePass(gl, compile) {
   for(const [asset,resource] of cache)if(!assets.has(asset)){
    dispose(resource);cache.delete(asset);
   }
+  if(!assets.size)studioMiniatureScheduleFinishes(finishOwner,new Set(),onFinishReady);
+ }
+ function bindFinishField(mesh,field){
+  if(!field&&!mesh.finishBuffer){
+   gl.disableVertexAttribArray(4);gl.vertexAttrib2f(4,0,0);
+   return;
+  }
+  if(!mesh.finishBuffer){
+   mesh.finishBuffer=gl.createBuffer();
+   gl.bindBuffer(gl.ARRAY_BUFFER,mesh.finishBuffer);
+   gl.bufferData(gl.ARRAY_BUFFER,field,gl.STATIC_DRAW);
+   gl.vertexAttribPointer(4,2,gl.FLOAT,false,0,0);
+  }
+  gl.enableVertexAttribArray(4);
+ }
+ function bindContours(mesh,smoothing){
+  if(!mesh.contourVao){
+   mesh.contourVao=gl.createVertexArray();
+   mesh.contourBuffer=gl.createBuffer();
+   gl.bindVertexArray(mesh.contourVao);gl.bindBuffer(gl.ARRAY_BUFFER,mesh.contourBuffer);
+   for(const [loc,size,offset] of [[0,3,0],[1,3,12],[2,1,24]]){
+    gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,28,offset);
+    gl.vertexAttribDivisor(loc,1);
+   }
+  }
+  gl.bindVertexArray(mesh.contourVao);
+  const level=Math.round(Math.max(0,Math.min(1,smoothing??.6))*10)/10;
+  if(mesh.contourLevel!==level){
+   const data=studioMiniatureContours(mesh.primitive,level);
+   gl.bindBuffer(gl.ARRAY_BUFFER,mesh.contourBuffer);
+   gl.bufferData(gl.ARRAY_BUFFER,data,gl.DYNAMIC_DRAW);
+   mesh.contourCount=data.length/7;mesh.contourLevel=level;
+  }
  }
  function draw(matrix,instances){
+  const wanted=new Set(),missing=new Set();
+  for(const {resource,finishes} of instances)if(finishes&&(finishes.washStrength>0||finishes.dryBrushStrength>0)){
+   for(const mesh of resource.meshes){
+    wanted.add(mesh.primitive);
+    if(!mesh.finishBuffer)missing.add(mesh.primitive);
+   }
+  }
+  studioMiniatureScheduleFinishes(finishOwner,missing,onFinishReady);
+  const outlined=instances.filter(i=>i.edgeWidth>0&&(i.edgeStyle==='cel'||i.edgeStyle!=='off'&&i.resource.isStl));
+  const celInstances=outlined.filter(i=>i.edgeStyle==='cel');
+  const geometricResources=new Set(outlined.filter(i=>i.edgeStyle!=='cel').map(i=>i.resource));
+  if(!celInstances.length)releaseTarget();
   if(!instances.length)return;
   gl.useProgram(program);
   gl.uniform1i(uniforms.albedo,2);gl.uniform1i(uniforms.normalPass,0);
   gl.uniformMatrix4fv(uniforms.camera,false,matrix);
   gl.activeTexture(gl.TEXTURE2);
   try{
-   for(const {resource,transform,light,desaturate,doubleSided,forceOpaque,colors,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor,edgeSensitivity} of instances){
+   if(instances.some(i=>i.finishes)){
+    const x=-matrix[2],y=-matrix[6],z=-matrix[10];
+    const length=Math.hypot(x,y,z)||1;
+    gl.uniform3f(uniforms.viewDirection,x/length,y/length,z/length);
+   }
+   for(const {resource,transform,light,desaturate,doubleSided,forceOpaque,colors,paint,sculptShade,inspectionDirection,inspectionIntensity,finishes} of instances){
     gl.uniformMatrix4fv(uniforms.model,false,transform);
     gl.uniform3fv(uniforms.light,light);
     gl.uniform1f(uniforms.desaturate,desaturate);
     gl.uniform3fv(uniforms.inspectionDirection,inspectionDirection||[0,0,1]);
     gl.uniform1f(uniforms.inspectionIntensity,inspectionIntensity||0);
-    gl.uniform1f(uniforms.edgeSensitivity,Math.max(.01,Number(edgeSensitivity)||.65));
-    gl.uniform1f(uniforms.edgeWidth,0);
-    gl.uniform3fv(uniforms.edgeColor,studioMiniatureBaseColor(edgeColor||'#202020').slice(0,3));
     gl.uniform1f(uniforms.sculptShade,Math.max(0,Math.min(1,Number(sculptShade)||0)));
+    gl.uniform1i(uniforms.enhancedFinish,!!finishes);
+    if(finishes){
+     gl.uniform3f(uniforms.finishStrength,finishes.washStrength,finishes.dryBrushStrength,finishes.zenithalStrength);
+     gl.uniform3fv(uniforms.washTint,studioMiniatureBaseColor(finishes.washTint).slice(0,3));
+     gl.uniform3fv(uniforms.dryBrushTint,studioMiniatureBaseColor(finishes.dryBrushTint).slice(0,3));
+     gl.uniform2fv(uniforms.materialFinish,studioMiniatureMaterials[finishes.material]);
+    }
     for(const mesh of resource.meshes){
      const {vao,primitive,count}=mesh;
+     if(!geometricResources.has(resource))releaseContours(mesh);
      if(doubleSided||primitive.material.doubleSided)gl.disable(gl.CULL_FACE);
      else gl.enable(gl.CULL_FACE);
      gl.bindVertexArray(vao);
      if(mesh.paintBuffer&&mesh.lastPaint!==paint){const data=new Float32Array(primitive.positions.length/3*4);for(const [face,hex] of Object.entries(paint||{})){const i=Number(face);if(!Number.isInteger(i)||i<0||i*3>=count||!/^#[0-9a-f]{6}$/i.test(hex))continue;const c=studioMiniatureBaseColor(hex);for(let v=0;v<3;v++)data.set(c,primitive.indices[i*3+v]*4);}gl.bindBuffer(gl.ARRAY_BUFFER,mesh.paintBuffer);gl.bufferSubData(gl.ARRAY_BUFFER,0,data);mesh.lastPaint=paint;}
-     if(!mesh.paintBuffer){gl.vertexAttrib4f(3,0,0,0,0);gl.vertexAttrib3f(4,0,0,0);}
+     if(!mesh.paintBuffer)gl.vertexAttrib4f(3,0,0,0,0);
+     if(finishes&&wanted.has(primitive))bindFinishField(mesh,mesh.finishBuffer?null:studioMiniatureFinishField(primitive));
+     else{
+      gl.disableVertexAttribArray(4);gl.vertexAttrib2f(4,0,0);
+      if(!wanted.has(primitive)){
+       if(mesh.finishBuffer)gl.deleteBuffer(mesh.finishBuffer);
+       mesh.finishBuffer=null;
+      }
+     }
      gl.bindTexture(gl.TEXTURE_2D,resource.textures[primitive.material.image]||white);
      gl.uniform4fv(uniforms.baseColor,colors?.[primitive.colorSlot]??primitive.material.baseColor);
      gl.uniform1f(uniforms.alphaCutoff,forceOpaque?0:(primitive.material.alphaCutoff??0));
      gl.drawElements(gl.TRIANGLES,count,gl.UNSIGNED_INT,0);
     }
    }
+   if(!outlined.length)return;
    const viewport=gl.getParameter(gl.VIEWPORT),blend=gl.isEnabled(gl.BLEND),depthMask=gl.getParameter(gl.DEPTH_WRITEMASK);
    const blendState=[gl.BLEND_SRC_RGB,gl.BLEND_DST_RGB,gl.BLEND_SRC_ALPHA,gl.BLEND_DST_ALPHA].map(k=>gl.getParameter(k));
    try{
     gl.useProgram(contourProgram);gl.uniformMatrix4fv(cu.camera,false,matrix);gl.uniform2f(cu.viewport,viewport[2],viewport[3]);
     gl.disable(gl.CULL_FACE);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
-    for(const {resource,transform,edgeWidth,edgeColor,edgeSensitivity,edgeSmoothing,edgeStyle,light} of instances){
-     if(!(edgeWidth>0)||edgeStyle==='off'||edgeStyle==='cel')continue;
+    for(const {resource,transform,edgeWidth,edgeColor,edgeSensitivity,edgeSmoothing,edgeStyle,light} of outlined){
+     if(!resource.isStl||edgeStyle==='cel')continue;
      gl.uniformMatrix4fv(cu.model,false,transform);gl.uniform1f(cu.width,edgeWidth);gl.uniform1f(cu.sensitivity,edgeSensitivity??.65);
      gl.uniform3fv(cu.color,studioMiniatureBaseColor(edgeColor||'#202020').slice(0,3).map((v,i)=>v*light[i]));
-     for(const mesh of resource.meshes)if(mesh.contourVao){const level=Math.round(Math.max(0,Math.min(1,edgeSmoothing??.6))*10)/10;if(mesh.contourLevel!==level){const data=studioMiniatureContours(mesh.primitive,level);gl.bindBuffer(gl.ARRAY_BUFFER,mesh.contourBuffer);gl.bufferData(gl.ARRAY_BUFFER,data,gl.DYNAMIC_DRAW);mesh.contourCount=data.length/7;mesh.contourLevel=level;}gl.bindVertexArray(mesh.contourVao);gl.drawArraysInstanced(gl.TRIANGLES,0,6,mesh.contourCount);}
+     for(const mesh of resource.meshes){
+      bindContours(mesh,edgeSmoothing);
+      gl.drawArraysInstanced(gl.TRIANGLES,0,6,mesh.contourCount);
+     }
     }
    // Render a miniature-only normal/depth image, then composite visible surface boundaries.
-    const celInstances=instances.filter(i=>i.edgeStyle==='cel'&&i.edgeWidth>0);
     if(celInstances.length){
      const drawFbo=gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING),readFbo=gl.getParameter(gl.READ_FRAMEBUFFER_BINDING),clear=gl.getParameter(gl.COLOR_CLEAR_VALUE),clearDepth=gl.getParameter(gl.DEPTH_CLEAR_VALUE),depthFunc=gl.getParameter(gl.DEPTH_FUNC),depthEnabled=gl.isEnabled(gl.DEPTH_TEST),scissor=gl.isEnabled(gl.SCISSOR_TEST);
      gl.activeTexture(gl.TEXTURE0);const tex0=gl.getParameter(gl.TEXTURE_BINDING_2D);gl.activeTexture(gl.TEXTURE1);const tex1=gl.getParameter(gl.TEXTURE_BINDING_2D);
@@ -460,7 +636,7 @@ function studioMiniatureBaseInstance(pass,asset,base,[x,y,z],footprint,heading,l
 function studioMiniatureBaseHeight(footprint){return Math.min(.18,footprint*.075)}
 
 let studioMiniaturePreview=null;
-function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor,edgeSensitivity,edgeSmoothing,edgeStyle,modelScale=1,scaleMode='height',footprint=1,referenceHeight=1.35}={}){
+function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor,edgeSensitivity,edgeSmoothing,edgeStyle,finishes,enhancedFinishes=true,modelScale=1,scaleMode='height',footprint=1,referenceHeight=1.35}={}){
  const canvas=el('miniaturePreview');
  try{
   if(!studioMiniaturePreview){
@@ -471,6 +647,8 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
     gl.shaderSource(shader,source);gl.compileShader(shader);
     if(!gl.getShaderParameter(shader,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(shader));
     return shader;
+   },()=>{
+    if(studioMiniaturePreview?.pass===pass&&miniatureEditor?.asset)updateMiniatureEditor();
    });
    gl.enable(gl.DEPTH_TEST);
    studioMiniaturePreview={gl,pass};
@@ -481,7 +659,6 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
   const ratio=Math.min(2,Math.max(1,window.devicePixelRatio||1)*1.5);
   if(rect.width>0&&rect.height>0){const w=Math.round(rect.width*ratio),h=Math.round(rect.height*ratio);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}}
   const pixelScale=rect.width>0?canvas.width/rect.width:1;
-  const {min,max}=studioMiniatureOriented(asset,rotation).bounds;
   const height=studioMiniatureSizedHeight(asset,rotation,referenceHeight,footprint,modelScale,scaleMode);
   const heading=(180+Number(el('miniaturePreviewRotation').value))*Math.PI/180;
   const pitch=Number(el('miniaturePreviewElevation').value)*Math.PI/180;
@@ -497,11 +674,15 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
   const lift=baseAsset?studioMiniatureBaseHeight(baseFootprint):0;
   const instances=[];
   if(baseAsset)instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,[0,0,0],baseFootprint,heading,light,desaturate));
-  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth:edgeWidth*pixelScale,edgeColor,edgeSensitivity,edgeSmoothing,edgeStyle});
+  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),
+   light,desaturate,doubleSided,forceOpaque,paint,inspectionDirection,inspectionIntensity,
+   sculptShade:enhancedFinishes?sculptShade:0,edgeWidth:enhancedFinishes?edgeWidth*pixelScale:0,edgeColor,edgeSensitivity,edgeSmoothing,edgeStyle,
+   finishes:enhancedFinishes&&asset.sourceTriangles?studioMiniatureFinishSettings(finishes):null});
   studioMiniaturePreview.pick={asset,camera,model:instances.at(-1).transform};
   pass.draw(camera,instances);
   canvas.hidden=false;
  }catch(error){
+  disposeStudioMiniaturePreview();
   canvas.hidden=true;
   el('miniatureStatus').textContent=error.message;
  }
