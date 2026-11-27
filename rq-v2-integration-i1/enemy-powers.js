@@ -134,7 +134,7 @@
       }},
       'drain-resource':{select:(a,p)=>ctx.heroResources()[p.targetColor]>0?p.targetColor:null,
         apply:(a,p,t)=>ctx.drainHeroResource(t,p.amount)},
-      'create-special':{select:()=>ctx.ordinaryTiles()[0],
+      'create-special':{select:()=>{const pool=ctx.ordinaryTiles();return pool[Math.floor(Math.random()*pool.length)];},
         apply:(a,p,t)=>ctx.createEnemySpecial(t,p.special,p.amount,a)},
       intercept:{select:(a,p)=>ctx.statusTarget?.(a,p,'intercept'),apply:(a,p,t)=>ctx.addStatus(a,p,t,'intercept')},
       retaliate:{select:(a,p)=>ctx.statusTarget?.(a,p,'retaliate'),apply:(a,p,t)=>ctx.addStatus(a,p,t,'retaliate')},

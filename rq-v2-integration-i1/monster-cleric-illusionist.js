@@ -36,7 +36,7 @@
     apply:(_actor,_power,tile)=>ctx.absolve(tile)
    },
    'ivory-mirage':{
-    select:()=>ctx.tiles().find(tile=>ctx.ivoryEligible(tile)&&tile.v!==6),
+    select:()=>(()=>{const pool=ctx.tiles().filter(tile=>ctx.ivoryEligible(tile)&&tile.v!==6);return pool[ctx.random(pool.length)];})(),
     apply:(_actor,_power,tile)=>ctx.applyCardPattern({
      effect:'transform',color:6,count:1,cells:[{x:0,y:0}],
      centerMode:'selected',center:{x:tile.c,y:tile.r}
