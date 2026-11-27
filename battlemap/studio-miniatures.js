@@ -119,7 +119,7 @@ function createStudioMiniaturePass(gl, compile) {
   gl.uniformMatrix4fv(uniforms.camera,false,matrix);
   gl.activeTexture(gl.TEXTURE2);
   try{
-   for(const {resource,transform,light,desaturate,doubleSided,colors} of instances){
+   for(const {resource,transform,light,desaturate,doubleSided,forceOpaque,colors} of instances){
     gl.uniformMatrix4fv(uniforms.model,false,transform);
     gl.uniform3fv(uniforms.light,light);
     gl.uniform1f(uniforms.desaturate,desaturate);
@@ -129,7 +129,7 @@ function createStudioMiniaturePass(gl, compile) {
      gl.bindVertexArray(vao);
      gl.bindTexture(gl.TEXTURE_2D,resource.textures[primitive.material.image]||white);
      gl.uniform4fv(uniforms.baseColor,colors?.[primitive.colorSlot]??primitive.material.baseColor);
-     gl.uniform1f(uniforms.alphaCutoff,primitive.material.alphaCutoff??0);
+     gl.uniform1f(uniforms.alphaCutoff,forceOpaque?0:(primitive.material.alphaCutoff??0));
      gl.drawElements(gl.TRIANGLES,count,gl.UNSIGNED_INT,0);
     }
    }
@@ -270,7 +270,7 @@ function studioMiniatureBaseInstance(pass,asset,base,[x,y,z],footprint,heading,l
 function studioMiniatureBaseHeight(footprint){return Math.min(.18,footprint*.075)}
 
 let studioMiniaturePreview=null;
-function renderStudioMiniaturePreview(asset,{base,doubleSided}={}){
+function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque}={}){
  const canvas=el('miniaturePreview');
  try{
   if(!studioMiniaturePreview){
@@ -302,7 +302,7 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided}={}){
   const lift=baseAsset?studioMiniatureBaseHeight(baseFootprint):0;
   const instances=[];
   if(baseAsset)instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,[0,0,0],baseFootprint,heading,light,desaturate));
-  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset),light,desaturate,doubleSided});
+  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset),light,desaturate,doubleSided,forceOpaque});
   pass.draw(camera,instances);
   canvas.hidden=false;
  }catch(error){
