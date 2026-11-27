@@ -25,6 +25,8 @@ function createStudioMiniaturePass(gl, compile) {
  uniform float alphaCutoff;
  uniform float desaturate;
  uniform float sculptShade;
+ uniform float edgeWidth;
+ uniform vec3 edgeColor;
  uniform vec3 inspectionDirection;
  uniform float inspectionIntensity;
  in vec3 worldNormal;
@@ -49,6 +51,9 @@ function createStudioMiniaturePass(gl, compile) {
   float lamp=max(0.,dot(n,normalize(inspectionDirection)));
   shade+=inspectionIntensity*(.18+.85*lamp);
   vec3 rgb=toSRGB(clamp(color.rgb*light*shade,0.,1.));
+  float edge=length(dFdx(n))+length(dFdy(n));
+  float ink=smoothstep(.12,.45,edge*edgeWidth)*step(.001,edgeWidth);
+  rgb=mix(rgb,edgeColor*light,ink);
   rgb=mix(rgb,vec3(dot(rgb,vec3(.2126,.7152,.0722))),desaturate);
   pixel=vec4(rgb,1.);
  }`);
@@ -59,7 +64,7 @@ function createStudioMiniaturePass(gl, compile) {
   gl.deleteProgram(program);
   throw new Error(error);
  }
- const uniforms=Object.fromEntries(['albedo','camera','model','baseColor','light','alphaCutoff','desaturate','sculptShade','inspectionDirection','inspectionIntensity']
+ const uniforms=Object.fromEntries(['albedo','camera','model','baseColor','light','alphaCutoff','desaturate','sculptShade','inspectionDirection','inspectionIntensity','edgeWidth','edgeColor']
   .map(name=>[name,gl.getUniformLocation(program,name)]));
  const white=gl.createTexture();
  const cache=new Map();
@@ -134,12 +139,14 @@ function createStudioMiniaturePass(gl, compile) {
   gl.uniformMatrix4fv(uniforms.camera,false,matrix);
   gl.activeTexture(gl.TEXTURE2);
   try{
-   for(const {resource,transform,light,desaturate,doubleSided,forceOpaque,colors,paint,sculptShade,inspectionDirection,inspectionIntensity} of instances){
+   for(const {resource,transform,light,desaturate,doubleSided,forceOpaque,colors,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor} of instances){
     gl.uniformMatrix4fv(uniforms.model,false,transform);
     gl.uniform3fv(uniforms.light,light);
     gl.uniform1f(uniforms.desaturate,desaturate);
     gl.uniform3fv(uniforms.inspectionDirection,inspectionDirection||[0,0,1]);
     gl.uniform1f(uniforms.inspectionIntensity,inspectionIntensity||0);
+    gl.uniform1f(uniforms.edgeWidth,Number(edgeWidth)||0);
+    gl.uniform3fv(uniforms.edgeColor,studioMiniatureBaseColor(edgeColor||'#202020').slice(0,3));
     gl.uniform1f(uniforms.sculptShade,Math.max(0,Math.min(1,Number(sculptShade)||0)));
     for(const mesh of resource.meshes){
      const {vao,primitive,count}=mesh;
@@ -325,7 +332,7 @@ function studioMiniatureBaseInstance(pass,asset,base,[x,y,z],footprint,heading,l
 function studioMiniatureBaseHeight(footprint){return Math.min(.18,footprint*.075)}
 
 let studioMiniaturePreview=null;
-function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation,paint,sculptShade,inspectionDirection,inspectionIntensity,modelScale=1,scaleMode='height',footprint=1,referenceHeight=1.35}={}){
+function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor,modelScale=1,scaleMode='height',footprint=1,referenceHeight=1.35}={}){
  const canvas=el('miniaturePreview');
  try{
   if(!studioMiniaturePreview){
@@ -357,7 +364,7 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
   const lift=baseAsset?studioMiniatureBaseHeight(baseFootprint):0;
   const instances=[];
   if(baseAsset)instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,[0,0,0],baseFootprint,heading,light,desaturate));
-  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque,paint,sculptShade,inspectionDirection,inspectionIntensity});
+  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor});
   studioMiniaturePreview.pick={asset,camera,model:instances.at(-1).transform};
   pass.draw(camera,instances);
   canvas.hidden=false;
@@ -386,18 +393,21 @@ function studioMiniaturePaintPick(event,radius=0){
 }
 
 const studioPaintTopology=new WeakMap();
-function studioMiniaturePaintRegion(asset,seed,angle,paint){
+function studioMiniaturePaintRegion(asset,seed,angle,paint,range=25,cleanup=true){
  let topo=studioPaintTopology.get(asset);
  if(!topo){
- const p=asset.primitives[0],v=p.positions,idx=p.indices,edges=new Map(),adj=Array.from({length:idx.length/3},()=>[]),norm=[];
+ const p=asset.primitives[0],v=p.positions,idx=p.indices,edges=new Map(),adj=Array.from({length:idx.length/3},()=>[]),norm=[],centers=[];
  const key=i=>[v[i*3],v[i*3+1],v[i*3+2]].map(n=>Math.round(n*1e5)).join(',');
  for(let i=0;i<idx.length;i+=3){
- const a=idx[i]*3,b=idx[i+1]*3,c=idx[i+2]*3,u=[0,1,2].map(j=>v[b+j]-v[a+j]),w=[0,1,2].map(j=>v[c+j]-v[a+j]),n=[u[1]*w[2]-u[2]*w[1],u[2]*w[0]-u[0]*w[2],u[0]*w[1]-u[1]*w[0]],l=Math.hypot(...n)||1;norm.push(n.map(x=>x/l));
+ const a=idx[i]*3,b=idx[i+1]*3,c=idx[i+2]*3,u=[0,1,2].map(j=>v[b+j]-v[a+j]),w=[0,1,2].map(j=>v[c+j]-v[a+j]),n=[u[1]*w[2]-u[2]*w[1],u[2]*w[0]-u[0]*w[2],u[0]*w[1]-u[1]*w[0]],l=Math.hypot(...n)||1;norm.push(n.map(x=>x/l));centers.push([0,1,2].map(j=>(v[a+j]+v[b+j]+v[c+j])/3));
  for(let j=0;j<3;j++){const k=[key(idx[i+j]),key(idx[i+(j+1)%3])].sort().join('|'),prev=edges.get(k);if(prev!==undefined){adj[i/3].push(prev);adj[prev].push(i/3);}else edges.set(k,i/3);}
  }
- topo={adj,norm};studioPaintTopology.set(asset,topo);
+ topo={adj,norm,centers};studioPaintTopology.set(asset,topo);
  }
- const {adj,norm}=topo,threshold=Math.cos(angle*Math.PI/180),seen=new Set([seed]),queue=[seed],color=paint?.[seed];
- for(let i=0;i<queue.length;i++)for(const next of adj[queue[i]])if(!seen.has(next)&&paint?.[next]===color&&norm[queue[i]].reduce((a,v,j)=>a+v*norm[next][j],0)>=threshold){seen.add(next);queue.push(next);}
+ const {adj,norm,centers}=topo,threshold=Math.cos(angle*Math.PI/180),seen=new Set([seed]),queue=[seed],color=paint?.[seed];
+ const span=Math.max(...asset.bounds.max.map((v,i)=>v-asset.bounds.min[i]));
+ const within=i=>Math.hypot(...centers[i].map((v,j)=>v-centers[seed][j]))<=span*range/100;
+ for(let i=0;i<queue.length;i++)for(const next of adj[queue[i]])if(!seen.has(next)&&within(next)&&paint?.[next]===color&&norm[queue[i]].reduce((a,v,j)=>a+v*norm[next][j],0)>=threshold){seen.add(next);queue.push(next);}
+ if(cleanup){for(let pass=0;pass<2;pass++){const candidates=new Set(queue.flatMap(i=>adj[i]));const add=[...candidates].filter(i=>!seen.has(i)&&within(i)&&paint?.[i]===undefined&&adj[i].length>=2&&adj[i].filter(j=>seen.has(j)).length>=Math.max(2,Math.ceil(adj[i].length*.75)));for(const i of add){seen.add(i);queue.push(i);}}}
  return queue;
 }
