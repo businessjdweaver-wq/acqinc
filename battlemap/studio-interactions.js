@@ -2568,7 +2568,7 @@ function assignStandeeInitiative(source,clone,mode){
  if(!existing)initiativeEntries.set(key,{name,total:roll(),modifier});
 }
 el('standeePasteCancel').onclick=()=>el('standeePasteDialog').close();
-el('standeePasteForm').onsubmit=e=>{
+el('standeePasteForm').onsubmit=async e=>{
  e.preventDefault();
  if(!standeeClipboard||!standeePastePoint)return;
  const mode=el('standeePasteMode').value;
@@ -2584,6 +2584,26 @@ el('standeePasteForm').onsubmit=e=>{
  clone.ownerStandeeId=original.roomId||original.characterRoomId||original.ownerStandeeId;
  delete clone.targetId;delete clone.initiativeKey;delete clone.hpPoolId;delete clone.roomId;delete clone.characterRoomId;delete clone.controllerNames;
  if(!valid(clone,[...pieces,...tokens],null)){error('The standee does not fit there. Cancel and point at another square.');return}
+ const submit=e.submitter;
+ if(submit?.disabled)return;
+ if(submit)submit.disabled=true;
+ try{
+  const sourceKey=miniatureAssignmentKey(original),cloneKey=miniatureAssignmentKey(clone);
+  if(sourceKey&&cloneKey){
+   const settings=miniatureAssignments.get(sourceKey)||await savedValue(sourceKey,null);
+   if(settings?.id){
+    const copied=structuredClone(settings),db=await storageReady;
+    if(!db)throw Error('Browser storage is unavailable.');
+    await new Promise((resolve,reject)=>{
+     const tx=db.transaction('saves','readwrite');
+     tx.oncomplete=resolve;tx.onabort=tx.onerror=()=>reject(Error('The miniature assignment could not be copied.'));
+     tx.objectStore('saves').put(copied,cloneKey);
+    });
+    miniatureAssignments.set(cloneKey,copied);
+   }
+  }
+ }catch(err){error(err.message||String(err));return}
+ finally{if(submit)submit.disabled=false}
  remember(true);
  if(mode==='individual'||mode==='shared')clone.hp=clone.maxHp??null;
  if(mode==='split'){clone.hp=Math.floor(source.hp/2);source.hp-=clone.hp}
