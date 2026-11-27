@@ -1,8 +1,9 @@
 # 3D miniature preview
 
 Open the standee editor, choose **Appearance → 3D miniature**, and select
-an upright GLB or a supported `.unity3d` tabletop bundle. Extract the
-`.unity3d` file first when the model is supplied in a ZIP. Rotate and
+an upright GLB, a supported `.unity3d` tabletop bundle, or a ZIP containing
+one supported `.unity3d` file. Use the file picker or drop the file on the
+import area. Rotate and
 tilt the preview, set the scale and facing offset, and save the standee. The
 model draws in WebGL 3D Play. Switch the appearance to **2D standee** to use
 the standee artwork again. The Standard and top-down views use the artwork.
@@ -72,7 +73,7 @@ Import to first preview took 259 ms in that run.
 Estimated asset allocations were 25.9 MiB. These measurements exclude GPU
 completion and represent one software-rendered run.
 
-Importing ZIP files without extraction, synchronized miniature appearances, server-side
+Synchronized miniature appearances, server-side
 asset access, independent base replacement, and authenticated multiplayer
 acceptance tests are pending. The current remote room configuration targets the
 live Supabase project, so the browser checks used isolated local data.

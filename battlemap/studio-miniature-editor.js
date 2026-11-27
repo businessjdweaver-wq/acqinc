@@ -43,7 +43,7 @@ function decodeStudioMiniature(buffer,filename=''){
   const id=++miniatureRequestId;
   const timer=setTimeout(()=>resetMiniatureWorker('The miniature took too long to read.'),20000);
   miniatureRequests.set(id,{resolve,reject,timer});
-  try{miniatureWorker.postMessage({id,buffer,expectUnity:/\.unity3d$/i.test(filename)},[buffer])}
+  try{miniatureWorker.postMessage({id,buffer,expectUnity:/\.unity3d$/i.test(filename),expectZip:/\.zip$/i.test(filename)},[buffer])}
   catch(error){clearTimeout(timer);miniatureRequests.delete(id);reject(error)}
  });
 }
@@ -187,7 +187,7 @@ async function pickStudioMiniature(file){
  el('miniatureStatus').textContent='Reading miniature…';
  let asset;
  try{
-  if(file.size>miniatureFileLimit)throw Error('Choose a GLB or Unity tabletop bundle no larger than 24 MB.');
+  if(file.size>miniatureFileLimit)throw Error('Choose a ZIP, .unity3d, or GLB no larger than 24 MB.');
   const raw=await file.arrayBuffer();
   const hash=await crypto.subtle.digest('SHA-256',raw);
   const id=Array.from(new Uint8Array(hash),value=>value.toString(16).padStart(2,'0')).join('');
@@ -250,3 +250,21 @@ el('miniatureLibrary').addEventListener('change',event=>void chooseStudioMiniatu
 el('miniatureFile').addEventListener('change',event=>void pickStudioMiniature(event.target.files[0]));
 for(const id of ['miniaturePreviewRotation','miniaturePreviewElevation'])
  el(id).addEventListener('input',updateMiniatureEditor);
+
+const miniatureDrop=el('miniatureDrop');
+miniatureDrop.addEventListener('dragover',event=>{
+ if(!event.dataTransfer.types.includes('Files'))return;
+ event.preventDefault();
+ miniatureDrop.classList.add('is-dragging');
+});
+miniatureDrop.addEventListener('dragleave',event=>{
+ if(!miniatureDrop.contains(event.relatedTarget))miniatureDrop.classList.remove('is-dragging');
+});
+miniatureDrop.addEventListener('drop',event=>{
+ event.preventDefault();
+ miniatureDrop.classList.remove('is-dragging');
+ if(el('miniatureFile').disabled)return;
+ const {files}=event.dataTransfer;
+ if(files.length===1)void pickStudioMiniature(files[0]);
+ else if(files.length>1)el('miniatureStatus').textContent='Drop one miniature file at a time.';
+});
