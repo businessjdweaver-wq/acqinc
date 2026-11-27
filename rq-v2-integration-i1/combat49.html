@@ -1826,6 +1826,7 @@ function layoutPixelSpriteStage(){
  const sizedEnemies=factions[1].nodes.some(node=>enemies[Number(node.dataset.spriteEnemy)]?.creatureSize||/\/(?:village_crisis|scavengers_in_the_smoke|the_signal_tower|the_ashen_captain)_/.test(node.querySelector('img')?.src||''))||sandboxEnemyParty?.ai==='monster';
  // Fixed stage; one camera scale for both factions, based on actual rank heights and layered widths.
  const adaptive=sizedEnemies&&(!storeMode||sandboxEnemyParty?.ai==='monster');
+ const minimumVisibleHeight=32;
  const depthAt=(count,i)=>[1,.68,.50][Math.min(2,count-1-i)];
  const measure=({nodes,forward})=>{
   const ordered=nodes.slice().sort((a,b)=>forward===1?Number(a.classList.contains('sprite-down'))*-1-Number(b.classList.contains('sprite-down'))*-1:Number(a.classList.contains('sprite-front'))-Number(b.classList.contains('sprite-front')));
@@ -1834,7 +1835,7 @@ function layoutPixelSpriteStage(){
    const down=node.classList.contains('sprite-down');
    const h=(down?54:mediumHeight*sizeOf(node))*depthAt(ordered.length,i);
    const ratio=img?.naturalWidth&&img?.naturalHeight?img.naturalWidth/img.naturalHeight:.75;
-   return {h,w:h*ratio/opaqueFraction(img),rank:ordered.length-1-i};
+   return {h,w:h*ratio/opaqueFraction(img),rank:ordered.length-1-i,down};
   });
  };
  const measured=factions.map(measure);
@@ -1848,7 +1849,8 @@ function layoutPixelSpriteStage(){
   encounterSpriteCamera=Math.min(candidateCamera,118/tallest);
  }
  const camera=adaptive?(spriteLab.enabled?candidateCamera:encounterSpriteCamera??candidateCamera):1;
- const allySpan=span(measured[0])*camera,enemySpan=span(measured[1])*camera;
+ const visibleSpan=group=>group.reduce((sum,f)=>sum+f.w*(f.down?camera:Math.max(camera,minimumVisibleHeight/f.h)),0);
+ const allySpan=visibleSpan(measured[0]),enemySpan=visibleSpan(measured[1]);
  const free=Math.max(0,width-20-allySpan-enemySpan);
  const candidateAnchors={seam:10+allySpan+free/2,gap:Math.min(8,free/Math.max(1,2*(factions[0].nodes.length+factions[1].nodes.length-2)))};
  if(adaptive&&!spriteLab.enabled&&encounterSpriteCamera!==null&&encounterSpriteAnchors===null)encounterSpriteAnchors=candidateAnchors;
@@ -1874,7 +1876,7 @@ function layoutPixelSpriteStage(){
    // Merchant humanoid frontliners match the painted height of the allied
    // frontliner, not merely the dimensions of their transparent PNG canvases.
    // Only original rank zero qualifies; rear merchants keep their depth scale.
-   let fittedHeight=forward===1&&!down?height*sizeOf(node)/opaqueFraction(img)*camera:height*(forward===1?camera:1);
+   let fittedHeight=forward===1&&!down?Math.max(adaptive?minimumVisibleHeight:0,height*sizeOf(node)*camera)/opaqueFraction(img):height*(forward===1?camera:1);
    if(forward===-1&&storeMode&&initialEnemyRank===0&&!down){
     const hero=stage.querySelector('.sprite-figure:not(.sprite-enemy).sprite-front');
     const heroImg=hero?.querySelector('img');
@@ -1957,7 +1959,7 @@ function layoutPixelSpriteStage(){
    // Layer both factions using a common scale. Never shrink a supporting rank independently.
    if(forward===-1)for(let i=0;i<count;i++){
     const f=figures[i],ratio=f.width/f.height;
-    f.height=mediumHeight*sizeOf(f.node)*depthAt(count,i)*camera/opaqueFraction(f.img);
+    f.height=Math.max(minimumVisibleHeight,mediumHeight*sizeOf(f.node)*depthAt(count,i)*camera)/opaqueFraction(f.img);
     f.width=f.height*ratio;
    }
    const front=figures[count-1];
