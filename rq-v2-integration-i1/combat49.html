@@ -1812,6 +1812,13 @@ function layoutPixelSpriteStage(){
   {nodes:[...stage.querySelectorAll('.sprite-figure:not(.sprite-enemy)')],forward:1},
   {nodes:[...stage.querySelectorAll('.sprite-figure.sprite-enemy')],forward:-1}
  ];
+ const mediumHeight=115;
+ const sizeOf=node=>RQContentRegistry.creatureSizeMultiplier((node.classList.contains('sprite-enemy')?enemies[Number(node.dataset.spriteEnemy)]:party[Number(node.dataset.spriteHero)])||{});
+ const opaqueFraction=img=>{const a=silhouette(img);if(!a)return 1;const first=a.rows.findIndex(row=>row!==null),last=a.rows.findLastIndex(row=>row!==null);return first>=0&&last>=first?(last-first+1)/a.h:1;};
+ const sizedEnemies=factions[1].nodes.some(node=>enemies[Number(node.dataset.spriteEnemy)]?.creatureSize||/\/(?:village_crisis|scavengers_in_the_smoke|the_signal_tower|the_ashen_captain)_/.test(node.querySelector('img')?.src||''))||sandboxEnemyParty?.ai==='monster';
+ const largest=Math.max(1,...factions.flatMap(f=>f.nodes.map(sizeOf)));
+ const extraHeight=Math.ceil(mediumHeight*(largest-1));
+ stage.style.setProperty('height',(142+extraHeight)+'px','important');
  const merchantBuffer=storeMode&&factions.every(faction=>faction.nodes.length)?12:0;
  factions.forEach(({nodes,forward})=>{
   if(!nodes.length)return;
@@ -1827,12 +1834,12 @@ function layoutPixelSpriteStage(){
    const initialEnemyRank=forward===-1?enemyOrder.slice().reverse().indexOf(enemyId):-1;
    const depth=forward===-1?(storeMode&&count===1?1:[1,.68,.50][Math.max(0,Math.min(2,initialEnemyRank))]):(count===3?[.50,.68,1][i]:i===count-1?1:.68);
    const lab=spriteLab.enabled&&forward===1?spriteLab.settings[node.dataset.spriteHero]:null;
-   const height=(down?54:Math.min(115,stage.clientHeight*.90))*depth*(lab?.height||100)/100;
+   const height=(down?54:mediumHeight)*depth*(lab?.height||100)/100;
    const ratio=img?.naturalWidth&&img?.naturalHeight?img.naturalWidth/img.naturalHeight:.75;
    // Merchant humanoid frontliners match the painted height of the allied
    // frontliner, not merely the dimensions of their transparent PNG canvases.
    // Only original rank zero qualifies; rear merchants keep their depth scale.
-   let fittedHeight=height;
+   let fittedHeight=forward===1&&!down?height*sizeOf(node)/opaqueFraction(img):height;
    if(forward===-1&&storeMode&&initialEnemyRank===0&&!down){
     const hero=stage.querySelector('.sprite-figure:not(.sprite-enemy).sprite-front');
     const heroImg=hero?.querySelector('img');
@@ -1911,16 +1918,10 @@ function layoutPixelSpriteStage(){
   if(mirrorFormation){
    figures.forEach((f,i)=>{positions[i]=width-positions[i]-f.width;});
   }
-  if(forward===-1&&(sandboxEnemyParty?.ai==='monster'||nodes.some(node=>/\/(?:village_crisis|scavengers_in_the_smoke|the_signal_tower|the_ashen_captain)_/.test(node.querySelector('img')?.src||'')))){
-   // Match visible frontliner height; only the supporting ranks may shrink.
-   const opaqueFraction=img=>{const a=silhouette(img);if(!a)return 1;const first=a.rows.findIndex(row=>row!==null),last=a.rows.findLastIndex(row=>row!==null);return first>=0&&last>=first?(last-first+1)/a.h:1;};
-   const hero=stage.querySelector('.sprite-figure:not(.sprite-enemy).sprite-front');
-   const heroImg=hero?.querySelector('img');
-   const target=(parseFloat(heroImg?.style.height)||parseFloat(hero?.style.height)||115)*opaqueFraction(heroImg);
+  if(forward===-1&&sizedEnemies&&!storeMode||forward===-1&&sandboxEnemyParty?.ai==='monster'){
    const front=figures[count-1];
    const resize=(f,h)=>{const ratio=f.width/f.height;f.height=h;f.width=h*ratio;};
-   resize(front,target/opaqueFraction(front.img));
-   for(let i=count-2;i>=0;i--)resize(figures[i],target*[1,.68,.50][Math.min(2,count-1-i)]/opaqueFraction(figures[i].img));
+   for(let i=count-1;i>=0;i--)resize(figures[i],mediumHeight*sizeOf(figures[i].node)*[1,.68,.50][Math.min(2,count-1-i)]/opaqueFraction(figures[i].img));
    // Wide frontliners may cross midfield slightly rather than being scaled down.
    const reserve=count>1?Math.min(width*.24,Math.max(32,width-mid-front.width)):0;
    positions[count-1]=Math.max(0,Math.min(mid+7,width-3-reserve-front.width));
@@ -1992,7 +1993,11 @@ function layoutPixelSpriteStage(){
    const adjustment=spriteLab.enabled&&forward===1?(spriteLab.settings[f.node.dataset.spriteHero]?.x||0):0;
    const left=positions[i]+adjustment;
    f.node.style.setProperty('position','absolute','important');
-   const top=receding?0:enemySpriteTop(stage,f,count-1-i);
+   const sized=forward===1||sizedEnemies&&!storeMode||sandboxEnemyParty?.ai==='monster';
+   const alphaShape=silhouette(f.img);
+   const lastOpaque=alphaShape?alphaShape.rows.findLastIndex(row=>row!==null):-1;
+   const footOffset=lastOpaque>=0?(lastOpaque+1)*f.height/alphaShape.h:f.height;
+   const top=sized?extraHeight+122-(count-1-i)*14-footOffset:receding?0:enemySpriteTop(stage,f,count-1-i);
    f.node.style.setProperty('top',top+'px','important');
    f.node.style.setProperty('bottom','auto','important');
    f.node.style.setProperty('left',left+'px','important');
@@ -2011,7 +2016,7 @@ function layoutPixelSpriteStage(){
     const alpha=silhouette(f.img);
     const firstOpaque=alpha?alpha.rows.findIndex(row=>row!==null):-1;
     const alphaTop=firstOpaque>=0?firstOpaque*f.height/alpha.h:0;
-    f.img.style.setProperty('top',receding?(7-alphaTop)+'px':'0px','important');
+    f.img.style.setProperty('top',!sized&&receding?(7-alphaTop)+'px':'0px','important');
     f.img.style.setProperty('width',f.width+'px','important');
     f.img.style.setProperty('height',f.height+'px','important');
     f.img.style.setProperty('max-width','none','important');
