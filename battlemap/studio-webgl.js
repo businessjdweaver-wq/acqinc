@@ -776,7 +776,7 @@ function studioWebGLMiniatures(candidates,{showLighting,blockers}){
    point[2]+=studioMiniatureBaseHeight(token.size);
   }
   instances.push({resource,light,desaturate,doubleSided:settings.doubleSided!==false,forceOpaque:settings.forceOpaque!==false,
-   transform:studioMiniatureTransform(asset,point,height,heading+Math.PI/2,base.shape!=='off')});
+   transform:studioMiniatureTransform(asset,point,height,heading+Math.PI/2,base.shape!=='off',settings.rotation)});
  }
  pass.retain(new Set([...assets,...baseAssets]));
  if(miniatureEditor?.id)keys.add(miniatureAssetKey(miniatureEditor.id));
