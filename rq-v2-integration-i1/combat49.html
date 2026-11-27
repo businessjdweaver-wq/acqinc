@@ -809,7 +809,7 @@ function renderEnemyProfile(enemy,index){
   'salvage-special':()=> 'Consumes a special tile and deals '+p.baseDamage+' damage plus '+p.damagePerStrength+' per point of its strength.',
   'woven-life':()=> 'Places a countdown that reduces damage by '+p.reduction+'% and shares it across living monsters for '+p.duration+' rounds.',
   leafspeech:()=> 'Turns '+p.percent+'% of eligible tiles up to '+p.range+' spaces above the target green (maximum '+p.cap+'), removes hostile specials, and resolves matches.',
-  'withering-blight':()=> 'Destroys '+p.percent+'% of the largest hero energy pool and deals '+p.damagePerPoint+' damage per point removed.',
+  'withering-blight':()=> {const c=RQGrimmHester.monsterBlightConfig(p.percent,p.damagePerPoint);return 'Destroys '+p.percent+'% of '+(Number.isFinite(c.poolCount)?'the '+c.poolCount+' largest hero energy pools':'all hero energy pools')+' and deals '+c.damagePerPoint+' damage per point removed.';},
   'tile-pattern':()=>p.operation+' up to '+p.count+' '+p.eligibility+' tiles in a '+p.pattern+(p.filterColor===undefined?'':' filtered to '+labels[p.filterColor])+(p.operation==='convert'?' to '+(labels[p.targetColor]||'random colors'):'')+(p.cascade?', then resolve enemy cascades.':'.'),
   'hero-stun':()=> 'Stuns the frontline hero for '+p.duration+' hero turns.',
   cleanse:()=> 'Removes eligible harmful statuses from one '+p.team+' combatant.',
@@ -2703,7 +2703,7 @@ function selectMonsterAdvanced(kind,a,p,ledger){
   case 'woven-life':return !ledger.active('woven-life').length&&randomEligibleMonsterTile(t=>monsterTileEligible(t,'ordinary'));
   case 'leafspeech':return randomEligibleMonsterTile(tile=>tile&&Math.round(
    RQGrimmHester.leafspeechCandidates(tiles,tile,p.range,'player').length*p.percent/100)>0);
-  case 'withering-blight':return front&&RQGrimmHester.blight(energy,p.percent,p.damagePerPoint);
+  case 'withering-blight':{const c=RQGrimmHester.monsterBlightConfig(p.percent,p.damagePerPoint);return front&&RQGrimmHester.blightSpread(energy,p.percent,c.damagePerPoint,c.poolCount);}
   case 'tile-pattern':{
    const source=p.operation==='propagate'?tiles.find(t=>monsterTileEligible(t,'enemy-special')):null;
    return monsterPattern(p).length&&(p.operation!=='propagate'||source)?{source}:null;
@@ -2860,9 +2860,9 @@ async function applyMonsterAdvanced(kind,a,p,t,ledger,stunHero){
    break;
   }
   case 'withering-blight':
-   energy[t.color]-=t.destroyed;
+   for(const d of t.drains)energy[d.color]-=d.destroyed;
    damageParty(t.damage,{fixedDamage:true});
-   say(p.name+' destroys '+t.destroyed+' '+labels[t.color]+' energy and deals '+t.damage+' damage.');
+   say(p.name+' destroys '+t.destroyed+' energy ('+t.drains.map(d=>d.destroyed+' '+labels[d.color]).join(', ')+') and deals '+t.damage+' damage.');
    break;
 
   case 'tile-pattern':{
@@ -4707,7 +4707,7 @@ async function castNewHeroPower(i,j,t=null){
   chosen=RQGrimmHester.leafspeechSelection(tiles,t,cfg.range[n],cfg.percent[n],cfg.cap[n]);
   if(!chosen.length){say('No eligible tiles above that selection. No energy spent.');return false;}
  }else if(type==='hester-blight'){
-  enemy=frontEnemy();blight=RQGrimmHester.blight(enemyEnergy,cfg.percent[n],cfg.damage[n]);
+  enemy=frontEnemy();blight=RQGrimmHester.blightSpread(enemyEnergy,cfg.percent[n],cfg.damage[n],cfg.pools[n]);
   if(!blight||enemy===undefined){say('No enemy energy can be destroyed. No energy spent.');return false;}
  }else{
   allies=party.filter((ally,k)=>k!==i&&ally.hp>0&&ally.hp<ally.max);
@@ -4732,10 +4732,10 @@ async function castNewHeroPower(i,j,t=null){
    say('Leafspeech converts '+chosen.length+' tile(s) to green.');
    await resolve('player',null,null,null,{clearMatchFourLines:false});
   }else if(type==='hester-blight'){
-   enemyEnergy[blight.color]-=blight.destroyed;
+   for(const d of blight.drains)enemyEnergy[d.color]-=d.destroyed;
    await powerFlash(i,'🥀');
    damageEnemy(blight.damage,enemy,{fixedDamage:true});
-   say('Withering Blight destroys '+blight.destroyed+' '+labels[blight.color]+' energy and deals '+blight.damage+' damage.');
+   say('Withering Blight destroys '+blight.destroyed+' energy ('+blight.drains.map(d=>d.destroyed+' '+labels[d.color]).join(', ')+') and deals '+blight.damage+' damage.');
   }else{
    if(!monsterPowerTestParties)hero.hp-=cfg.sacrifice;
    float(combatSpriteTarget('hero',i),'−'+cfg.sacrifice,'#ff7777');

@@ -35,6 +35,15 @@
   const tied=resources.flatMap((amount,color)=>amount===largest?[color]:[]);
   return {color:tied[Math.floor(random()*tied.length)],destroyed,damage:destroyed*damagePerPoint};
  }
+ function blightSpread(resources,percent,damagePerPoint,poolCount){
+  const drains=resources.map((amount,color)=>({amount,color})).sort((a,b)=>b.amount-a.amount||a.color-b.color).slice(0,poolCount).map(({amount,color})=>({color,destroyed:Math.floor(Math.max(0,amount)*percent/100)})).filter(d=>d.destroyed>0);
+  const destroyed=drains.reduce((sum,d)=>sum+d.destroyed,0);
+  return destroyed?{drains,destroyed,damage:destroyed*damagePerPoint}:null;
+ }
+ function monsterBlightConfig(percent,damagePerPoint){
+  const level=percent>=60?3:percent>=50?2:percent>=40?1:0;
+  return {poolCount:[2,3,4,Infinity][level],damagePerPoint:Math.max(damagePerPoint,[3,4,5,6][level])};
+ }
  function eligibleBleedOut(tile){
   if(!tile||tile.hay||tile.lore||tile.towerBrazier||tile.groveRoot||tile.groveVillager||
     tile.grovePetrified||tile.sluiceGear||tile.sluiceWaterlock||tile.lumberFire||
@@ -54,5 +63,5 @@
  function matchMultiplier(trail,redCount){
   return trail?1+Math.min(trail.cap,redCount*trail.bonus)/100:1;
  }
- return {splitDamage,leafspeechCandidates,leafspeechSelection,convertLeafspeech,blight,eligibleBleedOut,clearBleedOut,bleedTarget,matchMultiplier};
+ return {splitDamage,leafspeechCandidates,leafspeechSelection,convertLeafspeech,blight,blightSpread,monsterBlightConfig,eligibleBleedOut,clearBleedOut,bleedTarget,matchMultiplier};
 });
