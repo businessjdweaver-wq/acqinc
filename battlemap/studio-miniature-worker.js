@@ -25,12 +25,43 @@ function generatedNormals(positions,indices){
  return normals;
 }
 // Read standard binary or ASCII STL, converting Z-up to Y-up.
-function parseStudioMiniatureStl(buffer){
- const view=new DataView(buffer), limit=66666;
+// Spatial vertex clustering collapses edges rather than dropping arbitrary faces.
+function simplifyStudioStl(source,target){
+ const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
+ for(let i=0;i<source.length;i++){const a=i%3;min[a]=Math.min(min[a],source[i]);max[a]=Math.max(max[a],source[i]);}
+ const span=Math.max(...max.map((v,i)=>v-min[i]));
+ function cluster(divisions){
+  const cells=new Map(),ids=new Uint32Array(source.length/3),points=[];
+  for(let i=0;i<source.length;i+=3){
+   const key=[0,1,2].map(a=>Math.floor((source[i+a]-min[a])/span*divisions)).join(',');
+   let cell=cells.get(key);
+   if(!cell){cell={id:points.length,x:0,y:0,z:0,n:0};cells.set(key,cell);points.push(cell);}
+   cell.x+=source[i];cell.y+=source[i+1];cell.z+=source[i+2];cell.n++;ids[i/3]=cell.id;
+  }
+  const faces=[],seen=new Set();
+  for(let i=0;i<ids.length;i+=3){
+   const a=ids[i],b=ids[i+1],c=ids[i+2];if(a===b||b===c||a===c)continue;
+   const key=[a,b,c].sort((x,y)=>x-y).join(',');if(seen.has(key))continue;seen.add(key);
+   faces.push(a,b,c);
+  }
+  return {points,faces};
+ }
+ let lo=2,hi=512,best=null;
+ while(lo<=hi){const mid=(lo+hi)>>1,result=cluster(mid),n=result.faces.length/3;
+  if(n<=target){if(n&&(!best||n>best.faces.length/3))best=result;lo=mid+1;}else hi=mid-1;
+ }
+ if(!best)throw Error('Could not simplify STL to this resolution.');
+ const out=new Float32Array(best.faces.length*3);
+ best.faces.forEach((id,i)=>{const p=best.points[id];out.set([p.x/p.n,p.y/p.n,p.z/p.n],i*3);});
+ return out;
+}
+
+function parseStudioMiniatureStl(buffer,target=60000){
+ const view=new DataView(buffer), limit=500000;
  let positions;
  const count=buffer.byteLength>=84?view.getUint32(80,true):0;
  if(count&&84+50*count===buffer.byteLength){
-  if(count>limit)throw Error('STL exceeds 66,666 triangles.');
+  if(count>limit)throw Error('STL exceeds 500,000 source triangles.');
   positions=new Float32Array(count*9);
   for(let t=0;t<count;t++)for(let v=0;v<3;v++){
    const at=84+t*50+12+v*12,i=t*9+v*3;
@@ -41,18 +72,21 @@ function parseStudioMiniatureStl(buffer){
   if(!/^\s*solid\b/i.test(source))throw Error('Invalid STL file.');
   const values=[], pattern=/\bvertex\s+(\S+)\s+(\S+)\s+(\S+)/gi;
   for(const match of source.matchAll(pattern)){
-   if(values.length>=limit*9)throw Error('STL exceeds 66,666 triangles.');
+   if(values.length>=limit*9)throw Error('STL exceeds 500,000 source triangles.');
    values.push(Number(match[1]),Number(match[3]),-Number(match[2]));
   }
   if(!values.length||values.length%9)throw Error('Invalid ASCII STL triangles.');
   positions=new Float32Array(values);
  }
  if(!positions.every(Number.isFinite))throw Error('Invalid STL coordinates.');
+ const sourceTriangles=positions.length/9;
+ target=Math.max(1000,Math.min(120000,Number(target)||60000));
+ if(sourceTriangles>target)positions=simplifyStudioStl(positions,target);
  const indices=Uint32Array.from({length:positions.length/3},(_,i)=>i);
- return {meshes:[{positions,indices,material:{alphaMode:'OPAQUE',baseColorFactor:[.48,.48,.48,1],doubleSided:true}}]};
+ return {sourceTriangles,meshes:[{positions,indices,material:{alphaMode:'OPAQUE',baseColorFactor:[.48,.48,.48,1],doubleSided:true}}]};
 }
 
-async function readMiniature({id,buffer,expectUnity,expectZip,expectStl}){
+async function readMiniature({id,buffer,expectUnity,expectZip,expectStl,stlTarget}){
  const bitmaps=[];
  try{
   let raw=new Uint8Array(buffer);
@@ -69,7 +103,7 @@ async function readMiniature({id,buffer,expectUnity,expectZip,expectStl}){
    if(typeof StudioUnityReader==='undefined')importScripts(miniatureScript('./vendor/miniature-unity/reader.js'));
    buffer=await convertStudioUnityMiniature(raw,StudioUnityReader);
   }
-  const {meshes}=expectStl?parseStudioMiniatureStl(buffer):parseStudioMiniatureGlb(buffer,{limits:{
+  const {meshes,sourceTriangles}=expectStl?parseStudioMiniatureStl(buffer,stlTarget):parseStudioMiniatureGlb(buffer,{limits:{
    fileBytes:24*1024*1024,vertices:200000,indices:600000,primitives:64,textureDimension:2048
   }});
   const usedImages=[...new Set(meshes.map(mesh=>mesh.material.baseColorTexture).filter(Boolean))];
@@ -110,7 +144,7 @@ async function readMiniature({id,buffer,expectUnity,expectZip,expectStl}){
   const groundCenter=[(groundXMin+groundXMax)/2,(groundZMin+groundZMax)/2];
   const buffers=primitives.flatMap(p=>[p.positions,p.normals,p.texcoords,p.indices].filter(Boolean).map(array=>array.buffer));
   const byteCost=buffers.reduce((total,array)=>total+array.byteLength,0)+bitmaps.reduce((total,img)=>total+img.width*img.height*6,0);
-  self.postMessage({id,asset:{primitives,bitmaps,bounds:{min,max,groundCenter},byteCost}},[...buffers,...bitmaps]);
+  self.postMessage({id,asset:{sourceTriangles,primitives,bitmaps,bounds:{min,max,groundCenter},byteCost}},[...buffers,...bitmaps]);
  }catch(error){
   for(const bitmap of bitmaps)bitmap.close();
   self.postMessage({id,error:error.message||'The miniature could not be read.'});
