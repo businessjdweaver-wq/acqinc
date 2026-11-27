@@ -16,7 +16,15 @@ function miniatureAssignmentKey(token){
 function miniatureAssetKey(id){
  return miniaturePrefix+miniatureAccount()+'/asset/'+id;
 }
-function decodeStudioMiniature(buffer){
+function resetMiniatureWorker(message){
+ miniatureWorker?.terminate();miniatureWorker=null;
+ for(const request of miniatureRequests.values()){
+  clearTimeout(request.timer);
+  request.reject(new Error(message));
+ }
+ miniatureRequests.clear();
+}
+function decodeStudioMiniature(buffer,filename=''){
  if(!miniatureWorker){
   const url=new URL('./studio-miniature-worker.js',document.baseURI);
   url.searchParams.set('build',el('battlemapBuild').textContent.trim());
@@ -25,20 +33,18 @@ function decodeStudioMiniature(buffer){
    const request=miniatureRequests.get(data.id);
    if(!request)return;
    miniatureRequests.delete(data.id);
+   clearTimeout(request.timer);
    if(data.error)request.reject(new Error(data.error));
    else request.resolve(data.asset);
   };
-  miniatureWorker.onerror=()=>{
-   for(const request of miniatureRequests.values())request.reject(new Error('The miniature reader could not start.'));
-   miniatureRequests.clear();
-   miniatureWorker.terminate();miniatureWorker=null;
-  };
+  miniatureWorker.onerror=()=>resetMiniatureWorker('The miniature reader could not start.');
  }
  return new Promise((resolve,reject)=>{
   const id=++miniatureRequestId;
-  miniatureRequests.set(id,{resolve,reject});
-  try{miniatureWorker.postMessage({id,buffer},[buffer])}
-  catch(error){miniatureRequests.delete(id);reject(error)}
+  const timer=setTimeout(()=>resetMiniatureWorker('The miniature took too long to read.'),20000);
+  miniatureRequests.set(id,{resolve,reject,timer});
+  try{miniatureWorker.postMessage({id,buffer,expectUnity:/\.unity3d$/i.test(filename)},[buffer])}
+  catch(error){clearTimeout(timer);miniatureRequests.delete(id);reject(error)}
  });
 }
 function releaseMiniatureBitmaps(asset){
@@ -64,7 +70,7 @@ function loadStudioMiniature(id){
  const promise=(async()=>{
   const value=await savedValue(key,null);
   if(!(value?.file instanceof Blob)||value.file.size>miniatureFileLimit)throw Error('Miniature file is unavailable.');
-  const asset=await decodeStudioMiniature(await value.file.arrayBuffer());
+  const asset=await decodeStudioMiniature(await value.file.arrayBuffer(),value.file.name);
   cacheStudioMiniature(key,asset);
   return asset;
  })().catch(error=>{miniatureAssets.set(key,{error});throw error});
@@ -181,11 +187,11 @@ async function pickStudioMiniature(file){
  el('miniatureStatus').textContent='Reading miniature…';
  let asset;
  try{
-  if(file.size>miniatureFileLimit)throw Error('Choose a GLB no larger than 24 MB.');
+  if(file.size>miniatureFileLimit)throw Error('Choose a GLB or Unity tabletop bundle no larger than 24 MB.');
   const raw=await file.arrayBuffer();
   const hash=await crypto.subtle.digest('SHA-256',raw);
   const id=Array.from(new Uint8Array(hash),value=>value.toString(16).padStart(2,'0')).join('');
-  asset=await decodeStudioMiniature(raw);
+  asset=await decodeStudioMiniature(raw,file.name);
   if(miniatureEditor!==draft||draft.change!==change){releaseMiniatureBitmaps(asset);return}
   const existing=miniatureAssets.get(miniatureAssetKey(id))?.asset;
   if(existing){releaseMiniatureBitmaps(asset);asset=existing}
