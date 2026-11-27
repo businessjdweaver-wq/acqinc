@@ -24,10 +24,16 @@ function generatedNormals(positions,indices){
  }
  return normals;
 }
-async function readMiniature({id,buffer,expectUnity}){
+async function readMiniature({id,buffer,expectUnity,expectZip}){
  const bitmaps=[];
  try{
-  const raw=new Uint8Array(buffer);
+  let raw=new Uint8Array(buffer);
+  const limit=24*1024*1024;
+  if(expectZip||(raw[0]===80&&raw[1]===75&&raw[2]===3&&raw[3]===4)){
+   importScripts(miniatureScript('./studio-miniature-zip.js'));
+   raw=await readStudioMiniatureZip(raw,limit);
+   expectUnity=true;
+  }
   const unity=isStudioUnityBundle(raw);
   if(expectUnity&&!unity)throw Error('Expected a UnityFS .unity3d file.');
   if(unity){
