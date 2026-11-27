@@ -328,7 +328,8 @@ function validateEncounter(record, location) {
   const combat = record.mode === 'combat';
   object(record, ['schemaVersion', 'kind', 'id', 'name', 'mode', 'handler', 'board',
     'intro', 'win', 'loss', 'objective', 'rewardPolicy',
-    ...(combat ? ['enemyPartyId'] : ['turnLimit'])], location);
+    ...(combat ? ['enemyPartyId'] : ['turnLimit'])], location, combat ? ['monsterPowerLevel'] : []);
+  if (combat && Object.hasOwn(record, 'monsterPowerLevel')) integer(record.monsterPowerLevel, 1, 4, `${location}.monsterPowerLevel`);
   oneOf(record.handler, [combat ? 'merchant' : 'harvest'], `${location}.handler`);
   for (const field of ['intro', 'win', 'loss']) displayText(record[field], `${location}.${field}`);
   object(record.board, ['layout', 'seed'], `${location}.board`);
