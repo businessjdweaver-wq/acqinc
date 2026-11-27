@@ -30,6 +30,7 @@ function createStudioMiniaturePass(gl, compile) {
  uniform float desaturate;
  uniform float sculptShade;
  uniform float edgeWidth;
+ uniform float edgeSensitivity;
  uniform vec3 edgeColor;
  uniform vec3 inspectionDirection;
  uniform float inspectionIntensity;
@@ -57,11 +58,13 @@ function createStudioMiniaturePass(gl, compile) {
   float lamp=max(0.,dot(n,normalize(inspectionDirection)));
   shade+=inspectionIntensity*(.18+.85*lamp);
   vec3 rgb=toSRGB(clamp(color.rgb*light*shade,0.,1.));
+  rgb=mix(rgb,vec3(1.),clamp(inspectionIntensity*.32*pow(lamp,2.),0.,.65));
+  rgb+=light*(.10*sculptShade*pow(ndl,3.));
   float edge=length(dFdx(n))+length(dFdy(n));
   vec3 dist=bary/max(fwidth(bary),vec3(.000001));
-  vec3 lines=(1.-smoothstep(vec3(max(0.,edgeWidth-.75)),vec3(edgeWidth+.75),dist))*edgeMask;
+  vec3 lines=(1.-smoothstep(vec3(max(0.,edgeWidth-.75)),vec3(edgeWidth+.75),dist))*step(vec3(edgeSensitivity),edgeMask);
   float ink=max(max(lines.x,lines.y),lines.z)*step(.001,edgeWidth);
-  ink=max(ink,smoothstep(.12,.45,edge*edgeWidth)*step(.001,edgeWidth));
+  // Do not ink individual normal derivatives: they reveal tessellation noise.
   rgb=mix(rgb,edgeColor*light,ink);
   rgb=mix(rgb,vec3(dot(rgb,vec3(.2126,.7152,.0722))),desaturate);
   pixel=vec4(rgb,1.);
@@ -73,7 +76,7 @@ function createStudioMiniaturePass(gl, compile) {
   gl.deleteProgram(program);
   throw new Error(error);
  }
- const uniforms=Object.fromEntries(['albedo','camera','model','baseColor','light','alphaCutoff','desaturate','sculptShade','inspectionDirection','inspectionIntensity','edgeWidth','edgeColor']
+ const uniforms=Object.fromEntries(['albedo','camera','model','baseColor','light','alphaCutoff','desaturate','sculptShade','inspectionDirection','inspectionIntensity','edgeWidth','edgeColor','edgeSensitivity']
   .map(name=>[name,gl.getUniformLocation(program,name)]));
  const white=gl.createTexture();
  const cache=new Map();
@@ -149,12 +152,13 @@ function createStudioMiniaturePass(gl, compile) {
   gl.uniformMatrix4fv(uniforms.camera,false,matrix);
   gl.activeTexture(gl.TEXTURE2);
   try{
-   for(const {resource,transform,light,desaturate,doubleSided,forceOpaque,colors,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor} of instances){
+   for(const {resource,transform,light,desaturate,doubleSided,forceOpaque,colors,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor,edgeSensitivity} of instances){
     gl.uniformMatrix4fv(uniforms.model,false,transform);
     gl.uniform3fv(uniforms.light,light);
     gl.uniform1f(uniforms.desaturate,desaturate);
     gl.uniform3fv(uniforms.inspectionDirection,inspectionDirection||[0,0,1]);
     gl.uniform1f(uniforms.inspectionIntensity,inspectionIntensity||0);
+    gl.uniform1f(uniforms.edgeSensitivity,Math.max(.01,Number(edgeSensitivity)||.65));
     gl.uniform1f(uniforms.edgeWidth,Number(edgeWidth)||0);
     gl.uniform3fv(uniforms.edgeColor,studioMiniatureBaseColor(edgeColor||'#202020').slice(0,3));
     gl.uniform1f(uniforms.sculptShade,Math.max(0,Math.min(1,Number(sculptShade)||0)));
@@ -342,7 +346,7 @@ function studioMiniatureBaseInstance(pass,asset,base,[x,y,z],footprint,heading,l
 function studioMiniatureBaseHeight(footprint){return Math.min(.18,footprint*.075)}
 
 let studioMiniaturePreview=null;
-function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor,modelScale=1,scaleMode='height',footprint=1,referenceHeight=1.35}={}){
+function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor,edgeSensitivity,modelScale=1,scaleMode='height',footprint=1,referenceHeight=1.35}={}){
  const canvas=el('miniaturePreview');
  try{
   if(!studioMiniaturePreview){
@@ -374,7 +378,7 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
   const lift=baseAsset?studioMiniatureBaseHeight(baseFootprint):0;
   const instances=[];
   if(baseAsset)instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,[0,0,0],baseFootprint,heading,light,desaturate));
-  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor});
+  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor,edgeSensitivity});
   studioMiniaturePreview.pick={asset,camera,model:instances.at(-1).transform};
   pass.draw(camera,instances);
   canvas.hidden=false;
@@ -434,9 +438,26 @@ function studioMiniatureFeatureMask(p){
   const n=[u[1]*w[2]-u[2]*w[1],u[2]*w[0]-u[0]*w[2],u[0]*w[1]-u[1]*w[0]],len=Math.hypot(...n)||1;
   for(let j=0;j<3;j++){const k=[key(idx[i+(j+1)%3]),key(idx[i+(j+2)%3])].sort().join('|');const entry={i,j,n:n.map(x=>x/len)};if(edges.has(k))edges.get(k).push(entry);else edges.set(k,[entry]);}
  }
- for(const list of edges.values()){
-  const sharp=list.length===1||list.some(a=>list.some(b=>a.n.reduce((sum,x,j)=>sum+x*b.n[j],0)<.94));
-  if(sharp)for(const {i,j} of list)for(let k=0;k<3;k++)mask[idx[i+k]*3+j]=1;
+ // Score coherent crease chains, rejecting isolated short edges and mesh holes.
+ const candidates=[],nodes=new Map();
+ for(const [key,list] of edges){
+  if(list.length!==2)continue;
+  const dot=list[0].n.reduce((sum,x,j)=>sum+x*list[1].n[j],0);
+  if(dot>.94)continue;
+  const ends=key.split('|'),a=ends[0].split(',').map(Number),b=ends[1].split(',').map(Number);
+  const e={list,ends,length:Math.hypot(...a.map((x,j)=>x-b[j])),angle:Math.acos(Math.max(-1,Math.min(1,dot))),seen:false};
+  candidates.push(e);for(const k of ends){if(!nodes.has(k))nodes.set(k,[]);nodes.get(k).push(e);}
+ }
+ let min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
+ for(let i=0;i<v.length;i++){let j=i%3;min[j]=Math.min(min[j],v[i]);max[j]=Math.max(max[j],v[i]);}
+ const span=Math.max(...max.map((x,j)=>x-min[j]))||1;
+ for(const seed of candidates){if(seed.seen)continue;seed.seen=true;const chain=[seed];let length=0,weighted=0;
+  for(let i=0;i<chain.length;i++){const e=chain[i];length+=e.length;weighted+=e.length*e.angle;
+   for(const k of e.ends){const neighbors=nodes.get(k);if(neighbors.length>3)continue;for(const n of neighbors)if(!n.seen){n.seen=true;chain.push(n);}}
+  }
+  if(length<span*.025||chain.length<3)continue;
+  const score=Math.min(1,length/(span*.18))*.65+Math.min(1,weighted/Math.max(length,1e-9)/1.2)*.35;
+  for(const e of chain)for(const {i,j} of e.list)for(let k=0;k<3;k++)mask[idx[i+k]*3+j]=score;
  }
  studioFeatureCache.set(p,mask);return mask;
 }
