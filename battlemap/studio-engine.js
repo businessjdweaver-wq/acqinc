@@ -1467,11 +1467,11 @@ function paintFlatStandee(f){
    ctx.fillStyle=color;ctx.fill();
   };
   fill(1,base.rimColor);
-  for(let i=0;i<base.ringCount;i++)fill(.94-.28*i/base.ringCount,base.ringColors[i]);
-  fill(.66,base.color);
+  for(let i=0;i<base.ringCount;i++)fill(.94-base.ringWidth*i/base.ringCount,base.ringColors[i]);
+  fill(.94-base.ringWidth,base.color);
   ctx.restore();
  }
- const artRadius=base?.shape!=='off'&&base?.ringCount?Math.max(r,standeeGridPixelSize()*p.size*.425*base.size)*.66:r;
+ const artRadius=base?.shape!=='off'&&base?.ringCount?Math.max(r,standeeGridPixelSize()*p.size*.425*base.size)*(.94-base.ringWidth):r;
  ctx.save();
  ctx.beginPath();ctx.arc(x,y,artRadius,0,Math.PI*2);
  ctx.fillStyle=obscured?'#080808':dead?'#985d57':p.color;ctx.fill();
