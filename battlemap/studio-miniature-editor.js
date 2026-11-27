@@ -3,8 +3,24 @@
 const miniaturePrefix='battlemap.miniatures.v1/';
 const miniatureAssets=new Map(),miniatureAssignments=new Map();
 const miniatureFileLimit=24*1024*1024;
+const miniatureBaseDefault={shape:'off',size:1,color:'#6b4b32',rimColor:'#241b16'};
 const miniatureRequests=new Map();
 let miniatureWorker=null,miniatureRequestId=0,miniatureEditor=null;
+
+function miniatureBaseSettings(settings){
+ const base=settings?.base||{};
+ const shape=['off','round','square'].includes(base.shape)?base.shape:'off';
+ const size=Number(base.size);
+ const color=value=>typeof value==='string'&&/^#[\da-f]{6}$/i.test(value)?value.toLowerCase():null;
+ return {shape,size:Number.isFinite(size)?Math.min(1.6,Math.max(.65,size)):1,
+  color:color(base.color)||miniatureBaseDefault.color,
+  rimColor:color(base.rimColor)||miniatureBaseDefault.rimColor};
+}
+function miniatureBaseFromControls(){
+ return miniatureBaseSettings({base:{shape:el('miniatureBaseShape').value,
+  size:Number(el('miniatureBaseSize').value)/100,color:el('miniatureBaseColor').value,
+  rimColor:el('miniatureBaseRimColor').value}});
+}
 
 function miniatureAccount(){
  return roomProfile?.name?'account/'+encodeURIComponent(roomProfile.name):'offline';
@@ -111,7 +127,8 @@ async function localMiniatureLibrary(){
  });
 }
 function miniatureFields(){
- return ['miniatureMode','miniatureLibrary','miniatureFile','miniatureScale','miniatureFacing']
+ return ['miniatureMode','miniatureLibrary','miniatureFile','miniatureScale','miniatureFacing',
+  'miniatureBaseShape','miniatureBaseSize','miniatureBaseColor','miniatureBaseRimColor','miniatureDoubleSided']
   .map(el);
 }
 function updateMiniatureEditor(){
@@ -119,8 +136,11 @@ function updateMiniatureEditor(){
  if(!draft)return;
  const enabled=el('miniatureMode').value==='3d';
  el('miniatureOptions').hidden=!enabled;
+ const base=miniatureBaseFromControls();
+ el('miniatureBaseControls').hidden=base.shape==='off';
+ el('miniatureBaseSizeValue').value=el('miniatureBaseSizeValue').textContent=`${Math.round(base.size*100)}%`;
  if(!enabled)el('miniaturePreview').hidden=true;
- if(enabled&&draft.asset)renderStudioMiniaturePreview(draft.asset);
+ if(enabled&&draft.asset)renderStudioMiniaturePreview(draft.asset,{base,doubleSided:el('miniatureDoubleSided').checked});
 }
 async function openMiniatureEditor(token){
  const panel=el('standeeMiniatures');
@@ -131,6 +151,11 @@ async function openMiniatureEditor(token){
  el('miniatureMode').value='2d';
  el('miniatureScale').value='100';
  el('miniatureFacing').value='0';
+ el('miniatureBaseShape').value=miniatureBaseDefault.shape;
+ el('miniatureBaseSize').value=String(miniatureBaseDefault.size*100);
+ el('miniatureBaseColor').value=miniatureBaseDefault.color;
+ el('miniatureBaseRimColor').value=miniatureBaseDefault.rimColor;
+ el('miniatureDoubleSided').checked=false;
  el('miniaturePreviewRotation').value='0';
  el('miniaturePreviewElevation').value='25';
  el('miniatureStatus').textContent='';
@@ -148,6 +173,12 @@ async function openMiniatureEditor(token){
    el('miniatureMode').value=settings.enabled?'3d':'2d';
    el('miniatureScale').value=String(settings.scale*100);
    el('miniatureFacing').value=String(settings.facing);
+   const base=miniatureBaseSettings(settings);
+   el('miniatureBaseShape').value=base.shape;
+   el('miniatureBaseSize').value=String(base.size*100);
+   el('miniatureBaseColor').value=base.color;
+   el('miniatureBaseRimColor').value=base.rimColor;
+   el('miniatureDoubleSided').checked=settings.doubleSided===true;
    if(settings.enabled)await chooseStudioMiniature(settings.id);
   }
  }catch(error){
@@ -216,7 +247,8 @@ async function saveMiniatureEditor(token){
  if(enabled&&(!draft.id||!draft.asset))throw Error('Choose a valid 3D miniature.');
  if(!await storageReady)throw Error('Browser storage is unavailable.');
  const key=miniatureAssignmentKey(token)??miniatureAssignmentKey({...token,trackingId:crypto.randomUUID()});
- const settings={id:draft.id,enabled,scale:Number(el('miniatureScale').value)/100,facing:Number(el('miniatureFacing').value)};
+ const settings={id:draft.id,enabled,scale:Number(el('miniatureScale').value)/100,facing:Number(el('miniatureFacing').value),
+  base:miniatureBaseFromControls(),doubleSided:el('miniatureDoubleSided').checked};
  if(!Number.isFinite(settings.scale)||settings.scale<.25||settings.scale>3||!Number.isFinite(settings.facing)||Math.abs(settings.facing)>180)
   throw Error('Enter a valid miniature scale and facing offset.');
  const db=await storageReady;
@@ -250,6 +282,10 @@ el('miniatureLibrary').addEventListener('change',event=>void chooseStudioMiniatu
 el('miniatureFile').addEventListener('change',event=>void pickStudioMiniature(event.target.files[0]));
 for(const id of ['miniaturePreviewRotation','miniaturePreviewElevation'])
  el(id).addEventListener('input',updateMiniatureEditor);
+for(const id of ['miniatureBaseSize','miniatureBaseColor','miniatureBaseRimColor'])
+ el(id).addEventListener('input',updateMiniatureEditor);
+for(const id of ['miniatureBaseShape','miniatureDoubleSided'])
+ el(id).addEventListener('change',updateMiniatureEditor);
 
 const miniatureDrop=el('miniatureDrop');
 miniatureDrop.addEventListener('dragover',event=>{
