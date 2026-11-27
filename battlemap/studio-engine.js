@@ -1454,8 +1454,26 @@ function paintDeadStandee(f){
 function paintFlatStandee(f){
  const {p,dead}=f,[x,y,r]=f.flat;
  const obscured=standeeObscured(p);
+ const settings=!obscured&&!dead&&!p.incognito&&!p.conditions?.includes('invisible')?sceneMiniatureSettings(p):null;
+ const base=settings?miniatureBaseSettings(settings):null;
+ if(base?.shape!=='off'&&base?.ringCount){
+  const radius=Math.max(r,standeeGridPixelSize()*p.size*.425*base.size);
+  ctx.save();
+  const fill=(factor,color)=>{
+   ctx.beginPath();
+   const q=radius*factor;
+   if(base.shape==='square')ctx.rect(x-q,y-q,2*q,2*q);
+   else ctx.arc(x,y,q,0,Math.PI*2);
+   ctx.fillStyle=color;ctx.fill();
+  };
+  fill(1,base.rimColor);
+  for(let i=0;i<base.ringCount;i++)fill(.94-.28*i/base.ringCount,base.ringColors[i]);
+  fill(.66,base.color);
+  ctx.restore();
+ }
+ const artRadius=base?.shape!=='off'&&base?.ringCount?Math.max(r,standeeGridPixelSize()*p.size*.425*base.size)*.66:r;
  ctx.save();
- ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);
+ ctx.beginPath();ctx.arc(x,y,artRadius,0,Math.PI*2);
  ctx.fillStyle=obscured?'#080808':dead?'#985d57':p.color;ctx.fill();
  if(!obscured&&!dead){
   ctx.save();ctx.clip();
@@ -1463,7 +1481,7 @@ function paintFlatStandee(f){
   const src=look?.front||p.src||defaultStandeeLook(p).front;
   const art=src&&getArt(src);
   if(art?.complete&&art.naturalWidth){
-   const scale=Math.min(r*1.9/art.naturalWidth,r*1.9/art.naturalHeight);
+   const scale=Math.min(artRadius*1.9/art.naturalWidth,artRadius*1.9/art.naturalHeight);
    const w=art.naturalWidth*scale,h=art.naturalHeight*scale;
    ctx.drawImage(art,x-w/2,y-h/2,w,h);
   }
