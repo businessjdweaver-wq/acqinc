@@ -1,6 +1,9 @@
-const parserUrl=new URL('./studio-miniature-glb.js',location.href);
-parserUrl.search=location.search;
-importScripts(parserUrl);
+function miniatureScript(path){
+ const url=new URL(path,location.href);
+ url.search=location.search;
+ return url;
+}
+importScripts(miniatureScript('./studio-miniature-glb.js'),miniatureScript('./studio-miniature-unity.js'));
 
 function generatedNormals(positions,indices){
  const normals=new Float32Array(positions.length);
@@ -21,9 +24,17 @@ function generatedNormals(positions,indices){
  }
  return normals;
 }
-async function readMiniature({id,buffer}){
+async function readMiniature({id,buffer,expectUnity}){
  const bitmaps=[];
  try{
+  const raw=new Uint8Array(buffer);
+  const unity=isStudioUnityBundle(raw);
+  if(expectUnity&&!unity)throw Error('Expected a UnityFS .unity3d file.');
+  if(unity){
+   if(raw.length>24*1024*1024)throw Error('Choose a miniature no larger than 24 MB.');
+   if(typeof StudioUnityReader==='undefined')importScripts(miniatureScript('./vendor/miniature-unity/reader.js'));
+   buffer=await convertStudioUnityMiniature(raw,StudioUnityReader);
+  }
   const {meshes}=parseStudioMiniatureGlb(buffer,{limits:{
    fileBytes:24*1024*1024,vertices:200000,indices:600000,primitives:64,textureDimension:2048
   }});
