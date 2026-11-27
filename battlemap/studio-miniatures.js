@@ -119,16 +119,16 @@ function createStudioMiniaturePass(gl, compile) {
   gl.uniformMatrix4fv(uniforms.camera,false,matrix);
   gl.activeTexture(gl.TEXTURE2);
   try{
-   for(const {resource,transform,light,desaturate} of instances){
+   for(const {resource,transform,light,desaturate,doubleSided,colors} of instances){
     gl.uniformMatrix4fv(uniforms.model,false,transform);
     gl.uniform3fv(uniforms.light,light);
     gl.uniform1f(uniforms.desaturate,desaturate);
     for(const {vao,primitive,count} of resource.meshes){
-     if(primitive.material.doubleSided)gl.disable(gl.CULL_FACE);
+     if(doubleSided||primitive.material.doubleSided)gl.disable(gl.CULL_FACE);
      else gl.enable(gl.CULL_FACE);
      gl.bindVertexArray(vao);
      gl.bindTexture(gl.TEXTURE_2D,resource.textures[primitive.material.image]||white);
-     gl.uniform4fv(uniforms.baseColor,primitive.material.baseColor);
+     gl.uniform4fv(uniforms.baseColor,colors?.[primitive.colorSlot]??primitive.material.baseColor);
      gl.uniform1f(uniforms.alphaCutoff,primitive.material.alphaCutoff??0);
      gl.drawElements(gl.TRIANGLES,count,gl.UNSIGNED_INT,0);
     }
@@ -142,19 +142,72 @@ function createStudioMiniaturePass(gl, compile) {
  return {prepare,retain,draw,destroy(){retain(new Set());gl.deleteTexture(white);gl.deleteProgram(program)}};
 }
 
-function studioMiniatureTransform(asset,[x,y,z],height,heading){
+function studioMiniatureTransform(asset,[x,y,z],height,heading,centerOnGround=false){
  const {min,max}=asset.bounds;
  const scale=height/(max[1]-min[1]);
  const c=Math.cos(heading)*scale,s=Math.sin(heading)*scale;
- const centerX=(min[0]+max[0])/2,centerZ=(min[2]+max[2])/2;
+ const [centerX,centerZ]=centerOnGround&&asset.bounds.groundCenter||
+  [(min[0]+max[0])/2,(min[2]+max[2])/2];
  return new Float32Array([
   c,s,0,0, 0,0,scale,0, s,-c,0,0,
   x-c*centerX-s*centerZ,y-s*centerX+c*centerZ,z-scale*min[1]+.002,1
  ]);
 }
 
+// Two procedural meshes shared by all miniature bases on a WebGL canvas.
+const studioMiniatureBases=new Map();
+function studioMiniatureBaseAsset(shape){
+ if(studioMiniatureBases.has(shape))return studioMiniatureBases.get(shape);
+ const top={positions:[],normals:[]},rim={positions:[],normals:[]};
+ const sides=shape==='square'?4:32;
+ const corners=Array.from({length:sides},(_,i)=>{
+  const angle=2*Math.PI*i/sides+(sides===4?Math.PI/4:0);
+  const radius=sides===4?Math.SQRT1_2:.5;
+  return [Math.cos(angle)*radius,Math.sin(angle)*radius];
+ });
+ const point=([x,z],scale,height)=>[x*scale,height,z*scale];
+ const flat=[0,1,0];
+ const emit=(part,normal,...points)=>{
+  for(const p of points){
+   part.positions.push(...p);
+   part.normals.push(...normal);
+  }
+ };
+ for(let i=0;i<sides;i++){
+  const a=corners[i],b=corners[(i+1)%sides];
+  const insideA=point(a,.82,1),insideB=point(b,.82,1);
+  const outerA=point(a,.94,1),outerB=point(b,.94,1);
+  const bottomA=point(a,1,0),bottomB=point(b,1,0);
+  const edge=[(a[0]+b[0])/2,.16,(a[1]+b[1])/2];
+  emit(top,flat,[0,1,0],insideB,insideA);
+  emit(rim,flat,insideA,insideB,outerB,insideA,outerB,outerA);
+  emit(rim,edge,bottomA,outerA,outerB,bottomA,outerB,bottomB);
+ }
+ const primitives=[top,rim].map(({positions,normals},colorSlot)=>({
+  positions:new Float32Array(positions),normals:new Float32Array(normals),
+  indices:Uint32Array.from({length:positions.length/3},(_,i)=>i),
+  material:{image:-1,baseColor:[1,1,1,1],doubleSided:true},
+  colorSlot
+ }));
+ const asset={primitives,bitmaps:[]};
+ studioMiniatureBases.set(shape,asset);
+ return asset;
+}
+function studioMiniatureBaseColor(hex){
+ const srgb=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255);
+ return [...srgb.map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4),1];
+}
+function studioMiniatureBaseInstance(pass,asset,base,[x,y,z],footprint,heading,light,desaturate){
+ const width=footprint*.85*base.size,thickness=studioMiniatureBaseHeight(footprint);
+ const c=Math.cos(heading)*width,s=Math.sin(heading)*width;
+ return {resource:pass.prepare(asset),light,desaturate,
+  colors:[studioMiniatureBaseColor(base.color),studioMiniatureBaseColor(base.rimColor)],
+  transform:new Float32Array([c,s,0,0, 0,0,thickness,0, s,-c,0,0, x,y,z+.002,1])};
+}
+function studioMiniatureBaseHeight(footprint){return Math.min(.18,footprint*.075)}
+
 let studioMiniaturePreview=null;
-function renderStudioMiniaturePreview(asset){
+function renderStudioMiniaturePreview(asset,{base,doubleSided}={}){
  const canvas=el('miniaturePreview');
  try{
   if(!studioMiniaturePreview){
@@ -177,11 +230,17 @@ function renderStudioMiniaturePreview(asset){
   const c=Math.cos(pitch),s=Math.sin(pitch);
   const camera=new Float32Array([.65,0,0,0, 0,-.85*s,-.3*c,0,
    0,.85*c,-.3*s,0, 0,-height*.425*c,0,1]);
-  pass.retain(new Set([asset]));
+  const baseAsset=base?.shape&&base.shape!=='off'?studioMiniatureBaseAsset(base.shape):null;
+  pass.retain(new Set(baseAsset?[asset,baseAsset]:[asset]));
   const resource=pass.prepare(asset);
   gl.viewport(0,0,canvas.width,canvas.height);
   gl.clearColor(.13,.12,.1,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-  pass.draw(camera,[{resource,transform:studioMiniatureTransform(asset,[0,0,0],height,heading),light:[1,1,1],desaturate:0}]);
+  const light=[1,1,1],desaturate=0,baseFootprint=1;
+  const lift=baseAsset?studioMiniatureBaseHeight(baseFootprint):0;
+  const instances=[];
+  if(baseAsset)instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,[0,0,0],baseFootprint,heading,light,desaturate));
+  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset),light,desaturate,doubleSided});
+  pass.draw(camera,instances);
   canvas.hidden=false;
  }catch(error){
   canvas.hidden=true;

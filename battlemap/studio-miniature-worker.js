@@ -70,9 +70,19 @@ async function readMiniature({id,buffer,expectUnity,expectZip}){
   const height=max[1]-min[1];
   if(height<=.000001||Math.max(max[0]-min[0],max[2]-min[2])>height*12)
    throw Error('Use an upright, Y-up 3D miniature.');
+  // Anchor optional bases under the lowest part of the figure. A sword
+  // extended at shoulder height should not move the figure off its base.
+  let groundXMin=Infinity,groundXMax=-Infinity,groundZMin=Infinity,groundZMax=-Infinity;
+  const groundLevel=min[1]+height*.18;
+  for(const {positions} of primitives)for(let i=0;i<positions.length;i+=3){
+   if(positions[i+1]>groundLevel)continue;
+   groundXMin=Math.min(groundXMin,positions[i]);groundXMax=Math.max(groundXMax,positions[i]);
+   groundZMin=Math.min(groundZMin,positions[i+2]);groundZMax=Math.max(groundZMax,positions[i+2]);
+  }
+  const groundCenter=[(groundXMin+groundXMax)/2,(groundZMin+groundZMax)/2];
   const buffers=primitives.flatMap(p=>[p.positions,p.normals,p.texcoords,p.indices].filter(Boolean).map(array=>array.buffer));
   const byteCost=buffers.reduce((total,array)=>total+array.byteLength,0)+bitmaps.reduce((total,img)=>total+img.width*img.height*6,0);
-  self.postMessage({id,asset:{primitives,bitmaps,bounds:{min,max},byteCost}},[...buffers,...bitmaps]);
+  self.postMessage({id,asset:{primitives,bitmaps,bounds:{min,max,groundCenter},byteCost}},[...buffers,...bitmaps]);
  }catch(error){
   for(const bitmap of bitmaps)bitmap.close();
   self.postMessage({id,error:error.message||'The miniature could not be read.'});

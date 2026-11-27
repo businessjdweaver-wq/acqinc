@@ -13,6 +13,19 @@ Choose an existing miniature from the editor to reuse it on another standee
 or scene. An in-game player can open the miniature controls for an assigned
 standee. Other players on separate devices see the scene's 2D appearance.
 
+## Customize a miniature base
+
+The GM can customize miniature bases, and players can edit bases for their
+assigned standees. In the 3D appearance editor, choose a round or square base,
+then set its size relative to the standee's footprint and pick the surface and
+rim colors. This base is decorative. Leaving the shape off displays the model
+with any base already built into its geometry. An added base sits underneath
+the model, including any built-in base. Appearance settings are stored on the
+current device.
+
+Enable **Render both sides** if some surfaces of an imported GLB look missing
+when you rotate the model. This setting also applies to existing imports.
+
 ## File support
 
 The browser reads self-contained, static GLB 2.0 triangle meshes with embedded

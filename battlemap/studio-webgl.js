@@ -740,6 +740,7 @@ let studioWebGLHadMiniatures=false;
 function studioWebGLMiniatures(candidates,{showLighting,blockers}){
  const assets=new Set(),keys=new Set(),rendered=new Set(),instances=[];
  const pass=studioWebGL.miniaturePass;
+ const baseAssets=new Set();
  let bytes=0;
  for(const token of candidates){
   if(topDown||token.incognito||token.conditions?.some(c=>['dead','invisible'].includes(c))||
@@ -766,14 +767,22 @@ function studioWebGLMiniatures(candidates,{showLighting,blockers}){
   const light=tint.slice(0,3).map(channel=>Math.max(intensity,.45+.55*strength*channel));
   const height=standeeArtHeight(token)/S*settings.scale;
   const heading=defaultFacingHeading-((trackingFacing(token)??0)+settings.facing)*Math.PI/180;
-  instances.push({resource,light,desaturate:!ambient&&!lamp?1:0,
-   transform:studioMiniatureTransform(asset,point,height,heading+Math.PI/2)});
+  const desaturate=!ambient&&!lamp?1:0;
+  const base=miniatureBaseSettings(settings);
+  if(base.shape!=='off'){
+   const baseAsset=studioMiniatureBaseAsset(base.shape);
+   baseAssets.add(baseAsset);
+   instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,point,token.size,heading,light,desaturate));
+   point[2]+=studioMiniatureBaseHeight(token.size);
+  }
+  instances.push({resource,light,desaturate,doubleSided:settings.doubleSided,
+   transform:studioMiniatureTransform(asset,point,height,heading+Math.PI/2,base.shape!=='off')});
  }
- pass.retain(assets);
+ pass.retain(new Set([...assets,...baseAssets]));
  if(miniatureEditor?.id)keys.add(miniatureAssetKey(miniatureEditor.id));
  collectStudioMiniatures(keys);
  if(performanceDraw){
-  performanceDraw.webGLMiniatureInstances=instances.length;
+  performanceDraw.webGLMiniatureInstances=rendered.size;
   performanceDraw.webGLMiniatureAssets=assets.size;
   performanceDraw.webGLMiniatureBytes=bytes;
  }
