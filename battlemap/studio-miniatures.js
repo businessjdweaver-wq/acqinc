@@ -142,14 +142,43 @@ function createStudioMiniaturePass(gl, compile) {
  return {prepare,retain,draw,destroy(){retain(new Set());gl.deleteTexture(white);gl.deleteProgram(program)}};
 }
 
-function studioMiniatureTransform(asset,[x,y,z],height,heading,centerOnGround=false){
- const {min,max}=asset.bounds;
- const scale=height/(max[1]-min[1]);
+const studioMiniatureOrientationCache=new WeakMap();
+function studioMiniatureOriented(asset,rotation){
+ const turns=[0,1,2].map(i=>((Math.round((Number(rotation?.[i])||0)/90)%4)+4)%4);
+ if(!turns.some(Boolean))return {bounds:asset.bounds,axes:[[1,0,0],[0,1,0],[0,0,1]]};
+ let cache=studioMiniatureOrientationCache.get(asset);
+ if(!cache){cache=new Map();studioMiniatureOrientationCache.set(asset,cache);}
+ const key=turns.join(',');
+ if(cache.has(key))return cache.get(key);
+ const rotate=(x,y,z)=>{
+  for(let i=0;i<turns[0];i++)[y,z]=[-z,y];
+  for(let i=0;i<turns[1];i++)[x,z]=[z,-x];
+  for(let i=0;i<turns[2];i++)[x,y]=[-y,x];
+  return [x,y,z];
+ };
+ const axes=[rotate(1,0,0),rotate(0,1,0),rotate(0,0,1)];
+ const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
+ for(const {positions:p} of asset.primitives)for(let i=0;i<p.length;i+=3){
+  const v=rotate(p[i],p[i+1],p[i+2]);
+  for(let j=0;j<3;j++){min[j]=Math.min(min[j],v[j]);max[j]=Math.max(max[j],v[j]);}
+ }
+ let gx=Infinity,gz=Infinity,hx=-Infinity,hz=-Infinity;
+ const level=min[1]+(max[1]-min[1])*.18;
+ for(const {positions:p} of asset.primitives)for(let i=0;i<p.length;i+=3){
+  const [x,y,z]=rotate(p[i],p[i+1],p[i+2]);
+  if(y<=level){gx=Math.min(gx,x);hx=Math.max(hx,x);gz=Math.min(gz,z);hz=Math.max(hz,z);}
+ }
+ const result={axes,bounds:{min,max,groundCenter:[(gx+hx)/2,(gz+hz)/2]}};
+ cache.set(key,result);return result;
+}
+function studioMiniatureTransform(asset,[x,y,z],height,heading,centerOnGround=false,rotation){
+ const {bounds,axes}=studioMiniatureOriented(asset,rotation),{min,max}=bounds;
+ const scale=height/Math.max(max[1]-min[1],.000001);
  const c=Math.cos(heading)*scale,s=Math.sin(heading)*scale;
- const [centerX,centerZ]=centerOnGround&&asset.bounds.groundCenter||
+ const [centerX,centerZ]=centerOnGround&&bounds.groundCenter||
   [(min[0]+max[0])/2,(min[2]+max[2])/2];
  return new Float32Array([
-  c,s,0,0, 0,0,scale,0, s,-c,0,0,
+  ...axes.flatMap(([a,b,d])=>[c*a+s*d,s*a-c*d,scale*b,0]),
   x-c*centerX-s*centerZ,y-s*centerX+c*centerZ,z-scale*min[1]+.002,1
  ]);
 }
@@ -270,7 +299,7 @@ function studioMiniatureBaseInstance(pass,asset,base,[x,y,z],footprint,heading,l
 function studioMiniatureBaseHeight(footprint){return Math.min(.18,footprint*.075)}
 
 let studioMiniaturePreview=null;
-function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque}={}){
+function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotation}={}){
  const canvas=el('miniaturePreview');
  try{
   if(!studioMiniaturePreview){
@@ -286,7 +315,7 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque}={}){
    studioMiniaturePreview={gl,pass};
   }
   const {gl,pass}=studioMiniaturePreview;
-  const {min,max}=asset.bounds;
+  const {min,max}=studioMiniatureOriented(asset,rotation).bounds;
   const height=Math.min(1.35,1.35*(max[1]-min[1])/Math.max(max[0]-min[0],max[2]-min[2],.000001));
   const heading=(180+Number(el('miniaturePreviewRotation').value))*Math.PI/180;
   const pitch=Number(el('miniaturePreviewElevation').value)*Math.PI/180;
@@ -302,7 +331,7 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque}={}){
   const lift=baseAsset?studioMiniatureBaseHeight(baseFootprint):0;
   const instances=[];
   if(baseAsset)instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,[0,0,0],baseFootprint,heading,light,desaturate));
-  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset),light,desaturate,doubleSided,forceOpaque});
+  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque});
   pass.draw(camera,instances);
   canvas.hidden=false;
  }catch(error){
