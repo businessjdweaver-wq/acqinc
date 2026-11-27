@@ -14161,7 +14161,9 @@ el('standeeArtForm').onsubmit=async e=>{
   if(landing)position=landing;
  }
  if(position.size!==token.size)position=resizedStandeePosition(token,position,otherPieces);
- if(!position||!valid(position,otherPieces,null)){
+ // Cosmetic edits must not revalidate an already occupied standee position.
+ const placementChanged=!position||position.size!==token.size||!!position.flying!==!!token.flying||position.x!==token.x||position.y!==token.y||Math.abs(position.z-token.z)>1e-6||!Number.isFinite(position.z);
+ if(placementChanged&&(!position||!valid(position,otherPieces,null))){
   el('artError').textContent=artDraft.size!==token.size?'The new base does not fit here. Move the standee to an open area or choose a smaller size.':'That altitude intersects terrain or another standee. Choose a clear height or move to a landing spot.';return;
  }
  const replacingDefault=token.looks?.[0]&&['front','back'].some(side=>uploadedStandeeImage(token.looks[0][side])&&token.looks[0][side]!==looks[0][side]);
