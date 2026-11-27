@@ -761,6 +761,8 @@ function renderEnemyProfile(enemy,index){
   'corvin-traps':()=> 'Conceals '+p.count+' traps for '+p.duration+' turns. Match damage depends on which side triggers them.',
   'corvin-vanish':()=> 'Evades half of incoming hits while the blue veil remains or until the next enemy turn.',
   'corvin-echo':()=> 'Stuns the frontline hero and plants a yellow echo that repeats after '+p.delay+' turns.',
+  'chronophage-reversal':()=> 'Restores half the damage received during the preceding player turn.',
+  'chronophage-steal':()=> 'Steals up to three energy from the strongest player resource pool into blue monster energy.',
   'iris-rewrite':()=> 'Reverses a recent move’s damage, healing and energy changes.',
   'iris-lengthen':()=> 'Extends a hostile countdown and recovers purple energy on expiration.',
   'iris-stop-time':()=> 'Locks one hostile countdown tile.',
@@ -1413,7 +1415,7 @@ function damageEnemy(n,index=null,{shoveBehind,bypassDefense=false,fixedDamage=f
   const reviver=enemies.find(actor=>actor.merrixReincarnation&&actor.hp>0);
   if(reviver){delete reviver.merrixReincarnation;hit=Math.max(0,e.hp-1);say(e.name+' reincarnates at 1 HP.');}
  }
- const defeated=hit>0&&hit>=e.hp;const defeatedSprite=defeated?preserveDefeatedEnemySprite(i):null;if(defeated)holdEnemyVisualFormation(i);e.hp-=hit;
+ const defeated=hit>0&&hit>=e.hp;const defeatedSprite=defeated?preserveDefeatedEnemySprite(i):null;if(defeated)holdEnemyVisualFormation(i);if(side==='player'&&hit>0){if(e.temporalDamageRound!==round){e.temporalDamageRound=round;e.temporalDamage=0;}e.temporalDamage+=Math.min(hit,e.hp);}e.hp-=hit;
  if(side==='player'&&e.hp>0&&hit>0&&e.sandboxPowers?.some(p=>p.effect==='rage-engine'))e.ragePending=(e.ragePending||0)+hit;
  monsterStatusLedger?.prune();
  if(e.hp===0&&hit>0){clearDefeatedAntagonistTiles(i);const claim=malvekClaims.get(i);if(claim){malvekClaims.delete(i);const available=tiles.filter(t=>t&&!t.patronDebt&&!t.effectFortified&&!t.locked&&!t.lumberFire&&!t.groveRoot&&!t.towerBrazier);if(available.length){const t=available[Math.floor(Math.random()*available.length)];RQPatronDebt.attach(t,claim.owner,claim.level,2);paint(t);say('Patron\'s Claim creates a delayed debt.');}}}
@@ -2934,6 +2936,7 @@ function prepareMonsterTestPower(actor,power,handlers){
    const tile=randomEligibleMonsterTile(t=>monsterTileEligible(t,'ordinary'));
    if(tile){tile.special='defense';tile.specialOwner='player';tile.specialStrength=3;paint(tile);}
   }
+  if(effect==='chronophage-reversal'&&!handlers[effect].select(actor,step)){const hit=Math.min(20,actor.hp-1);actor.hp-=hit;actor.temporalDamageRound=round;actor.temporalDamage=hit;enemyHP=enemies.reduce((n,e)=>n+e.hp,0);}
   if(effect==='iris-rewrite'&&!handlers[effect].select(actor,step)){
    const before=moveTotals();actor.hp=Math.max(1,actor.hp-10);recordRewindMove('allied',before);
   }
@@ -3217,6 +3220,10 @@ function createCombatMonsterHandlers(ledger){
   }),
 
   ...RQMonsterIrisKael.createHandlers({
+   temporalRecovery:(actor,percent)=>actor.temporalDamageRound===round?Math.min(actor.max-actor.hp,Math.floor((actor.temporalDamage||0)*percent/100)):0,
+   temporalHeal:(actor,amount)=>{actor.hp+=amount;actor.temporalDamage=0;enemyHP=enemies.reduce((n,e)=>n+e.hp,0);say(actor.name+' reverses '+amount+' damage.');render();float(combatSpriteTarget('enemy',enemies.indexOf(actor)),'+'+amount,'#8ee9a0');},
+   strongestResource:()=>{const n=Math.max(...energy);return n>0?energy.indexOf(n):null;},
+   stealSeconds:(color,amount,destination)=>{const n=Math.min(energy[color],amount);energy[color]-=n;enemyEnergy[destination]+=n;say('Stolen Seconds transfers '+n+' energy.');render();},
    rewriteTarget:(actor,rounds)=>rewindChoices(rounds)
     .map(move=>({move,score:describeRewind(move,0,0).score}))
     .sort((a,b)=>a.score-b.score)[0]?.move,

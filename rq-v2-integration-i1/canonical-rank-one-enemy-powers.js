@@ -10,8 +10,8 @@
 // combat integration supplies the engine adapters for these effect IDs.
 const kits = Object.freeze({
   iris: Object.freeze([
-    Object.freeze({name:'Rewrite the Moment',color:3,cost:6,effect:'iris-rewrite',rounds:1}),
-    Object.freeze({name:'Lengthen the Hour',color:2,cost:5,effect:'iris-lengthen',ticks:1}),
+    Object.freeze({name:'Temporal Reversal',color:3,cost:6,effect:'chronophage-reversal',percent:50}),
+    Object.freeze({name:'Stolen Seconds',color:2,cost:5,effect:'chronophage-steal',amount:3}),
     Object.freeze({name:'Stop Time',color:6,cost:6,effect:'iris-stop-time',duration:1})
   ]),
   kael: Object.freeze([
@@ -26,6 +26,8 @@ const kits = Object.freeze({
 function createHandlers(ctx) {
   const handler=(select,apply)=>Object.freeze({select,apply});
   return Object.freeze({
+    'chronophage-reversal':handler((actor,p)=>ctx.temporalRecovery(actor,p.percent)||null,(actor,p,amount)=>ctx.temporalHeal(actor,amount)),
+    'chronophage-steal':handler(()=>ctx.strongestResource(),(actor,p,color)=>ctx.stealSeconds(color,p.amount,p.color)),
     'iris-rewrite':handler(
       (actor,p)=>ctx.rewriteTarget?.(actor,p.rounds) ?? null,
       (actor,p,target)=>ctx.rewriteMove(actor,target,p.rounds)
