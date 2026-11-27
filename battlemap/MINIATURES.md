@@ -95,3 +95,7 @@ live Supabase project, so the browser checks used isolated local data.
 ## STL painting
 
 Enable Paint STL surface in the preview. Brush and Eraser use a 1–80 pixel diameter; the smallest setting selects one triangle. Smart fill follows connected edges until a surface-angle or existing paint boundary is reached. Eyedropper samples paint, Paint all applies a base coat, and Undo/Redo restore strokes. Paint is device-local and tied to the selected mesh resolution. Smart fill is geometric, not semantic, and can spread over smooth connected surfaces.
+
+## Edge styles
+
+Off disables outlines. Geometric contours retain the existing crease paths. Cel outlines sample the visible miniature's normal and depth buffers at several distances to emphasize surface boundaries and the silhouette. Thickness, color, feature scale and smoothing remain adjustable. Cel mode adds a per-miniature render pass and may cost more GPU time.
