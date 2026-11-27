@@ -775,7 +775,7 @@ function studioWebGLMiniatures(candidates,{showLighting,blockers}){
    instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,point,token.size,heading,light,desaturate));
    point[2]+=studioMiniatureBaseHeight(token.size);
   }
-  instances.push({resource,light,desaturate,paint:settings.paint,sculptShade:settings.sculptShade??.65,edgeSensitivity:settings.edgeSensitivity,edgeWidth:settings.edgeWidth,edgeColor:settings.edgeColor,doubleSided:settings.doubleSided!==false,forceOpaque:settings.forceOpaque!==false,
+  instances.push({resource,light,desaturate,paint:settings.paint,sculptShade:settings.sculptShade??.65,edgeSmoothing:settings.edgeSmoothing,edgeSensitivity:settings.edgeSensitivity,edgeWidth:settings.edgeWidth,edgeColor:settings.edgeColor,doubleSided:settings.doubleSided!==false,forceOpaque:settings.forceOpaque!==false,
    transform:studioMiniatureTransform(asset,point,height,heading+Math.PI/2,base.shape!=='off',settings.rotation)});
  }
  pass.retain(new Set([...assets,...baseAssets]));
