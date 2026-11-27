@@ -97,7 +97,7 @@ function createStudioMiniaturePass(gl, compile) {
  // Two triangles: start-, end-, end+, start-, end+, start+.
  vec4 pos=end?q:p;float r=width*.5+1.;
  vec2 offset=t*(end?r:-r)+n*side*r;
- pos.xy+=offset*2./viewport*pos.w;pos.z-=.00015*pos.w;
+ pos.xy+=offset*2./viewport*pos.w;pos.z-=.00035*pos.w;
  gl_Position=pos;local=vec2(end?lengthPx+r:-r,side*r);strength=score;
  }`);
  const cf=compile(gl.FRAGMENT_SHADER,`#version 300 es
@@ -107,7 +107,7 @@ function createStudioMiniaturePass(gl, compile) {
  out vec4 pixel;
  void main(){if(strength<sensitivity)discard;
  float d=length(vec2(local.x-clamp(local.x,0.,lengthPx),local.y));
- float alpha=1.-smoothstep(max(0.,width*.5-.65),width*.5+.65,d);
+ float aa=max(.5,fwidth(d)*.75);float alpha=1.-smoothstep(max(0.,width*.5-aa),width*.5+aa,d);
  if(alpha<.01)discard;pixel=vec4(color,alpha);}
  `);
  gl.attachShader(contourProgram,cv);gl.attachShader(contourProgram,cf);gl.linkProgram(contourProgram);gl.deleteShader(cv);gl.deleteShader(cf);
@@ -417,6 +417,11 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
    studioMiniaturePreview={gl,pass};
   }
   const {gl,pass}=studioMiniaturePreview;
+  canvas.hidden=false;
+  const rect=canvas.getBoundingClientRect();
+  const ratio=Math.min(2,Math.max(1,window.devicePixelRatio||1)*1.5);
+  if(rect.width>0&&rect.height>0){const w=Math.round(rect.width*ratio),h=Math.round(rect.height*ratio);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}}
+  const pixelScale=rect.width>0?canvas.width/rect.width:1;
   const {min,max}=studioMiniatureOriented(asset,rotation).bounds;
   const height=studioMiniatureSizedHeight(asset,rotation,referenceHeight,footprint,modelScale,scaleMode);
   const heading=(180+Number(el('miniaturePreviewRotation').value))*Math.PI/180;
@@ -433,7 +438,7 @@ function renderStudioMiniaturePreview(asset,{base,doubleSided,forceOpaque,rotati
   const lift=baseAsset?studioMiniatureBaseHeight(baseFootprint):0;
   const instances=[];
   if(baseAsset)instances.push(studioMiniatureBaseInstance(pass,baseAsset,base,[0,0,0],baseFootprint,heading,light,desaturate));
-  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth,edgeColor,edgeSensitivity});
+  instances.push({resource,transform:studioMiniatureTransform(asset,[0,0,lift],height,heading,!!baseAsset,rotation),light,desaturate,doubleSided,forceOpaque,paint,sculptShade,inspectionDirection,inspectionIntensity,edgeWidth:edgeWidth*pixelScale,edgeColor,edgeSensitivity});
   studioMiniaturePreview.pick={asset,camera,model:instances.at(-1).transform};
   pass.draw(camera,instances);
   canvas.hidden=false;
@@ -521,7 +526,17 @@ function studioMiniatureContours(p){
   while(unused.size){const e=unused.values().next().value;paths.push(walk(e.ends[0],e));}
   for(const path of paths){
    const points=path.map(k=>k.split(',').map(Number));
-   const smooth=points.map((p,i)=>{if(!i||i===points.length-1)return p;const a=points[i-1],b=points[i+1],u=p.map((x,j)=>x-a[j]),w=b.map((x,j)=>x-p[j]);const dot=u.reduce((sum,x,j)=>sum+x*w[j],0)/(Math.hypot(...u)*Math.hypot(...w)||1);return dot<.5?p:p.map((x,j)=>.75*x+.125*(a[j]+b[j]));});
+   let smooth=points;
+   // Repeated bounded smoothing removes mesh-scale zigzags without moving endpoints.
+   for(let pass=0;pass<3;pass++)smooth=smooth.map((p,i,arr)=>{
+    if(!i||i===arr.length-1)return p;
+    const a=arr[i-1],b=arr[i+1],u=p.map((x,j)=>x-a[j]),w=b.map((x,j)=>x-p[j]);
+    const dot=u.reduce((sum,x,j)=>sum+x*w[j],0)/(Math.hypot(...u)*Math.hypot(...w)||1);
+    if(dot<-.35)return p;
+    const q=p.map((x,j)=>.5*x+.25*(a[j]+b[j]));
+    const delta=q.map((x,j)=>x-points[i][j]),d=Math.hypot(...delta),limit=span*.0015;
+    return d>limit?points[i].map((x,j)=>x+delta[j]*limit/d):q;
+   });
    for(let i=1;i<smooth.length;i++)segments.push(...smooth[i-1],...smooth[i],score);
   }
  }
