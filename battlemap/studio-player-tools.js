@@ -9,18 +9,19 @@
  const target=document.createElement('button');target.type='button';target.textContent='◎ Target';target.title='Choose a target (T)';
  const section=canvas.closest('section');section.append(nav);
  const label=document.createElement('label');label.textContent='Hold-to-measure shortcut ';
- const keyInput=document.createElement('input');keyInput.type='text';keyInput.maxLength=1;keyInput.size=2;keyInput.setAttribute('aria-label','Hold-to-measure shortcut');label.append(keyInput);
+ label.textContent='Player tool shortcuts ';const defaults={select:'s',area:'a',target:'t',measure:'r'},inputs={};for(const [tool,caption] of Object.entries({select:'Select',area:'Area templates',target:'Target',measure:'Hold to measure'})){const field=document.createElement('label');field.textContent=caption+' ';const input=document.createElement('input');input.type='text';input.maxLength=1;input.size=2;input.setAttribute('aria-label',caption+' shortcut');field.append(input);label.append(field);inputs[tool]=input}
  const hint=document.createElement('small');hint.setAttribute('role','status');label.append(hint);el('preferencesTitle').after(label);
  let held=null;
  const storageKey=()=> 'battlemap.measureHoldKey:'+encodeURIComponent(roomProfile?.name||'local');
- function validKey(k){return /^[a-z]$/.test(k)&&!['e','t','l',String(pathKey).toLowerCase()].includes(k)}
- function key(){try{const k=localStorage.getItem(storageKey());return validKey(k||'')?k:'r'}catch{return 'r'}}
+ function validKey(k){return /^[a-z]$/.test(k)&&!['e',String(pathKey).toLowerCase()].includes(k)}
+ function keys(){let result={...defaults};try{const legacy=localStorage.getItem(storageKey());if(validKey(legacy||'')&&!Object.values(defaults).includes(legacy))result.measure=legacy;const saved=JSON.parse(localStorage.getItem(storageKey()+'.tools')||'null');if(saved&&Object.keys(defaults).every(t=>validKey(saved[t]))&&new Set(Object.keys(defaults).map(t=>saved[t])).size===4)result={...defaults,...saved}}catch{}return result}
+ function key(){return keys().measure}
  function update(){
   const player=roomProfile?.gm===false&&playing;
   nav.hidden=!player;label.hidden=!player;
   if(player&&ruler.parentNode!==nav){nav.append(ruler,area,target)}
   if(!player&&ruler.parentNode===nav){rulerHome.after(ruler);areaHome.after(area)}
-  if(player){ruler.title='Measure (hold '+key().toUpperCase()+')';select.setAttribute('aria-pressed',String(!measuring&&!areaMode&&!facingTarget));target.setAttribute('aria-pressed',String(!!facingTarget))}
+  if(player){const k=keys();select.title='Select ('+k.select.toUpperCase()+')';areaButton.title='Area templates ('+k.area.toUpperCase()+')';target.title='Target ('+k.target.toUpperCase()+')';ruler.title='Measure (hold '+k.measure.toUpperCase()+')';select.setAttribute('aria-pressed',String(!measuring&&!areaMode&&!facingTarget));target.setAttribute('aria-pressed',String(!!facingTarget))}
  }
  function release(restore=true){
   if(!held)return;
@@ -31,13 +32,18 @@
  select.onclick=()=>{release(false);if(carry)cancelMove();exitTool();message('Select or drag your token.');update()};
  target.onclick=()=>{release(false);if(carry||drag||roomState.paused)return;const controlled=tokens.filter(t=>ownsRoomStandee(t)&&!standeeHidden(t));const actor=controlled.includes(selected)?selected:controlled.find(t=>t.roomId===roomProfile.characterKey)??(controlled.length===1?controlled[0]:null);if(actor){exitTool();armFacingTarget(actor);update()}else message('Select your character first.')};
  ruler.addEventListener('click',()=>release(false),true);areaButton.addEventListener('click',()=>release(false),true);
- el('preferences').addEventListener('click',()=>{keyInput.value=key().toUpperCase();hint.textContent=''},true);
- keyInput.onchange=()=>{const k=keyInput.value.toLowerCase();if(!validKey(k)){hint.textContent=' Choose a letter other than E, T, L or the waypoint shortcut.';keyInput.value=key().toUpperCase();return}try{localStorage.setItem(storageKey(),k);hint.textContent=' Saved on this device.'}catch{hint.textContent=' Could not save shortcut.'}update()};
+ el('preferences').addEventListener('click',()=>{const k=keys();for(const t in inputs)inputs[t].value=k[t].toUpperCase();hint.textContent=''},true);
+ for(const t in inputs)inputs[t].onchange=()=>{const k=keys(),v=inputs[t].value.toLowerCase();if(!validKey(v)||Object.keys(k).some(other=>other!==t&&k[other]===v)){hint.textContent=' Choose an unused letter (not E or the waypoint shortcut).';inputs[t].value=k[t].toUpperCase();return}k[t]=v;try{localStorage.setItem(storageKey()+'.tools',JSON.stringify(k));hint.textContent=' Saved on this device.'}catch{hint.textContent=' Could not save shortcut.'}update()};
  window.addEventListener('keydown',e=>{
-  if(e.key==='Escape'&&held){e.preventDefault();e.stopImmediatePropagation();release();return}
-  if(roomProfile?.gm!==false||!playing||e.key.toLowerCase()!==key()||e.ctrlKey||e.metaKey||e.altKey||e.shiftKey||e.target?.closest?.('input,textarea,select,[contenteditable]')||document.querySelector('dialog[open]'))return;
-  if(carry||drag||spellPlacement||pendingPolymorph||visionTool||journalPlacing||playerNoteMoveDraft||measuring&&!held)return;
-  e.preventDefault();e.stopImmediatePropagation();if(e.repeat||held)return;
+  if(roomProfile?.gm!==false||!playing||e.ctrlKey||e.metaKey||e.altKey||e.shiftKey||e.target?.closest?.('input,textarea,select,[contenteditable]')||document.querySelector('dialog[open]'))return;
+  const k=keys(),pressed=e.key.toLowerCase();
+  if(e.key==='Escape'&&(held||measuring||areaMode||facingTarget)){e.preventDefault();e.stopImmediatePropagation();release(false);exitTool();update();return}
+  const action=Object.keys(k).find(t=>k[t]===pressed);
+  if(!action){if(pressed==='t'){e.stopImmediatePropagation()}return}
+  if(carry||drag||spellPlacement||pendingPolymorph||visionTool||journalPlacing||playerNoteMoveDraft)return;
+  e.preventDefault();e.stopImmediatePropagation();if(e.repeat)return;
+  if(action!=='measure'){release(false);if(action==='select')select.click();else if(action==='area'){if(!areaMode)areaButton.click()}else target.click();return}
+  if(held||measuring)return;
   held={code:e.code,profile:roomProfile,scene:currentSceneId,route,areaMode,areaOrigin,areaPreview,facingTarget,panMode};
   route=null;areaMode=false;areaOrigin=null;areaPreview=null;facingTarget=null;panMode=false;measuring=true;message('Click two points to measure. Release '+key().toUpperCase()+' to return.');refresh();
  },true);
