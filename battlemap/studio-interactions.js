@@ -1706,8 +1706,15 @@ function makeArea(x,y){
  return area;
 }
 let coneCaster=null;
+let movingPlayerTemplate=null;
 function placeArea(x,y){
  if(roomProfile?.gm===false&&(roomState.paused||playerAreaBusy))return;
+ if(movingPlayerTemplate){
+  const current=areas.find(a=>a.roomId===movingPlayerTemplate&&canEditArea(a));
+  if(!current){exitTool();return}
+  const next={...current,origin:areaAnchor(areaSurfacePoint(x,y))};
+  void changePlayerArea('area_update',next).then(ok=>{if(ok)exitTool()});return;
+ }
  if(!areaOrigin){
   const start=hit(x,y);
   coneCaster=['cone','cone3d'].includes(el('areaShape').value)&&(start?.standee||start?.shadow)?start.p:null;
@@ -1889,6 +1896,10 @@ function drawAreaTemplates(){
   }
   ctx.save();ctx.globalCompositeOperation='source-over';ctx.globalAlpha=1;ctx.drawImage(areaLayer,0,0,W,H);ctx.restore();
   if(!topDown)drawAreaVolume(highlighted?{...area,auraColor:'#ffdc58'}:area);
+  if(item===areaPreview&&area.shape!=='difficult'){
+   const vertices=areaOutline(area),x=vertices.reduce((sum,v)=>sum+v[0],0)/vertices.length,y=vertices.reduce((sum,v)=>sum+v[1],0)/vertices.length;
+   ctx.save();ctx.globalAlpha=1;ctx.font='bold 16px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineWidth=4;ctx.strokeStyle='#201a16';ctx.fillStyle='#fff4d7';const label=area.size*5+' ft';ctx.strokeText(label,x,y);ctx.fillText(label,x,y);ctx.restore();
+  }
   if(item!==areaPreview){
    const masks=masksByHeight.get(height);
    drawAreaOrigin(area,masks);

@@ -43,12 +43,13 @@
    const name=document.createElement('span');name.style.flex='1';name.textContent=({cone3d:'3D cone'})[a.shape]||a.shape[0].toUpperCase()+a.shape.slice(1);name.textContent+=' · '+a.size*5+' ft';row.append(name);
    const resolve=()=>areas.find(x=>x.roomId===a.roomId&&canEditArea(x));
    const edit=document.createElement('button');edit.type='button';edit.textContent='Edit';edit.disabled=!!roomState.paused;edit.onclick=()=>{const current=resolve();if(!current)return;exitTool();const r=edit.getBoundingClientRect();openAreaEditor(current,r.right,r.top)};
-   const del=document.createElement('button');del.type='button';del.textContent='Delete';del.disabled=!!roomState.paused;del.onclick=async()=>{const current=resolve();if(current&&await changePlayerArea('area_delete',current))refresh()};
+   const del=document.createElement('button');del.type='button';del.textContent='🗑';del.title='Delete template';del.setAttribute('aria-label','Delete template');del.disabled=!!roomState.paused;del.onclick=async()=>{const current=resolve();if(current&&await changePlayerArea('area_delete',current))refresh()};
    const highlight=()=>{hoveredPlayerAreaId=a.roomId;draw()};
    const clear=()=>{if(hoveredPlayerAreaId===a.roomId){hoveredPlayerAreaId=null;draw()}};
    row.addEventListener('pointerenter',highlight);row.addEventListener('pointerleave',clear);
    row.addEventListener('focusin',highlight);row.addEventListener('focusout',e=>{if(!row.contains(e.relatedTarget))clear()});
-   row.append(edit,del);list.append(row);
+   const move=document.createElement('button');move.type='button';move.textContent='↔';move.title='Move template';move.setAttribute('aria-label','Move template');move.disabled=!!roomState.paused;move.onclick=()=>{const current=resolve();if(!current)return;exitTool();movingPlayerTemplate=current.roomId;areaMode=true;message('Click a new location for this template. Escape cancels.');refresh()};
+   row.append(edit,move,del);list.append(row);
   }
  }
  const originalRefresh=refresh;

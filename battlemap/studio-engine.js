@@ -10291,6 +10291,7 @@ canvas.onpointerdown=e=>{
  }
  if(!middle&&modifier&&!topDown){e.preventDefault();if(!carry)ghost=null;cameraViewportPivot=null;drag={orbit:true,x,y,angle,tilt,pivot:cameraOrbitPoint(x,y)};return}
  if(middle||panMode||(topDown&&modifier)){if(!carry)ghost=null;cancelPanSettle();drag={pan:true,x,y,panX,panY,button:e.button};if(carry)draw();return}
+ if(areaMode&&!carry){placeArea(x,y);return}
  if(facingTarget){void applyFacingTarget(f);return}
  if(floorEdit&&canEditFloor()){pickFloorEdit(x,y,e.altKey,e.shiftKey);return}
  if(!carry&&!areaMode&&!journalPlacing&&!measuring&&!tool&&!tokenTool&&!brush){
@@ -13391,7 +13392,7 @@ function exitTool(){
  closeStandeeHud();
  facingTarget=null;
  playStandeeGroup.clear();
- areaMode=false;areaOrigin=null;areaPreview=null;
+ areaMode=false;areaOrigin=null;areaPreview=null;movingPlayerTemplate=null;
  linkingInitiative=null;
  measuring=false;route=null;carry=null;brush=null;tool=null;toolForm=null;tokenTool=null;ghost=null;drag=null;panMode=false;
  el('pan').classList.toggle('active',false);
