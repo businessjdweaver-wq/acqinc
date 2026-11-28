@@ -1663,12 +1663,31 @@ function areaAnchor([x,y,z]){
  const snap=el('areaSnap').checked;
  return [snap?Math.floor(x+1e-8)+.5:x,snap?Math.floor(y+1e-8)+.5:y,z];
 }
+// Area origins must use the clicked walkable surface, including polygonal
+// platform tops. The generic measurement helper only samples two triangles.
+function areaSurfacePoint(x,y){
+ const picked=hit(x,y);
+ if(picked?.standee||picked?.shadow)return basePoint(picked.p);
+ const surface=hit(x,y,null,true,f=>f.world?.length>=3);
+ if(surface){
+  const world=surface.world,projected=surface.projected;
+  for(let j=1;j<world.length-1;j++){
+   const [a,b,c]=[projected[0],projected[j],projected[j+1]];
+   const ux=b[0]-a[0],uy=b[1]-a[1],vx=c[0]-a[0],vy=c[1]-a[1],det=ux*vy-uy*vx;
+   if(Math.abs(det)<1e-8)continue;
+   const u=((x-a[0])*vy-(y-a[1])*vx)/det,v=(ux*(y-a[1])-uy*(x-a[0]))/det;
+   if(u>=-.001&&v>=-.001&&u+v<=1.001)return world[0].map((n,k)=>n*(1-u-v)+world[j][k]*u+world[j+1][k]*v);
+  }
+  if(Number.isFinite(surface.z))return [...inverse(x,y,surface.z),surface.z];
+ }
+ return measurePoint(x,y);
+}
 function conePointAim(){
  return ['cone','cone3d'].includes(el('areaShape').value)&&el('coneAim').checked;
 }
 function coneAimPoint(x,y,start=false){
  const f=hit(x,y);
- if(!f?.standee&&!f?.shadow)return areaAnchor(measurePoint(x,y));
+ if(!f?.standee&&!f?.shadow)return areaAnchor(areaSurfacePoint(x,y));
  const origin=basePoint(f.p);
  if(start&&f.p.size>1&&el("coneCenterOrigin").checked)origin[2]+=f.p.size/2;
  return origin;
@@ -1690,7 +1709,7 @@ function placeArea(x,y){
   const start=hit(x,y);
   coneCaster=['cone','cone3d'].includes(el('areaShape').value)&&(start?.standee||start?.shadow)?start.p:null;
   if(el('areaShape').value==='difficult'&&!canEditDifficultTerrain())return;
-  areaOrigin=el('areaShape').value==='difficult'?difficultPlacement(x,y,Number(el('areaSize').value)/5||3):conePointAim()?coneAimPoint(x,y,true):areaAnchor(measurePoint(x,y));
+  areaOrigin=el('areaShape').value==='difficult'?difficultPlacement(x,y,Number(el('areaSize').value)/5||3):conePointAim()?coneAimPoint(x,y,true):areaAnchor(areaSurfacePoint(x,y));
   areaPreview=makeArea(x,y);
   if(['circle','square','sphere','cube','difficult'].includes(areaPreview.shape)){
    if(areaPreview.shape==='difficult'&&!validDifficultTerrain(areaPreview)){areaOrigin=null;areaPreview=null;message('The full footprint needs support at this height.');draw();return}
