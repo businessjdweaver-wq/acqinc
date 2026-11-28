@@ -1829,6 +1829,7 @@ function areaPath(points){
  points.forEach(([x,y],i)=>i?areaCtx.lineTo(x,y):areaCtx.moveTo(x,y));
  areaCtx.closePath();
 }
+let hoveredPlayerAreaId=null;
 function drawAreaTemplates(){
  if(!areas.length&&!areaPreview)return;
  if(areaLayer.width!==canvas.width||areaLayer.height!==canvas.height){
@@ -1839,15 +1840,17 @@ function drawAreaTemplates(){
  for(const item of areaPreview?[...areas,areaPreview]:areas){
   if(['appearance','room','opening','light','journal','player_note'].includes(item.shape))continue;
   const area=(item===drag?.area||item===drag?.resizeTerrain?.area)&&drag.preview?drag.preview:item===editingArea?editedAreaPreview():effectiveArea(item);
-  if(playerFogEnabled()&&!fogPointVisible(area.origin))continue;
+  const flatTemplate=['line','circle','square','cone'].includes(area.shape);
+  if(playerFogEnabled()&&!fogPointVisible(flatTemplate?[area.origin[0],area.origin[1],area.origin[2]+0.02]:area.origin))continue;
   const height=area.origin[2];
   if(!masksByHeight.has(height))masksByHeight.set(height,areaOccluders(height));
   areaCtx.clearRect(0,0,W,H);
   areaCtx.globalCompositeOperation='source-over';
   areaPath(areaOutline(area));
-  areaCtx.fillStyle=area.shape==='difficult'?'#b980275e':'#9a4c4550';areaCtx.fill();
+  const highlighted=roomProfile?.gm===false&&areaMode&&!!hoveredPlayerAreaId&&item.roomId===hoveredPlayerAreaId&&item.areaOwner===roomProfile.name;
+  areaCtx.fillStyle=highlighted?'#ffc247a0':area.shape==='difficult'?'#b980275e':'#9a4c4550';areaCtx.fill();
   areaCtx.strokeStyle='#16120f';areaCtx.lineWidth=5;areaCtx.stroke();
-  areaCtx.strokeStyle=area.shape==='difficult'?'#ffdc78':'#fff2dd';areaCtx.lineWidth=2.5;areaCtx.stroke();
+  areaCtx.strokeStyle=highlighted?'#ffdc58':area.shape==='difficult'?'#ffdc78':'#fff2dd';areaCtx.lineWidth=highlighted?4:2.5;areaCtx.stroke();
   areaCtx.globalCompositeOperation='destination-out';areaCtx.fillStyle='#000';
   for(const mask of masksByHeight.get(height)){areaPath(mask);areaCtx.fill()}
   if(area.shape==='difficult')for(const f of faces){
@@ -1862,7 +1865,7 @@ function drawAreaTemplates(){
    areaCtx.beginPath();areaCtx.ellipse((left[0]+right[0])/2,base[1],f.baseWidth*.55,f.baseWidth*.22,0,0,Math.PI*2);areaCtx.fill();
   }
   ctx.drawImage(areaLayer,0,0,W,H);
-  if(!topDown)drawAreaVolume(area);
+  if(!topDown)drawAreaVolume(highlighted?{...area,auraColor:'#ffdc58'}:area);
   if(item!==areaPreview){
    const masks=masksByHeight.get(height);
    drawAreaOrigin(area,masks);
