@@ -1841,7 +1841,22 @@ function drawAreaTemplates(){
   if(['appearance','room','opening','light','journal','player_note'].includes(item.shape))continue;
   const area=(item===drag?.area||item===drag?.resizeTerrain?.area)&&drag.preview?drag.preview:item===editingArea?editedAreaPreview():effectiveArea(item);
   const flatTemplate=['line','circle','square','cone'].includes(area.shape);
-  if(playerFogEnabled()&&!fogPointVisible(flatTemplate?[area.origin[0],area.origin[1],area.origin[2]+0.02]:area.origin))continue;
+  // A player's own flat spell markers are tactical annotations, not terrain.
+  // Draw them directly on the overlay, avoiding terrain masks that can erase
+  // a coplanar footprint. Do not reveal terrain or other players' markers.
+  const ownFlat=flatTemplate&&roomProfile?.gm===false&&(item===areaPreview||item.areaOwner===roomProfile.name);
+  if(ownFlat){
+   const highlighted=areaMode&&!!hoveredPlayerAreaId&&item.roomId===hoveredPlayerAreaId;
+   ctx.save();ctx.globalCompositeOperation='source-over';ctx.globalAlpha=1;
+   const vertices=areaOutline(area);
+   ctx.beginPath();vertices.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();
+   ctx.fillStyle=highlighted?'#ffc247a0':'#9a4c4570';ctx.fill();
+   ctx.strokeStyle='#16120f';ctx.lineWidth=5;ctx.stroke();
+   ctx.strokeStyle=highlighted?'#ffdc58':'#fff2dd';ctx.lineWidth=highlighted?4:2.5;ctx.stroke();
+   if(item!==areaPreview){const [x,y]=point(...area.origin);ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.fillStyle=highlighted?'#ffdc58':'#f3e2b8';ctx.fill();ctx.strokeStyle='#8c392e';ctx.lineWidth=2;ctx.stroke()}
+   ctx.restore();continue;
+  }
+  if(playerFogEnabled()&&!fogPointVisible(area.origin))continue;
   const height=area.origin[2];
   if(!masksByHeight.has(height))masksByHeight.set(height,areaOccluders(height));
   areaCtx.clearRect(0,0,W,H);
