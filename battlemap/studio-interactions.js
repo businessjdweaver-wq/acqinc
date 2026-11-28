@@ -2420,6 +2420,15 @@ function detachPanel(key,title,laptop=false){
  doc.documentElement.lang='en';
  const viewport=doc.createElement('meta');
  viewport.name='viewport';viewport.content='width=device-width, initial-scale=1';doc.head.append(viewport);
+ // Mirror the application's linked stylesheets into the about:blank popup.
+ // Keep the popup-specific overrides last so they take precedence.
+ for(const sheet of document.querySelectorAll('link[rel~="stylesheet"]')){
+  if(!sheet.href)continue;
+  const link=doc.createElement('link');
+  link.rel='stylesheet';link.href=sheet.href;
+  if(sheet.media)link.media=sheet.media;
+  doc.head.append(link);
+ }
  const css=doc.createElement('style');
  css.textContent=[...document.querySelectorAll('style')].map(node=>node.textContent).join('\n')+
   '\nbody{display:block;height:auto;min-height:100dvh;padding:10px}#rollsPanel,#initiativePanel{position:static;width:100%;max-height:none;margin:0}#rollsPanel{height:calc(100dvh - 66px);bottom:auto}.detached-return{margin-bottom:8px}';
