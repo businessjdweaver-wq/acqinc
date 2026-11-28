@@ -25,7 +25,9 @@
  let lastList='';
  function updateAreas(){
   const player=roomProfile?.gm===false&&playing;
-  manage.hidden=!player;if(!player||!areaMode)hoveredPlayerAreaId=null;
+  manage.hidden=!player;
+  const showSize=!player&&el('areaShape').value==='difficult';
+  el('areaSize').hidden=!showSize;el('areaSizeLabel').hidden=!showSize;if(!player||!areaMode)hoveredPlayerAreaId=null;
   const difficult=el('areaChoices').querySelector('[data-shape="difficult"]');
   if(difficult)difficult.hidden=player;
   el('difficultTerrainOption').hidden=player;
@@ -33,6 +35,7 @@
   const own=areas.filter(a=>a.areaOwner===roomProfile.name&&Object.hasOwn(areaSizes,a.shape)&&a.shape!=='difficult');
   const signature=JSON.stringify([currentSceneId,roomProfile.name,roomState.paused,own]);
   if(signature===lastList)return;lastList=signature;
+  manage.open=own.length>0;
   hoveredPlayerAreaId=null;list.replaceChildren();
   if(!own.length){list.textContent='No placed templates';return}
   for(const a of own){
@@ -50,9 +53,11 @@
  }
  const originalRefresh=refresh;
  refresh=function(...args){const result=originalRefresh(...args);updateAreas();return result};
+ function ownTemplatesExist(){return areas.some(a=>a.areaOwner===roomProfile?.name&&Object.hasOwn(areaSizes,a.shape)&&a.shape!=='difficult')}
  function update(){
   const player=roomProfile?.gm===false&&playing;
   nav.hidden=!player;label.hidden=!player;updateAreas();
+  if(player&&areaMode&&ownTemplatesExist())manage.open=true;
   if(player&&ruler.parentNode!==nav){nav.append(ruler,area,target)}
   if(!player&&ruler.parentNode===nav){rulerHome.after(ruler);areaHome.after(area)}
   if(player){const k=keys();select.title='Select ('+k.select.toUpperCase()+')';areaButton.title='Area templates ('+k.area.toUpperCase()+')';target.title='Target ('+k.target.toUpperCase()+')';ruler.title='Measure (hold '+k.measure.toUpperCase()+')';select.setAttribute('aria-pressed',String(!measuring&&!areaMode&&!facingTarget));target.setAttribute('aria-pressed',String(!!facingTarget))}
