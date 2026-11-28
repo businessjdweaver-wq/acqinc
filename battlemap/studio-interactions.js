@@ -1693,11 +1693,14 @@ function coneAimPoint(x,y,start=false){
  return origin;
 }
 function makeArea(x,y){
- const shape=el('areaShape').value,size=Math.max(5,Math.min(200,Math.round((Number(el('areaSize').value)||areaSizes[shape])/5)*5))/5;
+ const shape=el('areaShape').value;let size=Math.max(5,Math.min(200,Math.round((Number(el('areaSize').value)||areaSizes[shape])/5)*5))/5;
  if(shape==='difficult')return {shape,size,origin:areaOrigin,angle:0};
  const aimed=conePointAim();
  const [u,v,z]=aimed?coneAimPoint(x,y):[...inverse(x,y,areaOrigin[2]),areaOrigin[2]];
  const dx=u-areaOrigin[0],dy=v-areaOrigin[1];
+ const distance=shape==='square'||shape==='cube'?2*Math.max(Math.abs(dx),Math.abs(dy)):shape==='cone3d'&&aimed?Math.hypot(dx,dy,z-areaOrigin[2]):Math.hypot(dx,dy);
+ size=Math.max(1,Math.min(40,Math.round(distance)));
+ el('areaSize').value=size*5;
  const area={shape,size,origin:areaOrigin,angle:['square','cube'].includes(shape)?0:Math.atan2(dy,dx)};
  if(aimed&&shape==='cone3d')area.pitch=Math.atan2(z-areaOrigin[2],Math.hypot(dx,dy))*180/Math.PI;
  return area;
@@ -1711,11 +1714,11 @@ function placeArea(x,y){
   if(el('areaShape').value==='difficult'&&!canEditDifficultTerrain())return;
   areaOrigin=el('areaShape').value==='difficult'?difficultPlacement(x,y,Number(el('areaSize').value)/5||3):conePointAim()?coneAimPoint(x,y,true):areaAnchor(areaSurfacePoint(x,y));
   areaPreview=makeArea(x,y);
-  if(['circle','square','sphere','cube','difficult'].includes(areaPreview.shape)){
+  if(areaPreview.shape==='difficult'){
    if(areaPreview.shape==='difficult'&&!validDifficultTerrain(areaPreview)){areaOrigin=null;areaPreview=null;message('The full footprint needs support at this height.');draw();return}
    addPlacedArea(areaPreview);finishAreaPlacement();return;
   }
-  message(conePointAim()?'Click the destination standee or map point to aim the cone.':'Point in the desired direction, then click to place the template.');draw();return;
+  message('Move the pointer to set the size and direction, then click to confirm. Escape cancels.');draw();return;
  }
  if(conePointAim()&&coneAimPoint(x,y).every((v,i)=>v===areaOrigin[i])){message('Choose an end point different from the origin.');return}
  const placed=makeArea(x,y);
@@ -2031,7 +2034,7 @@ el('areaEditForm').onsubmit=async e=>{
 el('areaTool').onclick=()=>{
  if(roomProfile?.gm===false&&roomState.paused)return;
  const next=!areaMode;exitTool();areaMode=next;
- if(next)message('Choose an area shape and size, then click the map.');
+ if(next)message('Choose an area shape, click its origin, then click to set its size.');
  refresh();
  if(next){
   const panel=el('areaOptions');
@@ -2044,6 +2047,7 @@ el('areaShape').onchange=()=>{
  const shape=el('areaShape').value;
  el('areaSize').value=areaSizes[shape];
  el('areaSizeLabel').textContent=areaLabels[shape]||'Length (ft)';
+ el('areaSize').readOnly=shape!=='difficult';
  areaOrigin=null;areaPreview=null;refresh();
 };
 el('coneAim').onchange=el('coneCenterOrigin').onchange=()=>{areaOrigin=null;areaPreview=null;refresh()};
