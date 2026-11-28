@@ -1953,14 +1953,15 @@ function areaOriginVisible(area,x,y,masks=areaOccluders(area.origin[2])){
  const visible=!masks.some(mask=>{areaPath(mask);return areaCtx.isPointInPath(x,y)});
  areaCtx.restore();return visible;
 }
+let selectedPlayerTemplateId=null;
 function playerTemplateControls(area,masks){
- if(roomProfile?.gm!==false||!areaMode||areaOrigin||roomState.paused||!canEditArea(area)||area.shape==='difficult'||!area.roomId)return null;
+ if(roomProfile?.gm!==false||area.roomId!==selectedPlayerTemplateId||areaOrigin||roomState.paused||!canEditArea(area)||area.shape==='difficult'||!area.roomId)return null;
  const [x,y]=point(...area.origin);
  if(!areaOriginVisible(area,x,y,masks))return null;
  return {x,y,move:[x-25,y+10,23,23],remove:[x+2,y+10,23,23]};
 }
 function hitPlayerTemplateControl(x,y){
- if(!areaMode||areaOrigin)return null;
+ if(areaOrigin||roomProfile?.gm!==false)return null;
  for(const area of [...areas].reverse()){
   const c=playerTemplateControls(effectiveArea(area));if(!c)continue;
   for(const action of ['move','remove']){

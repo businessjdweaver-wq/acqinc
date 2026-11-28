@@ -10291,7 +10291,16 @@ canvas.onpointerdown=e=>{
  }
  if(!middle&&modifier&&!topDown){e.preventDefault();if(!carry)ghost=null;cameraViewportPivot=null;drag={orbit:true,x,y,angle,tilt,pivot:cameraOrbitPoint(x,y)};return}
  if(middle||panMode||(topDown&&modifier)){if(!carry)ghost=null;cancelPanSettle();drag={pan:true,x,y,panX,panY,button:e.button};if(carry)draw();return}
- if(areaMode&&!carry){const control=hitPlayerTemplateControl(x,y);if(control){if(control.action==='remove'){void changePlayerArea('area_delete',control.area).then(ok=>{if(ok)refresh()});return}drag={area:control.area,x,y,templateHandle:true};return}placeArea(x,y);return}
+ if(!carry&&!measuring&&!facingTarget&&roomProfile?.gm===false&&!roomState.paused&&!areaOrigin){
+  const control=hitPlayerTemplateControl(x,y);
+  if(control){if(control.action==='remove'){selectedPlayerTemplateId=null;void changePlayerArea('area_delete',control.area).then(ok=>{if(ok)refresh()});return}drag={area:control.area,x,y,templateHandle:true};return}
+  const candidate=(!f?.standee||areaMode)?hitArea(x,y):null;
+  if(candidate&&canEditArea(candidate)&&candidate.roomId&&candidate.shape!=='difficult'){
+   selectedPlayerTemplateId=candidate.roomId;draw();return;
+  }
+  if(selectedPlayerTemplateId){selectedPlayerTemplateId=null;draw()}
+ }
+ if(areaMode&&!carry){placeArea(x,y);return}
  if(facingTarget){void applyFacingTarget(f);return}
  if(floorEdit&&canEditFloor()){pickFloorEdit(x,y,e.altKey,e.shiftKey);return}
  if(!carry&&!areaMode&&!journalPlacing&&!measuring&&!tool&&!tokenTool&&!brush){
@@ -13392,7 +13401,7 @@ function exitTool(){
  closeStandeeHud();
  facingTarget=null;
  playStandeeGroup.clear();
- areaMode=false;areaOrigin=null;areaPreview=null;movingPlayerTemplate=null;
+ areaMode=false;areaOrigin=null;areaPreview=null;movingPlayerTemplate=null;selectedPlayerTemplateId=null;
  linkingInitiative=null;
  measuring=false;route=null;carry=null;brush=null;tool=null;toolForm=null;tokenTool=null;ghost=null;drag=null;panMode=false;
  el('pan').classList.toggle('active',false);
