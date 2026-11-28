@@ -16,10 +16,40 @@
  function validKey(k){return /^[a-z]$/.test(k)&&!['e',String(pathKey).toLowerCase()].includes(k)}
  function keys(){let result={...defaults};try{const legacy=localStorage.getItem(storageKey());if(validKey(legacy||'')&&!Object.values(defaults).includes(legacy))result.measure=legacy;const saved=JSON.parse(localStorage.getItem(storageKey()+'.tools')||'null');if(saved&&Object.keys(defaults).every(t=>validKey(saved[t]))&&new Set(Object.keys(defaults).map(t=>saved[t])).size===4)result={...defaults,...saved}}catch{}return result}
  function key(){return keys().measure}
+ const manage=document.createElement('details');manage.hidden=true;manage.style.cssText='background:var(--panel,#292d27);color:inherit;padding:6px;max-width:240px;max-height:40vh;overflow:auto';
+ const summary=document.createElement('summary');summary.textContent='My placed templates';manage.append(summary);
+ const list=document.createElement('div');manage.append(list);nav.append(manage);
+ const originalCanEditArea=canEditArea,originalCanEditDifficultTerrain=canEditDifficultTerrain;
+ canEditDifficultTerrain=function(){return roomProfile?.gm===false?false:originalCanEditDifficultTerrain()};
+ canEditArea=function(a){return !(roomProfile?.gm===false&&a.shape==='difficult')&&originalCanEditArea(a)};
+ let lastList='';
+ function updateAreas(){
+  const player=roomProfile?.gm===false&&playing;
+  manage.hidden=!player;
+  const difficult=el('areaChoices').querySelector('[data-shape="difficult"]');
+  if(difficult)difficult.hidden=player;
+  el('difficultTerrainOption').hidden=player;
+  if(!player)return;
+  const own=areas.filter(a=>a.areaOwner===roomProfile.name&&Object.hasOwn(areaSizes,a.shape)&&a.shape!=='difficult');
+  const signature=JSON.stringify([currentSceneId,roomProfile.name,roomState.paused,own]);
+  if(signature===lastList)return;lastList=signature;
+  list.replaceChildren();
+  if(!own.length){list.textContent='No placed templates';return}
+  for(const a of own){
+   const row=document.createElement('div');row.style.cssText='display:flex;align-items:center;gap:4px;margin-top:4px';
+   const name=document.createElement('span');name.style.flex='1';name.textContent=({cone3d:'3D cone'})[a.shape]||a.shape[0].toUpperCase()+a.shape.slice(1);name.textContent+=' · '+a.size*5+' ft';row.append(name);
+   const resolve=()=>areas.find(x=>x.roomId===a.roomId&&canEditArea(x));
+   const edit=document.createElement('button');edit.type='button';edit.textContent='Edit';edit.disabled=!!roomState.paused;edit.onclick=()=>{const current=resolve();if(!current)return;exitTool();const r=edit.getBoundingClientRect();openAreaEditor(current,r.right,r.top)};
+   const del=document.createElement('button');del.type='button';del.textContent='Delete';del.disabled=!!roomState.paused;del.onclick=async()=>{const current=resolve();if(current&&await changePlayerArea('area_delete',current))refresh()};
+   row.append(edit,del);list.append(row);
+  }
+ }
+ const originalRefresh=refresh;
+ refresh=function(...args){const result=originalRefresh(...args);updateAreas();return result};
  function update(){
   const player=roomProfile?.gm===false&&playing;
-  nav.hidden=!player;label.hidden=!player;
-  if(player&&ruler.parentNode!==nav){nav.append(ruler,area,target)}
+  nav.hidden=!player;label.hidden=!player;updateAreas();
+  if(player&&ruler.parentNode!==nav){nav.append(ruler,area,target,manage)}
   if(!player&&ruler.parentNode===nav){rulerHome.after(ruler);areaHome.after(area)}
   if(player){const k=keys();select.title='Select ('+k.select.toUpperCase()+')';areaButton.title='Area templates ('+k.area.toUpperCase()+')';target.title='Target ('+k.target.toUpperCase()+')';ruler.title='Measure (hold '+k.measure.toUpperCase()+')';select.setAttribute('aria-pressed',String(!measuring&&!areaMode&&!facingTarget));target.setAttribute('aria-pressed',String(!!facingTarget))}
  }
