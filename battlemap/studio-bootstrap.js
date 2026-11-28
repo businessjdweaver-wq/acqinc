@@ -16,7 +16,8 @@
     "./tactical-discovery.js",
     "./studio-interactions.js",
     "./studio-miniature-editor.js",
-    "./studio-room-sync.js"
+    "./studio-room-sync.js",
+    "./studio-player-tools.js"
   ];
   Promise.all(parts.map(async path => {
     const build = document.getElementById("battlemapBuild")?.textContent.trim() || "unknown";
