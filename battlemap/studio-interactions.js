@@ -1841,22 +1841,8 @@ function drawAreaTemplates(){
   if(['appearance','room','opening','light','journal','player_note'].includes(item.shape))continue;
   const area=(item===drag?.area||item===drag?.resizeTerrain?.area)&&drag.preview?drag.preview:item===editingArea?editedAreaPreview():effectiveArea(item);
   const flatTemplate=['line','circle','square','cone'].includes(area.shape);
-  // A player's own flat spell markers are tactical annotations, not terrain.
-  // Draw them directly on the overlay, avoiding terrain masks that can erase
-  // a coplanar footprint. Do not reveal terrain or other players' markers.
   const ownFlat=flatTemplate&&roomProfile?.gm===false&&(item===areaPreview||item.areaOwner===roomProfile.name);
-  if(ownFlat){
-   const highlighted=areaMode&&!!hoveredPlayerAreaId&&item.roomId===hoveredPlayerAreaId;
-   ctx.save();ctx.globalCompositeOperation='source-over';ctx.globalAlpha=1;
-   const vertices=areaOutline(area);
-   ctx.beginPath();vertices.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();
-   ctx.fillStyle=highlighted?'#ffc247a0':'#9a4c4570';ctx.fill();
-   ctx.strokeStyle='#16120f';ctx.lineWidth=5;ctx.stroke();
-   ctx.strokeStyle=highlighted?'#ffdc58':'#fff2dd';ctx.lineWidth=highlighted?4:2.5;ctx.stroke();
-   if(item!==areaPreview){const [x,y]=point(...area.origin);ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.fillStyle=highlighted?'#ffdc58':'#f3e2b8';ctx.fill();ctx.strokeStyle='#8c392e';ctx.lineWidth=2;ctx.stroke()}
-   ctx.restore();continue;
-  }
-  if(playerFogEnabled()&&!fogPointVisible(area.origin))continue;
+  if(!ownFlat&&playerFogEnabled()&&!fogPointVisible(area.origin))continue;
   const height=area.origin[2];
   if(!masksByHeight.has(height))masksByHeight.set(height,areaOccluders(height));
   areaCtx.clearRect(0,0,W,H);
@@ -1868,8 +1854,8 @@ function drawAreaTemplates(){
   areaCtx.strokeStyle=highlighted?'#ffdc58':area.shape==='difficult'?'#ffdc78':'#fff2dd';areaCtx.lineWidth=highlighted?4:2.5;areaCtx.stroke();
   areaCtx.globalCompositeOperation='destination-out';areaCtx.fillStyle='#000';
   for(const mask of masksByHeight.get(height)){areaPath(mask);areaCtx.fill()}
-  if(area.shape==='difficult')for(const f of faces){
-   if(!f.standee)continue;
+  if(area.shape==='difficult'||ownFlat)for(const f of faces){
+   if(!f.standee||ownFlat&&f.p.z+f.p.size<=height)continue;
    if(f.flat){
     const [x,y,r]=f.flat;
     areaCtx.beginPath();areaCtx.arc(x,y,r,0,Math.PI*2);areaCtx.fill();
@@ -1879,7 +1865,7 @@ function drawAreaTemplates(){
    const [left,right,base]=f.projected;
    areaCtx.beginPath();areaCtx.ellipse((left[0]+right[0])/2,base[1],f.baseWidth*.55,f.baseWidth*.22,0,0,Math.PI*2);areaCtx.fill();
   }
-  ctx.drawImage(areaLayer,0,0,W,H);
+  ctx.save();ctx.globalCompositeOperation='source-over';ctx.globalAlpha=1;ctx.drawImage(areaLayer,0,0,W,H);ctx.restore();
   if(!topDown)drawAreaVolume(highlighted?{...area,auraColor:'#ffdc58'}:area);
   if(item!==areaPreview){
    const masks=masksByHeight.get(height);
