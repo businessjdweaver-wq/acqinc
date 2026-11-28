@@ -10291,7 +10291,7 @@ canvas.onpointerdown=e=>{
  }
  if(!middle&&modifier&&!topDown){e.preventDefault();if(!carry)ghost=null;cameraViewportPivot=null;drag={orbit:true,x,y,angle,tilt,pivot:cameraOrbitPoint(x,y)};return}
  if(middle||panMode||(topDown&&modifier)){if(!carry)ghost=null;cancelPanSettle();drag={pan:true,x,y,panX,panY,button:e.button};if(carry)draw();return}
- if(areaMode&&!carry){placeArea(x,y);return}
+ if(areaMode&&!carry){const control=hitPlayerTemplateControl(x,y);if(control){if(control.action==='remove'){void changePlayerArea('area_delete',control.area).then(ok=>{if(ok)refresh()});return}drag={area:control.area,x,y,templateHandle:true};return}placeArea(x,y);return}
  if(facingTarget){void applyFacingTarget(f);return}
  if(floorEdit&&canEditFloor()){pickFloorEdit(x,y,e.altKey,e.shiftKey);return}
  if(!carry&&!areaMode&&!journalPlacing&&!measuring&&!tool&&!tokenTool&&!brush){
@@ -10673,7 +10673,7 @@ canvas.onpointermove=e=>{
  if(drag?.area){
   if(!drag.changed&&Math.hypot(x-drag.x,y-drag.y)<4)return;
   const z=effectiveArea(drag.area).origin[2];
-  const origin=drag.area.shape==='difficult'?difficultPlacement(x,y,drag.area.size,drag.area.width??drag.area.size):areaAnchor([...inverse(x,y,z),z]);
+  const origin=drag.area.shape==='difficult'?difficultPlacement(x,y,drag.area.size,drag.area.width??drag.area.size):drag.templateHandle?areaAnchor([...inverse(x,y,z),z].map((v,i)=>i<2?v+effectiveArea(drag.area).origin[i]-inverse(drag.x,drag.y,z)[i]:v)):areaAnchor([...inverse(x,y,z),z]);
   if(drag.area.shape==='difficult'&&!validDifficultTerrain({...drag.area,origin}))return;
   if(roomProfile?.gm===false){drag.preview={...drag.area,origin};draw();return}
   if(!drag.changed){remember();drag.changed=true}

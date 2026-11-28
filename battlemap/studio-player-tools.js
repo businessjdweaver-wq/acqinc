@@ -49,7 +49,7 @@
    row.addEventListener('pointerenter',highlight);row.addEventListener('pointerleave',clear);
    row.addEventListener('focusin',highlight);row.addEventListener('focusout',e=>{if(!row.contains(e.relatedTarget))clear()});
    const move=document.createElement('button');move.type='button';move.textContent='↔';move.title='Move template';move.setAttribute('aria-label','Move template');move.disabled=!!roomState.paused;move.onclick=()=>{const current=resolve();if(!current)return;exitTool();movingPlayerTemplate=current.roomId;areaMode=true;message('Click a new location for this template. Escape cancels.');refresh()};
-   row.append(edit,move,del);list.append(row);
+   row.append(edit);list.append(row);
   }
  }
  const originalRefresh=refresh;

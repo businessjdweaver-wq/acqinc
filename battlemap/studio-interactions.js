@@ -1953,11 +1953,30 @@ function areaOriginVisible(area,x,y,masks=areaOccluders(area.origin[2])){
  const visible=!masks.some(mask=>{areaPath(mask);return areaCtx.isPointInPath(x,y)});
  areaCtx.restore();return visible;
 }
+function playerTemplateControls(area,masks){
+ if(roomProfile?.gm!==false||!areaMode||areaOrigin||roomState.paused||!canEditArea(area)||area.shape==='difficult'||!area.roomId)return null;
+ const [x,y]=point(...area.origin);
+ if(!areaOriginVisible(area,x,y,masks))return null;
+ return {x,y,move:[x-25,y+10,23,23],remove:[x+2,y+10,23,23]};
+}
+function hitPlayerTemplateControl(x,y){
+ if(!areaMode||areaOrigin)return null;
+ for(const area of [...areas].reverse()){
+  const c=playerTemplateControls(effectiveArea(area));if(!c)continue;
+  for(const action of ['move','remove']){
+   const [l,t,w,h]=c[action];if(x>=l&&x<=l+w&&y>=t&&y<=t+h)return {area,action};
+  }
+  if(Math.hypot(x-c.x,y-c.y)<=9)return {area,action:'move'};
+ }
+ return null;
+}
 function drawAreaOrigin(area,masks){
  const [x,y]=point(...area.origin);
  if(!areaOriginVisible(area,x,y,masks))return;
  ctx.save();ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);
  ctx.fillStyle='#f3e2b8';ctx.strokeStyle='#8c392e';ctx.lineWidth=2;ctx.fill();ctx.stroke();ctx.restore();
+ const controls=playerTemplateControls(area,masks);if(!controls)return;
+ ctx.save();ctx.globalAlpha=1;ctx.font='bold 17px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';for(const [action,glyph] of [['move','↔'],['remove','']]){const [l,t,w,h]=controls[action];ctx.fillStyle='#302a24';ctx.strokeStyle='#cfb48b';ctx.lineWidth=1;ctx.fillRect(l,t,w,h);ctx.strokeRect(l,t,w,h);ctx.fillStyle='#f5dfb8';if(glyph)ctx.fillText(glyph,l+w/2,t+h/2);else{ctx.strokeStyle='#f5dfb8';ctx.lineWidth=1.5;ctx.strokeRect(l+7,t+7,9,12);ctx.beginPath();ctx.moveTo(l+5,t+6);ctx.lineTo(l+18,t+6);ctx.moveTo(l+9,t+3);ctx.lineTo(l+14,t+3);ctx.moveTo(l+10,t+9);ctx.lineTo(l+10,t+16);ctx.moveTo(l+13,t+9);ctx.lineTo(l+13,t+16);ctx.stroke()}}ctx.restore();
 }
 function hitAreaOrigin(x,y){
  return areas.findLast(area=>{
